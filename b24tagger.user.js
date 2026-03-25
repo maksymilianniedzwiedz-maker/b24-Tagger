@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.4.5
+// @version      0.4.6
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -11,6 +11,7 @@
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
 // @connect       hooks.slack.com
+// @connect       raw.githubusercontent.com
 // @run-at       document-start
 // ==/UserScript==
 
@@ -21,7 +22,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.4.5';
+  const VERSION = '0.4.6';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3450,6 +3451,15 @@
 
   const CHANGELOG = [
     {
+      version: '0.4.6',
+      date: '2026-03-25',
+      label: 'Bugfix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Naprawiono auto-sprawdzanie aktualizacji — dodano brakujące uprawnienie @connect' },
+      ]
+    },
+    {
       version: '0.4.5',
       date: '2026-03-25',
       label: 'Bugfix',
@@ -4187,6 +4197,14 @@
   // ─────────────────────────────────────────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.4.6',
+      date: '2026-03-25',
+      notes: [
+        'Root cause fix: brakował @connect raw.githubusercontent.com w nagłówku — Tampermonkey blokował GM_xmlhttpRequest do tej domeny',
+        'Dodano // @connect raw.githubusercontent.com obok hooks.slack.com',
+      ]
+    },
     {
       version: '0.4.5',
       date: '2026-03-25',

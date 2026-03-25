@@ -2,7 +2,7 @@
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
 // @version      0.3.9
-// @description  Automatyczne tagowanie wzmianek w Brand24 na podstawie pliku z labelkami
+// @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
 // @match        https://panel.brand24.pl/*

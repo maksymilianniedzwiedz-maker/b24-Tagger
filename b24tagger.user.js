@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.4.1
+// @version      0.4.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -21,7 +21,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.4.1';
+  const VERSION = '0.4.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1696,7 +1696,7 @@
       <div id="b24t-subbar" style="display:flex;align-items:center;justify-content:space-between;padding:4px 12px;background:#0a0a0d;border-bottom:1px solid #1a1a22;">
         <div style="display:flex;align-items:center;gap:6px;">
           <button class="b24t-icon-btn" id="b24t-btn-changelog" title="Changelog & Feedback" style="font-size:10px;letter-spacing:0.03em;color:#6c6cff;padding:3px 8px;border:1px solid #6c6cff33;border-radius:4px;">📋 Changelog & Feedback</button>
-          <button class="b24t-icon-btn" id="b24t-btn-check-update" title="Sprawdź aktualizacje" style="font-size:10px;color:#555577;padding:3px 8px;border:1px solid #2a2a35;border-radius:4px;">↑ Aktualizacje</button>
+          <button class="b24t-icon-btn" id="b24t-btn-check-update" title="Sprawdź aktualizacje" style="font-size:10px;color:#555577;padding:3px 8px;border:1px solid #2a2a35;border-radius:4px;">↑ Sprawdź aktualizacje</button>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
           <div id="b24t-token-status-sub" style="font-size:9px;"></div>
@@ -2126,7 +2126,7 @@
       if (btn) { btn.textContent = '↻ Sprawdzam...'; btn.style.color = '#7878aa'; }
       checkForUpdate(true);
       setTimeout(() => {
-        if (btn) { btn.textContent = '↑ Aktualizacje'; btn.style.color = '#555577'; }
+        if (btn) { btn.textContent = '↑ Sprawdź aktualizacje'; btn.style.color = '#555577'; }
       }, 3000);
     });
 
@@ -3449,6 +3449,17 @@
 
   const CHANGELOG = [
     {
+      version: '0.4.2',
+      date: '2026-03-25',
+      label: 'Poprawki',
+      labelColor: '#4ade80',
+      changes: [
+        { type: 'fix',  text: 'Naprawiono auto-sprawdzanie aktualizacji przy załadowaniu strony' },
+        { type: 'ui',   text: 'Popup aktualizacji w prawym górnym rogu, większy, wchodzi z prawej' },
+        { type: 'ui',   text: 'Zmieniono nazwę przycisku na "Sprawdź aktualizacje"' },
+      ]
+    },
+    {
       version: '0.4.1',
       date: '2026-03-25',
       label: 'Poprawki',
@@ -4149,6 +4160,19 @@
 
   const DEV_CHANGELOG = [
     {
+      version: '0.4.2',
+      date: '2026-03-25',
+      notes: [
+        'Root cause auto-check: fetch() blokowany przez CSP Brand24 dla raw.githubusercontent.com',
+        'Fix: checkForUpdate używa GM_xmlhttpRequest (omija CSP) z fallbackiem na fetch',
+        'showUpdateBanner: position zmieniony z bottom/center na top:60px/right:16px',
+        'Animacja: slide-in/slide-out z prawej (translateX) zamiast slide-up od dołu',
+        'Baner aktualizacji: 300px szerokości, nagłówek z wersją, przycisk Zainstaluj full-width',
+        'Baner "najnowsza wersja": auto-dismiss po 3s ze slide-out',
+        'Baner aktualizacji: auto-dismiss po 20s',
+      ]
+    },
+    {
       version: '0.4.1',
       date: '2026-03-25',
       notes: [
@@ -4317,115 +4341,132 @@
   }
 
   function checkForUpdate(manual) {
-    if (!RAW_URL || RAW_URL === 'TWOJ_SLACK_WEBHOOK_URL') return;
+    if (!RAW_URL) return;
 
-    // raw.githubusercontent.com ma otwarty CORS — fetch działa bezpośrednio
-    fetch(RAW_URL + '?_=' + Date.now())
-      .then(function(r) { return r.text(); })
-      .then(function(text) {
-        const match = text.match(/\/\/ @version\s+([\d.]+)/);
-        if (!match) return;
-        const remoteVersion = match[1];
-        if (compareVersions(remoteVersion, VERSION) > 0) {
-          showUpdateBanner(remoteVersion);
-        } else if (manual) {
-          // Ręczne sprawdzenie — pokaż info że jest najnowsza wersja
-          showUpdateBanner(null);
+    function handleResponse(text) {
+      const match = text.match(/\/\/ @version\s+([\d.]+)/);
+      if (!match) return;
+      const remoteVersion = match[1];
+      if (compareVersions(remoteVersion, VERSION) > 0) {
+        showUpdateBanner(remoteVersion);
+      } else if (manual) {
+        showUpdateBanner(null);
+      }
+    }
+
+    // GM_xmlhttpRequest omija CSP Brand24 — działa zarówno w auto jak i manual
+    if (typeof GM_xmlhttpRequest !== 'undefined') {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: RAW_URL + '?_=' + Date.now(),
+        onload: function(r) {
+          if (r.status === 200) handleResponse(r.responseText);
+          else if (manual) addLog('⚠ Sprawdzanie aktualizacji: błąd ' + r.status, 'warn');
+        },
+        onerror: function() {
+          if (manual) addLog('⚠ Nie udało się sprawdzić aktualizacji', 'warn');
         }
-      })
-      .catch(function() {
-        if (manual) addLog('⚠ Nie udało się sprawdzić aktualizacji — brak połączenia', 'warn');
       });
+    } else {
+      // Fallback: fetch (może być blokowany przez CSP)
+      fetch(RAW_URL + '?_=' + Date.now())
+        .then(function(r) { return r.text(); })
+        .then(handleResponse)
+        .catch(function() {
+          if (manual) addLog('⚠ Nie udało się sprawdzić aktualizacji', 'warn');
+        });
+    }
   }
 
   function showUpdateBanner(newVersion) {
-    // Nie pokazuj jeśli banner już istnieje
     if (document.getElementById('b24t-update-banner')) return;
 
-    // null = ręczne sprawdzenie, brak aktualizacji
+    // Dodaj animację CSS (raz)
+    if (!document.getElementById('b24t-update-style')) {
+      const s = document.createElement('style');
+      s.id = 'b24t-update-style';
+      s.textContent = [
+        '@keyframes b24t-slide-in{from{opacity:0;transform:translateX(120%)}to{opacity:1;transform:translateX(0)}}',
+        '@keyframes b24t-slide-out{from{opacity:1;transform:translateX(0)}to{opacity:0;transform:translateX(120%)}}',
+      ].join('');
+      document.head.appendChild(s);
+    }
+
+    const el = document.createElement('div');
+    el.id = 'b24t-update-banner';
+
+    // Prawy górny róg — pod paskiem rozszerzeń (~60px od góry)
+    el.style.cssText = [
+      'position:fixed',
+      'top:60px',
+      'right:16px',
+      'width:300px',
+      'background:#0f0f13',
+      'border:1px solid ' + (newVersion ? '#6c6cff' : '#4ade80'),
+      'border-radius:12px',
+      'padding:16px',
+      'box-shadow:0 8px 32px rgba(0,0,0,0.6)',
+      'z-index:2147483646',
+      'font-family:monospace',
+      'animation:b24t-slide-in 0.35s cubic-bezier(0.34,1.56,0.64,1)',
+    ].join(';');
+
     if (newVersion === null) {
-      const el = document.createElement('div');
-      el.id = 'b24t-update-banner';
-      el.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#0f0f13;border:1px solid #4ade80;border-radius:10px;padding:12px 18px;display:flex;align-items:center;gap:12px;box-shadow:0 8px 32px rgba(74,222,128,0.2);z-index:2147483646;font-family:monospace;animation:b24t-slide-up 0.3s ease;';
-      el.innerHTML = '<span style="font-size:16px;">✓</span><div><div style="font-size:12px;font-weight:700;color:#4ade80;">Masz najnowszą wersję</div><div style="font-size:10px;color:#7878aa;margin-top:2px;">B24 Tagger BETA v' + VERSION + '</div></div>';
-      if (!document.getElementById('b24t-update-style')) {
-        const s = document.createElement('style');
-        s.id = 'b24t-update-style';
-        s.textContent = '@keyframes b24t-slide-up{from{opacity:0;transform:translateX(-50%) translateY(16px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}';
-        document.head.appendChild(s);
-      }
+      // Brak aktualizacji — krótki zielony baner
+      el.innerHTML =
+        '<div style="display:flex;align-items:center;gap:10px;">' +
+          '<div style="font-size:22px;">✓</div>' +
+          '<div>' +
+            '<div style="font-size:13px;font-weight:700;color:#4ade80;">Masz najnowszą wersję</div>' +
+            '<div style="font-size:11px;color:#555577;margin-top:3px;">B24 Tagger BETA v' + VERSION + '</div>' +
+          '</div>' +
+        '</div>';
       document.body.appendChild(el);
-      setTimeout(function() { el.style.transition='opacity 0.3s'; el.style.opacity='0'; setTimeout(function(){ el.remove(); }, 300); }, 3000);
+      setTimeout(function() {
+        el.style.animation = 'b24t-slide-out 0.25s ease forwards';
+        setTimeout(function() { el.remove(); }, 260);
+      }, 3000);
       return;
     }
 
-    const banner = document.createElement('div');
-    banner.id = 'b24t-update-banner';
-    banner.style.cssText = [
-      'position:fixed',
-      'bottom:20px',
-      'left:50%',
-      'transform:translateX(-50%)',
-      'background:#0f0f13',
-      'border:1px solid #6c6cff',
-      'border-radius:10px',
-      'padding:12px 18px',
-      'display:flex',
-      'align-items:center',
-      'gap:14px',
-      'box-shadow:0 8px 32px rgba(108,108,255,0.25)',
-      'z-index:2147483646',
-      'font-family:\'SF Mono\',monospace',
-      'min-width:320px',
-      'animation:b24t-slide-up 0.3s ease',
-    ].join(';');
-
-    banner.innerHTML =
-      '<div style="display:flex;align-items:center;gap:10px;flex:1;">' +
-        '<div style="width:32px;height:32px;background:#6c6cff22;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">✦</div>' +
-        '<div>' +
-          '<div style="font-size:12px;font-weight:700;color:#e2e2e8;">Dostępna aktualizacja!</div>' +
-          '<div style="font-size:10px;color:#7878aa;margin-top:2px;">' +
-            'B24 Tagger BETA <span style="color:#555588;">v' + VERSION + '</span>' +
-            ' → <span style="color:#6c6cff;font-weight:600;">v' + newVersion + '</span>' +
-          '</div>' +
+    // Jest aktualizacja — większy baner z przyciskami
+    el.innerHTML =
+      // Nagłówek
+      '<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;">' +
+        '<div style="width:36px;height:36px;background:#6c6cff22;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">✦</div>' +
+        '<div style="flex:1;">' +
+          '<div style="font-size:14px;font-weight:700;color:#e2e2e8;letter-spacing:-0.01em;">Dostępna aktualizacja</div>' +
+          '<div style="font-size:11px;color:#7878aa;margin-top:3px;">B24 Tagger BETA</div>' +
         '</div>' +
+        '<button id="b24t-update-dismiss" style="background:none;border:none;color:#444455;cursor:pointer;font-size:18px;line-height:1;padding:2px;flex-shrink:0;">✕</button>' +
       '</div>' +
-      '<div style="display:flex;gap:6px;flex-shrink:0;">' +
-        '<button id="b24t-update-install" style="background:#6c6cff;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;">Zainstaluj</button>' +
-        '<button id="b24t-update-dismiss" style="background:#1a1a22;color:#7878aa;border:1px solid #2a2a35;border-radius:6px;padding:7px 10px;font-size:11px;cursor:pointer;font-family:inherit;">✕</button>' +
-      '</div>';
+      // Wersje
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:8px 10px;background:#141419;border-radius:8px;">' +
+        '<span style="font-size:12px;color:#555577;font-family:monospace;">v' + VERSION + '</span>' +
+        '<span style="font-size:14px;color:#444466;">→</span>' +
+        '<span style="font-size:13px;font-weight:700;color:#6c6cff;font-family:monospace;">v' + newVersion + '</span>' +
+        '<span style="margin-left:auto;font-size:10px;background:#6c6cff22;color:#6c6cff;padding:2px 7px;border-radius:99px;">nowa wersja</span>' +
+      '</div>' +
+      // Przycisk
+      '<button id="b24t-update-install" style="width:100%;background:#6c6cff;color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:monospace;letter-spacing:0.02em;">Zainstaluj aktualizację →</button>';
 
-    // Dodaj animację CSS
-    if (!document.getElementById('b24t-update-style')) {
-      const style = document.createElement('style');
-      style.id = 'b24t-update-style';
-      style.textContent = '@keyframes b24t-slide-up { from { opacity:0; transform:translateX(-50%) translateY(16px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }';
-      document.head.appendChild(style);
+    document.body.appendChild(el);
+
+    function dismiss() {
+      el.style.animation = 'b24t-slide-out 0.25s ease forwards';
+      setTimeout(function() { el.remove(); }, 260);
     }
 
-    document.body.appendChild(banner);
-
-    // Kliknięcie "Zainstaluj" — otwórz raw URL (Tampermonkey obsłuży instalację)
     document.getElementById('b24t-update-install').addEventListener('click', function() {
       window.open(RAW_URL.replace('raw.githubusercontent.com', 'github.com').replace('/main/', '/blob/main/'), '_blank');
-      banner.remove();
+      dismiss();
     });
+    document.getElementById('b24t-update-dismiss').addEventListener('click', dismiss);
 
-    // Kliknięcie "✕" — zamknij baner
-    document.getElementById('b24t-update-dismiss').addEventListener('click', function() {
-      banner.style.animation = 'none';
-      banner.style.opacity = '0';
-      banner.style.transition = 'opacity 0.2s';
-      setTimeout(function() { banner.remove(); }, 200);
-    });
-
-    // Auto-ukryj po 15 sekundach
+    // Auto-ukryj po 20 sekundach
     setTimeout(function() {
-      if (document.getElementById('b24t-update-banner')) {
-        document.getElementById('b24t-update-dismiss')?.click();
-      }
-    }, 15000);
+      if (document.getElementById('b24t-update-banner')) dismiss();
+    }, 20000);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

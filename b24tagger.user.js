@@ -4276,11 +4276,6 @@
   function checkForUpdate() {
     if (!RAW_URL || RAW_URL === 'TWOJ_SLACK_WEBHOOK_URL') return;
 
-    // Throttle: sprawdzaj max raz na godzinę
-    const lastCheck = parseInt(localStorage.getItem('b24tagger_update_check') || '0');
-    if (Date.now() - lastCheck < 60 * 60 * 1000) return;
-    localStorage.setItem('b24tagger_update_check', Date.now());
-
     const doCheck = function(url) {
       const req = new XMLHttpRequest();
       req.open('GET', url + '?_=' + Date.now(), true);

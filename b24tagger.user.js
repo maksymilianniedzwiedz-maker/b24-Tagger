@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.4.4
+// @version      0.4.5
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -21,7 +21,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.4.4';
+  const VERSION = '0.4.5';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3448,6 +3448,15 @@
   // ─────────────────────────────────────────────────────────────────────────────
 
   const CHANGELOG = [
+    {
+      version: '0.4.5',
+      date: '2026-03-25',
+      label: 'Test',
+      labelColor: '#facc15',
+      changes: [
+        { type: 'ui', text: 'Test powiadomienia o aktualizacji' },
+      ]
+    },
     {
       version: '0.4.4',
       date: '2026-03-25',

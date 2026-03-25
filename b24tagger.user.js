@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.4.3
+// @version      0.4.4
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -21,7 +21,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.4.3';
+  const VERSION = '0.4.4';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3449,6 +3449,15 @@
 
   const CHANGELOG = [
     {
+      version: '0.4.4',
+      date: '2026-03-25',
+      label: 'Bugfix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Naprawiono sprawdzanie aktualizacji — GM_xmlhttpRequest działa poprawnie' },
+      ]
+    },
+    {
       version: '0.4.3',
       date: '2026-03-25',
       label: 'Poprawki',
@@ -4168,6 +4177,16 @@
   // ─────────────────────────────────────────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.4.4',
+      date: '2026-03-25',
+      notes: [
+        'Root cause fix: checkForUpdate przeniesione z init() do głównego scope IIFE',
+        'GM_xmlhttpRequest jest dostępne tylko w głównym scope skryptu Tampermonkey, nie w init() wywoływanym przez unsafeWindow',
+        'setTimeout(checkForUpdate, 5000) teraz w głównym scope — GM_xmlhttpRequest dostępne',
+        'Przycisk manualny już działał bo wireEvents jest wywoływane przez buildPanel() w głównym scope',
+      ]
+    },
     {
       version: '0.4.3',
       date: '2026-03-25',
@@ -5503,8 +5522,7 @@ Tej operacji nie można cofnąć.`)) {
     // Show What's New on version change
     setTimeout(() => showWhatsNewExtended(false), 2000);
 
-    // Check for updates in background (max raz na godzinę)
-    setTimeout(() => checkForUpdate(), 5000);
+    // (checkForUpdate wywołane w głównym scope IIFE — ma dostęp do GM_xmlhttpRequest)
   }
 
   // Wait for DOM
@@ -5526,5 +5544,8 @@ Tej operacji nie można cofnąć.`)) {
   } else {
     setTimeout(safeInit, 500);
   }
+
+  // Sprawdź aktualizacje w głównym scope — tu GM_xmlhttpRequest jest dostępne
+  setTimeout(function() { checkForUpdate(false); }, 5000);
 
 })();

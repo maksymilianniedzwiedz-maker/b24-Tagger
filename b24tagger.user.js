@@ -1279,6 +1279,7 @@
       forceStop: () => { state.status = 'idle'; updateStatusUI(); stopHealthCheck(); addLog('⏹ Awaryjne zatrzymanie.', 'warn'); },
       clearCheckpoint: () => { clearCheckpoint(); addLog('🗑 Checkpoint wyczyszczony.', 'info'); },
       getToken: () => state.tokenHeaders,
+      checkForUpdate: (manual) => checkForUpdate(manual),
     },
     exportReport,
     exportPartitions,
@@ -3451,10 +3452,10 @@
     {
       version: '0.4.5',
       date: '2026-03-25',
-      label: 'Test',
-      labelColor: '#facc15',
+      label: 'Bugfix',
+      labelColor: '#f87171',
       changes: [
-        { type: 'ui', text: 'Test powiadomienia o aktualizacji' },
+        { type: 'fix', text: 'Naprawiono auto-sprawdzanie aktualizacji — checkForUpdate dodane do debug bridge' },
       ]
     },
     {
@@ -4187,6 +4188,15 @@
 
   const DEV_CHANGELOG = [
     {
+      version: '0.4.5',
+      date: '2026-03-25',
+      notes: [
+        'checkForUpdate dodane do window.B24Tagger.debug.checkForUpdate() — teraz dostępne przez bridge',
+        'Dodano log diagnostyczny w checkForUpdate: pokazuje czy GM_xmlhttpRequest jest dostępne',
+        'setTimeout w głównym scope zwiększony do 6000ms żeby init() zdążył się wykonać',
+      ]
+    },
+    {
       version: '0.4.4',
       date: '2026-03-25',
       notes: [
@@ -4386,6 +4396,7 @@
 
   function checkForUpdate(manual) {
     if (!RAW_URL) return;
+    addLog('→ Sprawdzam aktualizacje... (GM: ' + (typeof GM_xmlhttpRequest !== 'undefined' ? 'tak' : 'nie') + ')', 'info');
 
     function handleResponse(text) {
       const match = text.match(/\/\/ @version\s+([\d.]+)/);
@@ -5554,7 +5565,15 @@ Tej operacji nie można cofnąć.`)) {
     setTimeout(safeInit, 500);
   }
 
-  // Sprawdź aktualizacje w głównym scope — tu GM_xmlhttpRequest jest dostępne
-  setTimeout(function() { checkForUpdate(false); }, 5000);
+  // Sprawdź aktualizacje — wywołane bezpośrednio w scope IIFE gdzie GM jest dostępne
+  // Czekamy 6s żeby init() zdążył się wykonać i panel był gotowy
+  setTimeout(function() {
+    if (typeof GM_xmlhttpRequest !== 'undefined') {
+      checkForUpdate(false);
+    } else {
+      // GM niedostępne — spróbuj przez fetch (może być blokowane przez CSP)
+      checkForUpdate(false);
+    }
+  }, 6000);
 
 })();

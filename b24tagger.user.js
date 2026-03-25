@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.4.0
+// @version      0.4.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -21,7 +21,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.4.0';
+  const VERSION = '0.4.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1694,7 +1694,10 @@
       <!-- TABS -->
       <!-- SUBBAR: changelog + session timer -->
       <div id="b24t-subbar" style="display:flex;align-items:center;justify-content:space-between;padding:4px 12px;background:#0a0a0d;border-bottom:1px solid #1a1a22;">
-        <button class="b24t-icon-btn" id="b24t-btn-changelog" title="Changelog & Feedback" style="font-size:10px;letter-spacing:0.03em;color:#6c6cff;padding:3px 8px;border:1px solid #6c6cff33;border-radius:4px;">📋 Changelog & Feedback</button>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <button class="b24t-icon-btn" id="b24t-btn-changelog" title="Changelog & Feedback" style="font-size:10px;letter-spacing:0.03em;color:#6c6cff;padding:3px 8px;border:1px solid #6c6cff33;border-radius:4px;">📋 Changelog & Feedback</button>
+          <button class="b24t-icon-btn" id="b24t-btn-check-update" title="Sprawdź aktualizacje" style="font-size:10px;color:#555577;padding:3px 8px;border:1px solid #2a2a35;border-radius:4px;">↑ Aktualizacje</button>
+        </div>
         <div style="display:flex;align-items:center;gap:8px;">
           <div id="b24t-token-status-sub" style="font-size:9px;"></div>
           <div id="b24t-session-timer-sub" style="font-size:10px;color:#444466;font-family:'SF Mono',monospace;"></div>
@@ -2116,6 +2119,16 @@
 
     // Changelog / What's New
     panel.querySelector('#b24t-btn-changelog')?.addEventListener('click', () => showWhatsNewExtended(true));
+
+    // Sprawdź aktualizacje ręcznie
+    panel.querySelector('#b24t-btn-check-update')?.addEventListener('click', () => {
+      const btn = document.getElementById('b24t-btn-check-update');
+      if (btn) { btn.textContent = '↻ Sprawdzam...'; btn.style.color = '#7878aa'; }
+      checkForUpdate(true);
+      setTimeout(() => {
+        if (btn) { btn.textContent = '↑ Aktualizacje'; btn.style.color = '#555577'; }
+      }, 3000);
+    });
 
     // Crash banner
     panel.querySelector('#b24t-crash-resume').addEventListener('click', () => {
@@ -3436,6 +3449,17 @@
 
   const CHANGELOG = [
     {
+      version: '0.4.1',
+      date: '2026-03-25',
+      label: 'Poprawki',
+      labelColor: '#4ade80',
+      changes: [
+        { type: 'fix', text: 'Naprawiono sprawdzanie aktualizacji — używa fetch zamiast GM_xmlhttpRequest' },
+        { type: 'new', text: 'Przycisk "↑ Aktualizacje" w subbarze — ręczne sprawdzenie' },
+        { type: 'ui',  text: 'Baner "Masz najnowszą wersję" przy ręcznym sprawdzeniu' },
+      ]
+    },
+    {
       version: '0.4.0',
       date: '2026-03-25',
       label: 'Test update',
@@ -4125,6 +4149,16 @@
 
   const DEV_CHANGELOG = [
     {
+      version: '0.4.1',
+      date: '2026-03-25',
+      notes: [
+        'checkForUpdate(): GM_xmlhttpRequest → fetch() — raw.githubusercontent.com ma otwarty CORS (Access-Control-Allow-Origin: *)',
+        'checkForUpdate(manual=true): przy braku aktualizacji pokazuje zielony baner "Masz najnowszą wersję" przez 3s',
+        'Nowy przycisk #b24t-btn-check-update w subbarze, podczas sprawdzania zmienia label na "↻ Sprawdzam..."',
+        'showUpdateBanner(null): obsługa przypadku brak aktualizacji przy manual check',
+      ]
+    },
+    {
       version: '0.3.9',
       date: '2026-03-25',
       notes: [
@@ -4282,49 +4316,48 @@
     return 0;
   }
 
-  function checkForUpdate() {
+  function checkForUpdate(manual) {
     if (!RAW_URL || RAW_URL === 'TWOJ_SLACK_WEBHOOK_URL') return;
 
-    const doCheck = function(url) {
-      const req = new XMLHttpRequest();
-      req.open('GET', url + '?_=' + Date.now(), true);
-      req.onload = function() {
-        if (req.status !== 200) return;
-        const match = req.responseText.match(/\/\/ @version\s+([\d.]+)/);
+    // raw.githubusercontent.com ma otwarty CORS — fetch działa bezpośrednio
+    fetch(RAW_URL + '?_=' + Date.now())
+      .then(function(r) { return r.text(); })
+      .then(function(text) {
+        const match = text.match(/\/\/ @version\s+([\d.]+)/);
         if (!match) return;
         const remoteVersion = match[1];
         if (compareVersions(remoteVersion, VERSION) > 0) {
           showUpdateBanner(remoteVersion);
+        } else if (manual) {
+          // Ręczne sprawdzenie — pokaż info że jest najnowsza wersja
+          showUpdateBanner(null);
         }
-      };
-      req.onerror = function() {};
-      req.send();
-    };
-
-    // Użyj GM_xmlhttpRequest jeśli dostępne (omija CORS), fallback na XHR
-    if (typeof GM_xmlhttpRequest !== 'undefined') {
-      GM_xmlhttpRequest({
-        method: 'GET',
-        url: RAW_URL + '?_=' + Date.now(),
-        onload: function(r) {
-          if (r.status !== 200) return;
-          const match = r.responseText.match(/\/\/ @version\s+([\d.]+)/);
-          if (!match) return;
-          const remoteVersion = match[1];
-          if (compareVersions(remoteVersion, VERSION) > 0) {
-            showUpdateBanner(remoteVersion);
-          }
-        },
-        onerror: function() {}
+      })
+      .catch(function() {
+        if (manual) addLog('⚠ Nie udało się sprawdzić aktualizacji — brak połączenia', 'warn');
       });
-    } else {
-      doCheck(RAW_URL);
-    }
   }
 
   function showUpdateBanner(newVersion) {
     // Nie pokazuj jeśli banner już istnieje
     if (document.getElementById('b24t-update-banner')) return;
+
+    // null = ręczne sprawdzenie, brak aktualizacji
+    if (newVersion === null) {
+      const el = document.createElement('div');
+      el.id = 'b24t-update-banner';
+      el.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#0f0f13;border:1px solid #4ade80;border-radius:10px;padding:12px 18px;display:flex;align-items:center;gap:12px;box-shadow:0 8px 32px rgba(74,222,128,0.2);z-index:2147483646;font-family:monospace;animation:b24t-slide-up 0.3s ease;';
+      el.innerHTML = '<span style="font-size:16px;">✓</span><div><div style="font-size:12px;font-weight:700;color:#4ade80;">Masz najnowszą wersję</div><div style="font-size:10px;color:#7878aa;margin-top:2px;">B24 Tagger BETA v' + VERSION + '</div></div>';
+      if (!document.getElementById('b24t-update-style')) {
+        const s = document.createElement('style');
+        s.id = 'b24t-update-style';
+        s.textContent = '@keyframes b24t-slide-up{from{opacity:0;transform:translateX(-50%) translateY(16px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}';
+        document.head.appendChild(s);
+      }
+      document.body.appendChild(el);
+      setTimeout(function() { el.style.transition='opacity 0.3s'; el.style.opacity='0'; setTimeout(function(){ el.remove(); }, 300); }, 3000);
+      return;
+    }
 
     const banner = document.createElement('div');
     banner.id = 'b24t-update-banner';

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.4.8
+// @version      0.4.9
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -22,7 +22,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.4.8';
+  const VERSION = '0.4.9';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4446,6 +4446,10 @@
       GM_xmlhttpRequest({
         method: 'GET',
         url: RAW_URL + '?_=' + Date.now(),
+        headers: {
+          'Cache-Control': 'no-cache, no-store',
+          'Pragma': 'no-cache',
+        },
         onload: function(r) {
           if (r.status === 200) handleResponse(r.responseText);
           else if (manual) addLog('⚠ Sprawdzanie aktualizacji: błąd ' + r.status, 'warn');

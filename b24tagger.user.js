@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.4.7
+// @version      0.4.8
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -22,7 +22,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.4.7';
+  const VERSION = '0.4.8';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4427,9 +4427,14 @@
 
     function handleResponse(text) {
       const match = text.match(/\/\/ @version\s+([\d.]+)/);
-      if (!match) return;
+      if (!match) {
+        addLog('⚠ Update check: nie znaleziono @version w odpowiedzi (dł: ' + text.length + ')', 'warn');
+        return;
+      }
       const remoteVersion = match[1];
+      addLog('→ Update check: lokalna=' + VERSION + ' zdalna=' + remoteVersion, 'info');
       if (compareVersions(remoteVersion, VERSION) > 0) {
+        addLog('✦ Dostępna aktualizacja: v' + remoteVersion, 'success');
         showUpdateBanner(remoteVersion);
       } else if (manual) {
         showUpdateBanner(null);

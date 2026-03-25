@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.3.8
+// @version      0.3.9
 // @description  Automatyczne tagowanie wzmianek w Brand24 na podstawie pliku z labelkami
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -21,7 +21,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.3.8';
+  const VERSION = '0.3.9';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3436,6 +3436,16 @@
 
   const CHANGELOG = [
     {
+      version: '0.3.9',
+      date: '2026-03-25',
+      label: 'Auto-update',
+      labelColor: '#6c6cff',
+      changes: [
+        { type: 'new', text: 'Powiadomienie o dostępnej aktualizacji — baner z przyciskiem Zainstaluj' },
+        { type: 'new', text: 'Sprawdzanie wersji w tle raz na godzinę (GitHub raw file)' },
+      ]
+    },
+    {
       version: '0.3.8',
       date: '2026-03-25',
       label: 'GitHub ready',
@@ -3602,6 +3612,7 @@
   // ─────────────────────────────────────────────────────────────────────────────
   // Slack Webhook URL — jak go zdobyć: https://api.slack.com/apps → Incoming Webhooks
   const SLACK_WEBHOOK_URL = 'TWOJ_SLACK_WEBHOOK_URL';
+  const RAW_URL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/b24tagger.user.js';
 
   // Planned features list
   const PLANNED_FEATURES = [
@@ -4105,6 +4116,18 @@
 
   const DEV_CHANGELOG = [
     {
+      version: '0.3.9',
+      date: '2026-03-25',
+      notes: [
+        'Nowa stała RAW_URL — wskazuje na raw plik wtyczki na GitHubie',
+        'checkForUpdate(): GM_xmlhttpRequest do GitHub raw URL, parsuje @version z nagłówka, throttle 1h przez localStorage b24tagger_update_check',
+        'compareVersions(a, b): porównanie semantycznych wersji jako tablice liczb',
+        'showUpdateBanner(newVersion): fixed baner na dole ekranu, animacja slide-up, auto-ukrycie po 15s',
+        'Przycisk Zainstaluj otwiera blob URL na GitHubie — Tampermonkey wykrywa .user.js i oferuje instalację',
+        'checkForUpdate wywołane setTimeout 5000ms po init (po showWhatsNewExtended)',
+      ]
+    },
+    {
       version: '0.3.8',
       date: '2026-03-25',
       notes: [
@@ -4232,6 +4255,141 @@
       ]
     },
   ];
+
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AUTO UPDATE CHECK
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  function compareVersions(a, b) {
+    // Returns 1 if a > b, -1 if a < b, 0 if equal
+    const pa = a.split('.').map(Number);
+    const pb = b.split('.').map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const na = pa[i] || 0, nb = pb[i] || 0;
+      if (na > nb) return 1;
+      if (na < nb) return -1;
+    }
+    return 0;
+  }
+
+  function checkForUpdate() {
+    if (!RAW_URL || RAW_URL === 'TWOJ_SLACK_WEBHOOK_URL') return;
+
+    // Throttle: sprawdzaj max raz na godzinę
+    const lastCheck = parseInt(localStorage.getItem('b24tagger_update_check') || '0');
+    if (Date.now() - lastCheck < 60 * 60 * 1000) return;
+    localStorage.setItem('b24tagger_update_check', Date.now());
+
+    const doCheck = function(url) {
+      const req = new XMLHttpRequest();
+      req.open('GET', url + '?_=' + Date.now(), true);
+      req.onload = function() {
+        if (req.status !== 200) return;
+        const match = req.responseText.match(/\/\/ @version\s+([\d.]+)/);
+        if (!match) return;
+        const remoteVersion = match[1];
+        if (compareVersions(remoteVersion, VERSION) > 0) {
+          showUpdateBanner(remoteVersion);
+        }
+      };
+      req.onerror = function() {};
+      req.send();
+    };
+
+    // Użyj GM_xmlhttpRequest jeśli dostępne (omija CORS), fallback na XHR
+    if (typeof GM_xmlhttpRequest !== 'undefined') {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: RAW_URL + '?_=' + Date.now(),
+        onload: function(r) {
+          if (r.status !== 200) return;
+          const match = r.responseText.match(/\/\/ @version\s+([\d.]+)/);
+          if (!match) return;
+          const remoteVersion = match[1];
+          if (compareVersions(remoteVersion, VERSION) > 0) {
+            showUpdateBanner(remoteVersion);
+          }
+        },
+        onerror: function() {}
+      });
+    } else {
+      doCheck(RAW_URL);
+    }
+  }
+
+  function showUpdateBanner(newVersion) {
+    // Nie pokazuj jeśli banner już istnieje
+    if (document.getElementById('b24t-update-banner')) return;
+
+    const banner = document.createElement('div');
+    banner.id = 'b24t-update-banner';
+    banner.style.cssText = [
+      'position:fixed',
+      'bottom:20px',
+      'left:50%',
+      'transform:translateX(-50%)',
+      'background:#0f0f13',
+      'border:1px solid #6c6cff',
+      'border-radius:10px',
+      'padding:12px 18px',
+      'display:flex',
+      'align-items:center',
+      'gap:14px',
+      'box-shadow:0 8px 32px rgba(108,108,255,0.25)',
+      'z-index:2147483646',
+      'font-family:\'SF Mono\',monospace',
+      'min-width:320px',
+      'animation:b24t-slide-up 0.3s ease',
+    ].join(';');
+
+    banner.innerHTML =
+      '<div style="display:flex;align-items:center;gap:10px;flex:1;">' +
+        '<div style="width:32px;height:32px;background:#6c6cff22;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">✦</div>' +
+        '<div>' +
+          '<div style="font-size:12px;font-weight:700;color:#e2e2e8;">Dostępna aktualizacja!</div>' +
+          '<div style="font-size:10px;color:#7878aa;margin-top:2px;">' +
+            'B24 Tagger BETA <span style="color:#555588;">v' + VERSION + '</span>' +
+            ' → <span style="color:#6c6cff;font-weight:600;">v' + newVersion + '</span>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div style="display:flex;gap:6px;flex-shrink:0;">' +
+        '<button id="b24t-update-install" style="background:#6c6cff;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;">Zainstaluj</button>' +
+        '<button id="b24t-update-dismiss" style="background:#1a1a22;color:#7878aa;border:1px solid #2a2a35;border-radius:6px;padding:7px 10px;font-size:11px;cursor:pointer;font-family:inherit;">✕</button>' +
+      '</div>';
+
+    // Dodaj animację CSS
+    if (!document.getElementById('b24t-update-style')) {
+      const style = document.createElement('style');
+      style.id = 'b24t-update-style';
+      style.textContent = '@keyframes b24t-slide-up { from { opacity:0; transform:translateX(-50%) translateY(16px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }';
+      document.head.appendChild(style);
+    }
+
+    document.body.appendChild(banner);
+
+    // Kliknięcie "Zainstaluj" — otwórz raw URL (Tampermonkey obsłuży instalację)
+    document.getElementById('b24t-update-install').addEventListener('click', function() {
+      window.open(RAW_URL.replace('raw.githubusercontent.com', 'github.com').replace('/main/', '/blob/main/'), '_blank');
+      banner.remove();
+    });
+
+    // Kliknięcie "✕" — zamknij baner
+    document.getElementById('b24t-update-dismiss').addEventListener('click', function() {
+      banner.style.animation = 'none';
+      banner.style.opacity = '0';
+      banner.style.transition = 'opacity 0.2s';
+      setTimeout(function() { banner.remove(); }, 200);
+    });
+
+    // Auto-ukryj po 15 sekundach
+    setTimeout(function() {
+      if (document.getElementById('b24t-update-banner')) {
+        document.getElementById('b24t-update-dismiss')?.click();
+      }
+    }, 15000);
+  }
 
   // ─────────────────────────────────────────────────────────────────────────────
   // PARALLEL FETCH HELPER - used by all multi-page collection flows
@@ -5249,6 +5407,9 @@ Tej operacji nie można cofnąć.`)) {
 
     // Show What's New on version change
     setTimeout(() => showWhatsNewExtended(false), 2000);
+
+    // Check for updates in background (max raz na godzinę)
+    setTimeout(() => checkForUpdate(), 5000);
   }
 
   // Wait for DOM

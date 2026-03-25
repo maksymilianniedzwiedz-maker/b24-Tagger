@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.4.2
+// @version      0.4.3
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -21,7 +21,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.4.2';
+  const VERSION = '0.4.3';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3449,6 +3449,15 @@
 
   const CHANGELOG = [
     {
+      version: '0.4.3',
+      date: '2026-03-25',
+      label: 'Poprawki',
+      labelColor: '#4ade80',
+      changes: [
+        { type: 'fix', text: 'Przycisk Zainstaluj otwiera ekran aktualizacji Tampermonkey bezpośrednio' },
+      ]
+    },
+    {
       version: '0.4.2',
       date: '2026-03-25',
       label: 'Poprawki',
@@ -4160,6 +4169,13 @@
 
   const DEV_CHANGELOG = [
     {
+      version: '0.4.3',
+      date: '2026-03-25',
+      notes: [
+        'Przycisk Zainstaluj: zmiana z blob URL na RAW_URL — Tampermonkey rozpoznaje .user.js i pokazuje ekran Update jednym kliknięciem',
+      ]
+    },
+    {
       version: '0.4.2',
       date: '2026-03-25',
       notes: [
@@ -4458,7 +4474,8 @@
     }
 
     document.getElementById('b24t-update-install').addEventListener('click', function() {
-      window.open(RAW_URL.replace('raw.githubusercontent.com', 'github.com').replace('/main/', '/blob/main/'), '_blank');
+      // Otwarcie raw .user.js URL — Tampermonkey automatycznie wykrywa i pokazuje ekran aktualizacji
+      window.open(RAW_URL, '_blank');
       dismiss();
     });
     document.getElementById('b24t-update-dismiss').addEventListener('click', dismiss);

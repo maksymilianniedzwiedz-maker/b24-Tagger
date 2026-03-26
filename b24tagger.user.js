@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.5.0
+// @version      0.5.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -22,13 +22,14 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.5.0';
+  const VERSION = '0.5.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
     SCHEMAS:     'b24tagger_schemas',
     JOBS:        'b24tagger_jobs',
     CRASHLOG:    'b24tagger_crashlog',
+    FEATURES:    'b24tagger_features',
     UI_POS:      'b24tagger_ui_pos',
     UI_COLLAPSED:'b24tagger_ui_collapsed',
     PANEL_CORNER:     'b24tagger_panel_corner',
@@ -1682,6 +1683,7 @@
         <span class="b24t-version">v${VERSION}</span>
         <div id="b24t-topbar-right">
           <span id="b24t-status-badge" class="b24t-badge badge-idle">Idle</span>
+          <button class="b24t-icon-btn" id="b24t-btn-features" title="Dodatkowe funkcje" style="font-size:14px;">⚙</button>
           <button class="b24t-icon-btn" id="b24t-btn-help" title="Pomoc">?</button>
           <button class="b24t-icon-btn" id="b24t-btn-collapse" title="Zwiń/Rozwiń">▼</button>
         </div>
@@ -1711,6 +1713,7 @@
         <button class="b24t-tab" data-tab="quicktag">⚡ Quick Tag</button>
         <button class="b24t-tab" data-tab="delete">🗑 Quick Delete</button>
         <button class="b24t-tab" data-tab="history">📋 Historia</button>
+        <button class="b24t-tab" data-tab="dashboard" id="b24t-tab-dashboard" style="display:none;">📊 Dash</button>
       </div>
 
       <!-- BODY -->
@@ -1897,6 +1900,16 @@
 
       <!-- HISTORY TAB (injected by JS) -->
       <div id="b24t-history-tab-placeholder"></div>
+
+      <!-- DASHBOARD TAB (shown when feature enabled) -->
+      <div id="b24t-dashboard-tab" style="display:none;">
+        <div id="b24t-dashboard-content">
+          <div style="padding:20px;text-align:center;color:#444466;font-size:11px;">Kliknij Odśwież aby załadować dane</div>
+        </div>
+        <div style="padding:0 12px 12px;display:flex;gap:6px;">
+          <button class="b24t-btn-secondary" id="b24t-dashboard-refresh" style="flex:1;font-size:11px;">↻ Odśwież</button>
+        </div>
+      </div>
 
       </div><!-- /body -->
 
@@ -2121,6 +2134,16 @@
 
     // Changelog / What's New
     panel.querySelector('#b24t-btn-changelog')?.addEventListener('click', () => showWhatsNewExtended(true));
+
+    // Dodatkowe funkcje
+    panel.querySelector('#b24t-btn-features')?.addEventListener('click', () => showFeaturesModal());
+
+    // Dashboard — tab click + refresh button
+    panel.querySelector('#b24t-tab-dashboard')?.addEventListener('click', function() {
+      // Odśwież przy każdym wejściu w zakładkę
+      setTimeout(() => refreshDashboard(), 100);
+    });
+    panel.querySelector('#b24t-dashboard-refresh')?.addEventListener('click', () => refreshDashboard());
 
     // Sprawdź aktualizacje ręcznie
     panel.querySelector('#b24t-btn-check-update')?.addEventListener('click', () => {
@@ -3451,6 +3474,17 @@
 
   const CHANGELOG = [
     {
+      version: '0.5.1',
+      date: '2026-03-26',
+      label: 'Dashboard',
+      labelColor: '#6c6cff',
+      changes: [
+        { type: 'new', text: 'Przycisk ⚙ — panel dodatkowych funkcji z checkboxami' },
+        { type: 'new', text: 'Dashboard Annotatora — licznik wzmianek bieżącego miesiąca, postęp, dni do końca' },
+        { type: 'new', text: 'Automatyczna logika dat: dzień 1-2 pokazuje poprzedni miesiąc' },
+      ]
+    },
+    {
       version: '0.5.0',
       date: '2026-03-25',
       label: 'Test',
@@ -3716,7 +3750,9 @@
 
   // Planned features list
   const PLANNED_FEATURES = [
-    { priority: 'high',   text: 'Podgląd wzmianki on-hover — najedź na URL w logu żeby zobaczyć treść i autora', next: true  },
+    { priority: 'ai',     text: 'Dostęp do AI API — tłumaczenie wzmianek, klasyfikacja, Batch Review Mode, integracja z Rosettą', next: false },
+    { priority: 'high',   text: 'Dashboard Annotatora — licznik wzmianek bieżącego miesiąca, postęp, dni do końca miesiąca', next: true  },
+    { priority: 'high',   text: 'Podgląd wzmianki on-hover — najedź na URL w logu żeby zobaczyć treść i autora', next: false },
     { priority: 'high',   text: 'Szybkie filtry w Quick Tag — builder filtrów (źródło, sentyment, daty) bez dotykania UI Brand24', next: false },
     { priority: 'high',   text: 'Tryb "Continue from date" — automatyczna kontynuacja od ostatniej przetworzonej daty', next: false },
     { priority: 'medium', text: 'Bulk rename / merge tagów — zmiana nazwy tagu i scalanie tagów w projekcie', next: false },
@@ -3963,8 +3999,8 @@
 
     const typeIcon = { new: '✦', fix: '⚒', perf: '⚡', ui: '◈' };
     const typeColor = { new: '#6c6cff', fix: '#4ade80', perf: '#facc15', ui: '#b0b0cc' };
-    const prioColor = { high: '#f87171', medium: '#facc15', low: '#7878aa' };
-    const prioLabel = { high: '🔴', medium: '🟡', low: '🟢' };
+    const prioColor = { ai: '#a78bfa', high: '#f87171', medium: '#facc15', low: '#7878aa' };
+    const prioLabel = { ai: '🟣', high: '🔴', medium: '🟡', low: '🟢' };
 
     // Build changelog HTML
     let changelogHtml = '';
@@ -4215,6 +4251,21 @@
   // ─────────────────────────────────────────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.5.1',
+      date: '2026-03-26',
+      notes: [
+        'Nowa stała LS.FEATURES = b24tagger_features — JSON obiekt z flagami włączonych funkcji',
+        'OPTIONAL_FEATURES[] — tablica definicji opcjonalnych funkcji (id, label, desc)',
+        'loadFeatures() / saveFeatures() / applyFeatures() — odczyt, zapis, zastosowanie flag',
+        'showFeaturesModal() — modal z checkboxami, zapis przez przycisk Zapisz',
+        'fetchDashboardStats() — dwa query: va:0 (nieotagowane) i va:1 (wszystkie), logika dat 1-2 dnia miesiąca',
+        'renderDashboard(el, stats) — 3 kafelki (wszystkie/otagowane/pozostałe) + progress bar + % ukończenia',
+        'refreshDashboard() — loader + fetchDashboardStats + renderDashboard',
+        'Tab "📊 Dash" — domyślnie display:none, odkrywany przez applyFeatures gdy feature.dashboard=true',
+        'applyFeatures() wywołane w init() przed showWhatsNewExtended',
+      ]
+    },
     {
       version: '0.4.6',
       date: '2026-03-25',
@@ -4568,6 +4619,223 @@
     setTimeout(function() {
       if (document.getElementById('b24t-update-banner')) dismiss();
     }, 20000);
+  }
+
+
+
+  // Dodatkowe funkcje — modal z checkboxami
+  const OPTIONAL_FEATURES = [
+    {
+      id: 'dashboard',
+      label: '📊 Dashboard Annotatora',
+      desc: 'Licznik wzmianek bieżącego miesiąca: otagowane, pozostałe, postęp i dni do końca miesiąca.',
+    },
+  ];
+
+  function loadFeatures() {
+    try { return JSON.parse(lsGet(LS.FEATURES, '{}')); } catch(e) { return {}; }
+  }
+
+  function saveFeatures(features) {
+    lsSet(LS.FEATURES, JSON.stringify(features));
+  }
+
+  function applyFeatures() {
+    const features = loadFeatures();
+
+    // Dashboard
+    const dashTab = document.getElementById('b24t-tab-dashboard');
+    const dashContent = document.getElementById('b24t-dashboard-tab');
+    if (features.dashboard) {
+      if (dashTab) dashTab.style.display = '';
+      if (dashContent) dashContent.style.display = '';
+    } else {
+      if (dashTab) dashTab.style.display = 'none';
+      if (dashContent) dashContent.style.display = 'none';
+      // Jeśli aktywna zakładka to dashboard — przełącz na Plik
+      if (dashTab?.classList.contains('b24t-tab-active')) {
+        document.querySelector('.b24t-tab[data-tab="main"]')?.click();
+      }
+    }
+  }
+
+  function showFeaturesModal() {
+    if (document.getElementById('b24t-features-modal')) return;
+    const features = loadFeatures();
+
+    const modal = document.createElement('div');
+    modal.id = 'b24t-features-modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'SF Mono\',monospace;';
+
+    let checkboxesHtml = OPTIONAL_FEATURES.map(function(f) {
+      const checked = features[f.id] ? 'checked' : '';
+      return '<label style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid #1a1a22;cursor:pointer;">' +
+        '<input type="checkbox" data-feature="' + f.id + '" ' + checked + ' ' +
+          'style="margin-top:2px;accent-color:#6c6cff;width:14px;height:14px;flex-shrink:0;cursor:pointer;">' +
+        '<div>' +
+          '<div style="font-size:12px;font-weight:600;color:#e2e2e8;margin-bottom:3px;">' + f.label + '</div>' +
+          '<div style="font-size:10px;color:#555577;line-height:1.5;">' + f.desc + '</div>' +
+        '</div>' +
+      '</label>';
+    }).join('');
+
+    modal.innerHTML =
+      '<div style="background:#0f0f13;border:1px solid #2a2a35;border-radius:14px;width:380px;box-shadow:0 20px 60px rgba(0,0,0,0.8);">' +
+        '<div style="padding:16px 20px;border-bottom:1px solid #1a1a22;display:flex;align-items:center;gap:10px;">' +
+          '<span style="font-size:18px;">⚙</span>' +
+          '<div style="flex:1;">' +
+            '<div style="font-size:13px;font-weight:700;color:#e2e2e8;">Dodatkowe funkcje</div>' +
+            '<div style="font-size:10px;color:#444466;margin-top:2px;">Włącz lub wyłącz opcjonalne funkcje wtyczki</div>' +
+          '</div>' +
+          '<button id="b24t-features-close" style="background:none;border:none;color:#444455;cursor:pointer;font-size:20px;">✕</button>' +
+        '</div>' +
+        '<div style="padding:8px 20px 4px;">' + checkboxesHtml + '</div>' +
+        '<div style="padding:12px 20px;border-top:1px solid #1a1a22;text-align:right;">' +
+          '<button id="b24t-features-save" style="background:#6c6cff;color:#fff;border:none;border-radius:7px;padding:8px 22px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Zapisz</button>' +
+        '</div>' +
+      '</div>';
+
+    document.body.appendChild(modal);
+
+    function close() { modal.remove(); }
+
+    document.getElementById('b24t-features-close').addEventListener('click', close);
+    modal.addEventListener('click', function(e) { if (e.target === modal) close(); });
+
+    document.getElementById('b24t-features-save').addEventListener('click', function() {
+      const newFeatures = {};
+      modal.querySelectorAll('input[data-feature]').forEach(function(cb) {
+        newFeatures[cb.dataset.feature] = cb.checked;
+      });
+      saveFeatures(newFeatures);
+      applyFeatures();
+      close();
+      addLog('✓ Ustawienia funkcji zapisane', 'success');
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // DASHBOARD ANNOTATORA
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  // Pobiera statystyki dla bieżącego miesiąca (lub poprzedniego jeśli dzień 1-2)
+  async function fetchDashboardStats() {
+    if (!state.tokenHeaders) throw new Error('TOKEN_NOT_READY');
+    if (!state.projectId) throw new Error('Brak projektu');
+
+    const now = new Date();
+    const day = now.getDate();
+    let dateFrom, dateTo, label;
+
+    // Dzień 1-2 — pokaż poprzedni miesiąc
+    if (day <= 2) {
+      const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const last = new Date(now.getFullYear(), now.getMonth(), 0);
+      dateFrom = prev.toISOString().split('T')[0];
+      dateTo   = last.toISOString().split('T')[0];
+      label    = prev.toLocaleString('pl-PL', { month: 'long', year: 'numeric' });
+    } else {
+      dateFrom = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+      dateTo   = now.toISOString().split('T')[0];
+      label    = now.toLocaleString('pl-PL', { month: 'long', year: 'numeric' });
+    }
+
+    const baseFilters = {
+      se: [], vi: null, gr: [], sq: '', lem: false, ctr: [], nctr: false,
+      is: [0, 10], tp: null, anom: '', lang: [], nlang: false, aue: null,
+      htg: null, mt: false, mtri: null, cxs: [], rt: []
+    };
+
+    const query = `query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){
+      getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){ count }
+    }`;
+
+    const doQuery = function(va) {
+      return origFetch('/api/graphql', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { ...state.tokenHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operationName: 'getMentions',
+          variables: {
+            projectId: state.projectId,
+            dateRange: { from: dateFrom, to: dateTo },
+            filters: { ...baseFilters, va },
+            page: 1, order: 0
+          },
+          query
+        })
+      }).then(function(r) { return r.json(); });
+    };
+
+    const [allRes, untaggedRes] = await Promise.all([doQuery(1), doQuery(0)]);
+    const total    = allRes?.data?.getMentions?.count || 0;
+    const untagged = untaggedRes?.data?.getMentions?.count || 0;
+    const tagged   = total - untagged;
+    const pct      = total > 0 ? Math.round((tagged / total) * 100) : 0;
+
+    // Dni do końca miesiąca
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const daysLeft = lastDay - now.getDate();
+
+    return { total, tagged, untagged, pct, dateFrom, dateTo, label, daysLeft, day };
+  }
+
+  // Renderuj dashboard w elemencie
+  function renderDashboard(el, stats) {
+    const { total, tagged, untagged, pct, label, daysLeft, day } = stats;
+    const isLastMonth = day <= 2;
+
+    el.innerHTML =
+      '<div style="padding:14px 16px;">' +
+        // Nagłówek
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">' +
+          '<div style="font-size:11px;font-weight:700;color:#a0a0cc;letter-spacing:0.05em;text-transform:uppercase;">Dashboard Annotatora</div>' +
+          (isLastMonth
+            ? '<div style="font-size:9px;background:#facc1522;color:#facc15;padding:2px 6px;border-radius:99px;">poprzedni miesiąc</div>'
+            : '<div style="font-size:9px;color:#444466;">' + daysLeft + ' dni do końca miesiąca</div>'
+          ) +
+        '</div>' +
+        // Miesiąc
+        '<div style="font-size:10px;color:#555577;margin-bottom:10px;">' + label + ' · ' + stats.dateFrom + ' – ' + stats.dateTo + '</div>' +
+        // Progress bar
+        '<div style="background:#1a1a22;border-radius:99px;height:6px;margin-bottom:12px;overflow:hidden;">' +
+          '<div style="height:100%;border-radius:99px;background:' + (pct === 100 ? '#4ade80' : '#6c6cff') + ';width:' + pct + '%;transition:width 0.4s ease;"></div>' +
+        '</div>' +
+        // Statystyki — 3 kafelki
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
+          _dashTile('Wszystkie', total, '#7878aa') +
+          _dashTile('Otagowane', tagged, '#4ade80') +
+          _dashTile('Pozostałe', untagged, untagged === 0 ? '#4ade80' : '#f87171') +
+        '</div>' +
+        // Procent ukończenia
+        '<div style="margin-top:10px;text-align:center;font-size:11px;color:' + (pct === 100 ? '#4ade80' : '#7878aa') + ';">' +
+          (pct === 100 ? '✓ Gotowe!' : pct + '% ukończone') +
+        '</div>' +
+      '</div>';
+  }
+
+  function _dashTile(label, value, color) {
+    return '<div style="background:#141419;border-radius:8px;padding:8px;text-align:center;">' +
+      '<div style="font-size:16px;font-weight:700;color:' + color + ';">' + (value ?? '—') + '</div>' +
+      '<div style="font-size:9px;color:#444466;margin-top:2px;">' + label + '</div>' +
+    '</div>';
+  }
+
+  // Odśwież dane dashboardu i wyrenderuj
+  async function refreshDashboard() {
+    const el = document.getElementById('b24t-dashboard-content');
+    if (!el) return;
+
+    // Pokaż loader
+    el.innerHTML = '<div style="padding:20px;text-align:center;color:#444466;font-size:11px;">↻ Ładowanie...</div>';
+
+    try {
+      const stats = await fetchDashboardStats();
+      renderDashboard(el, stats);
+    } catch(e) {
+      el.innerHTML = '<div style="padding:14px;font-size:10px;color:#f87171;">⚠ ' + e.message + '</div>';
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -5555,6 +5823,8 @@ Tej operacji nie można cofnąć.`)) {
         if (qtTabEl) qtTabEl.style.display = tab === 'quicktag' ? 'block' : 'none';
         if (delTabEl) delTabEl.style.display = tab === 'delete' ? 'block' : 'none';
         if (histTabEl) histTabEl.style.display = tab === 'history' ? 'block' : 'none';
+        const dashEl = document.getElementById('b24t-dashboard-tab');
+        if (dashEl) dashEl.style.display = tab === 'dashboard' ? 'block' : 'none';
         if (actions) actions.style.display = tab === 'main' ? 'flex' : 'none';
       });
     });
@@ -5583,6 +5853,9 @@ Tej operacji nie można cofnąć.`)) {
     }
 
     addLog(`B24 Tagger BETA v${VERSION} załadowany.`, 'info');
+
+    // Zastosuj opcjonalne funkcje
+    applyFeatures();
 
     // Show What's New on version change
     setTimeout(() => showWhatsNewExtended(false), 2000);

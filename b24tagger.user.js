@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.5.1
+// @version      0.5.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -22,7 +22,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.5.1';
+  const VERSION = '0.5.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3474,6 +3474,16 @@
 
   const CHANGELOG = [
     {
+      version: '0.5.2',
+      date: '2026-03-26',
+      label: 'Dashboard',
+      labelColor: '#6c6cff',
+      changes: [
+        { type: 'fix',  text: 'Dashboard: naprawiono zliczanie nieotagowanych wzmianek' },
+        { type: 'perf', text: 'Dashboard: binary search — ~7 requestów zamiast iteracji przez wszystkie strony' },
+      ]
+    },
+    {
       version: '0.5.1',
       date: '2026-03-26',
       label: 'Dashboard',
@@ -4252,6 +4262,19 @@
 
   const DEV_CHANGELOG = [
     {
+      version: '0.5.2',
+      date: '2026-03-26',
+      notes: [
+        'Root cause: va:0/va:1 nie filtruje po tagach — va:0=wszystkie+usunięte, va:1=standardowy widok',
+        'Odkrycie: wzmianki posortowane nieotagowane→otagowane, co umożliwia binary search',
+        'fetchDashboardStats(): krok 1 = count query, krok 2 = binary search hasTaggedOnPage()',
+        'Binary search: lo/hi na totalPages, porównanie przez hasTaggedOnPage(mid)',
+        'Granica lo-1 pełnych stron × PER_PAGE(60) + countUntaggedOnPage(lo) = untaggedCount',
+        'Edge case: strona 1 ma otagowane (wszystkie tagowane) — countUntaggedOnPage(1)',
+        '~7 requestów zamiast iterowania wszystkich 79 stron (4711 wzmianek)',
+      ]
+    },
+    {
       version: '0.5.1',
       date: '2026-03-26',
       notes: [
@@ -4741,44 +4764,83 @@
     }
 
     const baseFilters = {
-      se: [], vi: null, gr: [], sq: '', lem: false, ctr: [], nctr: false,
+      va: 1, se: [], vi: null, gr: [], sq: '', lem: false, ctr: [], nctr: false,
       is: [0, 10], tp: null, anom: '', lang: [], nlang: false, aue: null,
       htg: null, mt: false, mtri: null, cxs: [], rt: []
     };
 
-    const query = `query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){
-      getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){ count }
-    }`;
+    const GQL_COUNT = 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count}}';
+    const GQL_TAGS  = 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count results{id tags{id}}}}';
+    const PER_PAGE  = 60;
 
-    const doQuery = function(va) {
+    const doQ = function(gql, page) {
       return origFetch('/api/graphql', {
-        method: 'POST',
-        credentials: 'same-origin',
+        method: 'POST', credentials: 'same-origin',
         headers: { ...state.tokenHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           operationName: 'getMentions',
-          variables: {
-            projectId: state.projectId,
-            dateRange: { from: dateFrom, to: dateTo },
-            filters: { ...baseFilters, va },
-            page: 1, order: 0
-          },
-          query
+          variables: { projectId: state.projectId, dateRange: { from: dateFrom, to: dateTo }, filters: baseFilters, page: page, order: 0 },
+          query: gql
         })
       }).then(function(r) { return r.json(); });
     };
 
-    const [allRes, untaggedRes] = await Promise.all([doQuery(1), doQuery(0)]);
-    const total    = allRes?.data?.getMentions?.count || 0;
-    const untagged = untaggedRes?.data?.getMentions?.count || 0;
-    const tagged   = total - untagged;
+    // Krok 1: pobierz łączną liczbę wzmianek
+    const countRes = await doQ(GQL_COUNT, 1);
+    const total = countRes?.data?.getMentions?.count || 0;
+    if (total === 0) {
+      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      return { total: 0, tagged: 0, untagged: 0, pct: 0, dateFrom, dateTo, label, daysLeft: lastDay - day, day };
+    }
+
+    // Krok 2: binary search — znajdź granicę nieotagowane/otagowane
+    // Wzmianki są posortowane: nieotagowane najpierw, otagowane na końcu
+    // Szukamy pierwszej strony gdzie pojawiają się otagowane
+    const totalPages = Math.ceil(total / PER_PAGE);
+
+    async function hasTaggedOnPage(page) {
+      const res = await doQ(GQL_TAGS, page);
+      const results = res?.data?.getMentions?.results || [];
+      return results.some(function(m) { return m.tags && m.tags.length > 0; });
+    }
+
+    async function countUntaggedOnPage(page) {
+      const res = await doQ(GQL_TAGS, page);
+      const results = res?.data?.getMentions?.results || [];
+      return results.filter(function(m) { return !m.tags || m.tags.length === 0; }).length;
+    }
+
+    // Sprawdź czy strona 1 ma otagowane — jeśli tak, wszystkie są otagowane
+    const page1Tagged = await hasTaggedOnPage(1);
+    let untaggedCount = 0;
+
+    if (page1Tagged) {
+      // Strona 1 ma otagowane — sprawdź czy jest też nieotagowanych (granica na str 1)
+      const untaggedOnP1 = await countUntaggedOnPage(1);
+      untaggedCount = untaggedOnP1;
+    } else {
+      // Binary search: szukaj pierwszej strony z otagowanymi
+      let lo = 1, hi = totalPages;
+      while (lo < hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        const tagged = await hasTaggedOnPage(mid);
+        if (tagged) hi = mid;
+        else lo = mid + 1;
+      }
+      // lo = pierwsza strona z otagowanymi
+      // Strony 1..(lo-1) = w pełni nieotagowane
+      // Strona lo = mieszana
+      const fullUntaggedPages = lo - 1;
+      const mixedUntagged = await countUntaggedOnPage(lo);
+      untaggedCount = fullUntaggedPages * PER_PAGE + mixedUntagged;
+    }
+
+    const tagged   = total - untaggedCount;
     const pct      = total > 0 ? Math.round((tagged / total) * 100) : 0;
+    const lastDay  = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const daysLeft = lastDay - day;
 
-    // Dni do końca miesiąca
-    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    const daysLeft = lastDay - now.getDate();
-
-    return { total, tagged, untagged, pct, dateFrom, dateTo, label, daysLeft, day };
+    return { total, tagged, untagged: untaggedCount, pct, dateFrom, dateTo, label, daysLeft, day };
   }
 
   // Renderuj dashboard w elemencie

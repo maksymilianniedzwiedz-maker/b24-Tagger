@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.5.11
+// @version      0.5.12
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.5.11';
+  const VERSION = '0.5.12';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1750,6 +1750,7 @@
         <button class="b24t-tab" data-tab="delete">🗑 Quick Delete</button>
         <button class="b24t-tab" data-tab="history">📋 Historia</button>
         <button class="b24t-tab" data-tab="dashboard" id="b24t-tab-dashboard" style="display:none;">📊 Dash</button>
+        <button class="b24t-tab" data-tab="tagstats" id="b24t-tab-tagstats" style="display:none;">🏷 Tagi</button>
       </div>
 
       <!-- BODY -->
@@ -1936,6 +1937,16 @@
 
       <!-- HISTORY TAB (injected by JS) -->
       <div id="b24t-history-tab-placeholder"></div>
+
+      <!-- TAG STATS TAB (shown when feature enabled) -->
+      <div id="b24t-tagstats-tab" style="display:none;">
+        <div id="b24t-tagstats-content">
+          <div style="padding:20px;text-align:center;color:#444466;font-size:12px;">Kliknij Odśwież aby załadować dane ze wszystkich projektów</div>
+        </div>
+        <div style="padding:0 12px 12px;display:flex;gap:6px;">
+          <button class="b24t-btn-secondary" id="b24t-tagstats-refresh" style="flex:1;font-size:11px;">↻ Odśwież</button>
+        </div>
+      </div>
 
       <!-- DASHBOARD TAB (shown when feature enabled) -->
       <div id="b24t-dashboard-tab" style="display:none;">
@@ -2164,6 +2175,12 @@
       setTimeout(() => refreshDashboard(), 100);
     });
     panel.querySelector('#b24t-dashboard-refresh')?.addEventListener('click', () => refreshDashboard());
+
+    // Tag Stats — tab click + refresh button
+    panel.querySelector('#b24t-tab-tagstats')?.addEventListener('click', function() {
+      setTimeout(() => refreshTagStats(), 100);
+    });
+    panel.querySelector('#b24t-tagstats-refresh')?.addEventListener('click', () => refreshTagStats());
 
     // Sprawdź aktualizacje ręcznie
     panel.querySelector('#b24t-btn-check-update')?.addEventListener('click', () => {
@@ -3584,6 +3601,17 @@
 
   const CHANGELOG = [
     {
+      version: '0.5.12',
+      date: '2026-03-27',
+      label: 'Nowość',
+      labelColor: '#4ade80',
+      changes: [
+        { type: 'new', text: 'Statystyki tagów — zakładka 🏷 Tagi: tabela wszystkich projektów z liczbą wzmianek REQUIRES_VERIFICATION i TO_DELETE' },
+        { type: 'new', text: 'Dane ładowane w tle bez przeładowania strony, z podglądem postępu per projekt' },
+        { type: 'new', text: 'Widoczne tylko projekty które mają coś do zrobienia (reqVer > 0 lub toDelete > 0)' },
+      ]
+    },
+    {
       version: '0.5.11',
       date: '2026-03-27',
       label: 'Stabilność',
@@ -4460,6 +4488,19 @@
 
   const DEV_CHANGELOG = [
     {
+      version: '0.5.12',
+      date: '2026-03-27',
+      notes: [
+        'Nowa funkcja opcjonalna: tagstats (id) — zakładka 🏷 Tagi',
+        'getKnownProjects() — odczytuje projekty z LS.PROJECTS, filtruje te z reqVerId i toDeleteId',
+        'fetchProjectTagCounts(projectId, reqVerId, toDeleteId, dateFrom, dateTo) — pobiera wszystkie strony 10x równolegle, zlicza tagi po id',
+        'renderTagStats(el, projectStats, dateFrom, dateTo) — tabela z filtrem (tylko projekty z reqVer>0 || toDelete>0), sortowanie po sumie malejąco',
+        'refreshTagStats() — loader z postępem "i/n — NazwaProjektu", sekwencyjnie per projekt (parallel między stronami, serial między projektami)',
+        'rt filter Brand24 API zwraca Internal server error — obejście przez pobieranie wszystkich stron i zliczanie tagów po id',
+        'UWAGA: wymaga że projekty były wcześniej odwiedzone z taggerem (dane w LS.PROJECTS)',
+      ]
+    },
+    {
       version: '0.5.10',
       date: '2026-03-27',
       notes: [
@@ -4930,6 +4971,11 @@
       label: '📊 Dashboard Annotatora',
       desc: 'Licznik wzmianek bieżącego miesiąca: otagowane, pozostałe, postęp i dni do końca miesiąca.',
     },
+    {
+      id: 'tagstats',
+      label: '🏷 Statystyki tagów — wszystkie projekty',
+      desc: 'Tabela pokazująca ile wzmianek z tagiem REQUIRES_VERIFICATION i TO_DELETE jest na każdym projekcie w bieżącym miesiącu.',
+    },
   ];
 
   function loadFeatures() {
@@ -4945,19 +4991,28 @@
 
     // Dashboard — pokaż/ukryj zakładkę w navbarze
     const dashTabBtn = document.getElementById('b24t-tab-dashboard');
-    // Dashboard content NIE jest zarządzany tu — zarządza nim tab switcher
-    // Tutaj tylko pokazujemy/ukrywamy przycisk zakładki
     if (features.dashboard) {
       if (dashTabBtn) dashTabBtn.style.display = '';
     } else {
       if (dashTabBtn) dashTabBtn.style.display = 'none';
-      // Jeśli aktywna zakładka to dashboard — przełącz na Plik
       if (dashTabBtn && dashTabBtn.classList.contains('b24t-tab-active')) {
         document.querySelector('.b24t-tab[data-tab="main"]')?.click();
       }
-      // Ukryj content dashboardu
       const dashContent = document.getElementById('b24t-dashboard-tab');
       if (dashContent) dashContent.style.display = 'none';
+    }
+
+    // Tag Stats — pokaż/ukryj zakładkę
+    const tagStatsBtn = document.getElementById('b24t-tab-tagstats');
+    if (features.tagstats) {
+      if (tagStatsBtn) tagStatsBtn.style.display = '';
+    } else {
+      if (tagStatsBtn) tagStatsBtn.style.display = 'none';
+      if (tagStatsBtn && tagStatsBtn.classList.contains('b24t-tab-active')) {
+        document.querySelector('.b24t-tab[data-tab="main"]')?.click();
+      }
+      const tagStatsContent = document.getElementById('b24t-tagstats-tab');
+      if (tagStatsContent) tagStatsContent.style.display = 'none';
     }
   }
 
@@ -5014,6 +5069,182 @@
       close();
       addLog('✓ Ustawienia funkcji zapisane', 'success');
     });
+  }
+
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // TAG STATS — WSZYSTKIE PROJEKTY
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  // Pobiera z localStorage listę znanych projektów
+  function getKnownProjects() {
+    const projects = lsGet(LS.PROJECTS, {});
+    return Object.entries(projects).map(function([id, p]) {
+      return {
+        id: parseInt(id),
+        name: p.name || ('Project ' + id),
+        tagIds: p.tagIds || {},
+        reqVerId: p.tagIds && p.tagIds['REQUIRES_VERIFICATION'],
+        toDeleteId: p.tagIds && p.tagIds['TO_DELETE'],
+      };
+    }).filter(function(p) {
+      // Tylko projekty które mają oba tagi
+      return p.reqVerId && p.toDeleteId;
+    });
+  }
+
+  // Pobiera wszystkie strony wzmianek projektu równolegle (10x) i zlicza po tagach
+  async function fetchProjectTagCounts(projectId, reqVerId, toDeleteId, dateFrom, dateTo, onProgress) {
+    const bf = {
+      va: 1, rt: [], se: [], vi: null, gr: [], sq: '', do: '', au: '',
+      lem: false, ctr: [], nctr: false, is: [0, 10], tp: null, anom: '',
+      lang: [], nlang: false, aue: null, htg: null, mt: false, mtri: null, cxs: []
+    };
+    const gql = `query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){
+      getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){
+        count results{id tags{id title}}
+      }
+    }`;
+
+    const doPage = function(page) {
+      return origFetch('/api/graphql', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { ...state.tokenHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operationName: 'getMentions',
+          variables: { projectId, dateRange: { from: dateFrom, to: dateTo }, filters: bf, page, order: 0 },
+          query: gql
+        })
+      }).then(function(r) { return r.json(); });
+    };
+
+    // Krok 1: pobierz count i pierwszą stronę
+    const first = await doPage(1);
+    const total = first?.data?.getMentions?.count || 0;
+    if (total === 0) return { total: 0, reqVer: 0, toDelete: 0 };
+
+    const totalPages = Math.ceil(total / 60);
+    let reqVer = 0, toDelete = 0;
+
+    // Zlicz tagi z pierwszej strony
+    (first?.data?.getMentions?.results || []).forEach(function(m) {
+      m.tags?.forEach(function(t) {
+        if (t.id === reqVerId) reqVer++;
+        if (t.id === toDeleteId) toDelete++;
+      });
+    });
+
+    // Krok 2: pobierz pozostałe strony równolegle (batche po 10)
+    const remainingPages = [];
+    for (let p = 2; p <= totalPages; p++) remainingPages.push(p);
+
+    for (let i = 0; i < remainingPages.length; i += 10) {
+      const batch = remainingPages.slice(i, i + 10);
+      if (onProgress) onProgress(1 + i, totalPages);
+      const results = await Promise.all(batch.map(function(p) { return doPage(p); }));
+      results.forEach(function(d) {
+        (d?.data?.getMentions?.results || []).forEach(function(m) {
+          m.tags?.forEach(function(t) {
+            if (t.id === reqVerId) reqVer++;
+            if (t.id === toDeleteId) toDelete++;
+          });
+        });
+      });
+    }
+
+    return { total, reqVer, toDelete };
+  }
+
+  // Renderuje tabelę statystyk tagów
+  function renderTagStats(el, projectStats, dateFrom, dateTo) {
+    // Filtruj tylko projekty z reqVer > 0 lub toDelete > 0
+    const filtered = projectStats.filter(function(p) {
+      return p.reqVer > 0 || p.toDelete > 0;
+    }).sort(function(a, b) {
+      // Sortuj po reqVer malejąco
+      return (b.reqVer + b.toDelete) - (a.reqVer + a.toDelete);
+    });
+
+    if (filtered.length === 0) {
+      el.innerHTML = '<div style="padding:20px;text-align:center;color:#4ade80;font-size:12px;">✓ Wszystkie projekty oczyśczone!</div>';
+      return;
+    }
+
+    var rows = filtered.map(function(p) {
+      var reqColor = p.reqVer > 0 ? '#facc15' : '#444466';
+      var delColor = p.toDelete > 0 ? '#f87171' : '#444466';
+      return '<tr>' +
+        '<td style="padding:7px 10px;font-size:11px;color:#c0c0e0;border-bottom:1px solid #1a1a22;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + p.name + '">' + p.name + '</td>' +
+        '<td style="padding:7px 10px;font-size:13px;font-weight:700;color:' + reqColor + ';text-align:center;border-bottom:1px solid #1a1a22;">' + (p.reqVer || '—') + '</td>' +
+        '<td style="padding:7px 10px;font-size:13px;font-weight:700;color:' + delColor + ';text-align:center;border-bottom:1px solid #1a1a22;">' + (p.toDelete || '—') + '</td>' +
+      '</tr>';
+    }).join('');
+
+    el.innerHTML =
+      '<div style="padding:10px 12px 0;">' +
+        '<div style="font-size:9px;color:#444466;margin-bottom:8px;">' + dateFrom + ' – ' + dateTo + '</div>' +
+        '<table style="width:100%;border-collapse:collapse;">' +
+          '<thead>' +
+            '<tr>' +
+              '<th style="padding:5px 10px;font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:#555577;text-align:left;border-bottom:1px solid #2a2a35;">Projekt</th>' +
+              '<th style="padding:5px 10px;font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:#facc15;text-align:center;border-bottom:1px solid #2a2a35;">REQ VER</th>' +
+              '<th style="padding:5px 10px;font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:#f87171;text-align:center;border-bottom:1px solid #2a2a35;">TO DELETE</th>' +
+            '</tr>' +
+          '</thead>' +
+          '<tbody>' + rows + '</tbody>' +
+        '</table>' +
+      '</div>';
+  }
+
+  // Odśwież dane tag stats
+  async function refreshTagStats() {
+    const el = document.getElementById('b24t-tagstats-content');
+    if (!el) return;
+    if (!state.tokenHeaders) {
+      el.innerHTML = '<div style="padding:14px;font-size:11px;color:#f87171;">⚠ Token nie gotowy — odśwież stronę</div>';
+      return;
+    }
+
+    const projects = getKnownProjects();
+    if (projects.length === 0) {
+      el.innerHTML = '<div style="padding:14px;font-size:11px;color:#444466;">Brak zapisanych projektów. Odwiedź każdy projekt raz żeby go zarejestrować.</div>';
+      return;
+    }
+
+    // Daty — bieżący miesiąc (lub poprzedni na 1-2 dzień)
+    const now = new Date();
+    const day = now.getDate();
+    let dateFrom, dateTo;
+    if (day <= 2) {
+      const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const last = new Date(now.getFullYear(), now.getMonth(), 0);
+      dateFrom = prev.toISOString().split('T')[0];
+      dateTo = last.toISOString().split('T')[0];
+    } else {
+      dateFrom = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+      dateTo = now.toISOString().split('T')[0];
+    }
+
+    // Pokaż loader z postępem
+    el.innerHTML = '<div style="padding:20px;text-align:center;">' +
+      '<div style="font-size:11px;color:#444466;margin-bottom:8px;">↻ Pobieram dane ze wszystkich projektów...</div>' +
+      '<div id="b24t-tagstats-progress" style="font-size:10px;color:#555577;">0/' + projects.length + ' projektów</div>' +
+    '</div>';
+
+    const results = [];
+    for (let i = 0; i < projects.length; i++) {
+      const p = projects[i];
+      const progressEl = document.getElementById('b24t-tagstats-progress');
+      if (progressEl) progressEl.textContent = (i + 1) + '/' + projects.length + ' — ' + p.name;
+      try {
+        const counts = await fetchProjectTagCounts(p.id, p.reqVerId, p.toDeleteId, dateFrom, dateTo, null);
+        results.push({ name: p.name, id: p.id, ...counts });
+      } catch(e) {
+        results.push({ name: p.name, id: p.id, total: 0, reqVer: 0, toDelete: 0, error: e.message });
+      }
+    }
+
+    renderTagStats(el, results, dateFrom, dateTo);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -6166,6 +6397,8 @@ Tej operacji nie można cofnąć.`)) {
         const dashEl = document.getElementById('b24t-dashboard-tab');
         const features = loadFeatures();
         if (dashEl) dashEl.style.display = (tab === 'dashboard' && features.dashboard) ? 'block' : 'none';
+        const tagStatsEl = document.getElementById('b24t-tagstats-tab');
+        if (tagStatsEl) tagStatsEl.style.display = (tab === 'tagstats' && features.tagstats) ? 'block' : 'none';
         if (actions) actions.style.display = tab === 'main' ? 'flex' : 'none';
       });
     });

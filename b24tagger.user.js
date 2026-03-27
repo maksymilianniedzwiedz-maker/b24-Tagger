@@ -5521,10 +5521,10 @@ function hideHelpTip() {
       version: '0.9.4',
       date: '2026-03-28',
       notes: [
-        'HOTFIX: applyFeatures() — features.includes('annotator_tools') crashował bo features = {} (obiekt), nie [] (tablica)',
+        'HOTFIX: applyFeatures() — features.includes("annotator_tools") crashował bo features = {} (obiekt), nie [] (tablica)',
         'Poprawka: features.includes(...) → features.annotator_tools (spójne z resztą kodu który używa features.xxx)',
         'Crash w applyFeatures() blokował całe init() po budowie panelu — stąd ? button, Zapisz i Annotators Tab nie działały',
-        'loadFeatures() zwraca {} z JSON.parse(lsGet(LS.FEATURES, '{}')), nie tablicę — features.annotator_tools = true/false',
+        'loadFeatures() zwraca {} z JSON.parse(lsGet(LS.FEATURES, "{}")), nie tablicę — features.annotator_tools = true/false',
       ]
     },
     {

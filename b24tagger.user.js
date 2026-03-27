@@ -1834,22 +1834,69 @@
         margin-top: 6px; white-space: pre-wrap; max-height: 80px; overflow-y: auto;
       }
 
-      /* ── TABS ── */
+      /* ── TABS — liquid glass pill style ── */
       #b24t-tabs {
-        display: flex; background: var(--b24t-section-grad-b);
-        border-bottom: 2px solid var(--b24t-border);
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 6px 10px;
+        background: var(--b24t-bg-deep);
+        border-bottom: 1px solid var(--b24t-border-sub);
         transition: background 0.3s, border-color 0.3s;
       }
       .b24t-tab {
-        flex: 1; background: none; border: none;
-        color: var(--b24t-text-muted); font-size: 12px; font-weight: 500;
-        padding: 9px 0; cursor: pointer; font-family: inherit;
-        border-bottom: 2px solid transparent;
-        transition: color 0.15s, border-color 0.15s, background 0.15s;
-        margin-bottom: -2px;
+        flex: 1;
+        position: relative;
+        background: transparent;
+        border: 1px solid transparent;
+        color: var(--b24t-text-faint);
+        font-size: 12px;
+        font-weight: 500;
+        padding: 6px 4px;
+        border-radius: 20px;
+        cursor: pointer;
+        font-family: inherit;
+        letter-spacing: 0.01em;
+        transition: color 0.18s, background 0.18s, border-color 0.18s,
+                    box-shadow 0.18s, transform 0.12s;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
-      .b24t-tab:hover { color: var(--b24t-primary); background: var(--b24t-primary-bg); }
-      .b24t-tab.b24t-tab-active { color: var(--b24t-primary); border-bottom-color: var(--b24t-primary); font-weight: 700; }
+      .b24t-tab:hover {
+        color: var(--b24t-text-muted);
+        background: color-mix(in srgb, var(--b24t-primary) 8%, transparent);
+        border-color: color-mix(in srgb, var(--b24t-primary) 20%, transparent);
+        transform: translateY(-1px);
+      }
+      .b24t-tab:active { transform: scale(0.97); }
+
+      /* Light mode aktywna zakładka */
+      .b24t-tab.b24t-tab-active {
+        color: var(--b24t-primary);
+        font-weight: 700;
+        background:
+          linear-gradient(180deg,
+            color-mix(in srgb, var(--b24t-primary) 14%, var(--b24t-bg)) 0%,
+            color-mix(in srgb, var(--b24t-primary) 6%,  var(--b24t-bg)) 100%);
+        border-color: color-mix(in srgb, var(--b24t-primary) 35%, transparent);
+        box-shadow:
+          0 1px 6px color-mix(in srgb, var(--b24t-primary) 20%, transparent),
+          inset 0 1px 0 color-mix(in srgb, white 40%, transparent),
+          inset 0 -1px 0 color-mix(in srgb, var(--b24t-primary) 15%, transparent);
+      }
+      /* Dark mode aktywna zakładka — mocniejszy kontrast */
+      [data-b24t-theme="dark"] .b24t-tab.b24t-tab-active {
+        background:
+          linear-gradient(180deg,
+            rgba(108,108,255,0.22) 0%,
+            rgba(108,108,255,0.10) 100%);
+        border-color: rgba(108,108,255,0.45);
+        box-shadow:
+          0 2px 10px rgba(108,108,255,0.25),
+          inset 0 1px 0 rgba(255,255,255,0.12),
+          inset 0 -1px 0 rgba(108,108,255,0.15);
+      }
 
       /* Collapsed */
       #b24t-panel.collapsed #b24t-tabs { display: none; }
@@ -2291,6 +2338,7 @@
     });
 
     panel.addEventListener('mousedown', function(e) {
+    if (panel.getAttribute('data-ob-locked')) return; // onboarding aktywny
       // Ignoruj kliknięcia na przyciski/inputy
       if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' ||
           e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
@@ -2394,6 +2442,7 @@
 
     topbar.addEventListener('mousedown', (e) => {
       if (e.target.closest('button')) return;
+      if (panel.getAttribute('data-ob-locked')) return; // onboarding aktywny
       isDragging = true;
       panel.classList.add('dragging');
       const rect = panel.getBoundingClientRect();
@@ -3098,136 +3147,127 @@ function injectOnboardingStyles() {
     /* ── ONBOARDING OVERLAY ── */
     #b24t-ob-overlay {
       position: fixed; inset: 0;
-      background: rgba(0,0,0,0); /* starts transparent, fades in */
-      z-index: 2147483600;
+      background: rgba(0,0,0,0);
+      /* MUSI być wyższy niż panel (2147483647) żeby nakrywać */
+      z-index: 2147483640;
       pointer-events: none;
       transition: background 0.4s ease;
     }
     #b24t-ob-overlay.ob-active {
-      background: rgba(0,0,0,0.62);
+      background: rgba(0,0,0,0.65);
       pointer-events: all;
     }
-    /* Spotlight cutout via box-shadow */
+    /* Spotlight — jeszcze wyżej, wycina "dziurę" przez box-shadow */
     #b24t-ob-spotlight {
       position: fixed;
       border-radius: 10px;
-      z-index: 2147483601;
+      z-index: 2147483644;
       pointer-events: none;
-      box-shadow: 0 0 0 9999px rgba(0,0,0,0.62);
-      transition: all 0.35s cubic-bezier(0.4,0,0.2,1);
-      outline: 2px solid rgba(108,108,255,0.7);
+      box-shadow: 0 0 0 9999px rgba(0,0,0,0.65);
+      transition: top 0.32s cubic-bezier(0.4,0,0.2,1),
+                  left 0.32s cubic-bezier(0.4,0,0.2,1),
+                  width 0.32s cubic-bezier(0.4,0,0.2,1),
+                  height 0.32s cubic-bezier(0.4,0,0.2,1);
+      outline: 2px solid rgba(108,108,255,0.8);
       outline-offset: 2px;
     }
     #b24t-ob-spotlight.ob-hidden {
       box-shadow: none; outline: none;
       width: 0 !important; height: 0 !important;
+      opacity: 0;
     }
 
-    /* ── BUBBLE / DYMEK ── */
+    /* ── BUBBLE — najwyższy z-index ── */
     #b24t-ob-bubble {
       position: fixed;
-      z-index: 2147483640;
-      max-width: 340px;
-      min-width: 260px;
+      z-index: 2147483647;
+      max-width: 320px;
+      min-width: 240px;
       font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
-      background: var(--b24t-bg, #141419);
-      border: 1px solid rgba(108,108,255,0.35);
+      background: #111118;
+      border: 1px solid rgba(108,108,255,0.4);
       border-radius: 16px;
       padding: 18px 20px 14px;
-      box-shadow: 0 12px 48px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.05);
+      box-shadow: 0 16px 56px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.06);
       pointer-events: all;
-      transition: opacity 0.25s ease, transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
+      transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.34,1.56,0.64,1);
     }
     #b24t-ob-bubble.ob-entering {
-      opacity: 0; transform: translateY(12px) scale(0.96);
+      opacity: 0; transform: translateY(10px) scale(0.97);
     }
     #b24t-ob-bubble.ob-visible {
       opacity: 1; transform: translateY(0) scale(1);
     }
     #b24t-ob-bubble.ob-exiting {
-      opacity: 0; transform: translateY(-8px) scale(0.97);
+      opacity: 0; transform: translateY(-6px) scale(0.97);
     }
 
-    /* Tail / strzałka dymka */
+    /* Tail — strzałka wskazująca na podświetlony element */
     #b24t-ob-bubble::before {
       content: '';
       position: absolute;
-      width: 12px; height: 12px;
-      background: var(--b24t-bg, #141419);
-      border: 1px solid rgba(108,108,255,0.35);
+      width: 11px; height: 11px;
+      background: #111118;
+      border: 1px solid rgba(108,108,255,0.4);
       transform: rotate(45deg);
       z-index: -1;
-      transition: all 0.25s ease;
     }
     #b24t-ob-bubble[data-tail="bottom"]::before {
-      bottom: -7px; left: 50%; margin-left: -6px;
+      bottom: -6px; left: 50%; margin-left: -5px;
       border-top: none; border-left: none;
     }
     #b24t-ob-bubble[data-tail="top"]::before {
-      top: -7px; left: 50%; margin-left: -6px;
+      top: -6px; left: 50%; margin-left: -5px;
       border-bottom: none; border-right: none;
     }
     #b24t-ob-bubble[data-tail="right"]::before {
-      right: -7px; top: 50%; margin-top: -6px;
+      right: -6px; top: 40%; margin-top: -5px;
       border-bottom: none; border-left: none;
     }
     #b24t-ob-bubble[data-tail="left"]::before {
-      left: -7px; top: 50%; margin-top: -6px;
+      left: -6px; top: 40%; margin-top: -5px;
       border-top: none; border-right: none;
     }
     #b24t-ob-bubble[data-tail="none"]::before { display: none; }
 
-    /* Bubble header */
+    /* Bubble content */
     .ob-bubble-step {
       font-size: 10px; font-weight: 600;
-      color: rgba(108,108,255,0.7);
+      color: rgba(108,108,255,0.8);
       letter-spacing: 0.12em; text-transform: uppercase;
-      margin-bottom: 6px;
+      margin-bottom: 5px;
     }
     .ob-bubble-title {
-      font-size: 15px; font-weight: 700;
-      color: #e2e2e8;
-      margin-bottom: 8px;
-      line-height: 1.3;
+      font-size: 14px; font-weight: 700;
+      color: #eeeef4;
+      margin-bottom: 8px; line-height: 1.3;
     }
     .ob-bubble-body {
-      font-size: 12px;
-      color: #b0b0c8;
-      line-height: 1.7;
-      margin-bottom: 14px;
+      font-size: 12px; color: #a0a0c0;
+      line-height: 1.7; margin-bottom: 14px;
     }
-    .ob-bubble-body strong { color: #e2e2e8; }
+    .ob-bubble-body strong { color: #eeeef4; }
     .ob-bubble-body .ob-tag {
       display: inline-block;
-      background: rgba(108,108,255,0.12);
-      border: 1px solid rgba(108,108,255,0.25);
-      border-radius: 4px;
-      padding: 1px 6px;
-      font-size: 11px;
-      color: #9090ff;
-      margin: 1px 2px;
+      background: rgba(108,108,255,0.14);
+      border: 1px solid rgba(108,108,255,0.28);
+      border-radius: 4px; padding: 1px 6px;
+      font-size: 11px; color: #9090ff; margin: 1px 2px;
     }
 
-    /* Progress dots in bubble */
-    .ob-dots {
-      display: flex; gap: 5px; margin-bottom: 12px;
-    }
+    /* Progress dots */
+    .ob-dots { display: flex; gap: 5px; margin-bottom: 12px; }
     .ob-dot {
-      width: 5px; height: 5px;
-      border-radius: 50%;
-      background: rgba(255,255,255,0.12);
+      width: 5px; height: 5px; border-radius: 50%;
+      background: rgba(255,255,255,0.1);
       transition: background 0.2s, transform 0.2s;
     }
-    .ob-dot.ob-dot-done { background: rgba(74,222,128,0.5); }
-    .ob-dot.ob-dot-active {
-      background: #6c6cff;
-      transform: scale(1.4);
-    }
+    .ob-dot.ob-dot-done { background: rgba(74,222,128,0.45); }
+    .ob-dot.ob-dot-active { background: #6c6cff; transform: scale(1.5); }
 
-    /* Navigation row */
+    /* Nav */
     .ob-nav {
-      display: flex; align-items: center; justify-content: space-between;
-      gap: 8px;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
     }
     .ob-btn-next {
       background: linear-gradient(135deg, #6c6cff, #9b59ff);
@@ -3235,30 +3275,25 @@ function injectOnboardingStyles() {
       padding: 8px 18px; font-size: 12px; font-weight: 700;
       font-family: inherit; cursor: pointer;
       transition: opacity 0.15s, transform 0.1s;
-      box-shadow: 0 2px 10px rgba(108,108,255,0.35);
+      box-shadow: 0 2px 12px rgba(108,108,255,0.4);
     }
     .ob-btn-next:hover { opacity: 0.88; }
-    .ob-btn-next:active { transform: scale(0.96); }
+    .ob-btn-next:active { transform: scale(0.95); }
     .ob-btn-back {
-      background: rgba(255,255,255,0.06);
-      color: #7878aa; border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 8px; padding: 8px 14px;
-      font-size: 12px; font-family: inherit; cursor: pointer;
+      background: rgba(255,255,255,0.05); color: #7878aa;
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
+      padding: 8px 14px; font-size: 12px;
+      font-family: inherit; cursor: pointer;
       transition: background 0.15s;
     }
     .ob-btn-back:hover { background: rgba(255,255,255,0.1); }
-    .ob-step-counter {
-      font-size: 10px; color: #555577;
-      letter-spacing: 0.05em;
-    }
+    .ob-step-counter { font-size: 10px; color: #444466; letter-spacing: 0.05em; }
 
-    /* Animate pulse on spotlight */
     @keyframes ob-pulse {
-      0%   { outline-color: rgba(108,108,255,0.7); }
-      50%  { outline-color: rgba(108,108,255,1.0); }
-      100% { outline-color: rgba(108,108,255,0.7); }
+      0%, 100% { outline-color: rgba(108,108,255,0.7); }
+      50%       { outline-color: rgba(160,140,255,1.0); }
     }
-    #b24t-ob-spotlight.ob-pulse { animation: ob-pulse 1.5s ease-in-out infinite; }
+    #b24t-ob-spotlight.ob-pulse { animation: ob-pulse 1.6s ease-in-out infinite; }
 
     /* ── HELP MODE ── */
     #b24t-panel.b24t-help-mode {
@@ -3471,7 +3506,24 @@ function getOnboardingSteps() {
         Wróć tu kiedy zapomnisz do czego służy jakiś przycisk! 🔍`,
       tail: 'bottom',
     },
-    // 14 — Finał
+    // 14 — Resize panelu
+    {
+      target: '#b24t-panel',
+      title: '↔️ Zmiana rozmiaru panelu',
+      body: `Panel możesz <strong>dowolnie rozciągać</strong> — chwyć za <strong>dowolną krawędź lub róg</strong> i przeciągnij.<br><br>
+        Min: 360×380px &nbsp;|&nbsp; Max: 720px szerokości<br><br>
+        Wybrany rozmiar jest <strong>zapamiętywany</strong> między sesjami — panel zawsze otworzy się z Twoimi ustawieniami. 📐`,
+      tail: 'left',
+    },
+    // 15 — Drag
+    {
+      target: '#b24t-topbar',
+      title: '🖱️ Przeciąganie panelu',
+      body: `Panel możesz <strong>swobodnie przesuwać</strong> po ekranie — chwyć za <strong>pasek tytułowy</strong> (ten fioletowy na górze) i przeciągnij gdzie chcesz.<br><br>
+        Pozycja jest zapamiętywana między sesjami — panel wróci dokładnie tam gdzie go zostawisz. 📌`,
+      tail: 'bottom',
+    },
+    // 16 — Finał
     {
       target: null,
       title: '🎉 Gotowy do pracy!',
@@ -3497,7 +3549,30 @@ function showOnboarding(onComplete) {
   let currentStep = 0;
   let animating = false;
 
-  // Tworzę overlay + spotlight + bubble
+  // ── Zablokuj pozycję panelu na czas onboardingu ──
+  // Snap do prawego-dolnego rogu (safe zone dla wszystkich rozmiarów ekranu)
+  const panel = document.getElementById('b24t-panel');
+  let panelPosBackup = null;
+  if (panel) {
+    panelPosBackup = {
+      left: panel.style.left, top: panel.style.top,
+      right: panel.style.right, bottom: panel.style.bottom,
+      width: panel.style.width,
+    };
+    // Ustaw stałą pozycję: prawy-dolny róg z marginesem
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const pw = Math.min(440, vw - 24);  // szerokość panelu, max ekran - margines
+    panel.style.left   = Math.max(12, vw - pw - 16) + 'px';
+    panel.style.top    = Math.max(12, vh - panel.offsetHeight - 16) + 'px';
+    panel.style.right  = 'auto';
+    panel.style.bottom = 'auto';
+    panel.style.width  = pw + 'px';
+    // Zablokuj resize i drag podczas onboardingu
+    panel.setAttribute('data-ob-locked', '1');
+  }
+
+  // Tworzę overlay + spotlight + bubble — wszystkie na body, nad panelem
   const overlay = document.createElement('div');
   overlay.id = 'b24t-ob-overlay';
   document.body.appendChild(overlay);
@@ -3512,82 +3587,110 @@ function showOnboarding(onComplete) {
   bubble.classList.add('ob-entering');
   document.body.appendChild(bubble);
 
-  // Aktywuj overlay z opóźnieniem
-  requestAnimationFrame(() => {
-    overlay.classList.add('ob-active');
-  });
+  requestAnimationFrame(() => { overlay.classList.add('ob-active'); });
 
   function getTargetRect(selector) {
     if (!selector) return null;
     const el = document.querySelector(selector);
     if (!el) return null;
     const r = el.getBoundingClientRect();
-    return { top: r.top, left: r.left, width: r.width, height: r.height, el };
+    if (r.width === 0 && r.height === 0) return null; // element ukryty
+    return { top: r.top, left: r.left, width: r.width, height: r.height };
   }
 
   function positionSpotlight(rect) {
-    const pad = 6;
     if (!rect) {
       spotlight.classList.add('ob-hidden');
-      spotlight.style.cssText = 'width:0;height:0;top:0;left:0;';
       return;
     }
+    const pad = 6;
     spotlight.classList.remove('ob-hidden');
     spotlight.classList.add('ob-pulse');
-    spotlight.style.cssText = `
-      top: ${rect.top - pad}px;
-      left: ${rect.left - pad}px;
-      width: ${rect.width + pad * 2}px;
-      height: ${rect.height + pad * 2}px;
-    `;
+    spotlight.style.top    = (rect.top  - pad) + 'px';
+    spotlight.style.left   = (rect.left - pad) + 'px';
+    spotlight.style.width  = (rect.width  + pad * 2) + 'px';
+    spotlight.style.height = (rect.height + pad * 2) + 'px';
   }
 
   function positionBubble(rect, tailHint) {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const bw = 340; // max bubble width
-    const bh = bubble.offsetHeight || 250;
-    const margin = 16;
+    const bw = Math.min(320, vw - 32); // responsive szerokość
+    const bh = bubble.offsetHeight || 240;
+    const margin = 12;
+    const gap = 14; // odległość od elementu
 
+    // Bez targetu — centrum ekranu
     if (!rect) {
-      // Centrum ekranu
-      bubble.style.left = Math.max(margin, (vw - bw) / 2) + 'px';
-      bubble.style.top = Math.max(margin, (vh - bh) / 2) + 'px';
+      bubble.style.width = bw + 'px';
+      bubble.style.left  = Math.max(margin, (vw - bw) / 2) + 'px';
+      bubble.style.top   = Math.max(margin, (vh - bh) / 2) + 'px';
       bubble.setAttribute('data-tail', 'none');
       return;
     }
 
-    let tail = tailHint || 'bottom';
-    let left, top;
+    bubble.style.width = bw + 'px';
 
-    // Próbuj nad elementem
-    if (tailHint === 'bottom' || !tailHint) {
-      top = rect.top - bh - 18;
-      if (top < margin) {
-        // Nie ma miejsca nad — daj pod
-        top = rect.top + rect.height + 18;
-        tail = 'top';
-      }
-    } else if (tailHint === 'top') {
-      top = rect.top + rect.height + 18;
-      if (top + bh > vh - margin) {
-        top = rect.top - bh - 18;
-        tail = 'bottom';
-      }
+    // Sprawdź dostępne miejsce po każdej stronie
+    const spaceAbove = rect.top - margin;
+    const spaceBelow = vh - (rect.top + rect.height) - margin;
+    const spaceLeft  = rect.left - margin;
+    const spaceRight = vw - (rect.left + rect.width) - margin;
+
+    let tail, top, left;
+
+    // Priorytet pozycji: tailHint → dostępne miejsce
+    // tailHint="bottom" = bubble NAD elementem (ogon wskazuje w dół)
+    // tailHint="top"    = bubble POD elementem (ogon wskazuje w górę)
+
+    if (tailHint === 'bottom' && spaceAbove >= bh + gap) {
+      // Nad elementem
+      top  = rect.top - bh - gap;
+      tail = 'bottom';
+    } else if (tailHint === 'top' && spaceBelow >= bh + gap) {
+      // Pod elementem
+      top  = rect.top + rect.height + gap;
+      tail = 'top';
+    } else if (spaceAbove >= bh + gap) {
+      // Fallback: nad
+      top  = rect.top - bh - gap;
+      tail = 'bottom';
+    } else if (spaceBelow >= bh + gap) {
+      // Fallback: pod
+      top  = rect.top + rect.height + gap;
+      tail = 'top';
+    } else if (spaceLeft >= bw + gap) {
+      // Po lewej
+      top  = Math.max(margin, rect.top + rect.height / 2 - bh / 2);
+      top  = Math.min(top, vh - bh - margin);
+      left = rect.left - bw - gap;
+      bubble.style.left = left + 'px';
+      bubble.style.top  = top  + 'px';
+      bubble.setAttribute('data-tail', 'right');
+      return;
+    } else if (spaceRight >= bw + gap) {
+      // Po prawej
+      top  = Math.max(margin, rect.top + rect.height / 2 - bh / 2);
+      top  = Math.min(top, vh - bh - margin);
+      left = rect.left + rect.width + gap;
+      bubble.style.left = left + 'px';
+      bubble.style.top  = top  + 'px';
+      bubble.setAttribute('data-tail', 'left');
+      return;
+    } else {
+      // Ostateczność: wyśrodkuj ekran i ukryj ogon
+      bubble.style.left = Math.max(margin, (vw - bw) / 2) + 'px';
+      bubble.style.top  = Math.max(margin, (vh - bh) / 2) + 'px';
+      bubble.setAttribute('data-tail', 'none');
+      return;
     }
 
-    // Poziomo: wyśrodkuj nad elementem, ale nie wychodź poza ekran
+    // Poziomo: wyśrodkuj względem elementu, nie wychodź poza ekran
     left = rect.left + rect.width / 2 - bw / 2;
     left = Math.max(margin, Math.min(left, vw - bw - margin));
 
-    // Dodatkowe sprawdzenie — czy bubble nie nakrywa elementu
-    if (tail === 'bottom' && top + bh > rect.top - 4) {
-      top = rect.top + rect.height + 18;
-      tail = 'top';
-    }
-
     bubble.style.left = left + 'px';
-    bubble.style.top = top + 'px';
+    bubble.style.top  = Math.max(margin, Math.min(top, vh - bh - margin)) + 'px';
     bubble.setAttribute('data-tail', tail);
   }
 
@@ -3597,22 +3700,17 @@ function showOnboarding(onComplete) {
 
     const step = steps[idx];
     const dots = steps.map((_, i) => {
-      let cls = '';
-      if (i < idx) cls = 'ob-dot-done';
-      else if (i === idx) cls = 'ob-dot-active';
+      let cls = i < idx ? 'ob-dot-done' : i === idx ? 'ob-dot-active' : '';
       return `<div class="ob-dot ${cls}"></div>`;
     }).join('');
 
-    // Animacja wyjścia
     bubble.classList.remove('ob-visible');
     bubble.classList.add('ob-exiting');
 
     setTimeout(() => {
-      // Update spotlight
       const rect = getTargetRect(step.target);
       positionSpotlight(rect);
 
-      // Render bubble content
       bubble.innerHTML = `
         <div class="ob-dots">${dots}</div>
         <div class="ob-bubble-step">Krok ${idx + 1} z ${steps.length}</div>
@@ -3628,67 +3726,72 @@ function showOnboarding(onComplete) {
         </div>
       `;
 
-      // Reset animacja
       bubble.classList.remove('ob-exiting');
       bubble.classList.add('ob-entering');
 
-      // Pozycjonuj bubble po wyrenderowaniu
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          positionBubble(rect, step.tail);
-          bubble.classList.remove('ob-entering');
-          bubble.classList.add('ob-visible');
-          animating = false;
-        });
-      });
+      // Dwa RAF żeby browser zdążył obliczyć offsetHeight bubble
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        positionBubble(rect, step.tail);
+        bubble.classList.remove('ob-entering');
+        bubble.classList.add('ob-visible');
+        animating = false;
+      }));
 
-      // Bind nav
       document.getElementById('ob-btn-next').addEventListener('click', () => {
-        if (idx < steps.length - 1) {
-          currentStep++;
-          renderStep(currentStep);
-        } else {
-          finishOnboarding();
-        }
+        if (idx < steps.length - 1) { currentStep++; renderStep(currentStep); }
+        else finishOnboarding();
       });
       const backBtn = document.getElementById('ob-btn-back');
-      if (backBtn) backBtn.addEventListener('click', () => {
-        currentStep--;
-        renderStep(currentStep);
-      });
+      if (backBtn) backBtn.addEventListener('click', () => { currentStep--; renderStep(currentStep); });
 
-    }, 220);
+    }, 200);
   }
 
   function finishOnboarding() {
-    // Fade out
     overlay.style.background = 'rgba(0,0,0,0)';
     bubble.style.opacity = '0';
-    bubble.style.transform = 'scale(0.9) translateY(-10px)';
+    bubble.style.transform = 'scale(0.92) translateY(-8px)';
     spotlight.style.opacity = '0';
 
     setTimeout(() => {
       overlay.remove();
       spotlight.remove();
       bubble.remove();
+      // Przywróć pozycję i rozmiar panelu
+      if (panel && panelPosBackup) {
+        panel.style.left   = panelPosBackup.left;
+        panel.style.top    = panelPosBackup.top;
+        panel.style.right  = panelPosBackup.right;
+        panel.style.bottom = panelPosBackup.bottom;
+        panel.style.width  = panelPosBackup.width;
+        panel.removeAttribute('data-ob-locked');
+      }
       lsSet(LS.SETUP_DONE, true);
       if (onComplete) onComplete();
     }, 350);
   }
 
-  // Dostosuj pozycję bubble przy resize
+  // Resize handler
   let resizeTimer;
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
+      if (!panel) return;
+      // Ponownie snap panel do rogu po resize okna
+      const vw2 = window.innerWidth;
+      const vh2 = window.innerHeight;
+      const pw2 = Math.min(440, vw2 - 24);
+      panel.style.left  = Math.max(12, vw2 - pw2 - 16) + 'px';
+      panel.style.top   = Math.max(12, vh2 - panel.offsetHeight - 16) + 'px';
+      panel.style.width = pw2 + 'px';
+      // Reposition spotlight + bubble
       const step = steps[currentStep];
       const rect = getTargetRect(step.target);
       positionSpotlight(rect);
       positionBubble(rect, step.tail);
-    }, 100);
+    }, 120);
   });
 
-  // Start
   renderStep(0);
 }
 
@@ -7227,32 +7330,32 @@ Tej operacji nie można cofnąć.`)) {
     div.innerHTML = `
       <div class="b24t-section">
         <div class="b24t-section-label">Quick Tag</div>
-        <div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:10px;line-height:1.5;">
+        <div style="font-size:12px;color:var(--b24t-text-muted);margin-bottom:10px;line-height:1.6;">
           Taguje wzmianki widoczne w aktualnym widoku Brand24
           (aktywne filtry, zakres dat, untagged itd.)
         </div>
 
         <!-- Current view info -->
-        <div id="b24t-qt-view-info" style="background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:8px 10px;margin-bottom:10px;font-size:10px;color:var(--b24t-text-meta);line-height:1.6;">
+        <div id="b24t-qt-view-info" style="background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:8px 10px;margin-bottom:10px;font-size:12px;color:var(--b24t-text-muted);line-height:1.6;">
           Wczytywanie widoku...
         </div>
 
         <!-- Tag selector -->
-        <div class="b24t-section-label" style="margin-bottom:4px;">Wybierz tag</div>
+        <div style="font-size:12px;font-weight:700;color:var(--b24t-primary);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:5px;">Wybierz tag</div>
         <select class="b24t-select" id="b24t-qt-tag" style="width:100%;margin-bottom:8px;">
           <option value="">— wybierz tag —</option>
         </select>
 
         <!-- Scope -->
-        <div class="b24t-section-label" style="margin-bottom:4px;">Zakres</div>
+        <div style="font-size:12px;font-weight:700;color:var(--b24t-primary);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:5px;">Zakres</div>
         <div class="b24t-radio-group" style="margin-bottom:10px;">
-          <label class="b24t-radio">
+          <label class="b24t-radio" style="font-size:13px;">
             <input type="radio" name="b24t-qt-scope" value="current-page" checked>
-            <span>Tylko bieżąca strona</span>
+            <span style="font-size:13px;color:var(--b24t-text-muted);">Tylko bieżąca strona</span>
           </label>
-          <label class="b24t-radio">
+          <label class="b24t-radio" style="font-size:13px;">
             <input type="radio" name="b24t-qt-scope" value="all-pages">
-            <span>Wszystkie strony</span>
+            <span style="font-size:13px;color:var(--b24t-text-muted);">Wszystkie strony</span>
           </label>
         </div>
 
@@ -7263,8 +7366,8 @@ Tej operacji nie można cofnąć.`)) {
 
         <!-- Status + timer -->
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-          <div id="b24t-qt-status" class="b24t-qt-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;flex:1;"></div>
-          <div id="b24t-qt-timer" style="font-size:11px;color:#8888aa;font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
+          <div id="b24t-qt-status" class="b24t-qt-status" style="font-size:12px;color:var(--b24t-text-muted);min-height:16px;flex:1;"></div>
+          <div id="b24t-qt-timer" style="font-size:13px;color:var(--b24t-text-muted);font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;font-weight:500;">00:00</div>
         </div>
 
         <!-- Run button -->
@@ -7274,7 +7377,7 @@ Tej operacji nie można cofnąć.`)) {
 
         <!-- Untag option -->
         <div style="margin-top:8px;text-align:center;">
-          <button id="b24t-qt-untag" style="background:none;border:none;font-size:10px;color:#444455;cursor:pointer;font-family:inherit;">
+          <button id="b24t-qt-untag" style="background:none;border:none;font-size:11px;color:var(--b24t-text-faint);cursor:pointer;font-family:inherit;transition:color 0.15s;" onmouseover="this.style.color='var(--b24t-err)'" onmouseout="this.style.color='var(--b24t-text-faint)'">
             Usuń tag z widocznych wzmianek →
           </button>
         </div>

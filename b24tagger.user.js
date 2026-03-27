@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.5.2
+// @version      0.5.3
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -22,7 +22,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.5.2';
+  const VERSION = '0.5.3';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1341,14 +1341,14 @@
       }
       #b24t-topbar:active { cursor: grabbing; }
       .b24t-logo {
-        font-size: 12px;
+        font-size: 13px;
         font-weight: 700;
         color: #6c6cff;
         letter-spacing: 0.08em;
         text-transform: uppercase;
         flex-shrink: 0;
       }
-      .b24t-version { font-size: 9px; color: #7878aa; margin-left: 4px; }
+      .b24t-version { font-size: 10px; color: #7878aa; margin-left: 4px; }
       #b24t-topbar-right { display: flex; align-items: center; gap: 6px; margin-left: auto; }
       .b24t-badge {
         font-size: 9px;
@@ -1397,12 +1397,12 @@
         border-bottom: 1px solid #1a1a22;
       }
       .b24t-section-label {
-        font-size: 11px; font-weight: 600; color: #6666aa;
+        font-size: 12px; font-weight: 600; color: #6666aa;
         text-transform: uppercase; letter-spacing: 0.1em;
         margin-bottom: 8px;
       }
-      .b24t-project-name { font-size: 14px; font-weight: 600; color: #c0c0e0; }
-      .b24t-project-meta { font-size: 11px; color: #b8b8d8; margin-top: 3px; }
+      .b24t-project-name { font-size: 15px; font-weight: 600; color: #c0c0e0; }
+      .b24t-project-meta { font-size: 12px; color: #b8b8d8; margin-top: 3px; }
 
       /* File zone */
       .b24t-file-zone {
@@ -1413,8 +1413,8 @@
       }
       .b24t-file-zone:hover { border-color: #6c6cff; background: #13131a; }
       .b24t-file-icon { font-size: 16px; flex-shrink: 0; }
-      .b24t-file-name { font-size: 13px; color: #c0c0e0; font-weight: 500; }
-      .b24t-file-meta { font-size: 11px; color: #b8b8d8; }
+      .b24t-file-name { font-size: 14px; color: #c0c0e0; font-weight: 500; }
+      .b24t-file-meta { font-size: 12px; color: #b8b8d8; }
       .b24t-date-range {
         display: flex; align-items: center; gap: 6px;
         margin-top: 6px; font-size: 10px; color: #b8b8d8;
@@ -1430,8 +1430,8 @@
         display: grid; grid-template-columns: 1fr 1fr 80px;
         gap: 4px; margin-bottom: 4px; align-items: center;
       }
-      .b24t-map-label { font-size: 12px; color: #b0b0cc; truncate: ellipsis; overflow: hidden; white-space: nowrap; }
-      .b24t-map-count { font-size: 11px; color: #b8b8d8; }
+      .b24t-map-label { font-size: 13px; color: #b0b0cc; truncate: ellipsis; overflow: hidden; white-space: nowrap; }
+      .b24t-map-count { font-size: 12px; color: #b8b8d8; }
       .b24t-select {
         background: #1a1a22; border: 1px solid #2a2a35;
         color: #c0c0e0; border-radius: 4px; font-size: 12px;
@@ -1451,14 +1451,14 @@
         display: flex; align-items: center; justify-content: space-between;
         margin-bottom: 4px;
       }
-      .b24t-toggle-label { font-size: 12px; color: #b0b0cc; }
+      .b24t-toggle-label { font-size: 13px; color: #b0b0cc; }
       .b24t-radio-group { display: flex; gap: 12px; }
       .b24t-radio { display: flex; align-items: center; gap: 4px; cursor: pointer; }
       .b24t-radio input { accent-color: #6c6cff; cursor: pointer; }
-      .b24t-radio span { font-size: 12px; color: #b0b0cc; }
+      .b24t-radio span { font-size: 13px; color: #b0b0cc; }
       .b24t-checkbox-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
       .b24t-checkbox-row input { accent-color: #6c6cff; cursor: pointer; }
-      .b24t-checkbox-row label { font-size: 12px; color: #b0b0cc; cursor: pointer; }
+      .b24t-checkbox-row label { font-size: 13px; color: #b0b0cc; cursor: pointer; }
       .b24t-select-inline {
         background: #1a1a22; border: 1px solid #2a2a35;
         color: #a0a0c0; border-radius: 4px; font-size: 10px;
@@ -1476,8 +1476,8 @@
         border-radius: 99px; width: 0%;
         transition: width 0.3s ease;
       }
-      #b24t-progress-label { font-size: 10px; color: #b8b8d8; }
-      #b24t-progress-action { font-size: 10px; color: #7878aa; margin-top: 2px; }
+      #b24t-progress-label { font-size: 12px; color: #b8b8d8; }
+      #b24t-progress-action { font-size: 11px; color: #7878aa; margin-top: 2px; }
 
       /* Stats */
       .b24t-stats-grid {
@@ -1487,7 +1487,7 @@
         background: #141419; border: 1px solid #1e1e28;
         border-radius: 6px; padding: 6px 8px;
       }
-      .b24t-stat-label { font-size: 11px; color: #b8b8d8; margin-bottom: 3px; }
+      .b24t-stat-label { font-size: 12px; color: #b8b8d8; margin-bottom: 3px; }
       .b24t-stat-value { font-size: 18px; font-weight: 600; color: #a0a0c0; }
       .b24t-stat-value.ok  { color: #4ade80; }
       .b24t-stat-value.warn { color: #facc15; }
@@ -1495,14 +1495,14 @@
       /* Log */
       #b24t-log {
         height: 120px; overflow-y: auto;
-        font-size: 11px; line-height: 1.6;
+        font-size: 12px; line-height: 1.6;
       }
       #b24t-log::-webkit-scrollbar { width: 3px; }
       #b24t-log::-webkit-scrollbar-thumb { background: #2a2a35; }
       .b24t-log-entry { display: flex; gap: 6px; padding: 1px 0; }
       .b24t-log-time { color: #8888aa; flex-shrink: 0; }
       .b24t-log-msg  { color: #aaaacc; flex: 1; }
-      .b24t-log-elapsed { color: #7878aa; font-size: 9px; flex-shrink: 0; }
+      .b24t-log-elapsed { color: #7878aa; font-size: 10px; flex-shrink: 0; }
       .b24t-log-success .b24t-log-msg { color: #4ade80; }
       .b24t-log-error   .b24t-log-msg { color: #f87171; }
       .b24t-log-warn    .b24t-log-msg { color: #facc15; }
@@ -1571,7 +1571,7 @@
       }
       .b24t-tab {
         flex: 1; background: none; border: none;
-        color: #b8b8d8; font-size: 12px; font-weight: 500;
+        color: #b8b8d8; font-size: 13px; font-weight: 500;
         padding: 8px 0; cursor: pointer; font-family: inherit;
         border-bottom: 2px solid transparent;
         transition: color 0.15s, border-color 0.15s;
@@ -1679,7 +1679,7 @@
     panel.innerHTML = `
       <!-- TOPBAR -->
       <div id="b24t-topbar">
-        <span class="b24t-logo">B24 Tagger <span style="font-size:9px;color:#6c6cff;letter-spacing:0.08em;">BETA</span></span>
+        <span class="b24t-logo">B24 Tagger <span style="font-size:10px;color:#6c6cff;letter-spacing:0.08em;">BETA</span></span>
         <span class="b24t-version">v${VERSION}</span>
         <div id="b24t-topbar-right">
           <span id="b24t-status-badge" class="b24t-badge badge-idle">Idle</span>
@@ -1699,12 +1699,12 @@
       <!-- SUBBAR: changelog + session timer -->
       <div id="b24t-subbar" style="display:flex;align-items:center;justify-content:space-between;padding:4px 12px;background:#0a0a0d;border-bottom:1px solid #1a1a22;">
         <div style="display:flex;align-items:center;gap:6px;">
-          <button class="b24t-icon-btn" id="b24t-btn-changelog" title="Changelog & Feedback" style="font-size:10px;letter-spacing:0.03em;color:#6c6cff;padding:3px 8px;border:1px solid #6c6cff33;border-radius:4px;">📋 Changelog & Feedback</button>
-          <button class="b24t-icon-btn" id="b24t-btn-check-update" title="Sprawdź aktualizacje" style="font-size:10px;color:#555577;padding:3px 8px;border:1px solid #2a2a35;border-radius:4px;">↑ Sprawdź aktualizacje</button>
+          <button class="b24t-icon-btn" id="b24t-btn-changelog" title="Changelog & Feedback" style="font-size:11px;letter-spacing:0.02em;color:#6c6cff;padding:3px 9px;border:1px solid #6c6cff33;border-radius:4px;">📋 Changelog & Feedback</button>
+          <button class="b24t-icon-btn" id="b24t-btn-check-update" title="Sprawdź aktualizacje" style="font-size:11px;color:#555577;padding:3px 9px;border:1px solid #2a2a35;border-radius:4px;">↑ Sprawdź aktualizacje</button>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
-          <div id="b24t-token-status-sub" style="font-size:9px;"></div>
-          <div id="b24t-session-timer-sub" style="font-size:10px;color:#444466;font-family:'SF Mono',monospace;"></div>
+          <div id="b24t-token-status-sub" style="font-size:10px;"></div>
+          <div id="b24t-session-timer-sub" style="font-size:11px;color:#444466;font-family:'SF Mono',monospace;"></div>
         </div>
       </div>
 
@@ -1917,8 +1917,8 @@
       <div id="b24t-actions" style="flex-direction:column;gap:6px;">
         <div style="display:flex;gap:6px;width:100%;">
           <button class="b24t-btn-primary" id="b24t-btn-start" style="flex:2;">▶ Start</button>
-          <button class="b24t-btn-secondary" id="b24t-btn-preview" title="Match Preview — sprawdź dopasowanie bez tagowania" style="flex:1;font-size:11px;">Match</button>
-          <button class="b24t-btn-secondary" id="b24t-btn-audit" title="Audit Mode — porównaj bez tagowania" style="flex:1;font-size:11px;color:#9090ff;">Audit</button>
+          <button class="b24t-btn-secondary" id="b24t-btn-preview" title="Match Preview — sprawdź dopasowanie bez tagowania" style="flex:1;font-size:12px;">Match</button>
+          <button class="b24t-btn-secondary" id="b24t-btn-audit" title="Audit Mode — porównaj bez tagowania" style="flex:1;font-size:12px;color:#9090ff;">Audit</button>
         </div>
         <div style="display:flex;gap:6px;width:100%;">
           <button class="b24t-btn-secondary" id="b24t-btn-pause" disabled style="flex:1;">⏸ Pauza</button>
@@ -2496,6 +2496,23 @@
     if (!state.file) { showError('Najpierw wgraj plik z wzmiankami.'); return; }
     if (!Object.keys(state.mapping).length) { showError('Skonfiguruj mapowanie labelek.'); return; }
     if (!state.projectId) { showError('Przejdź do zakładki Mentions projektu Brand24.'); return; }
+
+    // Potwierdzenie przy dużej liczbie wzmianek (200+) — tylko w trybie właściwym
+    if (!state.testRunMode && state.file && state.file.rows && state.file.rows.length >= 200) {
+      const count = state.file.rows.length;
+      const projectName = state.projectName || state.projectId;
+      const confirmed = window.confirm(
+        `⚠ Duża operacja — potwierdzenie wymagane\n\n` +
+        `Zamierzasz otagować ${count} wzmianek\n` +
+        `w projekcie: ${projectName}\n\n` +
+        `Ta operacja wykona realne zmiany w Brand24.\n` +
+        `Czy na pewno chcesz kontynuować?`
+      );
+      if (!confirmed) {
+        addLog('⏹ Sesja anulowana przez użytkownika.', 'info');
+        return;
+      }
+    }
     if (!state.tokenHeaders) { showError('Token nie jest gotowy. Poczekaj chwilę aż strona się załaduje.'); return; }
 
     saveSchema();
@@ -2525,7 +2542,23 @@
     if (!projectId) return;
 
     state.projectId = projectId;
-    state.projectName = document.title.split(' - ')[0].trim() || `Project ${projectId}`;
+
+    // Próbuj wyciągnąć nazwę z tytułu strony — ale sprawdź czy nie jest to generyczny tytuł Brand24
+    const rawTitle = document.title.split(' - ')[0].trim();
+    const isFallbackTitle = !rawTitle || rawTitle === 'Brand24' || rawTitle === 'Panel Brand24' || rawTitle.length < 3;
+    state.projectName = isFallbackTitle ? `Project ${projectId}` : rawTitle;
+
+    // Jeśli tytuł był fallbackiem — spróbuj ponownie po 2s (strona może jeszcze ładować tytuł)
+    if (isFallbackTitle) {
+      setTimeout(function() {
+        const retryTitle = document.title.split(' - ')[0].trim();
+        if (retryTitle && retryTitle !== 'Brand24' && retryTitle !== 'Panel Brand24' && retryTitle.length >= 3) {
+          state.projectName = retryTitle;
+          const el = document.getElementById('b24t-project-name');
+          if (el) el.textContent = state.projectName;
+        }
+      }, 2000);
+    }
 
     document.getElementById('b24t-project-name').textContent = state.projectName;
     document.getElementById('b24t-project-meta').textContent = `ID: ${projectId}`;
@@ -3474,6 +3507,17 @@
 
   const CHANGELOG = [
     {
+      version: '0.5.3',
+      date: '2026-03-27',
+      label: 'Bezpieczeństwo',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix',  text: 'Naprawiono błędną nazwę projektu w panelu (pokazywało "Brand24" zamiast nazwy projektu)' },
+        { type: 'new',  text: 'Potwierdzenie wymagane przy operacjach na 200+ wzmiankowach' },
+        { type: 'ui',   text: 'Powiększono czcionki w całym panelu' },
+      ]
+    },
+    {
       version: '0.5.2',
       date: '2026-03-26',
       label: 'Dashboard',
@@ -4261,6 +4305,15 @@
   // ─────────────────────────────────────────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.5.3',
+      date: '2026-03-27',
+      notes: [
+        'Bug fix: detectProject() — document.title był "Brand24" gdy strona ładowała się asynchronicznie; dodano retry po 2s i walidację tytułu (isFallbackTitle)',
+        'Potwierdzenie: window.confirm() przy state.file.rows.length >= 200 i testRunMode=false — blokuje start sesji',
+        'Czcionki: base panel 13px (bez zmian), tab 12→13px, log 11→12px, section-label 11→12px, map-label 12→13px, progress-label 10→12px, i inne +1-2px',
+      ]
+    },
     {
       version: '0.5.2',
       date: '2026-03-26',

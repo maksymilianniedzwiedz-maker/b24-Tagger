@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.5.5
+// @version      0.5.6
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.5.5';
+  const VERSION = '0.5.6';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3551,6 +3551,16 @@
 
   const CHANGELOG = [
     {
+      version: '0.5.6',
+      date: '2026-03-27',
+      label: 'Bugfix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Naprawiono Dashboard Annotatora — pojawiał się między logiem a przyciskami' },
+        { type: 'fix', text: 'Naprawiono wczytywanie XLSX — błąd sandboxu Tampermonkey' },
+      ]
+    },
+    {
       version: '0.5.5',
       date: '2026-03-27',
       label: 'Bugfix',
@@ -4368,6 +4378,16 @@
 
   const DEV_CHANGELOG = [
     {
+      version: '0.5.6',
+      date: '2026-03-27',
+      notes: [
+        'Bug: applyFeatures() ustawiało display:"" (pusty) zamiast "block" — dashboard był widoczny zawsze po włączeniu features.dashboard',
+        'Fix: applyFeatures() zarządza tylko przyciskiem zakładki (b24t-tab-dashboard), nie contentem',
+        'Fix: tab switcher sprawdza features.dashboard przed pokazaniem dashEl',
+        'Dashboard content (b24t-dashboard-tab) domyślnie display:none w HTML — pokazywany tylko przez tab switcher gdy tab=dashboard',
+      ]
+    },
+    {
       version: '0.5.5',
       date: '2026-03-27',
       notes: [
@@ -4801,19 +4821,21 @@
   function applyFeatures() {
     const features = loadFeatures();
 
-    // Dashboard
-    const dashTab = document.getElementById('b24t-tab-dashboard');
-    const dashContent = document.getElementById('b24t-dashboard-tab');
+    // Dashboard — pokaż/ukryj zakładkę w navbarze
+    const dashTabBtn = document.getElementById('b24t-tab-dashboard');
+    // Dashboard content NIE jest zarządzany tu — zarządza nim tab switcher
+    // Tutaj tylko pokazujemy/ukrywamy przycisk zakładki
     if (features.dashboard) {
-      if (dashTab) dashTab.style.display = '';
-      if (dashContent) dashContent.style.display = '';
+      if (dashTabBtn) dashTabBtn.style.display = '';
     } else {
-      if (dashTab) dashTab.style.display = 'none';
-      if (dashContent) dashContent.style.display = 'none';
+      if (dashTabBtn) dashTabBtn.style.display = 'none';
       // Jeśli aktywna zakładka to dashboard — przełącz na Plik
-      if (dashTab?.classList.contains('b24t-tab-active')) {
+      if (dashTabBtn && dashTabBtn.classList.contains('b24t-tab-active')) {
         document.querySelector('.b24t-tab[data-tab="main"]')?.click();
       }
+      // Ukryj content dashboardu
+      const dashContent = document.getElementById('b24t-dashboard-tab');
+      if (dashContent) dashContent.style.display = 'none';
     }
   }
 
@@ -6021,7 +6043,8 @@ Tej operacji nie można cofnąć.`)) {
         if (delTabEl) delTabEl.style.display = tab === 'delete' ? 'block' : 'none';
         if (histTabEl) histTabEl.style.display = tab === 'history' ? 'block' : 'none';
         const dashEl = document.getElementById('b24t-dashboard-tab');
-        if (dashEl) dashEl.style.display = tab === 'dashboard' ? 'block' : 'none';
+        const features = loadFeatures();
+        if (dashEl) dashEl.style.display = (tab === 'dashboard' && features.dashboard) ? 'block' : 'none';
         if (actions) actions.style.display = tab === 'main' ? 'flex' : 'none';
       });
     });

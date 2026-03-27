@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.6.0
+// @version      0.7.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.6.0';
+  const VERSION = '0.7.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1346,88 +1346,119 @@
     const style = document.createElement('style');
     style.textContent = `
       /* =====================================================================
-         B24 TAGGER — DESIGN SYSTEM v0.6.0
-         Light mode default (Brand24 palette), Dark mode opt-in
+         B24 TAGGER — DESIGN SYSTEM v0.7.0
+         Light mode: Brand24 white+grey+green, full panel gradient feel
+         Dark mode:  rich indigo/violet, multi-gradient sections
          ===================================================================== */
 
       /* ── LIGHT MODE (default) ── */
       :root, [data-b24t-theme="light"] {
         --b24t-bg:          #ffffff;
-        --b24t-bg-deep:     #f4f5f9;
-        --b24t-bg-elevated: #f9fafb;
-        --b24t-bg-input:    #f0f1f7;
-        --b24t-border:      #e0e2ef;
-        --b24t-border-sub:  #eceef7;
+        --b24t-bg-deep:     #f0f4f8;
+        --b24t-bg-elevated: #e8f0e9;
+        --b24t-bg-input:    #eef2f5;
+        --b24t-bg-section-a: #ffffff;
+        --b24t-bg-section-b: #f5f9f5;
+        --b24t-bg-section-c: #eef4f0;
+        --b24t-border:      #c8d8cc;
+        --b24t-border-sub:  #dce8de;
+        --b24t-border-strong: #a8c4ae;
 
-        --b24t-text:        #1a1b2e;
-        --b24t-text-muted:  #6b7280;
-        --b24t-text-faint:  #9ca3af;
+        --b24t-text:        #1a2520;
+        --b24t-text-muted:  #3d5244;
+        --b24t-text-faint:  #7a9882;
+        --b24t-text-label:  #2d6b3a;
+        --b24t-text-meta:   #5a7860;
 
-        --b24t-primary:     #5B4FFF;
-        --b24t-primary-h:   #7C3AED;
-        --b24t-primary-glow: rgba(91,79,255,0.15);
-        --b24t-primary-bg:  rgba(91,79,255,0.08);
+        --b24t-primary:     #1e7d3a;
+        --b24t-primary-h:   #15602c;
+        --b24t-primary-glow: rgba(30,125,58,0.18);
+        --b24t-primary-bg:  rgba(30,125,58,0.08);
 
-        --b24t-accent-grad: linear-gradient(135deg, #5B4FFF 0%, #7C3AED 100%);
+        --b24t-accent-grad: linear-gradient(135deg, #1e7d3a 0%, #2a9649 40%, #1a6b32 100%);
+        --b24t-panel-grad:  linear-gradient(180deg, #ffffff 0%, #f2f8f3 40%, #e8f2ea 100%);
+        --b24t-section-grad-a: linear-gradient(135deg, #ffffff 0%, #f5fbf6 100%);
+        --b24t-section-grad-b: linear-gradient(135deg, #f0f7f1 0%, #e6f2e8 100%);
+        --b24t-section-grad-c: linear-gradient(135deg, #e8f4ea 0%, #dceede 100%);
+        --b24t-section-grad-d: linear-gradient(135deg, #f8f8ff 0%, #eef4ff 100%);
 
-        --b24t-ok:          #16a34a;
-        --b24t-ok-bg:       #dcfce7;
-        --b24t-warn:        #d97706;
-        --b24t-warn-bg:     #fef3c7;
-        --b24t-err:         #dc2626;
-        --b24t-err-bg:      #fee2e2;
-        --b24t-info:        #2563eb;
-        --b24t-info-bg:     #dbeafe;
+        --b24t-ok:          #16753a;
+        --b24t-ok-bg:       linear-gradient(135deg, #d1fadf, #bbf7ce);
+        --b24t-ok-text:     #0d4f26;
+        --b24t-warn:        #b45309;
+        --b24t-warn-bg:     linear-gradient(135deg, #fef3c7, #fde68a);
+        --b24t-warn-text:   #78350f;
+        --b24t-err:         #c0392b;
+        --b24t-err-bg:      linear-gradient(135deg, #fee2e2, #fecaca);
+        --b24t-err-text:    #7f1d1d;
+        --b24t-info:        #1d4ed8;
+        --b24t-info-bg:     linear-gradient(135deg, #dbeafe, #bfdbfe);
+        --b24t-info-text:   #1e3a8a;
 
-        --b24t-shadow:      0 4px 24px rgba(91,79,255,0.10), 0 1px 4px rgba(0,0,0,0.06);
-        --b24t-shadow-h:    0 8px 36px rgba(91,79,255,0.16), 0 2px 8px rgba(0,0,0,0.08);
-        --b24t-shadow-drag: 0 16px 48px rgba(91,79,255,0.20);
+        --b24t-shadow:      0 4px 24px rgba(30,125,58,0.12), 0 1px 4px rgba(0,0,0,0.06);
+        --b24t-shadow-h:    0 8px 36px rgba(30,125,58,0.18), 0 2px 8px rgba(0,0,0,0.08);
+        --b24t-shadow-drag: 0 16px 48px rgba(30,125,58,0.22);
 
-        --b24t-scrollbar:   #d0d3e8;
-        --b24t-badge-idle-bg:  #f0f1f7; --b24t-badge-idle-fg: #6b7280;
-        --b24t-badge-run-bg:   #dcfce7; --b24t-badge-run-fg:  #16a34a;
-        --b24t-badge-pause-bg: #fef3c7; --b24t-badge-pause-fg:#d97706;
-        --b24t-badge-err-bg:   #fee2e2; --b24t-badge-err-fg:  #dc2626;
-        --b24t-badge-done-bg:  #dbeafe; --b24t-badge-done-fg: #2563eb;
+        --b24t-scrollbar:   #b8d4bc;
+        --b24t-badge-idle-bg:  #eef2ee; --b24t-badge-idle-fg: #4a6b52;
+        --b24t-badge-run-bg:   #d1fadf; --b24t-badge-run-fg:  #0d4f26;
+        --b24t-badge-pause-bg: #fef3c7; --b24t-badge-pause-fg:#78350f;
+        --b24t-badge-err-bg:   #fee2e2; --b24t-badge-err-fg:  #7f1d1d;
+        --b24t-badge-done-bg:  #dbeafe; --b24t-badge-done-fg: #1e3a8a;
       }
 
       /* ── DARK MODE ── */
       [data-b24t-theme="dark"] {
-        --b24t-bg:          #0f0f13;
-        --b24t-bg-deep:     #0c0c10;
-        --b24t-bg-elevated: #141419;
-        --b24t-bg-input:    #1a1a22;
-        --b24t-border:      #2a2a35;
-        --b24t-border-sub:  #1e1e28;
+        --b24t-bg:          #0d0d14;
+        --b24t-bg-deep:     #0a0a10;
+        --b24t-bg-elevated: #131320;
+        --b24t-bg-input:    #191926;
+        --b24t-bg-section-a: #0d0d14;
+        --b24t-bg-section-b: #101018;
+        --b24t-bg-section-c: #13131e;
+        --b24t-border:      #282840;
+        --b24t-border-sub:  #1c1c2e;
+        --b24t-border-strong: #3a3a5a;
 
-        --b24t-text:        #e2e2e8;
-        --b24t-text-muted:  #b8b8d8;
-        --b24t-text-faint:  #7878aa;
+        --b24t-text:        #e8e8f4;
+        --b24t-text-muted:  #c0c0e0;
+        --b24t-text-faint:  #7070a8;
+        --b24t-text-label:  #a0a8f0;
+        --b24t-text-meta:   #8888c0;
 
-        --b24t-primary:     #6c6cff;
-        --b24t-primary-h:   #9090ff;
-        --b24t-primary-glow: rgba(108,108,255,0.25);
-        --b24t-primary-bg:  rgba(108,108,255,0.10);
+        --b24t-primary:     #7c6fff;
+        --b24t-primary-h:   #a090ff;
+        --b24t-primary-glow: rgba(124,111,255,0.28);
+        --b24t-primary-bg:  rgba(124,111,255,0.12);
 
-        --b24t-accent-grad: linear-gradient(135deg, #6c6cff 0%, #9b59ff 100%);
+        --b24t-accent-grad: linear-gradient(135deg, #6c5fff 0%, #9b6bff 50%, #c060ff 100%);
+        --b24t-panel-grad:  linear-gradient(180deg, #0d0d14 0%, #0f0f1a 50%, #111120 100%);
+        --b24t-section-grad-a: linear-gradient(135deg, #0d0d14 0%, #0f0f1c 100%);
+        --b24t-section-grad-b: linear-gradient(135deg, #101018 0%, #141428 100%);
+        --b24t-section-grad-c: linear-gradient(135deg, #12121e 0%, #181830 100%);
+        --b24t-section-grad-d: linear-gradient(135deg, #0e0e1c 0%, #131328 100%);
 
         --b24t-ok:          #4ade80;
-        --b24t-ok-bg:       #0d3320;
-        --b24t-warn:        #facc15;
-        --b24t-warn-bg:     #2a2500;
+        --b24t-ok-bg:       linear-gradient(135deg, #0d3320, #0a2518);
+        --b24t-ok-text:     #86efac;
+        --b24t-warn:        #fbbf24;
+        --b24t-warn-bg:     linear-gradient(135deg, #2a2500, #1e1a00);
+        --b24t-warn-text:   #fde68a;
         --b24t-err:         #f87171;
-        --b24t-err-bg:      #2d1010;
+        --b24t-err-bg:      linear-gradient(135deg, #2d1010, #200808);
+        --b24t-err-text:    #fca5a5;
         --b24t-info:        #60a5fa;
-        --b24t-info-bg:     #0d2240;
+        --b24t-info-bg:     linear-gradient(135deg, #0d2240, #091830);
+        --b24t-info-text:   #93c5fd;
 
-        --b24t-shadow:      0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04);
-        --b24t-shadow-h:    0 12px 40px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.06);
-        --b24t-shadow-drag: 0 20px 60px rgba(0,0,0,0.8);
+        --b24t-shadow:      0 8px 32px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04);
+        --b24t-shadow-h:    0 12px 40px rgba(0,0,0,0.8), 0 0 20px rgba(124,111,255,0.08), 0 0 0 1px rgba(255,255,255,0.06);
+        --b24t-shadow-drag: 0 20px 60px rgba(0,0,0,0.9), 0 0 30px rgba(124,111,255,0.12);
 
-        --b24t-scrollbar:   #2a2a35;
-        --b24t-badge-idle-bg:  #1e1e28; --b24t-badge-idle-fg: #b8b8d8;
+        --b24t-scrollbar:   #282840;
+        --b24t-badge-idle-bg:  #1a1a2e; --b24t-badge-idle-fg: #c0c0e0;
         --b24t-badge-run-bg:   #0d3320; --b24t-badge-run-fg:  #4ade80;
-        --b24t-badge-pause-bg: #2a2500; --b24t-badge-pause-fg:#facc15;
+        --b24t-badge-pause-bg: #2a2500; --b24t-badge-pause-fg:#fbbf24;
         --b24t-badge-err-bg:   #2d1010; --b24t-badge-err-fg:  #f87171;
         --b24t-badge-done-bg:  #0d2240; --b24t-badge-done-fg: #60a5fa;
       }
@@ -1459,7 +1490,7 @@
         bottom: 20px;
         right: 20px;
         width: 440px;
-        background: var(--b24t-bg);
+        background: var(--b24t-panel-grad);
         border: 1px solid var(--b24t-border);
         border-radius: 14px;
         font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
@@ -1480,7 +1511,7 @@
       #b24t-topbar {
         display: flex;
         align-items: center;
-        padding: 10px 14px;
+        padding: 11px 14px;
         background: var(--b24t-accent-grad);
         border-bottom: none;
         cursor: grab;
@@ -1488,10 +1519,16 @@
         position: relative;
         overflow: hidden;
       }
+      #b24t-topbar::before {
+        content: '';
+        position: absolute; inset: 0;
+        background: radial-gradient(ellipse at 80% 50%, rgba(255,255,255,0.12) 0%, transparent 60%);
+        pointer-events: none;
+      }
       #b24t-topbar::after {
         content: '';
         position: absolute; inset: 0;
-        background: rgba(255,255,255,0.06);
+        background: linear-gradient(90deg, rgba(0,0,0,0.08) 0%, transparent 40%);
         pointer-events: none;
       }
       #b24t-topbar:active { cursor: grabbing; }
@@ -1565,14 +1602,14 @@
         display: flex; align-items: center; justify-content: space-between;
         padding: 5px 14px;
         background: var(--b24t-bg-deep);
-        border-bottom: 1px solid var(--b24t-border-sub);
+        border-bottom: 2px solid var(--b24t-border);
         font-size: 11px;
         transition: background 0.3s, border-color 0.3s;
       }
-      .b24t-token-ok      { color: var(--b24t-ok); }
+      .b24t-token-ok      { color: var(--b24t-ok); font-weight: 600; }
       .b24t-token-pending { color: var(--b24t-warn); }
       .b24t-token-error   { color: var(--b24t-err); }
-      #b24t-session-timer { color: var(--b24t-text-muted); font-size: 11px; }
+      #b24t-session-timer { color: var(--b24t-text-meta); font-size: 11px; font-weight: 500; }
 
       /* ── SUBBAR ── */
       #b24t-subbar {
@@ -1585,48 +1622,65 @@
         border: 1px solid color-mix(in srgb, var(--b24t-primary) 30%, transparent) !important;
         color: var(--b24t-primary) !important;
       }
-      #b24t-subbar .b24t-icon-btn:hover { background: var(--b24t-primary-bg) !important; filter: brightness(1.15); }
+      #b24t-subbar .b24t-icon-btn:hover { background: var(--b24t-primary-bg) !important; filter: brightness(1.2); }
+      /* Fix hardcoded dark colors on subbar buttons */
+      #b24t-btn-changelog { color: var(--b24t-primary) !important; border-color: color-mix(in srgb, var(--b24t-primary) 25%, transparent) !important; }
+      #b24t-btn-check-update { color: var(--b24t-text-faint) !important; border-color: var(--b24t-border) !important; }
+      #b24t-session-timer-sub { color: var(--b24t-text-faint) !important; }
 
       /* ── BODY ── */
-      #b24t-body { overflow-y: auto; max-height: 72vh; background: var(--b24t-bg); transition: background 0.3s; }
+      #b24t-body { overflow-y: auto; max-height: 72vh; background: var(--b24t-panel-grad); transition: background 0.3s; }
       #b24t-body::-webkit-scrollbar { width: 3px; }
-      #b24t-body::-webkit-scrollbar-track { background: var(--b24t-bg); }
+      #b24t-body::-webkit-scrollbar-track { background: transparent; }
       #b24t-body::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
 
       /* ── SECTIONS ── */
       .b24t-section {
-        padding: 10px 14px;
-        border-bottom: 1px solid var(--b24t-border-sub);
-        transition: border-color 0.3s;
+        padding: 12px 14px;
+        border-bottom: 2px solid var(--b24t-border);
+        transition: border-color 0.3s, background 0.3s;
         animation: b24t-fadein 0.25s ease;
+        position: relative;
+      }
+      /* Alternating section backgrounds for visual rhythm */
+      .b24t-section:nth-child(odd)  { background: var(--b24t-section-grad-a); }
+      .b24t-section:nth-child(even) { background: var(--b24t-section-grad-b); }
+      /* Section left accent stripe */
+      .b24t-section::before {
+        content: '';
+        position: absolute; left: 0; top: 6px; bottom: 6px;
+        width: 3px; border-radius: 0 3px 3px 0;
+        background: var(--b24t-accent-grad);
+        opacity: 0.5;
       }
       .b24t-section-label {
-        font-size: 10px; font-weight: 700; color: var(--b24t-primary);
-        text-transform: uppercase; letter-spacing: 0.12em;
-        margin-bottom: 8px;
+        font-size: 10px; font-weight: 700; color: var(--b24t-text-label);
+        text-transform: uppercase; letter-spacing: 0.14em;
+        margin-bottom: 10px;
       }
-      .b24t-project-name { font-size: 15px; font-weight: 600; color: var(--b24t-text); }
-      .b24t-project-meta { font-size: 12px; color: var(--b24t-text-muted); margin-top: 3px; }
+      .b24t-project-name { font-size: 15px; font-weight: 700; color: var(--b24t-text); }
+      .b24t-project-meta { font-size: 12px; color: var(--b24t-text-meta); margin-top: 3px; }
 
       /* ── FILE ZONE ── */
       .b24t-file-zone {
-        border: 1.5px dashed var(--b24t-border); border-radius: 8px;
-        padding: 8px 10px; cursor: pointer;
+        border: 2px dashed var(--b24t-border); border-radius: 8px;
+        padding: 10px 12px; cursor: pointer;
         display: flex; align-items: center; gap: 8px;
+        background: var(--b24t-section-grad-d);
         transition: border-color 0.2s, background 0.2s, transform 0.15s;
       }
       .b24t-file-zone:hover { border-color: var(--b24t-primary); background: var(--b24t-primary-bg); transform: translateY(-1px); }
-      .b24t-file-icon { font-size: 16px; flex-shrink: 0; }
-      .b24t-file-name { font-size: 13px; color: var(--b24t-text); font-weight: 500; }
-      .b24t-file-meta { font-size: 12px; color: var(--b24t-text-muted); }
+      .b24t-file-icon { font-size: 18px; flex-shrink: 0; }
+      .b24t-file-name { font-size: 13px; color: var(--b24t-text); font-weight: 600; }
+      .b24t-file-meta { font-size: 12px; color: var(--b24t-text-meta); }
       .b24t-date-range {
         display: flex; align-items: center; gap: 6px;
-        margin-top: 6px; font-size: 10px; color: var(--b24t-text-muted);
+        margin-top: 8px; font-size: 10px; color: var(--b24t-text-meta);
       }
       .b24t-date-chip {
-        background: var(--b24t-bg-input); border: 1px solid var(--b24t-border);
-        border-radius: 99px; padding: 2px 8px;
-        color: var(--b24t-text-muted); font-size: 11px;
+        background: var(--b24t-section-grad-c); border: 1px solid var(--b24t-border-strong);
+        border-radius: 99px; padding: 2px 10px;
+        color: var(--b24t-text-label); font-size: 11px; font-weight: 600;
         transition: background 0.3s, border-color 0.3s;
       }
 
@@ -1635,8 +1689,8 @@
         display: grid; grid-template-columns: 1fr 1fr 80px;
         gap: 4px; margin-bottom: 4px; align-items: center;
       }
-      .b24t-map-label { font-size: 13px; color: var(--b24t-text-muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-      .b24t-map-count { font-size: 12px; color: var(--b24t-text-faint); }
+      .b24t-map-label { font-size: 13px; color: var(--b24t-text); font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+      .b24t-map-count { font-size: 12px; color: var(--b24t-text-meta); }
       .b24t-select {
         background: var(--b24t-bg-input); border: 1px solid var(--b24t-border);
         color: var(--b24t-text); border-radius: 5px; font-size: 12px;
@@ -1645,9 +1699,9 @@
       }
       .b24t-select:focus { outline: none; border-color: var(--b24t-primary); }
       .b24t-add-tag-btn {
-        font-size: 10px; color: var(--b24t-primary); background: none; border: none;
+        font-size: 11px; color: var(--b24t-primary); background: none; border: none;
         cursor: pointer; padding: 2px 0; text-align: left; margin-top: 4px;
-        transition: opacity 0.15s;
+        font-weight: 600; transition: opacity 0.15s;
       }
       .b24t-add-tag-btn:hover { opacity: 0.75; }
 
@@ -1655,7 +1709,7 @@
       .b24t-toggle-row {
         display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;
       }
-      .b24t-toggle-label { font-size: 13px; color: var(--b24t-text-muted); }
+      .b24t-toggle-label { font-size: 13px; color: var(--b24t-text); font-weight: 500; }
       .b24t-radio-group { display: flex; gap: 12px; }
       .b24t-radio { display: flex; align-items: center; gap: 4px; cursor: pointer; }
       .b24t-radio input { accent-color: var(--b24t-primary); cursor: pointer; }
@@ -1665,16 +1719,17 @@
       .b24t-checkbox-row label { font-size: 13px; color: var(--b24t-text-muted); cursor: pointer; }
       .b24t-select-inline {
         background: var(--b24t-bg-input); border: 1px solid var(--b24t-border);
-        color: var(--b24t-text-muted); border-radius: 4px; font-size: 10px;
+        color: var(--b24t-text); border-radius: 4px; font-size: 10px;
         padding: 2px 4px; cursor: pointer; font-family: inherit; margin-left: 4px;
         transition: background 0.3s, border-color 0.3s;
       }
 
       /* ── PROGRESS ── */
       .b24t-progress-bar-track {
-        height: 4px; background: var(--b24t-bg-input); border-radius: 99px;
-        overflow: hidden; margin: 6px 0 4px;
+        height: 5px; background: var(--b24t-bg-input); border-radius: 99px;
+        overflow: hidden; margin: 8px 0 4px;
         transition: background 0.3s;
+        border: 1px solid var(--b24t-border-sub);
       }
       #b24t-progress-bar {
         height: 100%;
@@ -1682,21 +1737,26 @@
         border-radius: 99px; width: 0%;
         transition: width 0.4s cubic-bezier(0.4,0,0.2,1);
       }
-      #b24t-progress-label { font-size: 12px; color: var(--b24t-text-muted); }
-      #b24t-progress-action { font-size: 11px; color: var(--b24t-text-faint); margin-top: 2px; }
+      #b24t-progress-label { font-size: 12px; color: var(--b24t-text); font-weight: 500; }
+      #b24t-progress-action { font-size: 11px; color: var(--b24t-text-meta); margin-top: 2px; }
 
       /* ── STATS ── */
       .b24t-stats-grid {
         display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px;
       }
       .b24t-stat-card {
-        background: var(--b24t-bg-elevated); border: 1px solid var(--b24t-border);
-        border-radius: 8px; padding: 7px 10px;
+        background: var(--b24t-section-grad-d); border: 1px solid var(--b24t-border);
+        border-radius: 8px; padding: 8px 10px;
         transition: background 0.3s, border-color 0.3s, transform 0.15s;
+        position: relative; overflow: hidden;
       }
-      .b24t-stat-card:hover { transform: translateY(-1px); }
-      .b24t-stat-label { font-size: 11px; color: var(--b24t-text-faint); margin-bottom: 3px; }
-      .b24t-stat-value { font-size: 18px; font-weight: 700; color: var(--b24t-text-muted); }
+      .b24t-stat-card::after {
+        content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
+        background: var(--b24t-accent-grad); opacity: 0.4;
+      }
+      .b24t-stat-card:hover { transform: translateY(-2px); border-color: var(--b24t-border-strong); }
+      .b24t-stat-label { font-size: 11px; color: var(--b24t-text-meta); margin-bottom: 3px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; }
+      .b24t-stat-value { font-size: 20px; font-weight: 800; color: var(--b24t-text); }
       .b24t-stat-value.ok   { color: var(--b24t-ok); }
       .b24t-stat-value.warn { color: var(--b24t-warn); }
 
@@ -1704,8 +1764,9 @@
       #b24t-log {
         height: 120px; overflow-y: auto;
         font-size: 12px; line-height: 1.6;
-        background: var(--b24t-bg);
+        background: var(--b24t-bg-section-c);
         transition: background 0.3s;
+        border-radius: 6px;
       }
       #b24t-log::-webkit-scrollbar { width: 3px; }
       #b24t-log::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
@@ -1713,8 +1774,8 @@
       .b24t-log-time    { color: var(--b24t-text-faint); flex-shrink: 0; }
       .b24t-log-msg     { color: var(--b24t-text-muted); flex: 1; }
       .b24t-log-elapsed { color: var(--b24t-text-faint); font-size: 10px; flex-shrink: 0; }
-      .b24t-log-success .b24t-log-msg { color: var(--b24t-ok); }
-      .b24t-log-error   .b24t-log-msg { color: var(--b24t-err); }
+      .b24t-log-success .b24t-log-msg { color: var(--b24t-ok); font-weight: 500; }
+      .b24t-log-error   .b24t-log-msg { color: var(--b24t-err); font-weight: 500; }
       .b24t-log-warn    .b24t-log-msg { color: var(--b24t-warn); }
       .b24t-log-info    .b24t-log-msg { color: var(--b24t-text-muted); }
       .b24t-log-clear { font-size: 9px; color: var(--b24t-text-faint); background: none; border: none; cursor: pointer; float: right; transition: color 0.15s; }
@@ -1723,8 +1784,8 @@
       /* ── ACTION BAR ── */
       #b24t-actions {
         display: flex; gap: 6px; padding: 10px 14px;
-        background: var(--b24t-bg-deep);
-        border-top: 1px solid var(--b24t-border-sub);
+        background: var(--b24t-section-grad-c);
+        border-top: 2px solid var(--b24t-border);
         transition: background 0.3s, border-color 0.3s;
       }
       .b24t-btn-primary {
@@ -1734,30 +1795,31 @@
         font-family: inherit;
         transition: opacity 0.15s, transform 0.1s, box-shadow 0.15s;
         box-shadow: 0 2px 8px var(--b24t-primary-glow);
+        letter-spacing: 0.02em;
       }
-      .b24t-btn-primary:hover { opacity: 0.88; box-shadow: 0 4px 16px var(--b24t-primary-glow); }
+      .b24t-btn-primary:hover { opacity: 0.88; box-shadow: 0 4px 16px var(--b24t-primary-glow); transform: translateY(-1px); }
       .b24t-btn-primary:active { transform: scale(0.97); }
       .b24t-btn-primary:disabled { background: var(--b24t-bg-input); color: var(--b24t-text-faint); box-shadow: none; cursor: not-allowed; }
       .b24t-btn-secondary {
-        flex: 1; background: var(--b24t-bg-input); color: var(--b24t-text-muted);
+        flex: 1; background: var(--b24t-section-grad-d); color: var(--b24t-text);
         border: 1px solid var(--b24t-border); border-radius: 7px; padding: 9px 0;
-        font-size: 12px; cursor: pointer; font-family: inherit;
-        transition: background 0.15s, transform 0.1s;
+        font-size: 12px; cursor: pointer; font-family: inherit; font-weight: 500;
+        transition: background 0.15s, transform 0.1s, border-color 0.15s;
       }
-      .b24t-btn-secondary:hover { background: var(--b24t-bg-elevated); transform: translateY(-1px); }
+      .b24t-btn-secondary:hover { background: var(--b24t-section-grad-c); border-color: var(--b24t-border-strong); transform: translateY(-1px); }
       .b24t-btn-secondary:active { transform: scale(0.97); }
       .b24t-btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
       .b24t-btn-danger {
-        flex: 1; background: var(--b24t-err-bg); color: var(--b24t-err);
+        flex: 1; background: var(--b24t-err-bg); color: var(--b24t-err-text);
         border: 1px solid color-mix(in srgb, var(--b24t-err) 30%, transparent); border-radius: 7px; padding: 9px 0;
-        font-size: 12px; cursor: pointer; font-family: inherit;
+        font-size: 12px; cursor: pointer; font-family: inherit; font-weight: 600;
         transition: background 0.15s, transform 0.1s;
       }
       .b24t-btn-danger:hover { filter: brightness(0.9); transform: translateY(-1px); }
       .b24t-btn-warn {
-        background: var(--b24t-warn-bg); color: var(--b24t-warn);
+        background: var(--b24t-warn-bg); color: var(--b24t-warn-text);
         border: 1px solid color-mix(in srgb, var(--b24t-warn) 30%, transparent); border-radius: 7px; padding: 6px 12px;
-        font-size: 11px; cursor: pointer; font-family: inherit;
+        font-size: 11px; cursor: pointer; font-family: inherit; font-weight: 600;
         transition: filter 0.15s;
       }
       .b24t-btn-warn:hover { filter: brightness(0.9); }
@@ -1780,16 +1842,17 @@
 
       /* ── TABS ── */
       #b24t-tabs {
-        display: flex; background: var(--b24t-bg-deep);
-        border-bottom: 1px solid var(--b24t-border-sub);
+        display: flex; background: var(--b24t-section-grad-b);
+        border-bottom: 2px solid var(--b24t-border);
         transition: background 0.3s, border-color 0.3s;
       }
       .b24t-tab {
         flex: 1; background: none; border: none;
-        color: var(--b24t-text-muted); font-size: 13px; font-weight: 500;
+        color: var(--b24t-text-muted); font-size: 12px; font-weight: 500;
         padding: 9px 0; cursor: pointer; font-family: inherit;
         border-bottom: 2px solid transparent;
         transition: color 0.15s, border-color 0.15s, background 0.15s;
+        margin-bottom: -2px;
       }
       .b24t-tab:hover { color: var(--b24t-primary); background: var(--b24t-primary-bg); }
       .b24t-tab.b24t-tab-active { color: var(--b24t-primary); border-bottom-color: var(--b24t-primary); font-weight: 700; }
@@ -1847,7 +1910,7 @@
       /* ── INPUT ── */
       .b24t-input {
         background: var(--b24t-bg-input); border: 1px solid var(--b24t-border);
-        color: var(--b24t-text-muted); border-radius: 5px; font-size: 11px;
+        color: var(--b24t-text); border-radius: 5px; font-size: 12px;
         padding: 5px 8px; width: 100%; font-family: inherit;
         box-sizing: border-box;
         transition: border-color 0.15s, background 0.3s;
@@ -1947,14 +2010,14 @@
 
       <!-- TABS -->
       <!-- SUBBAR: changelog + session timer -->
-      <div id="b24t-subbar" style="display:flex;align-items:center;justify-content:space-between;padding:4px 12px;background:#0a0a0d;border-bottom:1px solid #1a1a22;">
+      <div id="b24t-subbar" style="display:flex;align-items:center;justify-content:space-between;padding:4px 12px;background:var(--b24t-bg-deep);border-bottom:1px solid var(--b24t-border-sub);">
         <div style="display:flex;align-items:center;gap:6px;">
           <button class="b24t-icon-btn" id="b24t-btn-changelog" title="Changelog & Feedback" style="font-size:11px;letter-spacing:0.02em;color:#6c6cff;padding:3px 9px;border:1px solid #6c6cff33;border-radius:4px;">📋 Changelog & Feedback</button>
-          <button class="b24t-icon-btn" id="b24t-btn-check-update" title="Sprawdź aktualizacje" style="font-size:11px;color:#555577;padding:3px 9px;border:1px solid #2a2a35;border-radius:4px;">↑ Sprawdź aktualizacje</button>
+          <button class="b24t-icon-btn" id="b24t-btn-check-update" title="Sprawdź aktualizacje" style="font-size:11px;color:var(--b24t-text-faint);padding:3px 9px;border:1px solid #2a2a35;border-radius:4px;">↑ Sprawdź aktualizacje</button>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
           <div id="b24t-token-status-sub" style="font-size:10px;"></div>
-          <div id="b24t-session-timer-sub" style="font-size:11px;color:#444466;font-family:'SF Mono',monospace;"></div>
+          <div id="b24t-session-timer-sub" style="font-size:11px;color:var(--b24t-text-faint);font-family:'SF Mono',monospace;"></div>
         </div>
       </div>
 
@@ -2008,33 +2071,33 @@
         </div>
 
         <!-- FILE VALIDATION -->
-        <div id="b24t-file-validation" style="display:none;margin-top:8px;background:#141419;border:1px solid #1e1e28;border-radius:6px;padding:8px 10px;"></div>
+        <div id="b24t-file-validation" style="display:none;margin-top:8px;background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:8px 10px;"></div>
 
         <!-- COLUMN OVERRIDE -->
         <div id="b24t-column-override-section" style="display:none;margin-top:8px;">
-          <button id="b24t-col-override-toggle" style="font-size:10px;color:#7878aa;background:none;border:none;cursor:pointer;padding:0;">&#9881; Zmien wykryte kolumny &#9660;</button>
-          <div id="b24t-column-override" style="display:none;margin-top:6px;background:#141419;border:1px solid #1e1e28;border-radius:6px;padding:8px 10px;"></div>
+          <button id="b24t-col-override-toggle" style="font-size:10px;color:var(--b24t-text-faint);background:none;border:none;cursor:pointer;padding:0;">&#9881; Zmien wykryte kolumny &#9660;</button>
+          <div id="b24t-column-override" style="display:none;margin-top:6px;background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:8px 10px;"></div>
         </div>
 
         <!-- MATCH PREVIEW -->
-        <div id="b24t-match-preview" style="display:none;margin-top:8px;background:#141419;border:1px solid #1e1e28;border-radius:6px;padding:10px;"></div>
+        <div id="b24t-match-preview" style="display:none;margin-top:8px;background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:10px;"></div>
 
         <!-- FILE VALIDATION -->
-        <div id="b24t-file-validation" style="display:none;margin-top:8px;background:#141419;border:1px solid #1e1e28;border-radius:6px;padding:8px 10px;"></div>
+        <div id="b24t-file-validation" style="display:none;margin-top:8px;background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:8px 10px;"></div>
 
         <!-- COLUMN OVERRIDE -->
         <div id="b24t-column-override-section" style="display:none;margin-top:6px;">
-          <button id="b24t-col-override-toggle" style="font-size:10px;color:#7878aa;background:none;border:none;cursor:pointer;padding:2px 0;">⚙ Zmień wykryte kolumny ▾</button>
-          <div id="b24t-column-override" style="display:none;margin-top:6px;background:#141419;border:1px solid #1e1e28;border-radius:6px;padding:8px 10px;"></div>
+          <button id="b24t-col-override-toggle" style="font-size:10px;color:var(--b24t-text-faint);background:none;border:none;cursor:pointer;padding:2px 0;">⚙ Zmień wykryte kolumny ▾</button>
+          <div id="b24t-column-override" style="display:none;margin-top:6px;background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:8px 10px;"></div>
         </div>
 
         <!-- MATCH PREVIEW -->
-        <div id="b24t-match-preview" style="display:none;margin-top:8px;background:#141419;border:1px solid #1e1e28;border-radius:6px;padding:10px;"></div>
+        <div id="b24t-match-preview" style="display:none;margin-top:8px;background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:10px;"></div>
 
         <!-- PARTYCJE -->
         <div class="b24t-section" id="b24t-partition-section" style="display:none">
           <div class="b24t-section-label">Partycje</div>
-          <div id="b24t-partition-info" style="font-size:11px;color:#9090aa;margin-bottom:6px;"></div>
+          <div id="b24t-partition-info" style="font-size:11px;color:var(--b24t-text-meta);margin-bottom:6px;"></div>
           <div class="b24t-toggle-row" style="margin-bottom:6px;">
             <span class="b24t-toggle-label">Po zakończeniu partycji:</span>
           </div>
@@ -2094,7 +2157,7 @@
           <!-- AUTO DELETE — injected by JS -->
           <div id="b24t-auto-delete-placeholder"></div>
 
-          <div style="height:1px;background:#1e1e28;margin:8px 0;"></div>
+          <div style="height:1px;background:var(--b24t-border);margin:8px 0;"></div>
           <div class="b24t-checkbox-row">
             <input type="checkbox" id="b24t-sound-cb">
             <label for="b24t-sound-cb">Dźwięk po zakończeniu sesji</label>
@@ -2104,9 +2167,9 @@
         <!-- POSTĘP -->
         <div class="b24t-section" id="b24t-progress-section">
           <div class="b24t-section-label">Postęp</div>
-          <div id="b24t-progress-label" style="font-size:12px;color:#9090aa;">Gotowy do startu</div>
+          <div id="b24t-progress-label" style="font-size:12px;color:var(--b24t-text-meta);">Gotowy do startu</div>
           <div class="b24t-progress-bar-track"><div id="b24t-progress-bar"></div></div>
-          <div id="b24t-progress-action" style="font-size:10px;color:#7878aa;"></div>
+          <div id="b24t-progress-action" style="font-size:10px;color:var(--b24t-text-faint);"></div>
         </div>
 
         <!-- STATYSTYKI -->
@@ -2161,7 +2224,7 @@
         <div style="display:flex;gap:6px;width:100%;">
           <button class="b24t-btn-primary" id="b24t-btn-start" style="flex:2;">▶ Start</button>
           <button class="b24t-btn-secondary" id="b24t-btn-preview" title="Match Preview — sprawdź dopasowanie bez tagowania" style="flex:1;font-size:12px;">Match</button>
-          <button class="b24t-btn-secondary" id="b24t-btn-audit" title="Audit Mode — porównaj bez tagowania" style="flex:1;font-size:12px;color:#9090ff;">Audit</button>
+          <button class="b24t-btn-secondary" id="b24t-btn-audit" title="Audit Mode — porównaj bez tagowania" style="flex:1;font-size:12px;color:var(--b24t-primary);">Audit</button>
         </div>
         <div style="display:flex;gap:6px;width:100%;">
           <button class="b24t-btn-secondary" id="b24t-btn-pause" disabled style="flex:1;">⏸ Pauza</button>
@@ -2739,7 +2802,7 @@
           <div class="b24t-map-label">(bez labela)</div>
           <div class="b24t-map-count">(${meta.noAssessment})</div>
         </div>
-        <div style="font-size:10px;color:#7878aa;grid-column:span 2;">Pomiń ℹ</div>
+        <div style="font-size:10px;color:var(--b24t-text-faint);grid-column:span 2;">Pomiń ℹ</div>
       `;
       container.appendChild(row);
     }
@@ -3103,20 +3166,20 @@
     el.style.display = 'block';
     el.innerHTML =
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">' +
-        '<span style="font-size:11px;color:#b0b0cc;font-weight:600;">Match Preview</span>' +
+        '<span style="font-size:11px;color:var(--b24t-text);font-weight:600;">Match Preview</span>' +
         '<span style="font-size:14px;font-weight:700;color:' + color + ';">' + preview.pct + '%</span>' +
       '</div>' +
       '<div style="display:flex;gap:10px;font-size:10px;margin-bottom:6px;">' +
         '<span style="color:#4ade80;">✓ ' + preview.matched + ' matched</span>' +
         '<span style="color:#f87171;">✗ ' + preview.unmatched + ' brak</span>' +
-        (preview.noAssessment ? '<span style="color:#7878aa;">~ ' + preview.noAssessment + ' bez labelki</span>' : '') +
+        (preview.noAssessment ? '<span style="color:var(--b24t-text-faint);">~ ' + preview.noAssessment + ' bez labelki</span>' : '') +
       '</div>' +
-      '<div style="height:4px;background:#1a1a22;border-radius:99px;overflow:hidden;margin-bottom:6px;">' +
+      '<div style="height:4px;background:var(--b24t-bg-input);border-radius:99px;overflow:hidden;margin-bottom:6px;">' +
         '<div style="height:100%;width:' + preview.pct + '%;background:' + color + ';border-radius:99px;transition:width 0.4s;"></div>' +
       '</div>' +
       (preview.unmatched > 0
-        ? '<button id="b24t-preview-btn" style="font-size:10px;color:#7878aa;background:none;border:none;cursor:pointer;padding:0;">Pokaż niezmatched (' + Math.min(preview.unmatched, 50) + ') \u25be</button>' +
-          '<div id="b24t-preview-list" style="display:none;max-height:80px;overflow-y:auto;margin-top:4px;font-size:9px;color:#555588;line-height:1.6;">' +
+        ? '<button id="b24t-preview-btn" style="font-size:10px;color:var(--b24t-text-faint);background:none;border:none;cursor:pointer;padding:0;">Pokaż niezmatched (' + Math.min(preview.unmatched, 50) + ') \u25be</button>' +
+          '<div id="b24t-preview-list" style="display:none;max-height:80px;overflow-y:auto;margin-top:4px;font-size:9px;color:var(--b24t-text-faint);line-height:1.6;">' +
           preview.unmatchedList.map(function(u){ return '<div>' + u.substring(0,60) + '</div>'; }).join('') +
           (preview.unmatched > 50 ? '<div>...i ' + (preview.unmatched-50) + ' więcej</div>' : '') +
           '</div>'
@@ -3146,17 +3209,17 @@
       { key: 'text',       label: 'Treść (opcjonalnie)' },
     ];
     const detected = state.file && state.file.colMap ? state.file.colMap : {};
-    let html = '<div style="font-size:10px;color:#7878aa;margin-bottom:6px;">Kolumny wykryte automatycznie. Zmień jeśli coś się nie zgadza:</div>';
+    let html = '<div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:6px;">Kolumny wykryte automatycznie. Zmień jeśli coś się nie zgadza:</div>';
     roles.forEach(function(r) {
       html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">';
-      html += '<span style="font-size:10px;color:#b0b0cc;width:140px;flex-shrink:0;">' + r.label + ':</span>';
+      html += '<span style="font-size:10px;color:var(--b24t-text);width:140px;flex-shrink:0;">' + r.label + ':</span>';
       html += '<select class="b24t-select b24t-col-sel" data-role="' + r.key + '" style="flex:1;"><option value="">— brak —</option>';
       headers.forEach(function(h) {
         html += '<option value="' + h + '"' + (detected[r.key] === h ? ' selected' : '') + '>' + h + '</option>';
       });
       html += '</select></div>';
     });
-    html += '<div id="b24t-col-preview" style="font-size:10px;color:#555588;margin-top:4px;"></div>';
+    html += '<div id="b24t-col-preview" style="font-size:10px;color:var(--b24t-text-faint);margin-top:4px;"></div>';
     el.innerHTML = html;
     el.querySelectorAll('.b24t-col-sel').forEach(function(sel) {
       sel.addEventListener('change', function() { applyColumnOverride(el, rows); });
@@ -3218,7 +3281,7 @@
       '<div class="b24t-section">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
           '<div class="b24t-section-label">Historia sesji</div>' +
-          '<button id="b24t-history-clear" style="font-size:9px;color:#7878aa;background:none;border:none;cursor:pointer;">wyczyść</button>' +
+          '<button id="b24t-history-clear" style="font-size:9px;color:var(--b24t-text-faint);background:none;border:none;cursor:pointer;">wyczyść</button>' +
         '</div>' +
         '<div id="b24t-history-list"></div>' +
       '</div>';
@@ -3230,25 +3293,25 @@
     if (!list) return;
     const history = lsGet(LS.HISTORY, []);
     if (!history.length) {
-      list.innerHTML = '<div style="font-size:11px;color:#555588;text-align:center;padding:16px 0;">Brak historii sesji</div>';
+      list.innerHTML = '<div style="font-size:11px;color:var(--b24t-text-faint);text-align:center;padding:16px 0;">Brak historii sesji</div>';
       return;
     }
     list.innerHTML = history.map(function(s) {
       const mins = Math.floor(s.durationSec / 60);
       const secs = s.durationSec % 60;
-      return '<div style="background:#141419;border:1px solid #1e1e28;border-radius:6px;padding:8px 10px;margin-bottom:6px;">' +
+      return '<div style="background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:8px 10px;margin-bottom:6px;">' +
         '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;">' +
-          '<span style="font-size:11px;color:#b0b0cc;font-weight:600;">' + s.projectName + '</span>' +
-          '<span style="font-size:9px;color:#555588;">' + s.date + '</span>' +
+          '<span style="font-size:11px;color:var(--b24t-text);font-weight:600;">' + s.projectName + '</span>' +
+          '<span style="font-size:9px;color:var(--b24t-text-faint);">' + s.date + '</span>' +
         '</div>' +
-        '<div style="font-size:10px;color:#7878aa;margin-bottom:3px;">📄 ' + s.fileName + '</div>' +
+        '<div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:3px;">📄 ' + s.fileName + '</div>' +
         '<div style="display:flex;gap:10px;font-size:10px;">' +
           '<span style="color:#4ade80;">✓ ' + s.tagged + ' otagowano</span>' +
           '<span style="color:#facc15;">⚠ ' + s.skipped + ' pominięto</span>' +
           (s.noMatch ? '<span style="color:#f87171;">✗ ' + s.noMatch + ' brak matcha</span>' : '') +
           (s.deleted ? '<span style="color:#f87171;">🗑 ' + s.deleted + ' usunięto</span>' : '') +
         '</div>' +
-        '<div style="font-size:9px;color:#444466;margin-top:3px;">' + s.mode + ' · ' + mins + 'm ' + secs + 's</div>' +
+        '<div style="font-size:9px;color:var(--b24t-text-faint);margin-top:3px;">' + s.mode + ' · ' + mins + 'm ' + secs + 's</div>' +
       '</div>';
     }).join('');
   }
@@ -3307,8 +3370,8 @@
     if (!warnings.length) { el.style.display = 'none'; return; }
     el.style.display = 'block';
     el.innerHTML = warnings.map(function(w) {
-      return '<div style="display:flex;gap:6px;align-items:flex-start;padding:4px 0;border-bottom:1px solid #1a1a22;">' +
-        '<span style="flex-shrink:0;' + (w.type === 'warn' ? 'color:#facc15;' : 'color:#7878aa;') + '">' + (w.type === 'warn' ? '⚠' : 'ℹ') + '</span>' +
+      return '<div style="display:flex;gap:6px;align-items:flex-start;padding:4px 0;border-bottom:1px solid var(--b24t-border-sub);">' +
+        '<span style="flex-shrink:0;' + (w.type === 'warn' ? 'color:#facc15;' : 'color:var(--b24t-text-faint);') + '">' + (w.type === 'warn' ? '⚠' : 'ℹ') + '</span>' +
         '<span style="font-size:10px;color:#9090bb;">' + w.msg + '</span></div>';
     }).join('');
   }
@@ -3371,9 +3434,9 @@
     if (!content) return;
     let wrongHtml = '';
     if (result.taggedWrong.length > 0) {
-      wrongHtml = '<div style="margin-top:12px;font-size:10px;color:#7878aa;">Błędne tagi (pierwsze 5):</div>';
+      wrongHtml = '<div style="margin-top:12px;font-size:10px;color:var(--b24t-text-faint);">Błędne tagi (pierwsze 5):</div>';
       result.taggedWrong.slice(0,5).forEach(function(e) {
-        wrongHtml += '<div style="font-size:9px;color:#555588;padding:3px 0;border-bottom:1px solid #1a1a22;">' +
+        wrongHtml += '<div style="font-size:9px;color:var(--b24t-text-faint);padding:3px 0;border-bottom:1px solid var(--b24t-border-sub);">' +
           e.url.substring(0,50) + '<br>' +
           '<span style="color:#f87171;">✗ ma: ' + e.actual + '</span> <span style="color:#4ade80;">\u2192 powinien: ' + e.expected + '</span></div>';
       });
@@ -3383,7 +3446,7 @@
       '<div class="b24t-report-row"><span>✓ Prawidłowo otagowane</span><strong style="color:#4ade80;">' + result.alreadyTagged.length + '</strong></div>' +
       '<div class="b24t-report-row"><span>⚠ Nieztagowane</span><strong style="color:#facc15;">' + result.untagged.length + '</strong></div>' +
       '<div class="b24t-report-row"><span>✗ Błędny tag</span><strong style="color:#f87171;">' + result.taggedWrong.length + '</strong></div>' +
-      '<div class="b24t-report-row"><span>? Nie znaleziono w Brand24</span><strong style="color:#7878aa;">' + result.notFound.length + '</strong></div>' +
+      '<div class="b24t-report-row"><span>? Nie znaleziono w Brand24</span><strong style="color:var(--b24t-text-faint);">' + result.notFound.length + '</strong></div>' +
       '<div class="b24t-report-row"><span>~ W Brand24, brak w pliku</span><strong>' + result.notInFile + '</strong></div>' +
       wrongHtml +
       '<div style="display:flex;gap:6px;margin-top:16px;">' +
@@ -3481,17 +3544,17 @@
     const color = preview.pct >= 80 ? '#4ade80' : preview.pct >= 50 ? '#facc15' : '#f87171';
     el.style.display = 'block';
     el.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">' +
-      '<span style="font-size:11px;color:#b0b0cc;font-weight:600;">Match Preview</span>' +
+      '<span style="font-size:11px;color:var(--b24t-text);font-weight:600;">Match Preview</span>' +
       '<span style="font-size:14px;font-weight:700;color:' + color + ';">' + preview.pct + '%</span></div>' +
       '<div style="display:flex;gap:10px;font-size:10px;margin-bottom:6px;">' +
       '<span style="color:#4ade80;">&#10003; ' + preview.matched + ' matched</span>' +
       '<span style="color:#f87171;">&#10007; ' + preview.unmatched + ' brak</span>' +
-      (preview.noAssessment ? '<span style="color:#7878aa;">~ ' + preview.noAssessment + ' bez labelki</span>' : '') + '</div>' +
-      '<div style="height:4px;background:#1a1a22;border-radius:99px;overflow:hidden;margin-bottom:6px;">' +
+      (preview.noAssessment ? '<span style="color:var(--b24t-text-faint);">~ ' + preview.noAssessment + ' bez labelki</span>' : '') + '</div>' +
+      '<div style="height:4px;background:var(--b24t-bg-input);border-radius:99px;overflow:hidden;margin-bottom:6px;">' +
       '<div style="height:100%;width:' + preview.pct + '%;background:' + color + ';border-radius:99px;"></div></div>' +
       (preview.unmatched > 0
-        ? '<div id="b24t-preview-list-toggle" style="font-size:10px;color:#7878aa;cursor:pointer;">Pokaż niezmatched (' + Math.min(preview.unmatched, 50) + ') &#9660;</div>' +
-          '<div id="b24t-preview-list" style="display:none;max-height:80px;overflow-y:auto;margin-top:4px;font-size:9px;color:#555588;line-height:1.6;">' +
+        ? '<div id="b24t-preview-list-toggle" style="font-size:10px;color:var(--b24t-text-faint);cursor:pointer;">Pokaż niezmatched (' + Math.min(preview.unmatched, 50) + ') &#9660;</div>' +
+          '<div id="b24t-preview-list" style="display:none;max-height:80px;overflow-y:auto;margin-top:4px;font-size:9px;color:var(--b24t-text-faint);line-height:1.6;">' +
           preview.unmatchedList.map(function(u){ return '<div>' + u.substring(0, 60) + '</div>'; }).join('') +
           (preview.unmatched > 50 ? '<div>...i ' + (preview.unmatched - 50) + ' wiecej</div>' : '') + '</div>'
         : '');
@@ -3520,16 +3583,16 @@
       { key: 'text', label: 'Tresc (opcjonalnie)' },
     ];
     const detected = state.file ? state.file.colMap : {};
-    var html = '<div style="font-size:10px;color:#7878aa;margin-bottom:6px;">Kolumny wykryte automatycznie. Zmien jesli cos sie pomylilo:</div>';
+    var html = '<div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:6px;">Kolumny wykryte automatycznie. Zmien jesli cos sie pomylilo:</div>';
     roles.forEach(function(r) {
       html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' +
-        '<span style="font-size:10px;color:#b0b0cc;width:130px;flex-shrink:0;">' + r.label + ':</span>' +
+        '<span style="font-size:10px;color:var(--b24t-text);width:130px;flex-shrink:0;">' + r.label + ':</span>' +
         '<select class="b24t-select b24t-col-sel" data-role="' + r.key + '" style="flex:1;">' +
         '<option value="">-- brak --</option>' +
         headers.map(function(h) { return '<option value="' + h + '"' + (detected[r.key] === h ? ' selected' : '') + '>' + h + '</option>'; }).join('') +
         '</select></div>';
     });
-    html += '<div id="b24t-col-sample" style="font-size:9px;color:#555588;margin-top:4px;"></div>';
+    html += '<div id="b24t-col-sample" style="font-size:9px;color:var(--b24t-text-faint);margin-top:4px;"></div>';
     el.innerHTML = html;
     el.querySelectorAll('.b24t-col-sel').forEach(function(sel) {
       sel.addEventListener('change', function() { applyColumnOverride(el, rows); });
@@ -3588,7 +3651,7 @@
     div.innerHTML = '<div class="b24t-section">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
       '<div class="b24t-section-label">Historia sesji</div>' +
-      '<button id="b24t-history-clear" style="font-size:9px;color:#7878aa;background:none;border:none;cursor:pointer;">wyczysc</button></div>' +
+      '<button id="b24t-history-clear" style="font-size:9px;color:var(--b24t-text-faint);background:none;border:none;cursor:pointer;">wyczysc</button></div>' +
       '<div id="b24t-history-list"></div></div>';
     return div;
   }
@@ -3598,22 +3661,22 @@
     if (!list) return;
     var history = lsGet(LS.HISTORY, []);
     if (!history.length) {
-      list.innerHTML = '<div style="font-size:11px;color:#555588;text-align:center;padding:16px 0;">Brak historii sesji</div>';
+      list.innerHTML = '<div style="font-size:11px;color:var(--b24t-text-faint);text-align:center;padding:16px 0;">Brak historii sesji</div>';
       return;
     }
     list.innerHTML = history.map(function(s) {
       var dur = Math.floor(s.durationSec / 60) + 'm ' + (s.durationSec % 60) + 's';
-      return '<div style="background:#141419;border:1px solid #1e1e28;border-radius:6px;padding:8px 10px;margin-bottom:6px;">' +
+      return '<div style="background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:8px 10px;margin-bottom:6px;">' +
         '<div style="display:flex;justify-content:space-between;margin-bottom:4px;">' +
-        '<span style="font-size:11px;color:#b0b0cc;font-weight:600;">' + s.projectName + '</span>' +
-        '<span style="font-size:9px;color:#555588;">' + s.date + '</span></div>' +
-        '<div style="font-size:10px;color:#7878aa;margin-bottom:3px;">&#128196; ' + s.fileName + '</div>' +
+        '<span style="font-size:11px;color:var(--b24t-text);font-weight:600;">' + s.projectName + '</span>' +
+        '<span style="font-size:9px;color:var(--b24t-text-faint);">' + s.date + '</span></div>' +
+        '<div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:3px;">&#128196; ' + s.fileName + '</div>' +
         '<div style="display:flex;gap:10px;font-size:10px;">' +
         '<span style="color:#4ade80;">&#10003; ' + s.tagged + ' otagowano</span>' +
         '<span style="color:#facc15;">&#9888; ' + s.skipped + ' pominieto</span>' +
         (s.noMatch ? '<span style="color:#f87171;">&#10007; ' + s.noMatch + ' brak matcha</span>' : '') +
         (s.deleted ? '<span style="color:#f87171;">&#128465; ' + s.deleted + ' usunieto</span>' : '') + '</div>' +
-        '<div style="font-size:9px;color:#444466;margin-top:3px;">' + s.mode + ' &middot; ' + dur + '</div></div>';
+        '<div style="font-size:9px;color:var(--b24t-text-faint);margin-top:3px;">' + s.mode + ' &middot; ' + dur + '</div></div>';
     }).join('');
   }
 
@@ -3669,8 +3732,8 @@
     if (!warnings.length) { el.style.display = 'none'; return; }
     el.style.display = 'block';
     el.innerHTML = warnings.map(function(w) {
-      return '<div style="display:flex;gap:6px;padding:4px 0;border-bottom:1px solid #1a1a22;">' +
-        '<span style="flex-shrink:0;' + (w.type === 'warn' ? 'color:#facc15;' : 'color:#7878aa;') + '">' + (w.type === 'warn' ? '&#9888;' : 'i') + '</span>' +
+      return '<div style="display:flex;gap:6px;padding:4px 0;border-bottom:1px solid var(--b24t-border-sub);">' +
+        '<span style="flex-shrink:0;' + (w.type === 'warn' ? 'color:#facc15;' : 'color:var(--b24t-text-faint);') + '">' + (w.type === 'warn' ? '&#9888;' : 'i') + '</span>' +
         '<span style="font-size:10px;color:#9090bb;">' + w.msg + '</span></div>';
     }).join('');
   }
@@ -3729,9 +3792,9 @@
     if (!content) return;
     var wrongHtml = '';
     if (result.taggedWrong.length > 0) {
-      wrongHtml = '<div style="margin-top:12px;font-size:10px;color:#7878aa;">Bledne tagi (pierwsze 5):</div>' +
+      wrongHtml = '<div style="margin-top:12px;font-size:10px;color:var(--b24t-text-faint);">Bledne tagi (pierwsze 5):</div>' +
         result.taggedWrong.slice(0, 5).map(function(e) {
-          return '<div style="font-size:9px;color:#555588;padding:3px 0;border-bottom:1px solid #1a1a22;">' +
+          return '<div style="font-size:9px;color:var(--b24t-text-faint);padding:3px 0;border-bottom:1px solid var(--b24t-border-sub);">' +
             e.url.substring(0, 50) + '<br><span style="color:#f87171;">ma: ' + e.actual +
             '</span> <span style="color:#4ade80;">powinien: ' + e.expected + '</span></div>';
         }).join('');
@@ -3740,7 +3803,7 @@
       '<div class="b24t-report-row"><span>Prawidlowo otagowane</span><strong style="color:#4ade80;">' + result.alreadyTagged.length + '</strong></div>' +
       '<div class="b24t-report-row"><span>Nieztagowane (Untagged)</span><strong style="color:#facc15;">' + result.untagged.length + '</strong></div>' +
       '<div class="b24t-report-row"><span>Bledny tag</span><strong style="color:#f87171;">' + result.taggedWrong.length + '</strong></div>' +
-      '<div class="b24t-report-row"><span>Nie znaleziono w Brand24</span><strong style="color:#7878aa;">' + result.notFound.length + '</strong></div>' +
+      '<div class="b24t-report-row"><span>Nie znaleziono w Brand24</span><strong style="color:var(--b24t-text-faint);">' + result.notFound.length + '</strong></div>' +
       '<div class="b24t-report-row"><span>W Brand24 ale nie w pliku</span><strong>' + result.notInFile + '</strong></div>' +
       wrongHtml +
       '<div style="display:flex;gap:6px;margin-top:16px;">' +
@@ -3808,6 +3871,22 @@
   // ─────────────────────────────────────────────────────────────────────────────
 
   const CHANGELOG = [
+    {
+      version: '0.7.0',
+      date: '2026-03-27',
+      label: 'Redesign',
+      labelColor: '#1e7d3a',
+      changes: [
+        { type: 'new', text: 'Light mode: paleta Brand24 — biały/szary/zielony, gradient na całym panelu, naprzemienne tła sekcji z lewym paskiem akcentowym' },
+        { type: 'new', text: 'Dark mode: bogatszy gradient indygo→fiolet→magneta (#6c5fff→#9b6bff→#c060ff), więcej głębi' },
+        { type: 'new', text: 'Sekcje z silnymi obramowaniami (2px) i wyraźnym kontrastem — łatwiej czytać układ panelu' },
+        { type: 'new', text: 'Nowe zmienne tekstowe --b24t-text-label i --b24t-text-meta — lepiej dobrane do obu trybów' },
+        { type: 'change', text: 'Subbar naprawiony — hardkodowane ciemne kolory zastąpione CSS variables (działa w light mode)' },
+        { type: 'change', text: 'Annotator panel: szerokość 300→420px, czcionka 13→15px, tab trigger powiększony' },
+        { type: 'change', text: 'Kafelki Annotatora: liczby 16px/700 → 22px/800, etykiety pogrubione i większe' },
+        { type: 'change', text: 'Topbar z efektem świetlnym (radial gradient), stat-karty z paskiem akcentowym na dole' },
+      ]
+    },
     {
       version: '0.6.0',
       date: '2026-03-27',
@@ -4337,12 +4416,12 @@
 
     modal.innerHTML =
       '<div style="background:#0f0f13;border:1px solid #2a2a35;border-radius:14px;width:440px;box-shadow:0 20px 60px rgba(0,0,0,0.8);">' +
-        '<div style="padding:20px 20px 16px;border-bottom:1px solid #1a1a22;">' +
+        '<div style="padding:20px 20px 16px;border-bottom:1px solid var(--b24t-border-sub);">' +
           '<div style="display:flex;align-items:center;gap:10px;">' +
             '<div style="width:32px;height:32px;background:#facc1522;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;">💬</div>' +
             '<div>' +
               '<div style="font-size:14px;font-weight:700;color:#e2e2e8;">Prześlij feedback</div>' +
-              '<div style="font-size:10px;color:#555588;margin-top:2px;">Trafia bezpośrednio na kanał Slack zespołu</div>' +
+              '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:2px;">Trafia bezpośrednio na kanał Slack zespołu</div>' +
             '</div>' +
             '<button id="b24t-fb-close" style="margin-left:auto;background:none;border:none;color:#444455;cursor:pointer;font-size:18px;line-height:1;padding:4px;">\u00d7</button>' +
           '</div>' +
@@ -4350,7 +4429,7 @@
         '<div style="padding:20px;">' +
           // Stars
           '<div style="margin-bottom:16px;">' +
-            '<div style="font-size:11px;color:#7878aa;margin-bottom:8px;">Ogólna ocena wtyczki:</div>' +
+            '<div style="font-size:11px;color:var(--b24t-text-faint);margin-bottom:8px;">Ogólna ocena wtyczki:</div>' +
             '<div id="b24t-fb-stars" style="display:flex;gap:6px;">' +
               [1,2,3,4,5].map(function(i) {
                 return '<span data-val="' + i + '" style="font-size:24px;cursor:pointer;color:#1e1e28;transition:color 0.1s;">★</span>';
@@ -4359,17 +4438,17 @@
           '</div>' +
           // Textarea
           '<div style="margin-bottom:16px;">' +
-            '<div style="font-size:11px;color:#7878aa;margin-bottom:6px;">Komentarz / sugestia / błąd (opcjonalnie):</div>' +
+            '<div style="font-size:11px;color:var(--b24t-text-faint);margin-bottom:6px;">Komentarz / sugestia / błąd (opcjonalnie):</div>' +
             '<textarea id="b24t-fb-text" placeholder="Co działa dobrze? Co można poprawić? Jakiś bug?" ' +
               'style="width:100%;height:90px;background:#141419;border:1px solid #2a2a35;border-radius:6px;color:#c0c0e0;' +
               'font-family:inherit;font-size:11px;padding:8px 10px;resize:none;box-sizing:border-box;outline:none;line-height:1.5;">' +
             '</textarea>' +
           '</div>' +
           // Status
-          '<div id="b24t-fb-status" style="font-size:10px;color:#555588;min-height:14px;margin-bottom:12px;"></div>' +
+          '<div id="b24t-fb-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;margin-bottom:12px;"></div>' +
           // Buttons
           '<div style="display:flex;gap:8px;">' +
-            '<button id="b24t-fb-cancel" style="flex:1;background:#1a1a22;color:#9090aa;border:1px solid #2a2a35;border-radius:6px;padding:8px;font-size:12px;cursor:pointer;font-family:inherit;">Anuluj</button>' +
+            '<button id="b24t-fb-cancel" style="flex:1;background:#1a1a22;color:var(--b24t-text-meta);border:1px solid #2a2a35;border-radius:6px;padding:8px;font-size:12px;cursor:pointer;font-family:inherit;">Anuluj</button>' +
             '<button id="b24t-fb-send" style="flex:2;background:#6c6cff;color:#fff;border:none;border-radius:6px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Wyślij feedback</button>' +
           '</div>' +
         '</div>' +
@@ -4418,19 +4497,19 @@
 
 
   function showDevNotes() {
-    let html = '<div style="font-size:10px;color:#555588;margin-bottom:16px;">Szczegółowe informacje techniczne o zmianach w kodzie. Dostępne od v0.3.4.</div>';
+    let html = '<div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:16px;">Szczegółowe informacje techniczne o zmianach w kodzie. Dostępne od v0.3.4.</div>';
 
     DEV_CHANGELOG.forEach(function(v, idx) {
       html +=
         '<div style="margin-bottom:' + (idx < DEV_CHANGELOG.length - 1 ? '16' : '0') + 'px;">' +
           '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
             '<span style="font-size:12px;font-weight:700;color:#e2e2e8;font-family:\'SF Mono\',monospace;">v' + v.version + '</span>' +
-            '<span style="font-size:10px;color:#444466;">' + v.date + '</span>' +
+            '<span style="font-size:10px;color:var(--b24t-text-faint);">' + v.date + '</span>' +
           '</div>' +
           v.notes.map(function(n) {
             return '<div style="display:flex;gap:8px;align-items:flex-start;padding:2px 0;">' +
               '<span style="flex-shrink:0;color:#6c6cff;font-size:10px;">›</span>' +
-              '<span style="font-size:10px;color:#7878aa;line-height:1.5;font-family:\'SF Mono\',monospace;">' + n + '</span>' +
+              '<span style="font-size:10px;color:var(--b24t-text-faint);line-height:1.5;font-family:\'SF Mono\',monospace;">' + n + '</span>' +
             '</div>';
           }).join('') +
         '</div>' +
@@ -4442,17 +4521,17 @@
     modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483648;font-family:\'SF Mono\',\'Fira Code\',monospace;';
     modal.innerHTML =
       '<div style="background:#0a0a0d;border:1px solid #2a2a35;border-radius:14px;width:520px;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.9);">' +
-        '<div style="padding:16px 20px;border-bottom:1px solid #1a1a22;flex-shrink:0;display:flex;align-items:center;gap:10px;">' +
+        '<div style="padding:16px 20px;border-bottom:1px solid var(--b24t-border-sub);flex-shrink:0;display:flex;align-items:center;gap:10px;">' +
           '<span style="font-size:16px;">🔧</span>' +
           '<div>' +
             '<div style="font-size:13px;font-weight:700;color:#e2e2e8;">Patch notes dla programistów</div>' +
-            '<div style="font-size:10px;color:#444466;margin-top:2px;">Szczegóły techniczne zmian w kodzie · B24 Tagger BETA</div>' +
+            '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:2px;">Szczegóły techniczne zmian w kodzie · B24 Tagger BETA</div>' +
           '</div>' +
           '<button id="b24t-devnotes-close" style="margin-left:auto;background:none;border:none;color:#444455;cursor:pointer;font-size:18px;line-height:1;">\u00d7</button>' +
         '</div>' +
         '<div style="overflow-y:auto;flex:1;padding:20px;">' + html + '</div>' +
         '<div style="padding:12px 20px;border-top:1px solid #1a1a22;flex-shrink:0;text-align:right;">' +
-          '<button id="b24t-devnotes-ok" style="background:#2a2a35;color:#9090aa;border:none;border-radius:6px;padding:7px 20px;font-size:12px;cursor:pointer;font-family:inherit;">Zamknij</button>' +
+          '<button id="b24t-devnotes-ok" style="background:#2a2a35;color:var(--b24t-text-meta);border:none;border-radius:6px;padding:7px 20px;font-size:12px;cursor:pointer;font-family:inherit;">Zamknij</button>' +
         '</div>' +
       '</div>';
 
@@ -4483,7 +4562,7 @@
           '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
             '<span style="font-size:15px;font-weight:700;color:#e2e2e8;font-family:\'SF Mono\',monospace;">v' + v.version + '</span>' +
             '<span style="font-size:12px;font-weight:600;background:' + v.labelColor + '22;color:' + v.labelColor + ';padding:2px 10px;border-radius:99px;">' + v.label + '</span>' +
-            '<span style="font-size:11px;color:#555577;margin-left:auto;">' + v.date + '</span>' +
+            '<span style="font-size:11px;color:var(--b24t-text-faint);margin-left:auto;">' + v.date + '</span>' +
           '</div>' +
           '<div style="' + (isLatest ? '' : 'opacity:0.6;') + '">' +
           v.changes.map(function(ch) {
@@ -4494,7 +4573,7 @@
           }).join('') +
           '</div>' +
         '</div>' +
-        (idx < CHANGELOG.length - 1 ? '<div style="height:1px;background:#1e1e28;margin:0 0 20px 0;"></div>' : '');
+        (idx < CHANGELOG.length - 1 ? '<div style="height:1px;background:var(--b24t-border);margin:0 0 20px 0;"></div>' : '');
     });
 
     // Build planned features HTML
@@ -4502,7 +4581,7 @@
       '<div style="font-size:12px;color:#666699;margin-bottom:14px;line-height:1.6;">Lista funkcji planowanych w przyszłych wersjach. Masz pomysł? Skorzystaj z zakładki Feedback!</div>';
     PLANNED_FEATURES.forEach(function(f) {
       plannedHtml +=
-        '<div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-bottom:1px solid #1a1a22;">' +
+        '<div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--b24t-border-sub);">' +
           '<span style="flex-shrink:0;font-size:16px;">' + prioLabel[f.priority] + '</span>' +
           '<span style="font-size:13px;color:#a0a0cc;line-height:1.6;flex:1;">' + f.text + '</span>' +
           (f.next ? '<span style="flex-shrink:0;font-size:11px;background:#6c6cff22;color:#6c6cff;padding:2px 8px;border-radius:99px;white-space:nowrap;">następna wersja</span>' : '') +
@@ -4518,13 +4597,13 @@
       '<div style="background:#0f0f13;border:1px solid #2a2a35;border-radius:14px;width:520px;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.85);">' +
 
         // ── HEADER ────────────────────────────────────────────────────────
-        '<div style="padding:16px 20px 0;flex-shrink:0;border-bottom:1px solid #1a1a22;">' +
+        '<div style="padding:16px 20px 0;flex-shrink:0;border-bottom:1px solid var(--b24t-border-sub);">' +
           // Title row
           '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">' +
             '<div style="width:36px;height:36px;background:#6c6cff22;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">✦</div>' +
             '<div style="flex:1;">' +
               '<div style="font-size:16px;font-weight:700;color:#e2e2e8;letter-spacing:-0.01em;">B24 Tagger <span style="font-size:11px;color:#6c6cff;letter-spacing:0.08em;font-weight:600;">BETA</span></div>' +
-              '<div style="font-size:12px;color:#555577;margin-top:3px;">v' + VERSION + ' · Dziennik zmian</div>' +
+              '<div style="font-size:12px;color:var(--b24t-text-faint);margin-top:3px;">v' + VERSION + ' · Dziennik zmian</div>' +
             '</div>' +
             '<button id="b24t-wnm-close" style="background:none;border:none;color:#444455;cursor:pointer;font-size:22px;line-height:1;padding:4px;border-radius:6px;transition:color 0.15s;">\u00d7</button>' +
           '</div>' +
@@ -4535,11 +4614,11 @@
               'font-size:11px;font-weight:600;padding:8px 4px;cursor:pointer;font-family:inherit;' +
               'display:flex;align-items:center;justify-content:center;gap:5px;">📰 Co nowego</button>' +
             '<button class="b24t-wnm-tab" data-tab="planned" ' +
-              'style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:#555588;' +
+              'style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:var(--b24t-text-faint);' +
               'font-size:11px;padding:8px 4px;cursor:pointer;font-family:inherit;' +
               'display:flex;align-items:center;justify-content:center;gap:5px;">🗓 Planowane</button>' +
             '<button class="b24t-wnm-tab" data-tab="feedback" ' +
-              'style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:#555588;' +
+              'style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:var(--b24t-text-faint);' +
               'font-size:11px;padding:8px 4px;cursor:pointer;font-family:inherit;' +
               'display:flex;align-items:center;justify-content:center;gap:5px;">💬 Feedback</button>' +
           '</div>' +
@@ -4564,7 +4643,7 @@
                 'color:#f87171;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;">🐛 Bug Report</button>' +
               '<button id="b24t-fb-mode-suggest" class="b24t-fb-mode-btn" data-mode="suggest" ' +
                 'style="flex:1;padding:9px;border:2px solid #2a2a35;border-radius:8px;background:none;' +
-                'color:#555588;font-family:inherit;font-size:12px;cursor:pointer;">💡 Suggestion</button>' +
+                'color:var(--b24t-text-faint);font-family:inherit;font-size:12px;cursor:pointer;">💡 Suggestion</button>' +
             '</div>' +
 
             // Bug Report panel
@@ -4602,14 +4681,14 @@
         '<div style="padding:10px 20px;border-top:1px solid #1a1a22;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:12px;">' +
           // Lewa strona: legenda + devnotes
           '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
-            '<div id="b24t-wnm-legend" style="display:flex;gap:8px;font-size:11px;color:#555577;">' +
+            '<div id="b24t-wnm-legend" style="display:flex;gap:8px;font-size:11px;color:var(--b24t-text-faint);">' +
               '<span title="Nowa funkcja"><span style="color:#6c6cff;">✦</span> nowe</span>' +
               '<span title="Naprawa błędu"><span style="color:#4ade80;">⚒</span> fix</span>' +
               '<span title="Wydajność"><span style="color:#facc15;">⚡</span> perf</span>' +
-              '<span title="Interfejs"><span style="color:#b0b0cc;">◈</span> UI</span>' +
+              '<span title="Interfejs"><span style="color:var(--b24t-text);">◈</span> UI</span>' +
             '</div>' +
             '<button id="b24t-wnm-devnotes-btn" ' +
-              'style="font-size:11px;color:#555577;background:none;border:1px solid #2a2a35;border-radius:4px;' +
+              'style="font-size:11px;color:var(--b24t-text-faint);background:none;border:1px solid #2a2a35;border-radius:4px;' +
               'padding:4px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;' +
               'transition:color 0.15s,border-color 0.15s;">🔧 Dev patch notes</button>' +
           '</div>' +
@@ -5146,7 +5225,7 @@
           '<div style="font-size:22px;">✓</div>' +
           '<div>' +
             '<div style="font-size:13px;font-weight:700;color:#4ade80;">Masz najnowszą wersję</div>' +
-            '<div style="font-size:11px;color:#555577;margin-top:3px;">B24 Tagger BETA v' + VERSION + '</div>' +
+            '<div style="font-size:11px;color:var(--b24t-text-faint);margin-top:3px;">B24 Tagger BETA v' + VERSION + '</div>' +
           '</div>' +
         '</div>';
       document.body.appendChild(el);
@@ -5164,14 +5243,14 @@
         '<div style="width:36px;height:36px;background:#6c6cff22;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">✦</div>' +
         '<div style="flex:1;">' +
           '<div style="font-size:14px;font-weight:700;color:#e2e2e8;letter-spacing:-0.01em;">Dostępna aktualizacja</div>' +
-          '<div style="font-size:11px;color:#7878aa;margin-top:3px;">B24 Tagger BETA</div>' +
+          '<div style="font-size:11px;color:var(--b24t-text-faint);margin-top:3px;">B24 Tagger BETA</div>' +
         '</div>' +
         '<button id="b24t-update-dismiss" style="background:none;border:none;color:#444455;cursor:pointer;font-size:18px;line-height:1;padding:2px;flex-shrink:0;">✕</button>' +
       '</div>' +
       // Wersje
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:8px 10px;background:#141419;border-radius:8px;">' +
-        '<span style="font-size:12px;color:#555577;font-family:monospace;">v' + VERSION + '</span>' +
-        '<span style="font-size:14px;color:#444466;">→</span>' +
+        '<span style="font-size:12px;color:var(--b24t-text-faint);font-family:monospace;">v' + VERSION + '</span>' +
+        '<span style="font-size:14px;color:var(--b24t-text-faint);">→</span>' +
         '<span style="font-size:13px;font-weight:700;color:#6c6cff;font-family:monospace;">v' + newVersion + '</span>' +
         '<span style="margin-left:auto;font-size:10px;background:#6c6cff22;color:#6c6cff;padding:2px 7px;border-radius:99px;">nowa wersja</span>' +
       '</div>' +
@@ -5396,19 +5475,19 @@
       var reqColor = p.reqVer > 0 ? '#facc15' : '#444466';
       var delColor = p.toDelete > 0 ? '#f87171' : '#444466';
       return '<tr>' +
-        '<td style="padding:7px 10px;font-size:11px;color:#c0c0e0;border-bottom:1px solid #1a1a22;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + p.name + '">' + p.name + '</td>' +
-        '<td style="padding:7px 10px;font-size:13px;font-weight:700;color:' + reqColor + ';text-align:center;border-bottom:1px solid #1a1a22;">' + (p.reqVer || '—') + '</td>' +
-        '<td style="padding:7px 10px;font-size:13px;font-weight:700;color:' + delColor + ';text-align:center;border-bottom:1px solid #1a1a22;">' + (p.toDelete || '—') + '</td>' +
+        '<td style="padding:7px 10px;font-size:11px;color:#c0c0e0;border-bottom:1px solid var(--b24t-border-sub);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + p.name + '">' + p.name + '</td>' +
+        '<td style="padding:7px 10px;font-size:13px;font-weight:700;color:' + reqColor + ';text-align:center;border-bottom:1px solid var(--b24t-border-sub);">' + (p.reqVer || '—') + '</td>' +
+        '<td style="padding:7px 10px;font-size:13px;font-weight:700;color:' + delColor + ';text-align:center;border-bottom:1px solid var(--b24t-border-sub);">' + (p.toDelete || '—') + '</td>' +
       '</tr>';
     }).join('');
 
     el.innerHTML =
       '<div style="padding:10px 12px 0;">' +
-        '<div style="font-size:9px;color:#444466;margin-bottom:8px;">' + dateFrom + ' – ' + dateTo + '</div>' +
+        '<div style="font-size:9px;color:var(--b24t-text-faint);margin-bottom:8px;">' + dateFrom + ' – ' + dateTo + '</div>' +
         '<table style="width:100%;border-collapse:collapse;">' +
           '<thead>' +
             '<tr>' +
-              '<th style="padding:5px 10px;font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:#555577;text-align:left;border-bottom:1px solid #2a2a35;">Projekt</th>' +
+              '<th style="padding:5px 10px;font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--b24t-text-faint);text-align:left;border-bottom:1px solid #2a2a35;">Projekt</th>' +
               '<th style="padding:5px 10px;font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:#facc15;text-align:center;border-bottom:1px solid #2a2a35;">REQ VER</th>' +
               '<th style="padding:5px 10px;font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:#f87171;text-align:center;border-bottom:1px solid #2a2a35;">TO DELETE</th>' +
             '</tr>' +
@@ -5429,7 +5508,7 @@
 
     const projects = getKnownProjects();
     if (projects.length === 0) {
-      el.innerHTML = '<div style="padding:14px;font-size:11px;color:#444466;">Brak zapisanych projektów. Odwiedź każdy projekt raz żeby go zarejestrować.</div>';
+      el.innerHTML = '<div style="padding:14px;font-size:11px;color:var(--b24t-text-faint);">Brak zapisanych projektów. Odwiedź każdy projekt raz żeby go zarejestrować.</div>';
       return;
     }
 
@@ -5449,8 +5528,8 @@
 
     // Pokaż loader z postępem
     el.innerHTML = '<div style="padding:20px;text-align:center;">' +
-      '<div style="font-size:11px;color:#444466;margin-bottom:8px;">↻ Pobieram dane ze wszystkich projektów...</div>' +
-      '<div id="b24t-tagstats-progress" style="font-size:10px;color:#555577;">0/' + projects.length + ' projektów</div>' +
+      '<div style="font-size:11px;color:var(--b24t-text-faint);margin-bottom:8px;">↻ Pobieram dane ze wszystkich projektów...</div>' +
+      '<div id="b24t-tagstats-progress" style="font-size:10px;color:var(--b24t-text-faint);">0/' + projects.length + ' projektów</div>' +
     '</div>';
 
     const results = [];
@@ -5587,13 +5666,13 @@
           '<div style="font-size:11px;font-weight:700;color:#a0a0cc;letter-spacing:0.05em;text-transform:uppercase;">Dashboard Annotatora</div>' +
           (isLastMonth
             ? '<div style="font-size:9px;background:#facc1522;color:#facc15;padding:2px 6px;border-radius:99px;">poprzedni miesiąc</div>'
-            : '<div style="font-size:9px;color:#444466;">' + daysLeft + ' dni do końca miesiąca</div>'
+            : '<div style="font-size:9px;color:var(--b24t-text-faint);">' + daysLeft + ' dni do końca miesiąca</div>'
           ) +
         '</div>' +
         // Miesiąc
-        '<div style="font-size:10px;color:#555577;margin-bottom:10px;">' + label + ' · ' + stats.dateFrom + ' – ' + stats.dateTo + '</div>' +
+        '<div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:10px;">' + label + ' · ' + stats.dateFrom + ' – ' + stats.dateTo + '</div>' +
         // Progress bar
-        '<div style="background:#1a1a22;border-radius:99px;height:6px;margin-bottom:12px;overflow:hidden;">' +
+        '<div style="background:var(--b24t-bg-input);border-radius:99px;height:6px;margin-bottom:12px;overflow:hidden;">' +
           '<div style="height:100%;border-radius:99px;background:' + (pct === 100 ? '#4ade80' : '#6c6cff') + ';width:' + pct + '%;transition:width 0.4s ease;"></div>' +
         '</div>' +
         // Statystyki — 3 kafelki
@@ -5612,7 +5691,7 @@
   function _dashTile(label, value, color) {
     return '<div style="background:#141419;border-radius:8px;padding:8px;text-align:center;">' +
       '<div style="font-size:16px;font-weight:700;color:' + color + ';">' + (value ?? '—') + '</div>' +
-      '<div style="font-size:9px;color:#444466;margin-top:2px;">' + label + '</div>' +
+      '<div style="font-size:9px;color:var(--b24t-text-faint);margin-top:2px;">' + label + '</div>' +
     '</div>';
   }
 
@@ -5622,7 +5701,7 @@
     if (!el) return;
 
     // Pokaż loader
-    el.innerHTML = '<div style="padding:20px;text-align:center;color:#444466;font-size:11px;">↻ Ładowanie...</div>';
+    el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--b24t-text-faint);font-size:11px;">↻ Ładowanie...</div>';
 
     try {
       const stats = await fetchDashboardStats();
@@ -5648,7 +5727,7 @@
     var tab = document.createElement('div');
     tab.id = 'b24t-annotator-tab';
     tab.setAttribute('data-b24t-theme', currentTheme);
-    tab.style.cssText = 'position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:2147483640;border-right:none;border-radius:8px 0 0 8px;padding:10px 6px;cursor:pointer;display:none;flex-direction:column;align-items:center;gap:4px;font-family:\'SF Mono\',monospace;font-size:11px;user-select:none;transition:transform 0.2s,box-shadow 0.2s,background 0.3s,border-color 0.3s,color 0.3s;';
+    tab.style.cssText = 'position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:2147483640;border-right:none;border-radius:8px 0 0 8px;padding:14px 8px;cursor:pointer;display:none;flex-direction:column;align-items:center;gap:6px;font-family:\'SF Mono\',monospace;font-size:13px;user-select:none;transition:transform 0.2s,box-shadow 0.2s,background 0.3s,border-color 0.3s,color 0.3s;';
     // inline colors that adapt via JS (CSS vars not available in inline style)
     tab.innerHTML = '<span style="writing-mode:vertical-rl;text-orientation:mixed;letter-spacing:.05em;">Narzędzia</span><span style="font-size:14px;">‹</span>';
     tab.title = 'Otwórz Narzędzia Annotatora';
@@ -5659,28 +5738,28 @@
     var panel = document.createElement('div');
     panel.id = 'b24t-annotator-panel';
     panel.setAttribute('data-b24t-theme', currentTheme);
-    panel.style.cssText = 'position:fixed;right:12px;top:80px;width:300px;z-index:2147483641;border-radius:14px;display:none;overflow:hidden;animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);font-family:\'SF Mono\',\'Fira Code\',monospace;font-size:13px;';
+    panel.style.cssText = 'position:fixed;right:12px;top:80px;width:420px;z-index:2147483641;border-radius:14px;display:none;overflow:hidden;animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);font-family:\'SF Mono\',\'Fira Code\',monospace;font-size:15px;';
 
     panel.innerHTML =
       // Header with gradient
-      '<div id="b24t-ann-header" style="display:flex;align-items:center;padding:10px 14px;background:var(--b24t-accent-grad);cursor:move;user-select:none;position:relative;overflow:hidden;">' +
-        '<span style="font-size:13px;font-weight:700;flex:1;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.2);">🛠 Narzędzia Annotatora</span>' +
-        '<button id="b24t-ann-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:16px;line-height:1;padding:2px 6px;border-radius:5px;transition:background 0.15s;">×</button>' +
+      '<div id="b24t-ann-header" style="display:flex;align-items:center;padding:12px 16px;background:var(--b24t-accent-grad);cursor:move;user-select:none;position:relative;overflow:hidden;">' +
+        '<span style="font-size:15px;font-weight:700;flex:1;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.2);">🛠 Narzędzia Annotatora</span>' +
+        '<button id="b24t-ann-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:18px;line-height:1;padding:2px 8px;border-radius:5px;transition:background 0.15s;">×</button>' +
       '</div>' +
       // Tabs
-      '<div style="display:flex;background:var(--b24t-bg-deep);border-bottom:1px solid var(--b24t-border-sub);">' +
-        '<button class="b24t-ann-tab b24t-ann-tab-active" data-ann-tab="project" style="flex:1;padding:9px 4px;font-size:13px;background:none;border:none;border-bottom:2px solid var(--b24t-primary);color:var(--b24t-primary);font-family:inherit;cursor:pointer;font-weight:700;transition:color 0.15s,border-color 0.15s,background 0.15s;">📊 Projekt</button>' +
-        '<button class="b24t-ann-tab" data-ann-tab="tagstats" style="flex:1;padding:9px 4px;font-size:13px;background:none;border:none;border-bottom:2px solid transparent;color:var(--b24t-text-muted);font-family:inherit;cursor:pointer;transition:color 0.15s,border-color 0.15s,background 0.15s;">🏷 Tagi</button>' +
+      '<div style="display:flex;background:var(--b24t-bg-deep);border-bottom:2px solid var(--b24t-border);">' +
+        '<button class="b24t-ann-tab b24t-ann-tab-active" data-ann-tab="project" style="flex:1;padding:10px 4px;font-size:15px;background:none;border:none;border-bottom:2px solid var(--b24t-primary);color:var(--b24t-primary);font-family:inherit;cursor:pointer;font-weight:700;margin-bottom:-2px;transition:color 0.15s,border-color 0.15s,background 0.15s;">📊 Projekt</button>' +
+        '<button class="b24t-ann-tab" data-ann-tab="tagstats" style="flex:1;padding:10px 4px;font-size:15px;background:none;border:none;border-bottom:2px solid transparent;color:var(--b24t-text-muted);font-family:inherit;cursor:pointer;margin-bottom:-2px;transition:color 0.15s,border-color 0.15s,background 0.15s;">🏷 Tagi</button>' +
       '</div>' +
       // Project tab
       '<div id="b24t-ann-tab-project" class="b24t-ann-content" style="display:block;background:var(--b24t-bg);">' +
-        '<div id="b24t-ann-project-content" style="padding:14px;font-size:13px;color:var(--b24t-text-faint);">↻ Ładowanie...</div>' +
-        '<div style="padding:0 14px 12px;"><button id="b24t-ann-project-refresh" style="width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:7px;padding:7px;font-size:12px;font-family:inherit;cursor:pointer;transition:background 0.15s,transform 0.1s;">↻ Odśwież</button></div>' +
+        '<div id="b24t-ann-project-content" style="padding:16px;font-size:14px;color:var(--b24t-text-faint);">↻ Ładowanie...</div>' +
+        '<div style="padding:0 16px 14px;"><button id="b24t-ann-project-refresh" style="width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:7px;padding:9px;font-size:13px;font-family:inherit;cursor:pointer;transition:background 0.15s,transform 0.1s;">↻ Odśwież</button></div>' +
       '</div>' +
       // Tags tab
       '<div id="b24t-ann-tab-tagstats" class="b24t-ann-content" style="display:none;background:var(--b24t-bg);">' +
-        '<div id="b24t-ann-tagstats-content" style="padding:14px;font-size:13px;color:var(--b24t-text-faint);">↻ Ładowanie...</div>' +
-        '<div style="padding:0 14px 12px;"><button id="b24t-ann-tagstats-refresh" style="width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:7px;padding:7px;font-size:12px;font-family:inherit;cursor:pointer;transition:background 0.15s,transform 0.1s;">↻ Odśwież</button></div>' +
+        '<div id="b24t-ann-tagstats-content" style="padding:16px;font-size:14px;color:var(--b24t-text-faint);">↻ Ładowanie...</div>' +
+        '<div style="padding:0 16px 14px;"><button id="b24t-ann-tagstats-refresh" style="width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:7px;padding:9px;font-size:13px;font-family:inherit;cursor:pointer;transition:background 0.15s,transform 0.1s;">↻ Odśwież</button></div>' +
       '</div>';
 
     // Apply panel border/shadow via attribute (CSS vars pick it up)
@@ -5801,7 +5880,7 @@
     if (!state.tokenHeaders || !state.projectId) {
       el.innerHTML = '<div style="color:#f87171;font-size:11px;">⚠ Token lub projekt nie gotowy — odśwież stronę</div>'; return;
     }
-    el.innerHTML = '<div style="color:#444466;font-size:11px;text-align:center;padding:8px 0;">↻ Pobieranie...</div>';
+    el.innerHTML = '<div style="color:var(--b24t-text-faint);font-size:11px;text-align:center;padding:8px 0;">↻ Pobieranie...</div>';
     try {
       var dates = getAnnotatorDates();
       var bf = { va:1,rt:[],se:[],vi:null,gr:[],sq:'',do:'',au:'',lem:false,ctr:[],nctr:false,is:[0,10],tp:null,anom:'',lang:[],nlang:false,aue:null,htg:null,mt:false,mtri:null,cxs:[] };
@@ -5860,9 +5939,9 @@
   }
 
   function _annTile(label, value, color) {
-    return '<div style="background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:8px;padding:8px;text-align:center;transition:background 0.3s,border-color 0.3s;">' +
-      '<div style="font-size:16px;font-weight:700;color:' + color + ';line-height:1.2;">' + (value !== undefined ? value : '—') + '</div>' +
-      '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:3px;text-transform:uppercase;letter-spacing:0.06em;">' + label + '</div></div>';
+    return '<div style="background:var(--b24t-section-grad-d);border:1px solid var(--b24t-border-strong);border-radius:8px;padding:10px;text-align:center;transition:background 0.3s,border-color 0.3s;">' +
+      '<div style="font-size:22px;font-weight:800;color:' + color + ';line-height:1.2;">' + (value !== undefined ? value : '—') + '</div>' +
+      '<div style="font-size:11px;color:var(--b24t-text-meta);margin-top:4px;text-transform:uppercase;letter-spacing:0.07em;font-weight:600;">' + label + '</div></div>';
   }
 
   async function loadAnnotatorTagStats() {
@@ -5870,13 +5949,13 @@
     if (!el) return;
     if (!state.tokenHeaders) { el.innerHTML = '<div style="color:#f87171;font-size:11px;">⚠ Token nie gotowy</div>'; return; }
     var projects = getKnownProjects();
-    if (!projects.length) { el.innerHTML = '<div style="font-size:11px;color:#444466;">Brak projektów. Odwiedź każdy projekt raz.</div>'; return; }
+    if (!projects.length) { el.innerHTML = '<div style="font-size:11px;color:var(--b24t-text-faint);">Brak projektów. Odwiedź każdy projekt raz.</div>'; return; }
     var dates = getAnnotatorDates();
-    el.innerHTML = '<div style="color:#444466;font-size:11px;text-align:center;padding:8px 0;">↻ 0/' + projects.length + '</div>';
+    el.innerHTML = '<div style="color:var(--b24t-text-faint);font-size:11px;text-align:center;padding:8px 0;">↻ 0/' + projects.length + '</div>';
     var results = [];
     for (var i = 0; i < projects.length; i++) {
       var p = projects[i];
-      el.innerHTML = '<div style="color:#444466;font-size:11px;text-align:center;padding:8px 0;">↻ ' + (i+1) + '/' + projects.length + '<br><span style="font-size:9px;">' + p.name + '</span></div>';
+      el.innerHTML = '<div style="color:var(--b24t-text-faint);font-size:11px;text-align:center;padding:8px 0;">↻ ' + (i+1) + '/' + projects.length + '<br><span style="font-size:9px;">' + p.name + '</span></div>';
       try {
         var counts = await fetchProjectTagCounts(p.id, p.reqVerId, p.toDeleteId, dates.dateFrom, dates.dateTo, null);
         results.push({ name:p.name, id:p.id, reqVer:counts.reqVer, toDelete:counts.toDelete });
@@ -6213,7 +6292,7 @@
     div.innerHTML = `
       <div class="b24t-section">
         <div class="b24t-section-label" style="color:#f87171;">Usuń po tagu</div>
-        <div style="font-size:10px;color:#7878aa;margin-bottom:10px;line-height:1.5;">
+        <div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:10px;line-height:1.5;">
           Usuwa wzmianki z wybranym tagiem w aktualnym zakresie dat.
           <strong style="color:#f87171;">Operacja nieodwracalna.</strong>
         </div>
@@ -6225,7 +6304,7 @@
         </select>
 
         <!-- Date range info -->
-        <div id="b24t-del-dateinfo" style="font-size:10px;color:#7878aa;margin-bottom:8px;background:#141419;border:1px solid #1e1e28;border-radius:6px;padding:8px 10px;line-height:1.6;">
+        <div id="b24t-del-dateinfo" style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:8px;background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:8px 10px;line-height:1.6;">
           Zakres dat z aktualnego widoku Brand24
         </div>
 
@@ -6256,7 +6335,7 @@
           <div id="b24t-del-progress" style="height:100%;background:#f87171;border-radius:99px;width:0%;transition:width 0.3s;"></div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-          <div id="b24t-del-status" style="font-size:10px;color:#7878aa;min-height:14px;flex:1;"></div>
+          <div id="b24t-del-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;flex:1;"></div>
           <div id="b24t-del-timer" style="font-size:11px;color:#8888aa;font-family:'SF Mono',monospace;margin-left:8px;">00:00</div>
         </div>
 
@@ -6276,7 +6355,7 @@
       <!-- DELETE CURRENT VIEW -->
       <div class="b24t-section">
         <div class="b24t-section-label" style="color:#f87171;">Usuń wyświetlane wzmianki</div>
-        <div style="font-size:10px;color:#7878aa;margin-bottom:10px;line-height:1.5;">
+        <div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:10px;line-height:1.5;">
           Usuwa wzmianki aktualnie widoczne w panelu Brand24
           (aktywne filtry, zakres dat, tagi itd.).
           <strong style="color:#f87171;">Operacja nieodwracalna.</strong>
@@ -6295,7 +6374,7 @@
         </div>
 
         <!-- Current view info -->
-        <div id="b24t-delview-info" style="font-size:10px;color:#7878aa;margin-bottom:8px;background:#141419;border:1px solid #1e1e28;border-radius:6px;padding:8px 10px;line-height:1.6;">
+        <div id="b24t-delview-info" style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:8px;background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:8px 10px;line-height:1.6;">
           Wczytywanie widoku...
         </div>
 
@@ -6304,7 +6383,7 @@
           <div id="b24t-delview-progress" style="height:100%;background:#f87171;border-radius:99px;width:0%;transition:width 0.3s;"></div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-          <div id="b24t-delview-status" style="font-size:10px;color:#7878aa;min-height:14px;flex:1;"></div>
+          <div id="b24t-delview-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;flex:1;"></div>
           <div id="b24t-delview-timer" style="font-size:11px;color:#8888aa;font-family:'SF Mono',monospace;margin-left:8px;">00:00</div>
         </div>
 
@@ -6323,11 +6402,11 @@
     div.style.display = 'none';
     div.style.marginTop = '10px';
     div.innerHTML = `
-      <div style="height:1px;background:#1e1e28;margin-bottom:8px;"></div>
+      <div style="height:1px;background:var(--b24t-border);margin-bottom:8px;"></div>
       <div class="b24t-section-label" style="color:#f87171;margin-bottom:4px;">Auto-Delete po zakończeniu</div>
       <div class="b24t-checkbox-row" id="b24t-auto-delete-row">
         <input type="checkbox" id="b24t-auto-delete-cb">
-        <label for="b24t-auto-delete-cb" style="color:#9090aa;">
+        <label for="b24t-auto-delete-cb" style="color:var(--b24t-text-meta);">
           Po zakończeniu usuń wzmianki z tagiem:
           <select class="b24t-select-inline" id="b24t-auto-delete-tag">
             <option value="">— wybierz —</option>
@@ -6337,7 +6416,7 @@
       <div id="b24t-auto-delete-save-row" style="display:none;margin-top:6px;padding-left:20px;">
         <div class="b24t-checkbox-row">
           <input type="checkbox" id="b24t-auto-delete-save-cb">
-          <label for="b24t-auto-delete-save-cb" style="font-size:10px;color:#7878aa;">
+          <label for="b24t-auto-delete-save-cb" style="font-size:10px;color:var(--b24t-text-faint);">
             Zawsze włączaj na tym projekcie z tym tagiem
           </label>
         </div>
@@ -6694,13 +6773,13 @@ Tej operacji nie można cofnąć.`)) {
     div.innerHTML = `
       <div class="b24t-section">
         <div class="b24t-section-label">Quick Tag</div>
-        <div style="font-size:10px;color:#7878aa;margin-bottom:10px;line-height:1.5;">
+        <div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:10px;line-height:1.5;">
           Taguje wzmianki widoczne w aktualnym widoku Brand24
           (aktywne filtry, zakres dat, untagged itd.)
         </div>
 
         <!-- Current view info -->
-        <div id="b24t-qt-view-info" style="background:#141419;border:1px solid #1e1e28;border-radius:6px;padding:8px 10px;margin-bottom:10px;font-size:10px;color:#9090aa;line-height:1.6;">
+        <div id="b24t-qt-view-info" style="background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:8px 10px;margin-bottom:10px;font-size:10px;color:var(--b24t-text-meta);line-height:1.6;">
           Wczytywanie widoku...
         </div>
 
@@ -6730,7 +6809,7 @@ Tej operacji nie można cofnąć.`)) {
 
         <!-- Status + timer -->
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-          <div id="b24t-qt-status" class="b24t-qt-status" style="font-size:10px;color:#7878aa;min-height:14px;flex:1;"></div>
+          <div id="b24t-qt-status" class="b24t-qt-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;flex:1;"></div>
           <div id="b24t-qt-timer" style="font-size:11px;color:#8888aa;font-family:'SF Mono',monospace;margin-left:8px;">00:00</div>
         </div>
 

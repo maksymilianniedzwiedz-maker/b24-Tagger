@@ -38,7 +38,7 @@
     DELETE_AUTO:      'b24tagger_delete_auto',
     HISTORY:          'b24tagger_history',
   };
-  const MAX_BATCH_SIZE = 200;
+  const MAX_BATCH_SIZE = 500;
   const HEALTH_CHECK_INTERVAL = 30000;
   const ACTION_TIMEOUT_WARN = 10000;
   const RETRY_DELAYS = [2000, 4000, 8000];

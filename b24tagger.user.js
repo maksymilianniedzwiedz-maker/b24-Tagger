@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.5.3
+// @version      0.5.4
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -12,6 +12,7 @@
 // @grant        unsafeWindow
 // @connect       hooks.slack.com
 // @connect       raw.githubusercontent.com
+// @connect       cdn.jsdelivr.net
 // @run-at       document-start
 // ==/UserScript==
 
@@ -22,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.5.3';
+  const VERSION = '0.5.4';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2330,17 +2331,50 @@
   }
 
   async function parseXLSXFile(file) {
-    // Load SheetJS from CDN dynamically
+    // Jeśli SheetJS jest już załadowany — użyj od razu
+    if (window.XLSX) {
+      return new Promise((resolve, reject) => readWithSheetJS(file, resolve, reject));
+    }
+
+    // Załaduj SheetJS przez GM_xmlhttpRequest (omija CSP Brand24)
+    // a następnie eval w unsafeWindow scope
     return new Promise((resolve, reject) => {
-      if (window.XLSX) {
-        readWithSheetJS(file, resolve, reject);
+      if (typeof GM_xmlhttpRequest === 'undefined') {
+        // Fallback: dynamiczny script tag (może być zablokowany przez CSP)
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+        script.onload = function() {
+          if (window.XLSX) readWithSheetJS(file, resolve, reject);
+          else reject(new Error('SheetJS załadowany ale XLSX undefined — odśwież stronę'));
+        };
+        script.onerror = function() { reject(new Error('Nie można załadować parsera XLSX. Sprawdź połączenie.')); };
+        document.head.appendChild(script);
         return;
       }
-      const script = document.createElement('script');
-      script.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
-      script.onload = () => readWithSheetJS(file, resolve, reject);
-      script.onerror = () => reject(new Error('Nie można załadować parsera XLSX. Sprawdź połączenie.'));
-      document.head.appendChild(script);
+
+      // GM_xmlhttpRequest pobiera skrypt poza CSP
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+        onload: function(r) {
+          if (r.status !== 200) {
+            reject(new Error('Błąd pobierania SheetJS: ' + r.status));
+            return;
+          }
+          try {
+            // Uruchom kod SheetJS w kontekście unsafeWindow
+            const _win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+            const fn = new Function('window', r.responseText + '; return window.XLSX;');
+            const XLSX = fn(_win);
+            if (!_win.XLSX && XLSX) _win.XLSX = XLSX;
+            if (!_win.XLSX) throw new Error('XLSX nie zostało zdefiniowane po eval');
+            readWithSheetJS(file, resolve, reject);
+          } catch(e) {
+            reject(new Error('Błąd inicjalizacji SheetJS: ' + e.message));
+          }
+        },
+        onerror: function() { reject(new Error('Nie można pobrać parsera XLSX. Sprawdź połączenie.')); }
+      });
     });
   }
 
@@ -3507,6 +3541,15 @@
 
   const CHANGELOG = [
     {
+      version: '0.5.4',
+      date: '2026-03-27',
+      label: 'Bugfix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Naprawiono wczytywanie plików XLSX — błąd "Cannot read properties of undefined"' },
+      ]
+    },
+    {
       version: '0.5.3',
       date: '2026-03-27',
       label: 'Bezpieczeństwo',
@@ -4305,6 +4348,16 @@
   // ─────────────────────────────────────────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.5.4',
+      date: '2026-03-27',
+      notes: [
+        'Root cause: CSP Brand24 blokował dynamiczne ładowanie SheetJS przez script tag z cdn.jsdelivr.net',
+        'Fix: GM_xmlhttpRequest pobiera SheetJS poza CSP, następnie eval przez new Function w unsafeWindow scope',
+        'Dodano @connect cdn.jsdelivr.net do nagłówka',
+        'Fallback na script tag zachowany dla środowisk bez GM_xmlhttpRequest',
+      ]
+    },
     {
       version: '0.5.3',
       date: '2026-03-27',

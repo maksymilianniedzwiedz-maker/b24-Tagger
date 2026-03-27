@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.5.10
+// @version      0.5.11
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.5.10';
+  const VERSION = '0.5.11';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -41,7 +41,7 @@
   const MAX_BATCH_SIZE = 500;
   const HEALTH_CHECK_INTERVAL = 30000;
   const ACTION_TIMEOUT_WARN = 10000;
-  const RETRY_DELAYS = [2000, 4000, 8000];
+  const RETRY_DELAYS = [2000, 4000, 8000, 12000, 20000]; // 5 prób — Brand24 API czasem losowo failuje
 
   // ─────────────────────────────────────────────────────────────────────────────
   // STATE
@@ -244,7 +244,7 @@
       bulkTagMentions(mentionsIds: $mentionsIds, tagId: $tagId) {
         ... on UserError { message }
       }
-    }`);
+    }`, 5); // 5 retry — Brand24 Internal server error jest losowy
     if (data.bulkTagMentions?.message) throw new Error(data.bulkTagMentions.message);
     return { success: true };
   }
@@ -3583,6 +3583,16 @@
   // ─────────────────────────────────────────────────────────────────────────────
 
   const CHANGELOG = [
+    {
+      version: '0.5.11',
+      date: '2026-03-27',
+      label: 'Stabilność',
+      labelColor: '#facc15',
+      changes: [
+        { type: 'fix', text: 'Zwiększono retry dla bulkTagMentions do 5 prób — Brand24 API losowo failuje z Internal server error' },
+        { type: 'fix', text: 'Opóźnienia retry wydłużone: 2s, 4s, 8s, 12s, 20s' },
+      ]
+    },
     {
       version: '0.5.10',
       date: '2026-03-27',

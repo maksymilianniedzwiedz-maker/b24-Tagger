@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.8.0
+// @version      0.9.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
 // @match        https://panel.brand24.pl/*
 // @updateURL    https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/b24tagger.user.js
-// @downloadURL   https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/b24tagger.user.js
+// @downloadURL  https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/b24tagger.user.js
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
 // @connect       hooks.slack.com
@@ -19,11 +19,11 @@
 (function () {
   'use strict';
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // CONSTANTS & CONFIG
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
-  const VERSION = '0.8.0';
+  const VERSION = '0.9.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -46,17 +46,15 @@
   const ACTION_TIMEOUT_WARN = 10000;
   const RETRY_DELAYS = [2000, 4000, 8000, 12000, 20000]; // 5 prób — Brand24 API czasem losowo failuje
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // STATE
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   const state = {
     status: 'idle',          // idle | running | paused | error | done
     lastMentionsVars: null,  // last organic getMentions variables from Brand24
     matchPreview: null,      // match preview result
-    columnOverride: null,    // manual column mapping
     soundEnabled: false,     // play sound on done
-    auditMode: false,        // audit compare mode
     tokenHeaders: null,
     projectId: null,
     projectName: null,
@@ -83,9 +81,9 @@
     partitionLimit: 1000,
   };
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // LOCAL STORAGE HELPERS
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   const lsGet = (key, fallback = null) => {
     try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
@@ -95,17 +93,23 @@
     try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
   };
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // URL NORMALIZATION
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
+
+  // Pre-compiled regexes for normalizeUrl (perf: called thousands of times per session)
+  const _RX_PROTO  = /^https?:\/\/(www\.)?/;
+  const _RX_TWIT   = /twitter\.com/;
+  const _RX_STATUS = /\/status\//;
+  const _RX_TRAIL  = /\/$/;
 
   function normalizeUrl(url) {
     if (!url) return '';
     return url
-      .replace(/^https?:\/\/(www\.)?/, '')
-      .replace(/twitter\.com/, 'x.com')
-      .replace(/\/status\//, '/statuses/')
-      .replace(/\/$/, '')
+      .replace(_RX_PROTO,  '')
+      .replace(_RX_TWIT,   'x.com')
+      .replace(_RX_STATUS, '/statuses/')
+      .replace(_RX_TRAIL,  '')
       .toLowerCase()
       .trim();
   }
@@ -123,9 +127,9 @@
     return false;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // TOKEN CAPTURE
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   // Use unsafeWindow to access the real page fetch (not TM sandbox copy)
   const _win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
@@ -151,9 +155,9 @@
     return res;
   };
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // GRAPHQL HELPERS
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   async function gql(operationName, variables, query) {
     if (!state.tokenHeaders) throw new Error('TOKEN_NOT_READY');
@@ -184,9 +188,9 @@
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // API OPERATIONS
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   async function getTags() {
     const data = await gqlRetry('getTags', {}, `query getTags {
@@ -301,9 +305,9 @@
     return data.getMentions;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // FILE PARSING
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function parseCSV(text) {
     const lines = text.trim().split('\n');
@@ -322,23 +326,6 @@
   function parseJSON(text) {
     const data = JSON.parse(text);
     return Array.isArray(data) ? data : [data];
-  }
-
-  async function parseXLSX(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const data = new Uint8Array(e.target.result);
-          // Simple XLSX parser using SheetJS-like approach
-          // Since we can't import SheetJS in Tampermonkey easily,
-          // we'll read the file as text and parse CSV-style
-          // For now, signal that XLSX needs conversion
-          resolve({ needsXLSX: true, data });
-        } catch (err) { reject(err); }
-      };
-      reader.readAsArrayBuffer(file);
-    });
   }
 
   function autoDetectColumns(rows) {
@@ -433,14 +420,9 @@
     return { assessments, noAssessment, minDate, maxDate, totalRows: rows.length };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // URL MAP BUILDING
-  // ─────────────────────────────────────────────────────────────────────────────
-
-  // Fetch a single page with full getMentions query
-  async function fetchMentionsPage(projectId, dateFrom, dateTo, gr, page) {
-    return getMentions(projectId, dateFrom, dateTo, gr, page);
-  }
+  // ───────────────────────────────────────────
 
   async function buildUrlMap(dateFrom, dateTo, untaggedOnly) {
     const gr = untaggedOnly ? [state.untaggedId] : [];
@@ -451,7 +433,7 @@
     addLog(`→ Budowanie mapy URL (${untaggedOnly ? 'Untagged' : 'pełny zakres'}) [${CONCURRENCY}x równolegle]`, 'info');
 
     // Step 1: fetch page 1 to get total count and pageSize
-    const first = await fetchMentionsPage(state.projectId, dateFrom, dateTo, gr, 1);
+    const first = await getMentions(state.projectId, dateFrom, dateTo, gr, 1);
     if (!state.pageSize && first.results.length > 0) state.pageSize = first.results.length;
     const pageSize = state.pageSize || 60;
     const totalPages = Math.ceil(first.count / pageSize);
@@ -475,7 +457,7 @@
       if (state.status !== 'running') break;
       const batch = remaining.slice(i, i + CONCURRENCY);
       const results = await Promise.all(
-        batch.map(p => fetchMentionsPage(state.projectId, dateFrom, dateTo, gr, p))
+        batch.map(p => getMentions(state.projectId, dateFrom, dateTo, gr, p))
       );
       results.forEach(result => {
         result.results.forEach(m => {
@@ -494,9 +476,9 @@
   }
 
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // MAIN TAGGING FLOW
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   async function runTagging(partition) {
     const { dateFrom, dateTo, rows } = partition;
@@ -628,9 +610,9 @@
     addLog(`✓ Partycja zakończona: ${state.stats.tagged} otagowane, ${state.stats.skipped} pominięte`, 'success');
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // PARTITION MANAGEMENT
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function buildPartitions(rows, colMap, partitionLimit) {
     if (rows.length <= partitionLimit) {
@@ -673,9 +655,9 @@
     return partitions;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // MAIN RUN LOOP
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   async function startRun() {
     if (!state.file || !Object.keys(state.mapping).length) {
@@ -767,16 +749,14 @@
 
       saveSessionToHistory();
       if (state.soundEnabled) playDoneSound();
-      saveSessionToHistory();
-      if (state.soundEnabled) playDoneSound();
       showFinalReport();
       clearCheckpoint();
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // NAVIGATION HELPERS
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function getProjectId() {
     const match = window.location.pathname.match(/\/panel\/results\/(\d+)/);
@@ -806,9 +786,9 @@
     if (untaggedChip) untaggedChip.click();
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // CHECKPOINT & CRASH LOG
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function saveCheckpoint() {
     const jobs = lsGet(LS.JOBS, {});
@@ -924,9 +904,9 @@
     showCrashBanner(crash);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // HEALTH CHECK
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   let healthCheckTimer = null;
 
@@ -947,9 +927,9 @@
     if (healthCheckTimer) { clearInterval(healthCheckTimer); healthCheckTimer = null; }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // SESSION TIMER
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   let sessionTimerInterval = null;
 
@@ -981,9 +961,9 @@
     }, 1000);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // LOGGING
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function addLog(message, type = 'info', extra = null) {
     const now = new Date();
@@ -1048,9 +1028,9 @@
     };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // UI HELPERS
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -1276,9 +1256,9 @@
     });
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // EXPORT
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function exportReport() {
     const rows = [['czas', 'typ', 'wiadomość']];
@@ -1303,9 +1283,9 @@
     a.click(); URL.revokeObjectURL(url);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // DEBUG BRIDGE
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   _win.B24Tagger = window.B24Tagger = {
     state,
@@ -1340,9 +1320,9 @@
     },
   };
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // UI - STYLES
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function injectStyles() {
     // Wczytaj Inter z Google Fonts (jeśli jeszcze nie ma)
@@ -1988,9 +1968,9 @@
     document.head.appendChild(style);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // UI - HTML
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function buildPanel() {
     const panel = document.createElement('div');
@@ -2084,17 +2064,6 @@
           </div>
         </div>
 
-        <!-- FILE VALIDATION -->
-        <div id="b24t-file-validation" style="display:none;margin-top:8px;background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:8px 10px;"></div>
-
-        <!-- COLUMN OVERRIDE -->
-        <div id="b24t-column-override-section" style="display:none;margin-top:8px;">
-          <button id="b24t-col-override-toggle" style="font-size:10px;color:var(--b24t-text-faint);background:none;border:none;cursor:pointer;padding:0;">&#9881; Zmien wykryte kolumny &#9660;</button>
-          <div id="b24t-column-override" style="display:none;margin-top:6px;background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:8px 10px;"></div>
-        </div>
-
-        <!-- MATCH PREVIEW -->
-        <div id="b24t-match-preview" style="display:none;margin-top:8px;background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:10px;"></div>
 
         <!-- FILE VALIDATION -->
         <div id="b24t-file-validation" style="display:none;margin-top:8px;background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:8px 10px;"></div>
@@ -2225,9 +2194,6 @@
       <!-- HISTORY TAB (injected by JS) -->
       <div id="b24t-history-tab-placeholder"></div>
 
-      <!-- HISTORY TAB (injected by JS) -->
-      <div id="b24t-history-tab-placeholder"></div>
-
       <!-- Annotator Tools: floating panel, no inline tabs -->
       <!-- Annotator Tools: moved to floating panel -->
 
@@ -2256,14 +2222,14 @@
     return panel;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // UI - DRAGGING & COLLAPSING
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // RESIZE — Windows-style resize dla obu paneli
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   const RESIZE_HANDLE_SIZE = 8; // px strefa klikania krawędzi
 
@@ -2468,9 +2434,9 @@
     });
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // UI - EVENT WIRING
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function wireEvents(panel) {
     // File upload
@@ -2537,22 +2503,6 @@
       if (!Object.keys(state.mapping).length) { addLog('Skonfiguruj mapowanie przed Audit Mode.', 'warn'); return; }
       if (state.status === 'running') { addLog('Sesja jest juz uruchomiona.', 'warn'); return; }
       await runAuditMode();
-    });
-
-    // Column override toggle
-    panel.querySelector('#b24t-col-override-toggle')?.addEventListener('click', () => {
-      const box = document.getElementById('b24t-column-override');
-      const btn = document.getElementById('b24t-col-override-toggle');
-      if (!box || !btn) return;
-      const show = box.style.display === 'none';
-      box.style.display = show ? 'block' : 'none';
-      btn.innerHTML = (show ? '&#9881; Zmien wykryte kolumny &#9650;' : '&#9881; Zmien wykryte kolumny &#9660;');
-      if (show && state.file && state.file.rows) buildColumnOverrideUI(state.file.rows);
-    });
-
-    // Sound checkbox
-    panel.querySelector('#b24t-sound-cb')?.addEventListener('change', (e) => {
-      state.soundEnabled = e.target.checked;
     });
 
     // Column override toggle
@@ -2707,9 +2657,9 @@
     });
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // FILE HANDLING
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   async function handleFileUpload(file) {
     if (!file) return;
@@ -2880,9 +2830,9 @@
     reader.readAsArrayBuffer(file);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // SCHEMA MANAGEMENT
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function findMatchingSchema(labels) {
     const schemas = lsGet(LS.SCHEMAS, {});
@@ -2905,9 +2855,9 @@
     lsSet(LS.SCHEMAS, schemas);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // MAPPING UI
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function renderMappingRows(assessments, savedSchema) {
     const container = document.getElementById('b24t-mapping-rows');
@@ -3002,9 +2952,9 @@
     updateTagCountsInMapping();
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // INIT RUN
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   async function initRun() {
     if (!state.file) { showError('Najpierw wgraj plik z wzmiankami.'); return; }
@@ -3047,9 +2997,9 @@
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // PROJECT DETECTION
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   async function detectProject() {
     const projectId = getProjectId();
@@ -3065,7 +3015,6 @@
     // Jeśli tytuł był fallbackiem — obserwuj zmiany tytułu przez MutationObserver
     if (isFallbackTitle) {
       let retryCount = 0;
-      const titleEl = document.querySelector('title');
       const updateName = function() {
         const t = document.title.split(' - ')[0].trim();
         if (t && t !== 'Brand24' && t !== 'Panel Brand24' && t.length >= 3) {
@@ -3134,9 +3083,9 @@
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // HELP / TUTORIAL
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ONBOARDING v2 — Dynamiczny tour z dymkami
@@ -3939,39 +3888,8 @@ function hideHelpTip() {
 }
 
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // F1 - MATCH PREVIEW
-  // ─────────────────────────────────────────────────────────────────────────────
-
-  async function runMatchPreview() {
-    if (!state.file || !state.projectId || !state.tokenHeaders) return null;
-    const dateFrom = state.file.meta.minDate;
-    const dateTo   = state.file.meta.maxDate;
-    if (!dateFrom || !dateTo) return null;
-
-    addLog('→ Match Preview: buduję mapę...', 'info');
-    const map = await buildUrlMap(dateFrom, dateTo, state.mapMode === 'untagged');
-
-    const colMap = state.file.colMap;
-    let matched = 0, unmatched = 0, noAssessment = 0;
-    const unmatchedList = [];
-
-    state.file.rows.forEach(row => {
-      const assessment = colMap.assessment ? (row[colMap.assessment] || '').trim() : '';
-      if (!assessment) { noAssessment++; return; }
-      const urlRaw = colMap.url ? (row[colMap.url] || '') : '';
-      if (!urlRaw) { unmatched++; return; }
-      if (map[normalizeUrl(urlRaw)]) { matched++; }
-      else { unmatched++; if (unmatchedList.length < 50) unmatchedList.push(urlRaw); }
-    });
-
-    state.matchPreview = {
-      matched, unmatched, noAssessment, unmatchedList,
-      total: state.file.rows.length,
-      pct: Math.round(matched / Math.max(1, matched + unmatched) * 100),
-    };
-    return state.matchPreview;
-  }
 
   function renderMatchPreview(preview) {
     const el = document.getElementById('b24t-match-preview');
@@ -4007,9 +3925,9 @@ function hideHelpTip() {
     });
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // F2 - MANUAL COLUMN MAPPING
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function buildColumnOverrideUI(rows) {
     if (!rows || !rows.length) return;
@@ -4046,7 +3964,6 @@ function hideHelpTip() {
     el.querySelectorAll('.b24t-col-sel').forEach(function(sel) {
       if (sel.value) newMap[sel.dataset.role] = sel.value;
     });
-    state.columnOverride = newMap;
     if (state.file) {
       state.file.colMap = Object.assign({}, state.file.colMap, newMap);
       state.file.meta = processFileData(rows, state.file.colMap);
@@ -4065,9 +3982,9 @@ function hideHelpTip() {
     if (prevEl) prevEl.style.display = 'none';
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // F4 - SESSION HISTORY
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function saveSessionToHistory() {
     if (!state.projectId || !state.stats) return;
@@ -4144,9 +4061,9 @@ function hideHelpTip() {
     }).observe(tab, { attributes: true, attributeFilter: ['style'] });
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // F5 - FILE VALIDATION
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function validateFile(rows, colMap) {
     const warnings = [];
@@ -4190,9 +4107,9 @@ function hideHelpTip() {
     }).join('');
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // F6 - AUDIT MODE
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   async function runAuditMode() {
     if (!state.file || !state.projectId) return;
@@ -4269,9 +4186,9 @@ function hideHelpTip() {
       '</div>';
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // F9 - SOUND NOTIFICATION
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function playDoneSound() {
     try {
@@ -4290,9 +4207,9 @@ function hideHelpTip() {
     } catch(e) {}
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // F11 - TAG COUNTS IN MAPPING
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function updateTagCountsInMapping() {
     if (!state.file || !state.file.meta || !state.file.meta.assessments) return;
@@ -4321,9 +4238,9 @@ function hideHelpTip() {
   }
 
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // FEATURE: MATCH PREVIEW
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   async function runMatchPreview() {
     if (!state.file || !state.projectId || !state.tokenHeaders) return null;
@@ -4352,339 +4269,47 @@ function hideHelpTip() {
     return state.matchPreview;
   }
 
-  function renderMatchPreview(preview) {
-    const el = document.getElementById('b24t-match-preview');
-    if (!el) return;
-    const color = preview.pct >= 80 ? '#4ade80' : preview.pct >= 50 ? '#facc15' : '#f87171';
-    el.style.display = 'block';
-    el.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">' +
-      '<span style="font-size:11px;color:var(--b24t-text);font-weight:600;">Match Preview</span>' +
-      '<span style="font-size:14px;font-weight:700;color:' + color + ';">' + preview.pct + '%</span></div>' +
-      '<div style="display:flex;gap:10px;font-size:10px;margin-bottom:6px;">' +
-      '<span style="color:#4ade80;">&#10003; ' + preview.matched + ' matched</span>' +
-      '<span style="color:#f87171;">&#10007; ' + preview.unmatched + ' brak</span>' +
-      (preview.noAssessment ? '<span style="color:var(--b24t-text-faint);">~ ' + preview.noAssessment + ' bez labelki</span>' : '') + '</div>' +
-      '<div style="height:4px;background:var(--b24t-bg-input);border-radius:99px;overflow:hidden;margin-bottom:6px;">' +
-      '<div style="height:100%;width:' + preview.pct + '%;background:' + color + ';border-radius:99px;"></div></div>' +
-      (preview.unmatched > 0
-        ? '<div id="b24t-preview-list-toggle" style="font-size:10px;color:var(--b24t-text-faint);cursor:pointer;">Pokaż niezmatched (' + Math.min(preview.unmatched, 50) + ') &#9660;</div>' +
-          '<div id="b24t-preview-list" style="display:none;max-height:80px;overflow-y:auto;margin-top:4px;font-size:9px;color:var(--b24t-text-faint);line-height:1.6;">' +
-          preview.unmatchedList.map(function(u){ return '<div>' + u.substring(0, 60) + '</div>'; }).join('') +
-          (preview.unmatched > 50 ? '<div>...i ' + (preview.unmatched - 50) + ' wiecej</div>' : '') + '</div>'
-        : '');
-    var btn = document.getElementById('b24t-preview-list-toggle');
-    if (btn) btn.addEventListener('click', function() {
-      var list = document.getElementById('b24t-preview-list');
-      var show = list.style.display === 'none';
-      list.style.display = show ? 'block' : 'none';
-      btn.innerHTML = 'Pokaz niezmatched (' + Math.min(preview.unmatched, 50) + ') ' + (show ? '&#9650;' : '&#9660;');
-    });
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // FEATURE: MANUAL COLUMN MAPPING
-  // ─────────────────────────────────────────────────────────────────────────────
 
-  function buildColumnOverrideUI(rows) {
-    if (!rows || !rows.length) return;
-    const headers = Object.keys(rows[0]);
-    const el = document.getElementById('b24t-column-override');
-    if (!el) return;
-    const roles = [
-      { key: 'url', label: 'URL' },
-      { key: 'assessment', label: 'Labelka (assessment)' },
-      { key: 'date', label: 'Data' },
-      { key: 'text', label: 'Tresc (opcjonalnie)' },
-    ];
-    const detected = state.file ? state.file.colMap : {};
-    var html = '<div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:6px;">Kolumny wykryte automatycznie. Zmien jesli cos sie pomylilo:</div>';
-    roles.forEach(function(r) {
-      html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' +
-        '<span style="font-size:10px;color:var(--b24t-text);width:130px;flex-shrink:0;">' + r.label + ':</span>' +
-        '<select class="b24t-select b24t-col-sel" data-role="' + r.key + '" style="flex:1;">' +
-        '<option value="">-- brak --</option>' +
-        headers.map(function(h) { return '<option value="' + h + '"' + (detected[r.key] === h ? ' selected' : '') + '>' + h + '</option>'; }).join('') +
-        '</select></div>';
-    });
-    html += '<div id="b24t-col-sample" style="font-size:9px;color:var(--b24t-text-faint);margin-top:4px;"></div>';
-    el.innerHTML = html;
-    el.querySelectorAll('.b24t-col-sel').forEach(function(sel) {
-      sel.addEventListener('change', function() { applyColumnOverride(el, rows); });
-    });
-    applyColumnOverride(el, rows);
-  }
-
-  function applyColumnOverride(el, rows) {
-    var newMap = {};
-    el.querySelectorAll('.b24t-col-sel').forEach(function(sel) {
-      if (sel.value) newMap[sel.dataset.role] = sel.value;
-    });
-    state.columnOverride = newMap;
-    if (state.file) {
-      state.file.colMap = Object.assign({}, state.file.colMap, newMap);
-      state.file.meta = processFileData(rows, state.file.colMap);
-    }
-    var preview = el.querySelector('#b24t-col-sample');
-    if (preview && rows[0]) {
-      var parts = [];
-      if (newMap.url) parts.push('URL: "' + (rows[0][newMap.url] || '').substring(0, 40) + '"');
-      if (newMap.assessment) parts.push('Label: "' + (rows[0][newMap.assessment] || '') + '"');
-      preview.textContent = parts.join(' | ');
-    }
-    state.matchPreview = null;
-    var prevEl = document.getElementById('b24t-match-preview');
-    if (prevEl) prevEl.style.display = 'none';
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // FEATURE: SESSION HISTORY
-  // ─────────────────────────────────────────────────────────────────────────────
 
-  function saveSessionToHistory() {
-    if (!state.projectId || !state.stats) return;
-    var history = lsGet(LS.HISTORY, []);
-    history.unshift({
-      date: new Date().toLocaleString('pl-PL'),
-      projectName: state.projectName || String(state.projectId),
-      projectId: state.projectId,
-      tagged: state.stats.tagged,
-      skipped: state.stats.skipped,
-      noMatch: state.stats.noMatch,
-      deleted: state.stats.deleted || 0,
-      fileName: state.file ? state.file.name : '--',
-      durationSec: state.sessionStart ? Math.floor((Date.now() - state.sessionStart) / 1000) : 0,
-      mode: state.testRunMode ? 'Test Run' : 'Wlasciwy',
-    });
-    lsSet(LS.HISTORY, history.slice(0, 20));
-  }
-
-  function buildHistoryTab() {
-    var div = document.createElement('div');
-    div.id = 'b24t-history-tab';
-    div.style.display = 'none';
-    div.innerHTML = '<div class="b24t-section">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
-      '<div class="b24t-section-label">Historia sesji</div>' +
-      '<button id="b24t-history-clear" style="font-size:9px;color:var(--b24t-text-faint);background:none;border:none;cursor:pointer;">wyczysc</button></div>' +
-      '<div id="b24t-history-list"></div></div>';
-    return div;
-  }
-
-  function renderHistoryTab() {
-    var list = document.getElementById('b24t-history-list');
-    if (!list) return;
-    var history = lsGet(LS.HISTORY, []);
-    if (!history.length) {
-      list.innerHTML = '<div style="font-size:11px;color:var(--b24t-text-faint);text-align:center;padding:16px 0;">Brak historii sesji</div>';
-      return;
-    }
-    list.innerHTML = history.map(function(s) {
-      var dur = Math.floor(s.durationSec / 60) + 'm ' + (s.durationSec % 60) + 's';
-      return '<div style="background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:8px 10px;margin-bottom:6px;">' +
-        '<div style="display:flex;justify-content:space-between;margin-bottom:4px;">' +
-        '<span style="font-size:11px;color:var(--b24t-text);font-weight:600;">' + s.projectName + '</span>' +
-        '<span style="font-size:9px;color:var(--b24t-text-faint);">' + s.date + '</span></div>' +
-        '<div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:3px;">&#128196; ' + s.fileName + '</div>' +
-        '<div style="display:flex;gap:10px;font-size:10px;">' +
-        '<span style="color:#4ade80;">&#10003; ' + s.tagged + ' otagowano</span>' +
-        '<span style="color:#facc15;">&#9888; ' + s.skipped + ' pominieto</span>' +
-        (s.noMatch ? '<span style="color:#f87171;">&#10007; ' + s.noMatch + ' brak matcha</span>' : '') +
-        (s.deleted ? '<span style="color:#f87171;">&#128465; ' + s.deleted + ' usunieto</span>' : '') + '</div>' +
-        '<div style="font-size:9px;color:var(--b24t-text-faint);margin-top:3px;">' + s.mode + ' &middot; ' + dur + '</div></div>';
-    }).join('');
-  }
-
-  function wireHistoryTab() {
-    var clearBtn = document.getElementById('b24t-history-clear');
-    if (clearBtn) clearBtn.addEventListener('click', function() {
-      if (confirm('Wyczysc historie sesji?')) { lsSet(LS.HISTORY, []); renderHistoryTab(); }
-    });
-    var tab = document.getElementById('b24t-history-tab');
-    if (tab) new MutationObserver(function() {
-      if (tab.style.display !== 'none') renderHistoryTab();
-    }).observe(tab, { attributes: true, attributeFilter: ['style'] });
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // FEATURE: FILE VALIDATION
-  // ─────────────────────────────────────────────────────────────────────────────
 
-  function validateFile(rows, colMap) {
-    var warnings = [];
-    var urlSet = new Set();
-    var dupUrls = 0, noUrl = 0, noAssessment = 0, badUrl = 0;
-    rows.forEach(function(row) {
-      var url = colMap.url ? (row[colMap.url] || '').trim() : '';
-      var assessment = colMap.assessment ? (row[colMap.assessment] || '').trim() : '';
-      if (!url) { noUrl++; }
-      else if (!/^https?:\/\//.test(url)) { badUrl++; }
-      else if (urlSet.has(url)) { dupUrls++; }
-      else { urlSet.add(url); }
-      if (!assessment) noAssessment++;
-    });
-    if (dupUrls > 0) warnings.push({ type: 'warn', msg: dupUrls + ' zduplikowanych URLi - te wzmianki moga byc otagowane podwojnie' });
-    if (noUrl > 0) warnings.push({ type: 'warn', msg: noUrl + ' wierszy bez URL - zostana pominiete' });
-    if (badUrl > 0) warnings.push({ type: 'warn', msg: badUrl + ' URLi bez http/https' });
-    if (noAssessment > 0) warnings.push({ type: 'info', msg: noAssessment + ' wierszy bez labelki - zostana pominiete' });
-    if (rows.length > 5000) warnings.push({ type: 'warn', msg: 'Duzy plik: ' + rows.length + ' wierszy. Operacja moze trwac kilkadziesiat sekund.' });
-    if (colMap.date) {
-      var dates = rows.map(function(r) { return (r[colMap.date] || '').substring(0, 10); })
-                      .filter(function(d) { return /^\d{4}-\d{2}-\d{2}$/.test(d); });
-      if (dates.length) {
-        var minD = dates.reduce(function(a,b){ return a < b ? a : b; });
-        var maxD = dates.reduce(function(a,b){ return a > b ? a : b; });
-        var days = Math.round((new Date(maxD) - new Date(minD)) / 86400000);
-        if (days > 90) warnings.push({ type: 'warn', msg: 'Szeroki zakres dat: ' + days + ' dni (' + minD + ' do ' + maxD + '). Rozwaz podzial na mniejsze pliki.' });
-      }
-    }
-    return warnings;
-  }
-
-  function renderFileValidation(warnings) {
-    var el = document.getElementById('b24t-file-validation');
-    if (!el) return;
-    if (!warnings.length) { el.style.display = 'none'; return; }
-    el.style.display = 'block';
-    el.innerHTML = warnings.map(function(w) {
-      return '<div style="display:flex;gap:6px;padding:4px 0;border-bottom:1px solid var(--b24t-border-sub);">' +
-        '<span style="flex-shrink:0;' + (w.type === 'warn' ? 'color:#facc15;' : 'color:var(--b24t-text-faint);') + '">' + (w.type === 'warn' ? '&#9888;' : 'i') + '</span>' +
-        '<span style="font-size:10px;color:#9090bb;">' + w.msg + '</span></div>';
-    }).join('');
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // FEATURE: AUDIT MODE
-  // ─────────────────────────────────────────────────────────────────────────────
 
-  async function runAuditMode() {
-    if (!state.file || !state.projectId) return;
-    state.status = 'running';
-    state.sessionStart = Date.now();
-    updateStatusUI();
-    startSessionTimer();
-    addLog('Audit Mode - porownuje plik z Brand24...', 'info');
-    var dateFrom = state.file.meta.minDate;
-    var dateTo   = state.file.meta.maxDate;
-    var colMap   = state.file.colMap;
-    var map = await buildUrlMap(dateFrom, dateTo, false);
-    var result = { alreadyTagged: [], untagged: [], taggedWrong: [], notFound: [], notInFile: 0 };
-    var fileUrls = new Set(state.file.rows.map(function(r) {
-      return normalizeUrl(colMap.url ? (r[colMap.url] || '') : '');
-    }).filter(Boolean));
-    result.notInFile = Object.keys(map).filter(function(k) { return !fileUrls.has(k); }).length;
-    state.file.rows.forEach(function(row) {
-      var assessment = (colMap.assessment ? (row[colMap.assessment] || '') : '').trim().toUpperCase();
-      if (!assessment) return;
-      var urlRaw = colMap.url ? (row[colMap.url] || '') : '';
-      if (!urlRaw) return;
-      var entry = map[normalizeUrl(urlRaw)];
-      var expectedMapping = state.mapping[assessment];
-      if (!entry) { result.notFound.push(urlRaw); return; }
-      var tags = (entry.existingTags || []).map(function(t) { return t.id; });
-      if (tags.length === 0) {
-        result.untagged.push({ url: urlRaw, expected: expectedMapping ? expectedMapping.tagName : assessment });
-      } else if (expectedMapping && tags.includes(expectedMapping.tagId)) {
-        result.alreadyTagged.push(urlRaw);
-      } else {
-        result.taggedWrong.push({ url: urlRaw,
-          expected: expectedMapping ? expectedMapping.tagName : assessment,
-          actual: (entry.existingTags || []).map(function(t) { return t.title; }).join(', ') });
-      }
-    });
-    state.status = 'done';
-    updateStatusUI();
-    showAuditReport(result);
-    addLog('Audit: ' + result.alreadyTagged.length + ' OK, ' + result.untagged.length + ' nieztagowane, ' + result.taggedWrong.length + ' zle tagi, ' + result.notFound.length + ' nie znaleziono', 'success');
-    saveSessionToHistory();
-  }
-
-  function showAuditReport(result) {
-    var modal = document.getElementById('b24t-report-modal');
-    if (!modal) return;
-    modal.style.display = 'flex';
-    var content = modal.querySelector('.b24t-report-content');
-    if (!content) return;
-    var wrongHtml = '';
-    if (result.taggedWrong.length > 0) {
-      wrongHtml = '<div style="margin-top:12px;font-size:10px;color:var(--b24t-text-faint);">Bledne tagi (pierwsze 5):</div>' +
-        result.taggedWrong.slice(0, 5).map(function(e) {
-          return '<div style="font-size:9px;color:var(--b24t-text-faint);padding:3px 0;border-bottom:1px solid var(--b24t-border-sub);">' +
-            e.url.substring(0, 50) + '<br><span style="color:#f87171;">ma: ' + e.actual +
-            '</span> <span style="color:#4ade80;">powinien: ' + e.expected + '</span></div>';
-        }).join('');
-    }
-    content.innerHTML = '<h3 style="color:#6c6cff;font-size:14px;margin-bottom:16px;">Raport Audit Mode</h3>' +
-      '<div class="b24t-report-row"><span>Prawidlowo otagowane</span><strong style="color:#4ade80;">' + result.alreadyTagged.length + '</strong></div>' +
-      '<div class="b24t-report-row"><span>Nieztagowane (Untagged)</span><strong style="color:#facc15;">' + result.untagged.length + '</strong></div>' +
-      '<div class="b24t-report-row"><span>Bledny tag</span><strong style="color:#f87171;">' + result.taggedWrong.length + '</strong></div>' +
-      '<div class="b24t-report-row"><span>Nie znaleziono w Brand24</span><strong style="color:var(--b24t-text-faint);">' + result.notFound.length + '</strong></div>' +
-      '<div class="b24t-report-row"><span>W Brand24 ale nie w pliku</span><strong>' + result.notInFile + '</strong></div>' +
-      wrongHtml +
-      '<div style="display:flex;gap:6px;margin-top:16px;">' +
-      '<button onclick="document.getElementById(\'b24t-report-modal\').style.display=\'none\'" class="b24t-btn-secondary" style="flex:1;">Zamknij</button>' +
-      '<button onclick="window.B24Tagger.exportAuditReport()" class="b24t-btn-primary" style="flex:1;">Eksport CSV</button></div>';
-    window.B24Tagger._lastAuditResult = result;
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // FEATURE: SOUND NOTIFICATION
-  // ─────────────────────────────────────────────────────────────────────────────
 
-  function playDoneSound() {
-    try {
-      var ctx = new (window.AudioContext || window.webkitAudioContext)();
-      [523.25, 659.25, 783.99].forEach(function(freq, i) {
-        var osc = ctx.createOscillator();
-        var gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.frequency.value = freq;
-        osc.type = 'sine';
-        var start = ctx.currentTime + i * 0.12;
-        gain.gain.setValueAtTime(0, start);
-        gain.gain.linearRampToValueAtTime(0.18, start + 0.03);
-        gain.gain.exponentialRampToValueAtTime(0.001, start + 0.4);
-        osc.start(start);
-        osc.stop(start + 0.4);
-      });
-    } catch(e) {}
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // FEATURE: TAG COUNTS IN MAPPING
-  // ─────────────────────────────────────────────────────────────────────────────
-
-  function updateTagCountsInMapping() {
-    if (!state.file || !state.file.meta || !state.file.meta.assessments) return;
-    var container = document.getElementById('b24t-mapping-rows');
-    if (!container) return;
-    var tagBuckets = {};
-    Object.entries(state.mapping).forEach(function(entry) {
-      var label = entry[0], m = entry[1];
-      var count = state.file.meta.assessments[label] || 0;
-      tagBuckets[m.tagId] = (tagBuckets[m.tagId] || 0) + count;
-    });
-    container.querySelectorAll('.b24t-tag-select').forEach(function(sel) {
-      var label = sel.dataset.label;
-      var mapping = state.mapping[label ? label.toUpperCase() : ''];
-      if (!mapping) return;
-      var total = tagBuckets[mapping.tagId] || 0;
-      Array.from(sel.options).forEach(function(opt) {
-        if (parseInt(opt.value) === mapping.tagId) {
-          var base = opt.dataset.origText || opt.textContent.replace(/ \(\d+\)$/, '');
-          opt.dataset.origText = base;
-          opt.textContent = total > 0 ? base + ' (' + total + ')' : base;
-        }
-      });
-    });
-  }
 
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // CHANGELOG - historia wersji
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   const CHANGELOG = [
+    {
+      version: '0.9.0',
+      date: '2026-03-27',
+      label: 'Optymalizacja',
+      labelColor: '#facc15',
+      changes: [
+        { type: 'perf', text: 'Usunięto 15 zduplikowanych definicji funkcji (~378 linii)', priority: 'high' },
+        { type: 'fix',  text: 'Usunięto zduplikowane bloki HTML w buildPanel (file-validation, column-override, match-preview)', priority: 'high' },
+        { type: 'fix',  text: 'Usunięto podwójne wywołania saveSessionToHistory() i playDoneSound() w startRun', priority: 'high' },
+        { type: 'fix',  text: 'Usunięto martwą funkcję parseXLSX (zastąpiona przez parseXLSXFile)', priority: 'medium' },
+        { type: 'fix',  text: 'Usunięto zbędny wrapper fetchMentionsPage (bezpośrednie wywołania getMentions)', priority: 'medium' },
+        { type: 'perf', text: 'Pre-kompilacja regexów w normalizeUrl (wywoływana tysiące razy per sesja)', priority: 'medium' },
+        { type: 'perf', text: 'Cache referencji DOM w przełączniku zakładek (querySelector tylko raz)', priority: 'medium' },
+        { type: 'fix',  text: 'Usunięto martwe zmienne: state.auditMode, state.columnOverride, titleEl, prioColor', priority: 'low' },
+        { type: 'ui',   text: 'Skrócono separatory w kodzie (bez wpływu na działanie)', priority: 'low' },
+      ],
+    },
     {
       version: '0.8.0',
       date: '2026-03-27',
@@ -5109,20 +4734,20 @@ function hideHelpTip() {
   ];
 
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // WHAT'S NEW - modal i przycisk
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function showWhatsNew(forceShow) { showWhatsNewExtended(forceShow); }
 
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // FEEDBACK & PLANNED FEATURES
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // KONFIGURACJA — uzupełnij przed użyciem
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // Slack Webhook URL — jak go zdobyć: https://api.slack.com/apps → Incoming Webhooks
   const SLACK_WEBHOOK_URL = 'TWOJ_SLACK_WEBHOOK_URL';
   const RAW_URL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/b24tagger.user.js';
@@ -5394,7 +5019,6 @@ function hideHelpTip() {
 
     const typeIcon = { new: '✦', fix: '⚒', perf: '⚡', ui: '◈' };
     const typeColor = { new: '#6c6cff', fix: '#4ade80', perf: '#facc15', ui: '#b0b0cc' };
-    const prioColor = { ai: '#a78bfa', high: '#f87171', medium: '#facc15', low: '#7878aa' };
     const prioLabel = { ai: '🟣', high: '🔴', medium: '🟡', low: '🟢' };
 
     // Build changelog HTML
@@ -5658,9 +5282,9 @@ function hideHelpTip() {
   }
 
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // DEV_CHANGELOG - szczegółowe patch notes dla programistów (od v0.3.4)
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
     {
@@ -5982,9 +5606,9 @@ function hideHelpTip() {
   ];
 
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // AUTO UPDATE CHECK
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function compareVersions(a, b) {
     // Returns 1 if a > b, -1 if a < b, 0 if equal
@@ -6231,9 +5855,9 @@ function hideHelpTip() {
   }
 
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // TAG STATS — WSZYSTKIE PROJEKTY
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   // Pobiera z localStorage listę znanych projektów
   function getKnownProjects() {
@@ -6409,9 +6033,9 @@ function hideHelpTip() {
     renderTagStats(el, results, dateFrom, dateTo);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // DASHBOARD ANNOTATORA
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   // Pobiera statystyki dla bieżącego miesiąca (lub poprzedniego jeśli dzień 1-2)
   async function fetchDashboardStats() {
@@ -6572,9 +6196,9 @@ function hideHelpTip() {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // ANNOTATOR TOOLS — FLOATING PANEL
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   var annotatorDataLoaded = false;
   var annotatorData = { project: null, tagstats: null };
@@ -6874,9 +6498,9 @@ function hideHelpTip() {
     try { await loadAnnotatorTagStats(); } catch(e) {}
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // PARALLEL FETCH HELPER - used by all multi-page collection flows
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   const FETCH_CONCURRENCY = 10;
 
@@ -6904,46 +6528,8 @@ function hideHelpTip() {
     return allIds;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // DELETE MODE
-  // ─────────────────────────────────────────────────────────────────────────────
-
-  // One-time delete confirmation (never shown again after user confirms)
-  async function confirmDeleteWarning() {
-    if (lsGet(LS.DELETE_CONFIRMED)) return true;
-    return new Promise(resolve => {
-      const modal = document.createElement('div');
-      modal.className = 'b24t-modal-overlay';
-      modal.innerHTML = `
-        <div class="b24t-modal">
-          <div class="b24t-modal-title" style="color:#f87171;">⚠ Operacja nieodwracalna</div>
-          <div class="b24t-modal-text">
-            Usuwanie wzmianek przez wtyczkę jest <strong style="color:#f87171;">PERMANENTNE</strong>
-            i nie można go cofnąć.<br><br>
-            Wzmianki znikną z projektu na zawsze.
-            Upewnij się że wiesz co robisz.<br><br>
-            To ostrzeżenie pojawi się tylko raz.
-          </div>
-          <div class="b24t-modal-actions">
-            <button data-action="cancel" class="b24t-btn-secondary">Anuluj</button>
-            <button data-action="confirm" class="b24t-btn-danger">Rozumiem — kontynuuj</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(modal);
-      modal.querySelectorAll('button').forEach(btn => {
-        btn.addEventListener('click', () => {
-          document.body.removeChild(modal);
-          if (btn.dataset.action === 'confirm') {
-            lsSet(LS.DELETE_CONFIRMED, true);
-            resolve(true);
-          } else {
-            resolve(false);
-          }
-        });
-      });
-    });
-  }
 
   // Delete all mentions with given tagId in given date range
   async function deleteMentionsByTag(tagId, tagName, dateFrom, dateTo, onProgress) {
@@ -7033,9 +6619,9 @@ function hideHelpTip() {
 
 
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // DELETE ENGINE
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   // Single mention delete via GraphQL
   async function deleteMention(mentionId) {
@@ -7149,9 +6735,9 @@ function hideHelpTip() {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // QUICK DELETE TAB
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function buildDeleteTab() {
     const div = document.createElement('div');
@@ -7502,9 +7088,9 @@ Tej operacji nie można cofnąć.`)) {
   }
 
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // QUICK TAG MODE
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   // Returns current view filters - mirrors exactly what Brand24 is showing
   // Uses last captured organic getMentions variables (includes all active filters)
@@ -7803,9 +7389,9 @@ Tej operacji nie można cofnąć.`)) {
     }, 1000);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
   // INIT
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────
 
   function init() {
     // Only run on Mentions page
@@ -7844,22 +7430,25 @@ Tej operacji nie można cofnąć.`)) {
     wireQuickTagEvents(panel);
     wireHistoryTab();
 
-    // Tab switching
-    panel.querySelectorAll('.b24t-tab').forEach(btn => {
+    // Tab switching — DOM refs cached once after panel is in DOM
+    const tabEls = {
+      main:     document.getElementById('b24t-main-tab'),
+      quicktag: document.getElementById('b24t-quicktag-tab'),
+      delete:   document.getElementById('b24t-delete-tab'),
+      history:  document.getElementById('b24t-history-tab'),
+      actions:  document.getElementById('b24t-actions'),
+    };
+    const tabBtns = panel.querySelectorAll('.b24t-tab');
+    tabBtns.forEach(btn => {
       btn.addEventListener('click', () => {
-        panel.querySelectorAll('.b24t-tab').forEach(b => b.classList.remove('b24t-tab-active'));
+        tabBtns.forEach(b => b.classList.remove('b24t-tab-active'));
         btn.classList.add('b24t-tab-active');
         const tab = btn.dataset.tab;
-        const mainTab = document.getElementById('b24t-main-tab');
-        const qtTabEl = document.getElementById('b24t-quicktag-tab');
-        const delTabEl = document.getElementById('b24t-delete-tab');
-        const histTabEl = document.getElementById('b24t-history-tab');
-        const actions = document.getElementById('b24t-actions');
-        if (mainTab) mainTab.style.display = tab === 'main' ? 'block' : 'none';
-        if (qtTabEl) qtTabEl.style.display = tab === 'quicktag' ? 'block' : 'none';
-        if (delTabEl) delTabEl.style.display = tab === 'delete' ? 'block' : 'none';
-        if (histTabEl) histTabEl.style.display = tab === 'history' ? 'block' : 'none';
-        if (actions) actions.style.display = tab === 'main' ? 'flex' : 'none';
+        if (tabEls.main)     tabEls.main.style.display     = tab === 'main'     ? 'block' : 'none';
+        if (tabEls.quicktag) tabEls.quicktag.style.display = tab === 'quicktag' ? 'block' : 'none';
+        if (tabEls.delete)   tabEls.delete.style.display   = tab === 'delete'   ? 'block' : 'none';
+        if (tabEls.history)  tabEls.history.style.display  = tab === 'history'  ? 'block' : 'none';
+        if (tabEls.actions)  tabEls.actions.style.display  = tab === 'main'     ? 'flex'  : 'none';
       });
     });
 

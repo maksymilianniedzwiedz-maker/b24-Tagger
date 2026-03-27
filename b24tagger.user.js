@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.5.9
+// @version      0.5.10
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.5.9';
+  const VERSION = '0.5.10';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -38,7 +38,7 @@
     DELETE_AUTO:      'b24tagger_delete_auto',
     HISTORY:          'b24tagger_history',
   };
-  const MAX_BATCH_SIZE = 1000;
+  const MAX_BATCH_SIZE = 200;
   const HEALTH_CHECK_INTERVAL = 30000;
   const ACTION_TIMEOUT_WARN = 10000;
   const RETRY_DELAYS = [2000, 4000, 8000];
@@ -105,6 +105,19 @@
       .replace(/\/$/, '')
       .toLowerCase()
       .trim();
+  }
+
+  // Porównaj dwa znormalizowane URL z tolerancją na obcięte ID
+  // TikTok/Twitter video ID mają 19 cyfr — Excel/XLSX może obciąć ostatnie cyfry
+  function urlsMatch(urlA, urlB) {
+    if (!urlA || !urlB) return false;
+    if (urlA === urlB) return true;
+    // Jeśli jeden jest prefiksem drugiego (obcięte ID) — uznaj za match
+    // Wymaga min 15 znaków wspólnych żeby uniknąć false positives
+    const shorter = urlA.length < urlB.length ? urlA : urlB;
+    const longer  = urlA.length < urlB.length ? urlB : urlA;
+    if (shorter.length >= 15 && longer.startsWith(shorter)) return true;
+    return false;
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -498,7 +511,13 @@
       const urlRaw = row[state.file.colMap.url] || '';
       const assessment = (row[state.file.colMap.assessment] || '').trim().toUpperCase();
       const normalizedUrl = normalizeUrl(urlRaw);
-      const entry = state.urlMap[normalizedUrl];
+      // Szukaj w mapie: dokładne dopasowanie, potem fuzzy (obcięte ID)
+      let entry = state.urlMap[normalizedUrl];
+      if (!entry) {
+        const keys = Object.keys(state.urlMap);
+        const fuzzyKey = keys.find(k => urlsMatch(normalizedUrl, k));
+        if (fuzzyKey) entry = state.urlMap[fuzzyKey];
+      }
 
       if (!assessment) {
         skipped.push({ row, reason: 'NO_ASSESSMENT' });
@@ -2394,12 +2413,17 @@
       try {
         const wb = _XLSX.read(e.target.result, { type: 'array', cellDates: true });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const rows = _XLSX.utils.sheet_to_json(ws, { defval: '' });
-        // Normalize date fields
+        // rawNumbers:false + raw:false zapobiega obcinaniu dużych ID przez Number precision
+        const rows = _XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+        // Normalize date fields i duże ID numeryczne (TikTok/Twitter mają 19 cyfr > MAX_SAFE_INTEGER)
         rows.forEach(row => {
           Object.keys(row).forEach(k => {
-            if (row[k] instanceof Date) {
-              row[k] = row[k].toISOString().substring(0, 10);
+            const v = row[k];
+            if (v instanceof Date) {
+              row[k] = v.toISOString().substring(0, 10);
+            } else if (typeof v === 'number' && !Number.isSafeInteger(v)) {
+              // Duża liczba — zostaw jako string żeby nie stracić cyfr
+              row[k] = String(v);
             }
           });
         });
@@ -3560,6 +3584,17 @@
 
   const CHANGELOG = [
     {
+      version: '0.5.10',
+      date: '2026-03-27',
+      label: 'Bugfix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Internal server error przy tagowaniu — MAX_BATCH_SIZE zmniejszony z 1000 do 200' },
+        { type: 'fix', text: 'Obcięte ID TikTok/Twitter w XLSX — raw:false zapobiega utracie cyfr przez Number precision' },
+        { type: 'fix', text: 'Fuzzy matching URL — dopasowuje wzmianki gdy ID w pliku jest obcięte o kilka cyfr' },
+      ]
+    },
+    {
       version: '0.5.9',
       date: '2026-03-27',
       label: 'Bugfix',
@@ -4414,6 +4449,18 @@
   // ─────────────────────────────────────────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.5.10',
+      date: '2026-03-27',
+      notes: [
+        'Bug 1: Brand24 bulkTagMentions zwraca Internal server error przy 840 IDs — limit empiryczny ~200',
+        'Fix 1: MAX_BATCH_SIZE 1000→200, partycje tagowane po max 200 IDs per request',
+        'Bug 2: XLSX sheet_to_json z raw:true konwertuje 19-cyfrowe ID na float (Number.MAX_SAFE_INTEGER = 2^53-1 ≈ 9×10^15), obcinając ostatnie cyfry',
+        'Fix 2: raw:false wymusza stringi dla wszystkich komórek, daty normalizowane osobno',
+        'Bug 3: urlMap[normalizedUrl] nie znajdowało obciętych URL',
+        'Fix 3: urlsMatch() — jeśli shorter jest prefiksem longer i len>=15 → match; wired jako fallback po exact lookup',
+      ]
+    },
     {
       version: '0.5.9',
       date: '2026-03-27',

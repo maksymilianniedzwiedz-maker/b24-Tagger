@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.5.12
+// @version      0.5.13
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.5.12';
+  const VERSION = '0.5.13';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1749,8 +1749,7 @@
         <button class="b24t-tab" data-tab="quicktag">⚡ Quick Tag</button>
         <button class="b24t-tab" data-tab="delete">🗑 Quick Delete</button>
         <button class="b24t-tab" data-tab="history">📋 Historia</button>
-        <button class="b24t-tab" data-tab="dashboard" id="b24t-tab-dashboard" style="display:none;">📊 Dash</button>
-        <button class="b24t-tab" data-tab="tagstats" id="b24t-tab-tagstats" style="display:none;">🏷 Tagi</button>
+        <!-- Annotator Tools uses floating panel, no tab here -->
       </div>
 
       <!-- BODY -->
@@ -1938,25 +1937,8 @@
       <!-- HISTORY TAB (injected by JS) -->
       <div id="b24t-history-tab-placeholder"></div>
 
-      <!-- TAG STATS TAB (shown when feature enabled) -->
-      <div id="b24t-tagstats-tab" style="display:none;">
-        <div id="b24t-tagstats-content">
-          <div style="padding:20px;text-align:center;color:#444466;font-size:12px;">Kliknij Odśwież aby załadować dane ze wszystkich projektów</div>
-        </div>
-        <div style="padding:0 12px 12px;display:flex;gap:6px;">
-          <button class="b24t-btn-secondary" id="b24t-tagstats-refresh" style="flex:1;font-size:11px;">↻ Odśwież</button>
-        </div>
-      </div>
-
-      <!-- DASHBOARD TAB (shown when feature enabled) -->
-      <div id="b24t-dashboard-tab" style="display:none;">
-        <div id="b24t-dashboard-content">
-          <div style="padding:20px;text-align:center;color:#444466;font-size:11px;">Kliknij Odśwież aby załadować dane</div>
-        </div>
-        <div style="padding:0 12px 12px;display:flex;gap:6px;">
-          <button class="b24t-btn-secondary" id="b24t-dashboard-refresh" style="flex:1;font-size:11px;">↻ Odśwież</button>
-        </div>
-      </div>
+      <!-- Annotator Tools: floating panel, no inline tabs -->
+      <!-- Annotator Tools: moved to floating panel -->
 
       </div><!-- /body -->
 
@@ -2169,18 +2151,7 @@
     // Dodatkowe funkcje
     panel.querySelector('#b24t-btn-features')?.addEventListener('click', () => showFeaturesModal());
 
-    // Dashboard — tab click + refresh button
-    panel.querySelector('#b24t-tab-dashboard')?.addEventListener('click', function() {
-      // Odśwież przy każdym wejściu w zakładkę
-      setTimeout(() => refreshDashboard(), 100);
-    });
-    panel.querySelector('#b24t-dashboard-refresh')?.addEventListener('click', () => refreshDashboard());
-
-    // Tag Stats — tab click + refresh button
-    panel.querySelector('#b24t-tab-tagstats')?.addEventListener('click', function() {
-      setTimeout(() => refreshTagStats(), 100);
-    });
-    panel.querySelector('#b24t-tagstats-refresh')?.addEventListener('click', () => refreshTagStats());
+    // Annotator Tools: wired in buildAnnotatorPanel()
 
     // Sprawdź aktualizacje ręcznie
     panel.querySelector('#b24t-btn-check-update')?.addEventListener('click', () => {
@@ -3601,6 +3572,19 @@
 
   const CHANGELOG = [
     {
+      version: '0.5.13',
+      date: '2026-03-27',
+      label: 'Nowość',
+      labelColor: '#4ade80',
+      changes: [
+        { type: 'new', text: 'Narzędzia Annotatora: floating panel z kartami 📊 Projekt i 🏷 Tagi' },
+        { type: 'new', text: 'Panel wysuwany strzałką po prawej stronie ekranu, zamykany przez ×, przeciągany' },
+        { type: 'new', text: 'Dane ładują się automatycznie w tle po włączeniu funkcji w ⚙' },
+        { type: 'new', text: 'Dokładne liczenie nieotagowanych — pełne skanowanie stron, nie binary search' },
+        { type: 'change', text: 'Dashboard Annotatora i Statystyki tagów połączone w jedno narzędzie' },
+      ]
+    },
+    {
       version: '0.5.12',
       date: '2026-03-27',
       label: 'Nowość',
@@ -4967,14 +4951,9 @@
   // Dodatkowe funkcje — modal z checkboxami
   const OPTIONAL_FEATURES = [
     {
-      id: 'dashboard',
-      label: '📊 Dashboard Annotatora',
-      desc: 'Licznik wzmianek bieżącego miesiąca: otagowane, pozostałe, postęp i dni do końca miesiąca.',
-    },
-    {
-      id: 'tagstats',
-      label: '🏷 Statystyki tagów — wszystkie projekty',
-      desc: 'Tabela pokazująca ile wzmianek z tagiem REQUIRES_VERIFICATION i TO_DELETE jest na każdym projekcie w bieżącym miesiącu.',
+      id: 'annotator_tools',
+      label: '🛠 Narzędzia Annotatora',
+      desc: 'Floating panel z narzędziami dla annotatorów: statystyki bieżącego projektu i przegląd wszystkich projektów (REQ VER / TO DELETE).',
     },
   ];
 
@@ -4989,30 +4968,18 @@
   function applyFeatures() {
     const features = loadFeatures();
 
-    // Dashboard — pokaż/ukryj zakładkę w navbarze
-    const dashTabBtn = document.getElementById('b24t-tab-dashboard');
-    if (features.dashboard) {
-      if (dashTabBtn) dashTabBtn.style.display = '';
+    // Narzędzia Annotatora — floating panel
+    const tab = document.getElementById('b24t-annotator-tab');
+    const panel = document.getElementById('b24t-annotator-panel');
+    if (features.annotator_tools) {
+      if (tab) tab.style.display = 'flex';
+      // Zacznij ładować dane w tle
+      setTimeout(function() {
+        if (!annotatorDataLoaded) loadAnnotatorDataBackground();
+      }, 1500);
     } else {
-      if (dashTabBtn) dashTabBtn.style.display = 'none';
-      if (dashTabBtn && dashTabBtn.classList.contains('b24t-tab-active')) {
-        document.querySelector('.b24t-tab[data-tab="main"]')?.click();
-      }
-      const dashContent = document.getElementById('b24t-dashboard-tab');
-      if (dashContent) dashContent.style.display = 'none';
-    }
-
-    // Tag Stats — pokaż/ukryj zakładkę
-    const tagStatsBtn = document.getElementById('b24t-tab-tagstats');
-    if (features.tagstats) {
-      if (tagStatsBtn) tagStatsBtn.style.display = '';
-    } else {
-      if (tagStatsBtn) tagStatsBtn.style.display = 'none';
-      if (tagStatsBtn && tagStatsBtn.classList.contains('b24t-tab-active')) {
-        document.querySelector('.b24t-tab[data-tab="main"]')?.click();
-      }
-      const tagStatsContent = document.getElementById('b24t-tagstats-tab');
-      if (tagStatsContent) tagStatsContent.style.display = 'none';
+      if (tab) tab.style.display = 'none';
+      if (panel) panel.style.display = 'none';
     }
   }
 
@@ -5079,16 +5046,19 @@
   // Pobiera z localStorage listę znanych projektów
   function getKnownProjects() {
     const projects = lsGet(LS.PROJECTS, {});
+    // Użyj tagów z aktualnego state.tags jako fallback
+    const globalReqVerId   = state.tags && state.tags['REQUIRES_VERIFICATION'];
+    const globalToDeleteId = state.tags && state.tags['TO_DELETE'];
     return Object.entries(projects).map(function([id, p]) {
+      const reqVerId   = (p.tagIds && p.tagIds['REQUIRES_VERIFICATION']) || globalReqVerId;
+      const toDeleteId = (p.tagIds && p.tagIds['TO_DELETE'])             || globalToDeleteId;
       return {
         id: parseInt(id),
         name: p.name || ('Project ' + id),
-        tagIds: p.tagIds || {},
-        reqVerId: p.tagIds && p.tagIds['REQUIRES_VERIFICATION'],
-        toDeleteId: p.tagIds && p.tagIds['TO_DELETE'],
+        reqVerId,
+        toDeleteId,
       };
     }).filter(function(p) {
-      // Tylko projekty które mają oba tagi
       return p.reqVerId && p.toDeleteId;
     });
   }
@@ -5408,6 +5378,248 @@
     } catch(e) {
       el.innerHTML = '<div style="padding:14px;font-size:10px;color:#f87171;">⚠ ' + e.message + '</div>';
     }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // ANNOTATOR TOOLS — FLOATING PANEL
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  var annotatorDataLoaded = false;
+  var annotatorData = { project: null, tagstats: null };
+
+  function buildAnnotatorPanel() {
+    if (document.getElementById('b24t-annotator-panel')) return;
+
+    // Trigger tab (strzałka po prawej)
+    var tab = document.createElement('div');
+    tab.id = 'b24t-annotator-tab';
+    tab.style.cssText = 'position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:2147483640;background:#1a1a28;border:1px solid #2a2a35;border-right:none;border-radius:8px 0 0 8px;padding:10px 6px;cursor:pointer;display:none;flex-direction:column;align-items:center;gap:4px;font-family:\'SF Mono\',monospace;font-size:9px;color:#9090cc;user-select:none;box-shadow:-2px 0 8px rgba(0,0,0,0.4);';
+    tab.innerHTML = '<span style="writing-mode:vertical-rl;text-orientation:mixed;letter-spacing:.05em;">Narzędzia</span><span style="font-size:13px;">‹</span>';
+    tab.title = 'Otwórz Narzędzia Annotatora';
+    tab.addEventListener('click', function() { openAnnotatorPanel(); });
+    document.body.appendChild(tab);
+
+    // Floating panel
+    var panel = document.createElement('div');
+    panel.id = 'b24t-annotator-panel';
+    panel.style.cssText = 'position:fixed;right:12px;top:80px;width:280px;z-index:2147483641;background:#0f0f13;border:1px solid #2a2a35;border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.7);font-family:\'SF Mono\',\'Fira Code\',monospace;font-size:12px;color:#e2e2e8;display:none;overflow:hidden;';
+    panel.innerHTML =
+      '<div id="b24t-ann-header" style="display:flex;align-items:center;padding:10px 12px;background:#0a0a0d;border-bottom:1px solid #1e1e28;cursor:move;user-select:none;">' +
+        '<span style="font-size:12px;font-weight:700;flex:1;">🛠 Narzędzia Annotatora</span>' +
+        '<button id="b24t-ann-close" style="background:none;border:none;color:#444466;cursor:pointer;font-size:18px;line-height:1;padding:0 2px;">×</button>' +
+      '</div>' +
+      '<div style="display:flex;border-bottom:1px solid #1e1e28;">' +
+        '<button class="b24t-ann-tab b24t-ann-tab-active" data-ann-tab="project" style="flex:1;padding:7px 4px;font-size:10px;background:none;border:none;border-bottom:2px solid #6c6cff;color:#6c6cff;font-family:inherit;cursor:pointer;font-weight:600;">📊 Projekt</button>' +
+        '<button class="b24t-ann-tab" data-ann-tab="tagstats" style="flex:1;padding:7px 4px;font-size:10px;background:none;border:none;border-bottom:2px solid transparent;color:#555577;font-family:inherit;cursor:pointer;">🏷 Tagi</button>' +
+      '</div>' +
+      '<div id="b24t-ann-tab-project" class="b24t-ann-content" style="display:block;">' +
+        '<div id="b24t-ann-project-content" style="padding:14px 12px;font-size:11px;color:#444466;">↻ Ładowanie...</div>' +
+        '<div style="padding:0 12px 10px;"><button id="b24t-ann-project-refresh" style="width:100%;background:#141419;border:1px solid #2a2a35;color:#7878aa;border-radius:6px;padding:6px;font-size:10px;font-family:inherit;cursor:pointer;">↻ Odśwież</button></div>' +
+      '</div>' +
+      '<div id="b24t-ann-tab-tagstats" class="b24t-ann-content" style="display:none;">' +
+        '<div id="b24t-ann-tagstats-content" style="padding:14px 12px;font-size:11px;color:#444466;">↻ Ładowanie...</div>' +
+        '<div style="padding:0 12px 10px;"><button id="b24t-ann-tagstats-refresh" style="width:100%;background:#141419;border:1px solid #2a2a35;color:#7878aa;border-radius:6px;padding:6px;font-size:10px;font-family:inherit;cursor:pointer;">↻ Odśwież</button></div>' +
+      '</div>';
+    document.body.appendChild(panel);
+
+    // Tab switching
+    panel.querySelectorAll('.b24t-ann-tab').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var tabName = btn.dataset.annTab;
+        panel.querySelectorAll('.b24t-ann-tab').forEach(function(b) {
+          b.style.borderBottomColor = 'transparent'; b.style.color = '#555577'; b.style.fontWeight = 'normal';
+        });
+        btn.style.borderBottomColor = '#6c6cff'; btn.style.color = '#6c6cff'; btn.style.fontWeight = '600';
+        panel.querySelectorAll('.b24t-ann-content').forEach(function(el) { el.style.display = 'none'; });
+        var content = document.getElementById('b24t-ann-tab-' + tabName);
+        if (content) content.style.display = 'block';
+      });
+    });
+
+    // Close
+    document.getElementById('b24t-ann-close').addEventListener('click', function() {
+      panel.style.display = 'none';
+      var t = document.getElementById('b24t-annotator-tab');
+      if (t) t.style.display = 'flex';
+    });
+
+    // Refresh
+    document.getElementById('b24t-ann-project-refresh').addEventListener('click', function() {
+      annotatorData.project = null; loadAnnotatorProject();
+    });
+    document.getElementById('b24t-ann-tagstats-refresh').addEventListener('click', function() {
+      annotatorData.tagstats = null; loadAnnotatorTagStats();
+    });
+
+    // Drag
+    var hdr = document.getElementById('b24t-ann-header');
+    var dragging = false, sx, sy, sl, st;
+    hdr.addEventListener('mousedown', function(e) {
+      if (e.target.id === 'b24t-ann-close') return;
+      dragging = true; sx = e.clientX; sy = e.clientY;
+      var r = panel.getBoundingClientRect(); sl = r.left; st = r.top; e.preventDefault();
+    });
+    document.addEventListener('mousemove', function(e) {
+      if (!dragging) return;
+      panel.style.left = (sl + e.clientX - sx) + 'px';
+      panel.style.top  = (st + e.clientY - sy) + 'px';
+      panel.style.right = 'auto';
+    });
+    document.addEventListener('mouseup', function() { dragging = false; });
+  }
+
+  function openAnnotatorPanel() {
+    var panel = document.getElementById('b24t-annotator-panel');
+    var tab   = document.getElementById('b24t-annotator-tab');
+    if (!panel) return;
+    panel.style.display = 'block';
+    if (tab) tab.style.display = 'none';
+    if (!annotatorData.project)  loadAnnotatorProject();
+    if (!annotatorData.tagstats) loadAnnotatorTagStats();
+  }
+
+  function getAnnotatorDates() {
+    var now = new Date(), day = now.getDate();
+    var dateFrom, dateTo, label, daysLeft;
+    if (day <= 2) {
+      var prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      var last = new Date(now.getFullYear(), now.getMonth(), 0);
+      dateFrom = prev.toISOString().split('T')[0]; dateTo = last.toISOString().split('T')[0];
+      label = prev.toLocaleString('pl-PL', { month: 'long', year: 'numeric' }); daysLeft = 0;
+    } else {
+      dateFrom = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+      dateTo = now.toISOString().split('T')[0];
+      label = now.toLocaleString('pl-PL', { month: 'long', year: 'numeric' });
+      daysLeft = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - day;
+    }
+    return { dateFrom, dateTo, label, daysLeft, day };
+  }
+
+  async function loadAnnotatorProject() {
+    var el = document.getElementById('b24t-ann-project-content');
+    if (!el) return;
+    if (!state.tokenHeaders || !state.projectId) {
+      el.innerHTML = '<div style="color:#f87171;font-size:11px;">⚠ Token lub projekt nie gotowy — odśwież stronę</div>'; return;
+    }
+    el.innerHTML = '<div style="color:#444466;font-size:11px;text-align:center;padding:8px 0;">↻ Pobieranie...</div>';
+    try {
+      var dates = getAnnotatorDates();
+      var bf = { va:1,rt:[],se:[],vi:null,gr:[],sq:'',do:'',au:'',lem:false,ctr:[],nctr:false,is:[0,10],tp:null,anom:'',lang:[],nlang:false,aue:null,htg:null,mt:false,mtri:null,cxs:[] };
+      var gql = 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count results{id tags{id}}}}';
+      var doPage = function(p) {
+        return origFetch('/api/graphql', { method:'POST', credentials:'same-origin',
+          headers:{...state.tokenHeaders,'Content-Type':'application/json'},
+          body: JSON.stringify({ operationName:'getMentions', variables:{ projectId:state.projectId, dateRange:{from:dates.dateFrom,to:dates.dateTo}, filters:bf, page:p, order:0 }, query:gql })
+        }).then(function(r){ return r.json(); });
+      };
+      var first = await doPage(1);
+      var total = first?.data?.getMentions?.count || 0;
+      var totalPages = Math.ceil(total / 60);
+      var untagged = 0, reqVer = 0, toDelete = 0;
+      var reqVerId = state.tags['REQUIRES_VERIFICATION'], toDeleteId = state.tags['TO_DELETE'];
+      var proc = function(results) {
+        (results || []).forEach(function(m) {
+          var ids = (m.tags || []).map(function(t){ return t.id; });
+          if (!ids.length) { untagged++; return; }
+          if (reqVerId   && ids.includes(reqVerId))   reqVer++;
+          if (toDeleteId && ids.includes(toDeleteId)) toDelete++;
+        });
+      };
+      proc(first?.data?.getMentions?.results);
+      var pages = []; for (var p = 2; p <= totalPages; p++) pages.push(p);
+      for (var i = 0; i < pages.length; i += 10) {
+        var batch = pages.slice(i, i+10);
+        var res = await Promise.all(batch.map(function(pp){ return doPage(pp); }));
+        res.forEach(function(d){ proc(d?.data?.getMentions?.results); });
+      }
+      var tagged = total - untagged;
+      var pct = total > 0 ? Math.round((tagged/total)*100) : 0;
+      annotatorData.project = { total, untagged, tagged, reqVer, toDelete, pct, dates };
+      renderAnnotatorProject(el, annotatorData.project);
+    } catch(e) {
+      el.innerHTML = '<div style="color:#f87171;font-size:11px;">⚠ ' + e.message + '</div>';
+    }
+  }
+
+  function renderAnnotatorProject(el, d) {
+    var pc = d.pct === 100 ? '#4ade80' : '#6c6cff';
+    el.innerHTML =
+      '<div style="font-size:9px;color:#444466;margin-bottom:8px;">' + d.dates.label +
+        (d.dates.daysLeft > 0 ? ' <span style="color:#facc15;">· ' + d.dates.daysLeft + ' dni</span>' : '') + '</div>' +
+      '<div style="background:#1a1a22;border-radius:99px;height:4px;margin-bottom:10px;overflow:hidden;">' +
+        '<div style="height:100%;border-radius:99px;background:' + pc + ';width:' + d.pct + '%;"></div></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:5px;">' +
+        _annTile('Wszystkie', d.total, '#7878aa') + _annTile('Nieotagowane', d.untagged, d.untagged===0?'#4ade80':'#f87171') +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;">' +
+        _annTile('REQ VER', d.reqVer, d.reqVer===0?'#333355':'#facc15') + _annTile('TO DELETE', d.toDelete, d.toDelete===0?'#333355':'#f87171') +
+      '</div>' +
+      '<div style="margin-top:8px;text-align:center;font-size:10px;color:' + pc + ';">' + (d.pct===100?'✓ Gotowe!':d.pct+'% otagowane') + '</div>';
+  }
+
+  function _annTile(label, value, color) {
+    return '<div style="background:#141419;border-radius:6px;padding:6px;text-align:center;">' +
+      '<div style="font-size:14px;font-weight:700;color:' + color + ';">' + (value!==undefined?value:'—') + '</div>' +
+      '<div style="font-size:8px;color:#444466;margin-top:1px;">' + label + '</div></div>';
+  }
+
+  async function loadAnnotatorTagStats() {
+    var el = document.getElementById('b24t-ann-tagstats-content');
+    if (!el) return;
+    if (!state.tokenHeaders) { el.innerHTML = '<div style="color:#f87171;font-size:11px;">⚠ Token nie gotowy</div>'; return; }
+    var projects = getKnownProjects();
+    if (!projects.length) { el.innerHTML = '<div style="font-size:11px;color:#444466;">Brak projektów. Odwiedź każdy projekt raz.</div>'; return; }
+    var dates = getAnnotatorDates();
+    el.innerHTML = '<div style="color:#444466;font-size:11px;text-align:center;padding:8px 0;">↻ 0/' + projects.length + '</div>';
+    var results = [];
+    for (var i = 0; i < projects.length; i++) {
+      var p = projects[i];
+      el.innerHTML = '<div style="color:#444466;font-size:11px;text-align:center;padding:8px 0;">↻ ' + (i+1) + '/' + projects.length + '<br><span style="font-size:9px;">' + p.name + '</span></div>';
+      try {
+        var counts = await fetchProjectTagCounts(p.id, p.reqVerId, p.toDeleteId, dates.dateFrom, dates.dateTo, null);
+        results.push({ name:p.name, id:p.id, reqVer:counts.reqVer, toDelete:counts.toDelete });
+      } catch(e) {
+        results.push({ name:p.name, id:p.id, reqVer:0, toDelete:0 });
+      }
+    }
+    annotatorData.tagstats = { results, dates };
+    renderAnnotatorTagStats(el, annotatorData.tagstats);
+  }
+
+  function renderAnnotatorTagStats(el, d) {
+    var filtered = (d.results||[]).filter(function(p){ return p.reqVer>0||p.toDelete>0; })
+      .sort(function(a,b){ return (b.reqVer+b.toDelete)-(a.reqVer+a.toDelete); });
+    if (!filtered.length) { el.innerHTML = '<div style="text-align:center;color:#4ade80;font-size:11px;padding:8px 0;">✓ Wszystkie projekty czyste!</div>'; return; }
+    var rows = filtered.map(function(p) {
+      return '<tr>' +
+        '<td style="padding:5px 8px;font-size:10px;color:#c0c0e0;border-bottom:1px solid #1a1a22;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + p.name + '">' + p.name + '</td>' +
+        '<td style="padding:5px 6px;font-size:12px;font-weight:700;color:' + (p.reqVer>0?'#facc15':'#333355') + ';text-align:center;border-bottom:1px solid #1a1a22;">' + (p.reqVer||'—') + '</td>' +
+        '<td style="padding:5px 6px;font-size:12px;font-weight:700;color:' + (p.toDelete>0?'#f87171':'#333355') + ';text-align:center;border-bottom:1px solid #1a1a22;">' + (p.toDelete||'—') + '</td>' +
+      '</tr>';
+    }).join('');
+    el.innerHTML =
+      '<div style="font-size:9px;color:#444466;padding:4px 0 6px;">' + d.dates.dateFrom + ' – ' + d.dates.dateTo + '</div>' +
+      '<table style="width:100%;border-collapse:collapse;">' +
+        '<thead><tr>' +
+          '<th style="padding:4px 8px;font-size:8px;text-transform:uppercase;color:#444466;text-align:left;border-bottom:1px solid #2a2a35;">Projekt</th>' +
+          '<th style="padding:4px 6px;font-size:8px;color:#facc15;text-align:center;border-bottom:1px solid #2a2a35;">REQ</th>' +
+          '<th style="padding:4px 6px;font-size:8px;color:#f87171;text-align:center;border-bottom:1px solid #2a2a35;">DEL</th>' +
+        '</tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table>';
+  }
+
+  async function loadAnnotatorDataBackground() {
+    if (annotatorDataLoaded) return;
+    annotatorDataLoaded = true;
+    if (!state.tokenHeaders) {
+      await new Promise(function(resolve) {
+        var check = setInterval(function() { if (state.tokenHeaders) { clearInterval(check); resolve(); } }, 500);
+        setTimeout(function(){ clearInterval(check); resolve(); }, 15000);
+      });
+    }
+    try { await loadAnnotatorProject(); } catch(e) {}
+    try { await loadAnnotatorTagStats(); } catch(e) {}
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -6394,11 +6606,6 @@ Tej operacji nie można cofnąć.`)) {
         if (qtTabEl) qtTabEl.style.display = tab === 'quicktag' ? 'block' : 'none';
         if (delTabEl) delTabEl.style.display = tab === 'delete' ? 'block' : 'none';
         if (histTabEl) histTabEl.style.display = tab === 'history' ? 'block' : 'none';
-        const dashEl = document.getElementById('b24t-dashboard-tab');
-        const features = loadFeatures();
-        if (dashEl) dashEl.style.display = (tab === 'dashboard' && features.dashboard) ? 'block' : 'none';
-        const tagStatsEl = document.getElementById('b24t-tagstats-tab');
-        if (tagStatsEl) tagStatsEl.style.display = (tab === 'tagstats' && features.tagstats) ? 'block' : 'none';
         if (actions) actions.style.display = tab === 'main' ? 'flex' : 'none';
       });
     });
@@ -6427,6 +6634,9 @@ Tej operacji nie można cofnąć.`)) {
     }
 
     addLog(`B24 Tagger BETA v${VERSION} załadowany.`, 'info');
+
+    // Annotator Tools — buduj floating panel
+    buildAnnotatorPanel();
 
     // Zastosuj opcjonalne funkcje
     applyFeatures();

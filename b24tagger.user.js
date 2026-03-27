@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.5.7
+// @version      0.5.8
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.5.7';
+  const VERSION = '0.5.8';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2608,16 +2608,25 @@
     const isFallbackTitle = !rawTitle || rawTitle === 'Brand24' || rawTitle === 'Panel Brand24' || rawTitle.length < 3;
     state.projectName = isFallbackTitle ? `Project ${projectId}` : rawTitle;
 
-    // Jeśli tytuł był fallbackiem — spróbuj ponownie po 2s (strona może jeszcze ładować tytuł)
+    // Jeśli tytuł był fallbackiem — obserwuj zmiany tytułu przez MutationObserver
     if (isFallbackTitle) {
-      setTimeout(function() {
-        const retryTitle = document.title.split(' - ')[0].trim();
-        if (retryTitle && retryTitle !== 'Brand24' && retryTitle !== 'Panel Brand24' && retryTitle.length >= 3) {
-          state.projectName = retryTitle;
+      let retryCount = 0;
+      const titleEl = document.querySelector('title');
+      const updateName = function() {
+        const t = document.title.split(' - ')[0].trim();
+        if (t && t !== 'Brand24' && t !== 'Panel Brand24' && t.length >= 3) {
+          state.projectName = t;
           const el = document.getElementById('b24t-project-name');
           if (el) el.textContent = state.projectName;
+          return true;
         }
-      }, 2000);
+        return false;
+      };
+      // Próbuj co 500ms przez max 10s
+      const retryInterval = setInterval(function() {
+        retryCount++;
+        if (updateName() || retryCount >= 20) clearInterval(retryInterval);
+      }, 500);
     }
 
     document.getElementById('b24t-project-name').textContent = state.projectName;
@@ -3567,6 +3576,15 @@
 
   const CHANGELOG = [
     {
+      version: '0.5.8',
+      date: '2026-03-27',
+      label: 'Bugfix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Naprawiono wykrywanie nazwy projektu — retry co 500ms przez max 10s zamiast jednorazowego retry po 2s' },
+      ]
+    },
+    {
       version: '0.5.7',
       date: '2026-03-27',
       label: 'Bugfix',
@@ -4402,6 +4420,14 @@
   // ─────────────────────────────────────────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.5.8',
+      date: '2026-03-27',
+      notes: [
+        'Bug: setTimeout 2s nie wystarczał dla KOTON_TR — Brand24 ustawia tytuł wolniej',
+        'Fix: setInterval co 500ms, max 20 prób (10s łącznie), clearInterval gdy nazwa znaleziona lub limit wyczerpany',
+      ]
+    },
     {
       version: '0.5.7',
       date: '2026-03-27',

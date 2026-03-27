@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.5.6
+// @version      0.5.7
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.5.6';
+  const VERSION = '0.5.7';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -331,17 +331,33 @@
     const detected = {};
 
     // Assessment column FIRST - detect before date to avoid false matches
-    // Looks for columns with small set of distinct string values (labels)
-    const assessmentCol = headers.find(h => {
-      if (['assessment', 'label', 'ocena', 'flag', 'category', 'status'].includes(h.toLowerCase())) return true;
-      const vals = new Set(rows.map(r => (r[h] || '').toString().trim()).filter(Boolean));
-      const isLikelyLabel = vals.size >= 2 && vals.size <= 15 && rows.length > vals.size * 3;
-      // Exclude columns that look like dates or IDs
-      const sampleVal = [...vals][0] || '';
-      const looksLikeDate = /\d{4}-\d{2}-\d{2}/.test(sampleVal);
-      const looksLikeId = /^[a-f0-9]{20,}$/.test(sampleVal) || /^\d{15,}$/.test(sampleVal);
-      return isLikelyLabel && !looksLikeDate && !looksLikeId;
-    });
+    // Krok 1: szukaj po dokładnej nazwie kolumny (najwyższy priorytet)
+    const ASSESSMENT_NAMES = ['assessment', 'label', 'ocena', 'flag', 'classification', 'klasa', 'class'];
+    // Kolumny które NIE są assessment — wyklucz je z heurystyki
+    const SOURCE_NAMES = ['source', 'platform', 'channel', 'medium', 'site', 'domain', 'network',
+      'source_type', 'mention_source', 'type', 'media_type', 'content_type'];
+
+    let assessmentCol = headers.find(h => ASSESSMENT_NAMES.includes(h.toLowerCase()));
+
+    // Krok 2: jeśli nie znaleziono po nazwie — użyj heurystyki (małe unikalne wartości)
+    if (!assessmentCol) {
+      assessmentCol = headers.find(h => {
+        const hl = h.toLowerCase();
+        // Wyklucz kolumny o znanych nazwach które nie są assessment
+        if (SOURCE_NAMES.some(s => hl.includes(s))) return false;
+        if (['url', 'link', 'id', 'date', 'text', 'content', 'author', 'title'].some(s => hl.includes(s))) return false;
+
+        const vals = new Set(rows.map(r => (r[h] || '').toString().trim()).filter(Boolean));
+        const isLikelyLabel = vals.size >= 2 && vals.size <= 10 && rows.length > vals.size * 5;
+        const sampleVal = [...vals][0] || '';
+        const looksLikeDate = /\d{4}-\d{2}-\d{2}/.test(sampleVal);
+        const looksLikeId = /^[a-f0-9]{20,}$/.test(sampleVal) || /^\d{15,}$/.test(sampleVal);
+        const looksLikeUrl = /^https?:\/\//.test(sampleVal);
+        // Wartości assessment to typowo słowa uppercase (RELEVANT, IRRELEVANT etc.)
+        const looksLikeAssessment = [...vals].some(v => /^[A-Z_]{3,}$/.test(v));
+        return isLikelyLabel && !looksLikeDate && !looksLikeId && !looksLikeUrl && looksLikeAssessment;
+      });
+    }
     if (assessmentCol) detected.assessment = assessmentCol;
 
     // ID column
@@ -3551,6 +3567,15 @@
 
   const CHANGELOG = [
     {
+      version: '0.5.7',
+      date: '2026-03-27',
+      label: 'Bugfix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Naprawiono auto-detekcję kolumny assessment — nie mylona już z kolumną source/platform' },
+      ]
+    },
+    {
       version: '0.5.6',
       date: '2026-03-27',
       label: 'Bugfix',
@@ -4377,6 +4402,16 @@
   // ─────────────────────────────────────────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.5.7',
+      date: '2026-03-27',
+      notes: [
+        'Root cause: heurystyka isLikelyLabel (vals.size <= 15) pasowała do kolumny source (twitter/tiktok/instagram = ~5-8 wartości)',
+        'Fix krok 1: priorytet dla dokładnych nazw kolumn (assessment, label, ocena, flag, classification)',
+        'Fix krok 2: heurystyka wyklucza SOURCE_NAMES i wymaga looksLikeAssessment (/^[A-Z_]{3,}$/ — uppercase słowa)',
+        'Zaostrzono próg: vals.size <= 10 i rows.length > vals.size * 5 (było 15 i *3)',
+      ]
+    },
     {
       version: '0.5.6',
       date: '2026-03-27',

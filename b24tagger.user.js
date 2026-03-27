@@ -38,6 +38,8 @@
     DELETE_AUTO:      'b24tagger_delete_auto',
     HISTORY:          'b24tagger_history',
     THEME:            'b24tagger_theme',
+    UI_SIZE:          'b24tagger_ui_size',
+    UI_ANN_SIZE:      'b24tagger_ann_size',
   };
   const MAX_BATCH_SIZE = 500;
   const HEALTH_CHECK_INTERVAL = 30000;
@@ -1514,6 +1516,8 @@
         animation: b24t-slidein 0.35s cubic-bezier(0.34,1.56,0.64,1) both;
       }
       #b24t-panel:hover { box-shadow: var(--b24t-shadow-h); }
+      #b24t-panel.b24t-resizing { opacity: 0.97; box-shadow: var(--b24t-shadow-drag); transition: none !important; }
+      #b24t-panel.b24t-resizing * { pointer-events: none !important; user-select: none !important; }
       #b24t-panel.dragging { opacity: 0.94; box-shadow: var(--b24t-shadow-drag); cursor: grabbing; }
 
 
@@ -2255,6 +2259,150 @@
   // ─────────────────────────────────────────────────────────────────────────────
   // UI - DRAGGING & COLLAPSING
   // ─────────────────────────────────────────────────────────────────────────────
+
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // RESIZE — Windows-style resize dla obu paneli
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  const RESIZE_HANDLE_SIZE = 8; // px strefa klikania krawędzi
+
+  function setupResize(panel, lsKey, opts) {
+    opts = opts || {};
+    var minW = opts.minW || 360;
+    var maxW = opts.maxW || 720;
+    var minH = opts.minH || 300;
+    var maxH = opts.maxH || Math.round(window.innerHeight * 0.92);
+
+    // Przywróć zapisany rozmiar
+    var saved = lsGet(lsKey);
+    if (saved) {
+      if (saved.width)  panel.style.width  = Math.min(maxW, Math.max(minW, saved.width))  + 'px';
+      if (saved.height) panel.style.maxHeight = Math.min(maxH, Math.max(minH, saved.height)) + 'px';
+    }
+
+    // Dodaj CSS cursor na krawędziach przez mousemove
+    var isResizing = false;
+    var resizeDir = '';
+    var startX, startY, startW, startH, startLeft, startTop;
+
+    function getDir(e) {
+      var r = panel.getBoundingClientRect();
+      var x = e.clientX, y = e.clientY;
+      var hs = RESIZE_HANDLE_SIZE;
+      var onL = x < r.left   + hs;
+      var onR = x > r.right  - hs;
+      var onT = y < r.top    + hs;
+      var onB = y > r.bottom - hs;
+      if (onT && onL) return 'nw';
+      if (onT && onR) return 'ne';
+      if (onB && onL) return 'sw';
+      if (onB && onR) return 'se';
+      if (onL) return 'w';
+      if (onR) return 'e';
+      if (onT) return 'n';
+      if (onB) return 's';
+      return '';
+    }
+
+    var cursorMap = { n:'n-resize', s:'s-resize', e:'e-resize', w:'w-resize',
+                      ne:'ne-resize', nw:'nw-resize', se:'se-resize', sw:'sw-resize' };
+
+    panel.addEventListener('mousemove', function(e) {
+      if (isResizing) return;
+      // Nie zmieniaj kursora gdy mousemove pochodzi od wewnętrznego elementu który sam ma kursor
+      if (e.target !== panel && !e.target.classList.contains('b24t-resize-handle')) {
+        var dir = getDir(e);
+        panel.style.cursor = dir ? cursorMap[dir] : '';
+        return;
+      }
+      var dir = getDir(e);
+      panel.style.cursor = dir ? cursorMap[dir] : '';
+    });
+
+    panel.addEventListener('mouseleave', function() {
+      if (!isResizing) panel.style.cursor = '';
+    });
+
+    panel.addEventListener('mousedown', function(e) {
+      // Ignoruj kliknięcia na przyciski/inputy
+      if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' ||
+          e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+
+      var dir = getDir(e);
+      if (!dir) return;
+
+      isResizing = true;
+      resizeDir = dir;
+      var r = panel.getBoundingClientRect();
+      startX    = e.clientX;
+      startY    = e.clientY;
+      startW    = r.width;
+      startH    = r.height;
+      startLeft = r.left;
+      startTop  = r.top;
+
+      panel.classList.add('b24t-resizing');
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    document.addEventListener('mousemove', function(e) {
+      if (!isResizing) return;
+      var dx = e.clientX - startX;
+      var dy = e.clientY - startY;
+      var newW = startW, newH = startH, newLeft = startLeft, newTop = startTop;
+
+      if (resizeDir.includes('e')) newW = startW + dx;
+      if (resizeDir.includes('w')) { newW = startW - dx; newLeft = startLeft + dx; }
+      if (resizeDir.includes('s')) newH = startH + dy;
+      if (resizeDir.includes('n')) { newH = startH - dy; newTop  = startTop  + dy; }
+
+      newW = Math.min(maxW, Math.max(minW, newW));
+      newH = Math.min(maxH, Math.max(minH, newH));
+
+      // Clamp pozycję żeby nie wyszła poza ekran
+      newLeft = Math.max(0, Math.min(window.innerWidth  - newW, newLeft));
+      newTop  = Math.max(0, Math.min(window.innerHeight - 60,   newTop));
+
+      panel.style.width = newW + 'px';
+      panel.style.left  = newLeft + 'px';
+      panel.style.top   = newTop  + 'px';
+      panel.style.right  = 'auto';
+      panel.style.bottom = 'auto';
+
+      // Dla main panelu: maxHeight kontroluje ciało, nie panel sam
+      if (opts.useMaxHeight) {
+        panel.style.maxHeight = newH + 'px';
+        var body = panel.querySelector('#b24t-body');
+        if (body) {
+          // maxHeight panelu minus stałe elementy (topbar ~40 + metabar ~28 + subbar ~34 + tabs ~40 + actions ~56 ≈ 198px)
+          var fixedPx = 198;
+          body.style.maxHeight = Math.max(80, newH - fixedPx) + 'px';
+        }
+      } else {
+        panel.style.height = newH + 'px';
+      }
+
+    });
+
+    document.addEventListener('mouseup', function() {
+      if (!isResizing) return;
+      isResizing = false;
+      resizeDir = '';
+      panel.classList.remove('b24t-resizing');
+      document.body.style.userSelect = '';
+      panel.style.cursor = '';
+
+      // Zapisz rozmiar
+      var r = panel.getBoundingClientRect();
+      lsSet(lsKey, { width: Math.round(r.width), height: Math.round(r.height) });
+
+      // Też zapisz pozycję (bo mogła się zmienić przy resize od lewej/góry)
+      lsSet(LS.UI_POS, { left: panel.style.left, top: panel.style.top });
+    });
+  }
 
   function setupDragging(panel) {
     const topbar = panel.querySelector('#b24t-topbar');
@@ -3170,17 +3318,21 @@ function injectOnboardingStyles() {
     .b24t-help-mode #b24t-body {
       pointer-events: none;
     }
-    /* Clickable zones in help mode */
+    /* Clickable zones in help mode - fixed na body poziomie */
     .b24t-help-zone {
-      position: absolute;
+      position: fixed;
       cursor: help;
-      border-radius: 6px;
-      transition: background 0.15s;
-      z-index: 2147483500;
+      border-radius: 7px;
+      z-index: 2147483495;
+      border: 2px solid rgba(108,108,255,0.0);
+      background: rgba(108,108,255,0.0);
+      transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+      box-sizing: border-box;
     }
     .b24t-help-zone:hover {
-      background: rgba(108,108,255,0.18) !important;
-      outline: 2px solid rgba(108,108,255,0.5);
+      background: rgba(108,108,255,0.13) !important;
+      border-color: rgba(108,108,255,0.65) !important;
+      box-shadow: 0 0 0 4px rgba(108,108,255,0.07);
     }
     /* Help tooltip */
     .b24t-help-tip {
@@ -3202,33 +3354,33 @@ function injectOnboardingStyles() {
     .b24t-help-tip strong { color: #e2e2e8; display: block; margin-bottom: 4px; font-size: 12px; }
 
     /* Help overlay (wyszarzenie panelu) */
-    #b24t-help-overlay {
-      position: absolute; inset: 0;
-      background: rgba(0,0,0,0.55);
-      backdrop-filter: blur(2px);
+    /* Help mode - overlay i strefy na body poziomie (panel ma overflow:hidden) */
+    #b24t-help-panel-overlay {
+      position: fixed;
       border-radius: 14px;
       z-index: 2147483490;
       pointer-events: none;
+      background: rgba(0,0,0,0.52);
+      backdrop-filter: blur(1.5px);
       animation: b24t-fadein 0.25s ease;
     }
     #b24t-help-close {
-      position: absolute;
-      top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      background: rgba(108,108,255,0.15);
-      border: 1px solid rgba(108,108,255,0.3);
+      position: fixed;
+      background: rgba(15,15,25,0.96);
+      border: 1px solid rgba(108,108,255,0.45);
       border-radius: 10px;
-      padding: 10px 18px;
-      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      padding: 9px 18px;
+      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
       font-size: 11px; color: #9090ff;
       cursor: pointer;
-      z-index: 2147483495;
+      z-index: 2147483498;
       pointer-events: all;
       white-space: nowrap;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-      transition: background 0.15s;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+      transition: background 0.15s, border-color 0.15s;
+      letter-spacing: 0.02em;
     }
-    #b24t-help-close:hover { background: rgba(108,108,255,0.25); }
+    #b24t-help-close:hover { background: rgba(25,25,50,0.98); border-color: rgba(108,108,255,0.75); }
   `;
   document.head.appendChild(s);
 }
@@ -3665,6 +3817,7 @@ function getHelpZones() {
 let helpModeActive = false;
 let helpZoneElements = [];
 let helpTipElement = null;
+let helpStickyTip = false;
 
 function toggleHelpMode() {
   if (helpModeActive) {
@@ -3679,108 +3832,109 @@ function enterHelpMode() {
   if (!panel) return;
 
   helpModeActive = true;
+  const panelRect = panel.getBoundingClientRect();
 
-  // Overlay na panel
+  // Overlay DOKŁADNIE na panel - na poziomie body żeby uniknąć overflow:hidden
   const overlay = document.createElement('div');
-  overlay.id = 'b24t-help-overlay';
-  panel.style.position = 'fixed'; // ensure relative positioning
-  panel.appendChild(overlay);
+  overlay.id = 'b24t-help-panel-overlay';
+  overlay.style.top    = panelRect.top + 'px';
+  overlay.style.left   = panelRect.left + 'px';
+  overlay.style.width  = panelRect.width + 'px';
+  overlay.style.height = panelRect.height + 'px';
+  document.body.appendChild(overlay);
 
-  // Przycisk zamknięcia na środku
+  // Przycisk "Wyjdź z trybu pomocy" - na dole panelu
   const closeBtn = document.createElement('button');
   closeBtn.id = 'b24t-help-close';
-  closeBtn.innerHTML = '🔍 Tryb pomocy — kliknij element żeby dowiedzieć się więcej<br><small style="opacity:0.6;font-size:9px;">Kliknij tutaj aby wyjść</small>';
-  panel.appendChild(closeBtn);
+  closeBtn.innerHTML = '🔍 Tryb pomocy — kliknij element aby poznać jego funkcję &nbsp; <span style="opacity:0.55;font-size:9px;">[ kliknij tutaj aby wyjść ]</span>';
+  closeBtn.style.top  = (panelRect.bottom - 44) + 'px';
+  closeBtn.style.left = (panelRect.left + panelRect.width / 2) + 'px';
+  closeBtn.style.transform = 'translateX(-50%)';
+  document.body.appendChild(closeBtn);
   closeBtn.addEventListener('click', exitHelpMode);
 
-  // Dodaj strefy klikania
+  // Strefy klikania - na body poziomie z fixed pozycjami z getBoundingClientRect
   const zones = getHelpZones();
-  zones.forEach(z => {
-    const targetEl = panel.querySelector(z.selector) || document.querySelector(z.selector);
+  zones.forEach(function(z) {
+    const targetEl = document.querySelector(z.selector);
     if (!targetEl) return;
-
-    const panelRect = panel.getBoundingClientRect();
-    const targetRect = targetEl.getBoundingClientRect();
+    const r = targetEl.getBoundingClientRect();
+    // Pomiń elementy poza panelem lub ukryte
+    if (r.width === 0 || r.height === 0) return;
 
     const zone = document.createElement('div');
     zone.className = 'b24t-help-zone';
-    zone.style.top = (targetRect.top - panelRect.top) + 'px';
-    zone.style.left = (targetRect.left - panelRect.left) + 'px';
-    zone.style.width = targetRect.width + 'px';
-    zone.style.height = targetRect.height + 'px';
-    zone.style.background = 'rgba(108,108,255,0.06)';
+    zone.style.top    = r.top + 'px';
+    zone.style.left   = r.left + 'px';
+    zone.style.width  = r.width + 'px';
+    zone.style.height = r.height + 'px';
     zone.title = z.title;
 
-    zone.addEventListener('mouseenter', (e) => showHelpTip(e, z));
-    zone.addEventListener('mouseleave', hideHelpTip);
-    zone.addEventListener('click', (e) => {
+    zone.addEventListener('mouseenter', function(e) { showHelpTip(e, z); });
+    zone.addEventListener('mouseleave', function() { if (!helpStickyTip) hideHelpTip(); });
+    zone.addEventListener('click', function(e) {
       e.stopPropagation();
-      showHelpTip(e, z, true); // sticky on click
+      helpStickyTip = true;
+      showHelpTip(e, z, true);
     });
 
-    panel.appendChild(zone);
+    document.body.appendChild(zone);
     helpZoneElements.push(zone);
   });
 }
 
 function exitHelpMode() {
   helpModeActive = false;
+  helpStickyTip = false;
   hideHelpTip();
 
-  const panel = document.getElementById('b24t-panel');
-  if (panel) {
-    const overlay = document.getElementById('b24t-help-overlay');
-    const closeBtn = document.getElementById('b24t-help-close');
-    if (overlay) overlay.remove();
-    if (closeBtn) closeBtn.remove();
-  }
+  var overlay = document.getElementById('b24t-help-panel-overlay');
+  var closeBtn = document.getElementById('b24t-help-close');
+  if (overlay) overlay.remove();
+  if (closeBtn) closeBtn.remove();
 
-  helpZoneElements.forEach(z => z.remove());
+  helpZoneElements.forEach(function(z) { z.remove(); });
   helpZoneElements = [];
 }
 
-function showHelpTip(e, zone, sticky = false) {
+function showHelpTip(e, zone, sticky) {
+  sticky = sticky || false;
   hideHelpTip();
 
-  const tip = document.createElement('div');
+  var tip = document.createElement('div');
   tip.className = 'b24t-help-tip';
   tip.id = 'b24t-help-tip-el';
-  tip.innerHTML = `<strong>${zone.title}</strong>${zone.desc}`;
+  tip.innerHTML = '<strong>' + zone.title + '</strong>' + zone.desc;
+  if (sticky) {
+    tip.style.pointerEvents = 'all';
+    var closeX = document.createElement('button');
+    closeX.style.cssText = 'position:absolute;top:5px;right:8px;background:none;border:none;color:#555577;cursor:pointer;font-size:14px;line-height:1;padding:0;';
+    closeX.textContent = '×';
+    closeX.addEventListener('click', function() { helpStickyTip = false; hideHelpTip(); });
+    tip.appendChild(closeX);
+  }
   document.body.appendChild(tip);
   helpTipElement = tip;
 
-  // Pozycjonuj
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-  const tipW = 280;
-  const tipH = tip.offsetHeight || 100;
+  // Pozycjonuj inteligentnie
+  var vw = window.innerWidth;
+  var vh = window.innerHeight;
+  var tipW = 280;
+  var tipH = tip.offsetHeight || 110;
+  var cx = e.clientX, cy = e.clientY;
 
-  let left = e.clientX + 14;
-  let top = e.clientY + 14;
-
-  if (left + tipW > vw - 10) left = e.clientX - tipW - 14;
-  if (top + tipH > vh - 10) top = e.clientY - tipH - 14;
-
+  var left = cx + 16;
+  var top  = cy + 16;
+  if (left + tipW > vw - 12) left = cx - tipW - 16;
+  if (top + tipH > vh - 12)  top  = cy - tipH - 16;
   tip.style.left = Math.max(10, left) + 'px';
-  tip.style.top = Math.max(10, top) + 'px';
-
-  if (sticky) {
-    tip.style.pointerEvents = 'all';
-    const closeX = document.createElement('button');
-    closeX.style.cssText = 'position:absolute;top:6px;right:8px;background:none;border:none;color:#666688;cursor:pointer;font-size:13px;line-height:1;padding:0;';
-    closeX.textContent = '×';
-    closeX.addEventListener('click', hideHelpTip);
-    tip.appendChild(closeX);
-  }
+  tip.style.top  = Math.max(10, top)  + 'px';
 }
 
 function hideHelpTip() {
-  if (helpTipElement) {
-    helpTipElement.remove();
-    helpTipElement = null;
-  }
-  // Also remove any stranded tip
-  const old = document.getElementById('b24t-help-tip-el');
+  helpStickyTip = false;
+  if (helpTipElement) { helpTipElement.remove(); helpTipElement = null; }
+  var old = document.getElementById('b24t-help-tip-el');
   if (old) old.remove();
 }
 
@@ -5364,6 +5518,9 @@ function hideHelpTip() {
             '<button id="b24t-wnm-fb-send" ' +
               'style="width:100%;background:#f87171;color:#fff;border:none;border-radius:8px;padding:10px;' +
               'font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;letter-spacing:0.02em;">Wyślij Bug Report →</button>' +
+            '<div style="margin-top:22px;padding-top:14px;border-top:1px solid #1c1c2a;text-align:center;">' +
+              '<button id="b24t-wnm-reset-onboarding" style="background:none;border:none;color:#2a2a42;font-size:10px;cursor:pointer;font-family:inherit;letter-spacing:0.03em;padding:4px 10px;border-radius:4px;transition:color 0.2s;">↺ Powtórz onboarding</button>' +
+            '</div>' +
           '</div>' +
         '</div>' +
 
@@ -5483,6 +5640,20 @@ function hideHelpTip() {
     }
     document.getElementById('b24t-wnm-close').addEventListener('click', closeWnm);
     document.getElementById('b24t-wnm-ok').addEventListener('click', closeWnm);
+
+    // Reset onboarding - dyskretny przycisk na dole zakładki Feedback
+    var wnmResetOb = document.getElementById('b24t-wnm-reset-onboarding');
+    if (wnmResetOb) {
+      wnmResetOb.addEventListener('mouseenter', function() { this.style.color = '#6c6cff'; });
+      wnmResetOb.addEventListener('mouseleave', function() { this.style.color = '#2a2a42'; });
+      wnmResetOb.addEventListener('click', function() {
+        closeWnm();
+        lsSet(LS.SETUP_DONE, false);
+        setTimeout(function() {
+          showOnboarding(function() { addLog('✓ Onboarding zakończony ponownie.', 'success'); });
+        }, 300);
+      });
+    }
     modal.addEventListener('click', function(e) { if (e.target === modal) closeWnm(); });
   }
 
@@ -6459,6 +6630,13 @@ function hideHelpTip() {
     panel.style.color = 'var(--b24t-text)';
 
     document.body.appendChild(panel);
+
+    // Resize annotator panel — wszystkie krawędzie
+    setupResize(panel, LS.UI_ANN_SIZE, {
+      minW: 320, maxW: 640,
+      minH: 240, maxH: Math.round(window.innerHeight * 0.85),
+      useMaxHeight: false
+    });
 
     // Style tab trigger to match theme
     function styleTab() {
@@ -7660,6 +7838,7 @@ Tej operacji nie można cofnąć.`)) {
     document.body.appendChild(panel);
     setupDragging(panel);
     setupCollapse(panel);
+    setupResize(panel, LS.UI_SIZE, { minW: 360, maxW: 720, minH: 380, maxH: Math.round(window.innerHeight * 0.92), useMaxHeight: true });
     wireEvents(panel);
     wireDeleteEvents(panel);
     wireQuickTagEvents(panel);

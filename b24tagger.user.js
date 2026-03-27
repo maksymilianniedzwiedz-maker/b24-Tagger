@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.9.4
+// @version      0.9.5
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -3914,7 +3914,7 @@ function getHelpZones() {
     {
       selector: '#b24t-btn-features',
       title: '⚙ Funkcje opcjonalne',
-      desc: 'Otwiera modal z funkcjami które możesz włączyć — np. Narzędzia Annotatora. Każda funkcja ma własny tutorial.',
+      desc: 'Otwiera modal z funkcjami które możesz włączyć — np. Annotators Tab. Każda funkcja ma własny tutorial.',
     },
     {
       selector: '#b24t-btn-collapse',
@@ -4490,6 +4490,19 @@ function hideHelpTip() {
 
   const CHANGELOG = [
     {
+      version: '0.9.5',
+      date: '2026-03-28',
+      label: 'Wydajność',
+      labelColor: '#34d399',
+      changes: [
+        { type: 'fix', text: 'Annotators Tab → Tagi: ładuje się błyskawicznie (2 requesty per projekt zamiast setek)' },
+        { type: 'ui',  text: 'Tagi: projekty bez wzmianek nie wyświetlają się — lista tylko z tym co istotne' },
+        { type: 'ui',  text: 'Cross-project delete: lista projektów zawiera tylko te z wzmiankami' },
+        { type: 'ui',  text: 'Zmiana nazwy: "Narzędzia Annotatora" → "Annotators Tab" wszędzie w UI' },
+        { type: 'new', text: 'Planowane: Overall Stats w Annotators Tab + grupowanie projektów po kategoriach' },
+      ],
+    },
+    {
       version: '0.9.4',
       date: '2026-03-28',
       label: 'Hotfix',
@@ -4987,6 +5000,8 @@ function hideHelpTip() {
     { priority: 'ai',     text: 'Dostęp do AI API — tłumaczenie wzmianek na bieżąco, automatyczna klasyfikacja, tryb tworzenia customowych klasyfikatorów (do automatycznej klasyfikacji) i inne...', next: false },
     { priority: 'high',   text: 'Podgląd wzmianki on-hover — najedź na URL w logu żeby zobaczyć treść i autora', next: false },
     { priority: 'high',   text: 'Szybkie filtry w Quick Tag — builder filtrów (źródło, sentyment, daty) bez dotykania UI Brand24', next: false },
+    { priority: 'medium', text: 'Annotators Tab — zakładka "Overall Stats": sumaryczne statystyki REQ/DEL ze wszystkich projektów (lub wybranej grupy projektów)', next: true },
+    { priority: 'medium', text: 'Grupowanie projektów — przypisywanie własnych kategorii do projektów (np. kraj, marka) dla cross-project operacji, sumarycznych statystyk i filtrowania widoków', next: false },
     { priority: 'medium', text: 'Bulk rename / merge tagów — zmiana nazwy tagu i scalanie tagów w projekcie', next: false },
     { priority: 'low',    text: 'Wieloprojektowość — jeden plik z wzmiankami z wielu projektów',              next: false },
   ];
@@ -5517,6 +5532,24 @@ function hideHelpTip() {
   // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.9.5',
+      date: '2026-03-28',
+      notes: [
+        'loadAnnotatorTagStats(): zastąpiono fetchProjectTagCounts() (pobierał WSZYSTKIE strony) dwoma getMentions() per projekt (po jednym dla reqVerId i toDeleteId) — analogicznie do refreshAllProjectsPanel()',
+        'loadAnnotatorTagStats(): skeleton loader per projekt z data-pid — każdy wiersz aktualizuje się live podczas ładowania, REQ/DEL widoczne od razu po załadowaniu projektu',
+        'loadAnnotatorTagStats(): projekty z REQ=0 i DEL=0 ukrywane na bieżąco podczas ładowania (display:none), render finalny tylko projekty z danymi',
+        'loadAnnotatorTagStats(): licznik "X / N" w stopce aktualizowany live podczas iteracji',
+        'refreshAllProjectsPanel(): render finalny pokazuje wyłącznie projekty z count > 0 (witData + withErrors), eliminuje listę "brak wzmianek z tym tagiem"',
+        'refreshAllProjectsPanel(): projekty z count=0 w ogóle nie trafiają do finalnego HTML — lista proporcjonalna do rzeczywistych danych',
+        'OPTIONAL_FEATURES[annotator_tools].label: "Narzędzia Annotatora" → "Annotators Tab"',
+        'buildAnnotatorPanel() header span: "Narzędzia Annotatora" → "Annotators Tab"',
+        'applyFeatures() komentarz: "Narzędzia Annotatora" → "Annotators Tab"',
+        'Onboarding krok (? button desc): "Narzędzia Annotatora" → "Annotators Tab"',
+        'PLANNED_FEATURES: dodano "Annotators Tab — Overall Stats" (medium, next:true)',
+        'PLANNED_FEATURES: dodano "Grupowanie projektów" (medium, next:false)',
+      ]
+    },
     {
       version: '0.9.4',
       date: '2026-03-28',
@@ -6124,7 +6157,7 @@ function hideHelpTip() {
   const OPTIONAL_FEATURES = [
     {
       id: 'annotator_tools',
-      label: '🛠 Narzędzia Annotatora',
+      label: '🛠 Annotators Tab',
       desc: 'Floating panel z narzędziami dla annotatorów: statystyki bieżącego projektu i przegląd wszystkich projektów (REQ VER / TO DELETE).',
     },
   ];
@@ -6143,7 +6176,7 @@ function hideHelpTip() {
     const apLabel = document.getElementById('b24t-del-allprojects-label');
     if (apLabel) apLabel.style.display = features.annotator_tools ? 'flex' : 'none';
 
-    // Narzędzia Annotatora — floating panel
+    // Annotators Tab — floating panel
     const tab = document.getElementById('b24t-annotator-tab');
     const panel = document.getElementById('b24t-annotator-panel');
     if (features.annotator_tools) {
@@ -6587,7 +6620,7 @@ function hideHelpTip() {
     panel.innerHTML =
       // Header with gradient
       '<div id="b24t-ann-header" style="display:flex;align-items:center;padding:12px 16px;background:var(--b24t-accent-grad);cursor:move;user-select:none;position:relative;overflow:hidden;">' +
-        '<span style="font-size:15px;font-weight:700;flex:1;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.2);">🛠 Narzędzia Annotatora</span>' +
+        '<span style="font-size:15px;font-weight:700;flex:1;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.2);">🛠 Annotators Tab</span>' +
         '<button id="b24t-ann-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:18px;line-height:1;padding:2px 8px;border-radius:5px;transition:background 0.15s;">×</button>' +
       '</div>' +
       // Tabs
@@ -6802,20 +6835,78 @@ function hideHelpTip() {
     var projects = getKnownProjects();
     if (!projects.length) { el.innerHTML = '<div style="font-size:11px;color:var(--b24t-text-faint);">Brak projektów. Odwiedź każdy projekt raz.</div>'; return; }
     var dates = getAnnotatorDates();
-    el.innerHTML = '<div style="color:var(--b24t-text-faint);font-size:11px;text-align:center;padding:8px 0;">↻ 0/' + projects.length + '</div>';
+
+    // Skeleton loader — każdy projekt jako osobna linia
+    el.innerHTML = projects.map(function(p) {
+      return '<div class="b24t-ann-skel-row" data-pid="' + p.id + '" style="padding:8px 10px;border-bottom:1px solid var(--b24t-border-sub);display:flex;align-items:center;justify-content:space-between;gap:6px;">' +
+        '<span style="font-size:12px;color:var(--b24t-text-muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + p.name + '">' + p.name + '</span>' +
+        '<span style="font-size:11px;color:var(--b24t-text-faint);">ładuję…</span>' +
+      '</div>';
+    }).join('') + '<div id="b24t-ann-skel-summary" style="padding:8px 10px;font-size:10px;color:var(--b24t-text-faint);text-align:right;">0 / ' + projects.length + '</div>';
+
     var results = [];
+    var done = 0;
+
     for (var i = 0; i < projects.length; i++) {
       var p = projects[i];
-      el.innerHTML = '<div style="color:var(--b24t-text-faint);font-size:11px;text-align:center;padding:8px 0;">↻ ' + (i+1) + '/' + projects.length + '<br><span style="font-size:9px;">' + p.name + '</span></div>';
+      // Aktualizuj placeholder dla tego projektu
+      var row = el.querySelector('.b24t-ann-skel-row[data-pid="' + p.id + '"]');
+      if (row) row.querySelector('span:last-child').textContent = '↻';
       try {
-        var counts = await fetchProjectTagCounts(p.id, p.reqVerId, p.toDeleteId, dates.dateFrom, dates.dateTo, null);
-        results.push({ name:p.name, id:p.id, reqVer:counts.reqVer, toDelete:counts.toDelete });
+        // Dwa szybkie requesty zamiast pobierania wszystkich stron
+        var reqPage  = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.reqVerId],  1);
+        var delPage  = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.toDeleteId], 1);
+        var reqVer   = reqPage.count  || 0;
+        var toDelete = delPage.count  || 0;
+        results.push({ name: p.name, id: p.id, reqVer: reqVer, toDelete: toDelete });
+        // Aktualizuj wiersz — ukryj od razu jeśli oba zero (nie zajmuje miejsca)
+        done++;
+        if (row) {
+          if (reqVer === 0 && toDelete === 0) {
+            row.style.display = 'none';
+          } else {
+            row.querySelector('span:last-child').innerHTML =
+              '<span style="color:var(--b24t-warn);font-weight:700;margin-right:6px;">' + (reqVer  || '—') + '</span>' +
+              '<span style="color:var(--b24t-err);font-weight:700;">'                  + (toDelete || '—') + '</span>';
+          }
+        }
       } catch(e) {
-        results.push({ name:p.name, id:p.id, reqVer:0, toDelete:0 });
+        results.push({ name: p.name, id: p.id, reqVer: 0, toDelete: 0 });
+        done++;
+        if (row) row.querySelector('span:last-child').textContent = 'błąd';
       }
+      var summEl = el.querySelector('#b24t-ann-skel-summary');
+      if (summEl) summEl.textContent = done + ' / ' + projects.length;
     }
-    annotatorData.tagstats = { results, dates };
-    renderAnnotatorTagStats(el, annotatorData.tagstats);
+
+    annotatorData.tagstats = { results: results, dates: dates };
+
+    // Render finalny — pokaż tylko projekty z danymi lub komunikat "czyste"
+    var filtered = results.filter(function(r) { return r.reqVer > 0 || r.toDelete > 0; })
+      .sort(function(a, b) { return (b.reqVer + b.toDelete) - (a.reqVer + a.toDelete); });
+
+    if (!filtered.length) {
+      el.innerHTML = '<div style="text-align:center;color:var(--b24t-ok);font-size:13px;padding:12px 0;font-weight:600;">✓ Wszystkie projekty czyste!</div>';
+      return;
+    }
+
+    var rows = filtered.map(function(p) {
+      return '<tr>' +
+        '<td style="padding:6px 10px;font-size:12px;color:var(--b24t-text);border-bottom:1px solid var(--b24t-border-sub);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + p.name + '">' + p.name + '</td>' +
+        '<td style="padding:6px 8px;font-size:13px;font-weight:700;color:' + (p.reqVer  > 0 ? 'var(--b24t-warn)' : 'var(--b24t-text-faint)') + ';text-align:center;border-bottom:1px solid var(--b24t-border-sub);">' + (p.reqVer  || '—') + '</td>' +
+        '<td style="padding:6px 8px;font-size:13px;font-weight:700;color:' + (p.toDelete > 0 ? 'var(--b24t-err)'  : 'var(--b24t-text-faint)') + ';text-align:center;border-bottom:1px solid var(--b24t-border-sub);">' + (p.toDelete || '—') + '</td>' +
+      '</tr>';
+    }).join('');
+    el.innerHTML =
+      '<div style="font-size:11px;color:var(--b24t-text-faint);padding:6px 0 8px;">' + dates.dateFrom + ' – ' + dates.dateTo + '</div>' +
+      '<table style="width:100%;border-collapse:collapse;">' +
+        '<thead><tr>' +
+          '<th style="padding:5px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--b24t-text-faint);text-align:left;border-bottom:1px solid var(--b24t-border);">Projekt</th>' +
+          '<th style="padding:5px 8px;font-size:10px;font-weight:700;color:var(--b24t-warn);text-align:center;border-bottom:1px solid var(--b24t-border);">REQ</th>' +
+          '<th style="padding:5px 8px;font-size:10px;font-weight:700;color:var(--b24t-err);text-align:center;border-bottom:1px solid var(--b24t-border);">DEL</th>' +
+        '</tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table>';
   }
 
   function renderAnnotatorTagStats(el, d) {
@@ -7295,25 +7386,31 @@ To jest NIEODWRACALNE.`)) return;
     }
     if (delBtn) delBtn.style.display = totalCount > 0 ? 'block' : 'none';
 
+    // Pokaż tylko projekty z wzmiankami (count > 0), ukryj puste
+    const withData    = results.filter(({ count }) => count > 0);
+    const withErrors  = results.filter(({ count }) => count < 0);
+
     if (list) {
-      list.innerHTML = results.map(({ p, count, hasData, error }) => {
-        const errored = count < 0;
-        return '<div style="padding:10px 14px;border-bottom:1px solid var(--b24t-border-sub);">' +
-          '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:2px;">' +
-            '<span style="font-size:12px;font-weight:600;color:var(--b24t-text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + p.name + '">' + p.name + '</span>' +
+      if (!withData.length && !withErrors.length) {
+        list.innerHTML = '<div style="padding:16px;text-align:center;font-size:12px;color:var(--b24t-text-faint);">Brak wzmianek z tym tagiem w żadnym projekcie</div>';
+      } else {
+        list.innerHTML = [...withData, ...withErrors].map(({ p, count, hasData, error }) => {
+          const errored = count < 0;
+          return '<div style="padding:10px 14px;border-bottom:1px solid var(--b24t-border-sub);">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:2px;">' +
+              '<span style="font-size:12px;font-weight:600;color:var(--b24t-text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + p.name + '">' + p.name + '</span>' +
+              (errored
+                ? '<span style="font-size:10px;color:var(--b24t-err);flex-shrink:0;">błąd</span>'
+                : '<span style="font-size:13px;font-weight:700;flex-shrink:0;color:var(--b24t-err);">' + count + '</span>'
+              ) +
+            '</div>' +
             (errored
-              ? '<span style="font-size:10px;color:var(--b24t-err);flex-shrink:0;">błąd</span>'
-              : '<span style="font-size:13px;font-weight:700;flex-shrink:0;color:' + (hasData ? 'var(--b24t-err)' : 'var(--b24t-text-faint)') + ';">' + Math.max(0, count) + '</span>'
-            ) +
-          '</div>' +
-          (hasData
-            ? '<div style="font-size:10px;color:var(--b24t-text-faint);">zakres: ' + (p._dateFrom || '?') + ' → ' + (p._dateTo || '?') + '</div>'
-            : errored
               ? '<div style="font-size:10px;color:var(--b24t-err);">' + (error || 'błąd zapytania') + '</div>'
-              : '<div style="font-size:10px;color:var(--b24t-text-faint);">brak wzmianek z tym tagiem</div>'
-          ) +
-        '</div>';
-      }).join('');
+              : '<div style="font-size:10px;color:var(--b24t-text-faint);">zakres: ' + (p._dateFrom || '?') + ' → ' + (p._dateTo || '?') + '</div>'
+            ) +
+          '</div>';
+        }).join('');
+      }
     }
   }
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.5.4
+// @version      0.5.5
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.5.4';
+  const VERSION = '0.5.5';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2332,7 +2332,9 @@
 
   async function parseXLSXFile(file) {
     // Jeśli SheetJS jest już załadowany — użyj od razu
-    if (window.XLSX) {
+    // Sprawdź unsafeWindow.XLSX (prawdziwy window strony, nie sandbox TM)
+    const _win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+    if (_win.XLSX && typeof _win.XLSX.read === 'function') {
       return new Promise((resolve, reject) => readWithSheetJS(file, resolve, reject));
     }
 
@@ -2379,12 +2381,20 @@
   }
 
   function readWithSheetJS(file, resolve, reject) {
+    // Użyj unsafeWindow.XLSX jeśli dostępne — Tampermonkey sandbox ma oddzielne window
+    const _XLSX = (typeof unsafeWindow !== 'undefined' && unsafeWindow.XLSX)
+      ? unsafeWindow.XLSX
+      : window.XLSX;
+    if (!_XLSX || typeof _XLSX.read !== 'function') {
+      reject(new Error('SheetJS (XLSX) nie jest załadowany. Odśwież stronę i spróbuj ponownie.'));
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const wb = window.XLSX.read(e.target.result, { type: 'array', cellDates: true });
+        const wb = _XLSX.read(e.target.result, { type: 'array', cellDates: true });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const rows = window.XLSX.utils.sheet_to_json(ws, { defval: '' });
+        const rows = _XLSX.utils.sheet_to_json(ws, { defval: '' });
         // Normalize date fields
         rows.forEach(row => {
           Object.keys(row).forEach(k => {
@@ -3541,6 +3551,15 @@
 
   const CHANGELOG = [
     {
+      version: '0.5.5',
+      date: '2026-03-27',
+      label: 'Bugfix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Naprawiono wczytywanie XLSX — błąd z sandboxem Tampermonkey' },
+      ]
+    },
+    {
       version: '0.5.4',
       date: '2026-03-27',
       label: 'Bugfix',
@@ -4348,6 +4367,16 @@
   // ─────────────────────────────────────────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.5.5',
+      date: '2026-03-27',
+      notes: [
+        'Root cause: Tampermonkey sandbox ma własny obiekt window odizolowany od strony; window.XLSX w scope TM ≠ unsafeWindow.XLSX gdzie SheetJS faktycznie jest załadowany',
+        'readWithSheetJS(): używa _XLSX = unsafeWindow.XLSX || window.XLSX zamiast window.XLSX bezpośrednio',
+        'parseXLSXFile(): sprawdza _win.XLSX (unsafeWindow) zamiast window.XLSX',
+        'Dodano guard: if (!_XLSX || typeof _XLSX.read !== "function") reject() z czytelnym komunikatem',
+      ]
+    },
     {
       version: '0.5.4',
       date: '2026-03-27',

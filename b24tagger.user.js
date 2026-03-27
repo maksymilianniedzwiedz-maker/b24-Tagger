@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.7.1
+// @version      0.8.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.7.1';
+  const VERSION = '0.8.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1343,6 +1343,14 @@
   // ─────────────────────────────────────────────────────────────────────────────
 
   function injectStyles() {
+    // Wczytaj Inter z Google Fonts (jeśli jeszcze nie ma)
+    if (!document.getElementById('b24t-inter-font')) {
+      const link = document.createElement('link');
+      link.id = 'b24t-inter-font';
+      link.rel = 'stylesheet';
+      link.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap';
+      document.head.appendChild(link);
+    }
     const style = document.createElement('style');
     style.textContent = `
       /* =====================================================================
@@ -1351,57 +1359,59 @@
          Dark mode:  rich indigo/violet, multi-gradient sections
          ===================================================================== */
 
-      /* ── LIGHT MODE (default) ── */
+      /* ── LIGHT MODE (default) — WYSOKI KONTRAST v0.8 ── */
       :root, [data-b24t-theme="light"] {
         --b24t-bg:          #ffffff;
-        --b24t-bg-deep:     #f0f4f8;
-        --b24t-bg-elevated: #e8f0e9;
-        --b24t-bg-input:    #eef2f5;
+        --b24t-bg-deep:     #f2f4f8;
+        --b24t-bg-elevated: #f8f9fc;
+        --b24t-bg-input:    #eaecf4;
         --b24t-bg-section-a: #ffffff;
-        --b24t-bg-section-b: #f5f9f5;
-        --b24t-bg-section-c: #eef4f0;
-        --b24t-border:      #c8d8cc;
-        --b24t-border-sub:  #dce8de;
-        --b24t-border-strong: #a8c4ae;
+        --b24t-bg-section-b: #f6f7fb;
+        --b24t-bg-section-c: #eef0f8;
+        --b24t-border:      #c8cde0;
+        --b24t-border-sub:  #dde0ef;
+        --b24t-border-strong: #9098c8;
 
-        --b24t-text:        #1a2520;
-        --b24t-text-muted:  #3d5244;
-        --b24t-text-faint:  #7a9882;
-        --b24t-text-label:  #2d6b3a;
-        --b24t-text-meta:   #5a7860;
+        /* Atramentowy tekst — wyraźny kontrast na białym */
+        --b24t-text:        #111827;
+        --b24t-text-muted:  #374151;
+        --b24t-text-faint:  #6b7280;
+        --b24t-text-label:  #1e40af;
+        --b24t-text-meta:   #4b5563;
 
-        --b24t-primary:     #1e7d3a;
-        --b24t-primary-h:   #15602c;
-        --b24t-primary-glow: rgba(30,125,58,0.18);
-        --b24t-primary-bg:  rgba(30,125,58,0.08);
+        /* Brand24-blue primary — czytelny na białym tle, wyraźny */
+        --b24t-primary:     #2563eb;
+        --b24t-primary-h:   #1d4ed8;
+        --b24t-primary-glow: rgba(37,99,235,0.20);
+        --b24t-primary-bg:  rgba(37,99,235,0.07);
 
-        --b24t-accent-grad: linear-gradient(135deg, #1e7d3a 0%, #2a9649 40%, #1a6b32 100%);
-        --b24t-panel-grad:  linear-gradient(180deg, #ffffff 0%, #f2f8f3 40%, #e8f2ea 100%);
-        --b24t-section-grad-a: linear-gradient(135deg, #ffffff 0%, #f5fbf6 100%);
-        --b24t-section-grad-b: linear-gradient(135deg, #f0f7f1 0%, #e6f2e8 100%);
-        --b24t-section-grad-c: linear-gradient(135deg, #e8f4ea 0%, #dceede 100%);
-        --b24t-section-grad-d: linear-gradient(135deg, #f8f8ff 0%, #eef4ff 100%);
+        --b24t-accent-grad: linear-gradient(135deg, #2563eb 0%, #1d4ed8 50%, #1e40af 100%);
+        --b24t-panel-grad:  linear-gradient(180deg, #ffffff 0%, #f6f8ff 60%, #eef1ff 100%);
+        --b24t-section-grad-a: #ffffff;
+        --b24t-section-grad-b: #f6f7fb;
+        --b24t-section-grad-c: #eef0f8;
+        --b24t-section-grad-d: #f0f2ff;
 
-        --b24t-ok:          #16753a;
-        --b24t-ok-bg:       linear-gradient(135deg, #d1fadf, #bbf7ce);
-        --b24t-ok-text:     #0d4f26;
-        --b24t-warn:        #b45309;
-        --b24t-warn-bg:     linear-gradient(135deg, #fef3c7, #fde68a);
+        --b24t-ok:          #166534;
+        --b24t-ok-bg:       #dcfce7;
+        --b24t-ok-text:     #14532d;
+        --b24t-warn:        #92400e;
+        --b24t-warn-bg:     #fef3c7;
         --b24t-warn-text:   #78350f;
-        --b24t-err:         #c0392b;
-        --b24t-err-bg:      linear-gradient(135deg, #fee2e2, #fecaca);
+        --b24t-err:         #991b1b;
+        --b24t-err-bg:      #fee2e2;
         --b24t-err-text:    #7f1d1d;
-        --b24t-info:        #1d4ed8;
-        --b24t-info-bg:     linear-gradient(135deg, #dbeafe, #bfdbfe);
+        --b24t-info:        #1e40af;
+        --b24t-info-bg:     #dbeafe;
         --b24t-info-text:   #1e3a8a;
 
-        --b24t-shadow:      0 4px 24px rgba(30,125,58,0.12), 0 1px 4px rgba(0,0,0,0.06);
-        --b24t-shadow-h:    0 8px 36px rgba(30,125,58,0.18), 0 2px 8px rgba(0,0,0,0.08);
-        --b24t-shadow-drag: 0 16px 48px rgba(30,125,58,0.22);
+        --b24t-shadow:      0 4px 16px rgba(37,99,235,0.10), 0 1px 4px rgba(0,0,0,0.07);
+        --b24t-shadow-h:    0 8px 28px rgba(37,99,235,0.14), 0 2px 8px rgba(0,0,0,0.09);
+        --b24t-shadow-drag: 0 16px 48px rgba(37,99,235,0.18);
 
-        --b24t-scrollbar:   #b8d4bc;
-        --b24t-badge-idle-bg:  #eef2ee; --b24t-badge-idle-fg: #4a6b52;
-        --b24t-badge-run-bg:   #d1fadf; --b24t-badge-run-fg:  #0d4f26;
+        --b24t-scrollbar:   #c4cae8;
+        --b24t-badge-idle-bg:  #e8eaf6; --b24t-badge-idle-fg: #374151;
+        --b24t-badge-run-bg:   #dcfce7; --b24t-badge-run-fg:  #14532d;
         --b24t-badge-pause-bg: #fef3c7; --b24t-badge-pause-fg:#78350f;
         --b24t-badge-err-bg:   #fee2e2; --b24t-badge-err-fg:  #7f1d1d;
         --b24t-badge-done-bg:  #dbeafe; --b24t-badge-done-fg: #1e3a8a;
@@ -1493,7 +1503,7 @@
         background: var(--b24t-panel-grad);
         border: 1px solid var(--b24t-border);
         border-radius: 14px;
-        font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+        font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
         font-size: 13px;
         color: var(--b24t-text);
         z-index: 2147483647;
@@ -1874,7 +1884,7 @@
       .b24t-modal {
         background: var(--b24t-bg); border: 1px solid var(--b24t-border);
         border-radius: 14px; padding: 20px; width: 320px;
-        font-family: 'SF Mono', monospace;
+        font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
         box-shadow: var(--b24t-shadow-h);
         animation: b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);
         transition: background 0.3s, border-color 0.3s;
@@ -1894,7 +1904,7 @@
       .b24t-report-content {
         background: var(--b24t-bg); border: 1px solid var(--b24t-border);
         border-radius: 14px; padding: 24px; width: 280px;
-        font-family: 'SF Mono', monospace;
+        font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
         box-shadow: var(--b24t-shadow-h);
         animation: b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);
       }
@@ -1921,7 +1931,7 @@
       #b24t-setup {
         position: fixed; inset: 0; background: rgba(0,0,0,0.7);
         display: flex; align-items: center; justify-content: center;
-        z-index: 2147483647; font-family: 'SF Mono', monospace;
+        z-index: 2147483647; font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
         backdrop-filter: blur(6px);
       }
       .b24t-setup-card {
@@ -2017,7 +2027,7 @@
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
           <div id="b24t-token-status-sub" style="font-size:10px;"></div>
-          <div id="b24t-session-timer-sub" style="font-size:11px;color:var(--b24t-text-faint);font-family:'SF Mono',monospace;"></div>
+          <div id="b24t-session-timer-sub" style="font-size:11px;color:var(--b24t-text-faint);font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;"></div>
         </div>
       </div>
 
@@ -2420,7 +2430,7 @@
     });
 
     // Help
-    panel.querySelector('#b24t-btn-help').addEventListener('click', showHelp);
+    panel.querySelector('#b24t-btn-help').addEventListener('click', toggleHelpMode);
 
     // Changelog / What's New
     panel.querySelector('#b24t-btn-changelog')?.addEventListener('click', () => showWhatsNewExtended(true));
@@ -2980,149 +2990,799 @@
   // HELP / TUTORIAL
   // ─────────────────────────────────────────────────────────────────────────────
 
-  function showHelp() {
-    const modal = document.createElement('div');
-    modal.className = 'b24t-modal-overlay';
-    modal.innerHTML = `
-      <div class="b24t-modal" style="width:400px;max-height:80vh;overflow-y:auto;">
-        <div class="b24t-modal-title" style="color:#6c6cff;">B24 Tagger — Pomoc</div>
-        <div class="b24t-modal-text">
-          <strong>Jak używać:</strong><br>
-          1. Przejdź do widoku Mentions projektu w Brand24<br>
-          2. Wgraj plik CSV/JSON/XLSX z labelkami<br>
-          3. Skonfiguruj mapowanie labelek → tagi<br>
-          4. Kliknij <strong>Start</strong> (lub najpierw Test Run)<br><br>
+// ─────────────────────────────────────────────────────────────────────────────
+// ONBOARDING v2 — Dynamiczny tour z dymkami
+// ─────────────────────────────────────────────────────────────────────────────
 
-          <strong>Tryby:</strong><br>
-          • <strong>Test Run</strong> — symulacja bez zapisu tagów<br>
-          • <strong>Właściwy</strong> — prawdziwe tagowanie<br><br>
+function injectOnboardingStyles() {
+  const s = document.createElement('style');
+  s.id = 'b24t-onboarding-styles';
+  s.textContent = `
+    /* ── ONBOARDING OVERLAY ── */
+    #b24t-ob-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0); /* starts transparent, fades in */
+      z-index: 2147483600;
+      pointer-events: none;
+      transition: background 0.4s ease;
+    }
+    #b24t-ob-overlay.ob-active {
+      background: rgba(0,0,0,0.62);
+      pointer-events: all;
+    }
+    /* Spotlight cutout via box-shadow */
+    #b24t-ob-spotlight {
+      position: fixed;
+      border-radius: 10px;
+      z-index: 2147483601;
+      pointer-events: none;
+      box-shadow: 0 0 0 9999px rgba(0,0,0,0.62);
+      transition: all 0.35s cubic-bezier(0.4,0,0.2,1);
+      outline: 2px solid rgba(108,108,255,0.7);
+      outline-offset: 2px;
+    }
+    #b24t-ob-spotlight.ob-hidden {
+      box-shadow: none; outline: none;
+      width: 0 !important; height: 0 !important;
+    }
 
-          <strong>Mapa wzmianek:</strong><br>
-          • <strong>Untagged</strong> — szybszy, tylko nieoznaczone<br>
-          • <strong>Pełna</strong> — wszystkie wzmianki w zakresie dat<br><br>
+    /* ── BUBBLE / DYMEK ── */
+    #b24t-ob-bubble {
+      position: fixed;
+      z-index: 2147483640;
+      max-width: 340px;
+      min-width: 260px;
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--b24t-bg, #141419);
+      border: 1px solid rgba(108,108,255,0.35);
+      border-radius: 16px;
+      padding: 18px 20px 14px;
+      box-shadow: 0 12px 48px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.05);
+      pointer-events: all;
+      transition: opacity 0.25s ease, transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
+    }
+    #b24t-ob-bubble.ob-entering {
+      opacity: 0; transform: translateY(12px) scale(0.96);
+    }
+    #b24t-ob-bubble.ob-visible {
+      opacity: 1; transform: translateY(0) scale(1);
+    }
+    #b24t-ob-bubble.ob-exiting {
+      opacity: 0; transform: translateY(-8px) scale(0.97);
+    }
 
-          <strong>Debug (dla programistów):</strong><br>
-          W konsoli przeglądarki wpisz:<br>
-          <code style="color:#4ade80;">window.B24Tagger.debug.getState()</code><br>
-          <code style="color:#4ade80;">window.B24Tagger.debug.testGraphQL()</code><br>
-          <code style="color:#4ade80;">window.B24Tagger.debug.getLogs()</code><br><br>
+    /* Tail / strzałka dymka */
+    #b24t-ob-bubble::before {
+      content: '';
+      position: absolute;
+      width: 12px; height: 12px;
+      background: var(--b24t-bg, #141419);
+      border: 1px solid rgba(108,108,255,0.35);
+      transform: rotate(45deg);
+      z-index: -1;
+      transition: all 0.25s ease;
+    }
+    #b24t-ob-bubble[data-tail="bottom"]::before {
+      bottom: -7px; left: 50%; margin-left: -6px;
+      border-top: none; border-left: none;
+    }
+    #b24t-ob-bubble[data-tail="top"]::before {
+      top: -7px; left: 50%; margin-left: -6px;
+      border-bottom: none; border-right: none;
+    }
+    #b24t-ob-bubble[data-tail="right"]::before {
+      right: -7px; top: 50%; margin-top: -6px;
+      border-bottom: none; border-left: none;
+    }
+    #b24t-ob-bubble[data-tail="left"]::before {
+      left: -7px; top: 50%; margin-top: -6px;
+      border-top: none; border-right: none;
+    }
+    #b24t-ob-bubble[data-tail="none"]::before { display: none; }
 
-          <strong>Wersja:</strong> ${VERSION}
-        </div>
-        <button class="b24t-btn-secondary" onclick="this.closest('.b24t-modal-overlay').remove()" style="width:100%;margin-top:8px;">Zamknij</button>
-      </div>
-    `;
-    document.body.appendChild(modal);
-    modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+    /* Bubble header */
+    .ob-bubble-step {
+      font-size: 10px; font-weight: 600;
+      color: rgba(108,108,255,0.7);
+      letter-spacing: 0.12em; text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+    .ob-bubble-title {
+      font-size: 15px; font-weight: 700;
+      color: #e2e2e8;
+      margin-bottom: 8px;
+      line-height: 1.3;
+    }
+    .ob-bubble-body {
+      font-size: 12px;
+      color: #b0b0c8;
+      line-height: 1.7;
+      margin-bottom: 14px;
+    }
+    .ob-bubble-body strong { color: #e2e2e8; }
+    .ob-bubble-body .ob-tag {
+      display: inline-block;
+      background: rgba(108,108,255,0.12);
+      border: 1px solid rgba(108,108,255,0.25);
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 11px;
+      color: #9090ff;
+      margin: 1px 2px;
+    }
+
+    /* Progress dots in bubble */
+    .ob-dots {
+      display: flex; gap: 5px; margin-bottom: 12px;
+    }
+    .ob-dot {
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.12);
+      transition: background 0.2s, transform 0.2s;
+    }
+    .ob-dot.ob-dot-done { background: rgba(74,222,128,0.5); }
+    .ob-dot.ob-dot-active {
+      background: #6c6cff;
+      transform: scale(1.4);
+    }
+
+    /* Navigation row */
+    .ob-nav {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px;
+    }
+    .ob-btn-next {
+      background: linear-gradient(135deg, #6c6cff, #9b59ff);
+      color: #fff; border: none; border-radius: 8px;
+      padding: 8px 18px; font-size: 12px; font-weight: 700;
+      font-family: inherit; cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+      box-shadow: 0 2px 10px rgba(108,108,255,0.35);
+    }
+    .ob-btn-next:hover { opacity: 0.88; }
+    .ob-btn-next:active { transform: scale(0.96); }
+    .ob-btn-back {
+      background: rgba(255,255,255,0.06);
+      color: #7878aa; border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px; padding: 8px 14px;
+      font-size: 12px; font-family: inherit; cursor: pointer;
+      transition: background 0.15s;
+    }
+    .ob-btn-back:hover { background: rgba(255,255,255,0.1); }
+    .ob-step-counter {
+      font-size: 10px; color: #555577;
+      letter-spacing: 0.05em;
+    }
+
+    /* Animate pulse on spotlight */
+    @keyframes ob-pulse {
+      0%   { outline-color: rgba(108,108,255,0.7); }
+      50%  { outline-color: rgba(108,108,255,1.0); }
+      100% { outline-color: rgba(108,108,255,0.7); }
+    }
+    #b24t-ob-spotlight.ob-pulse { animation: ob-pulse 1.5s ease-in-out infinite; }
+
+    /* ── HELP MODE ── */
+    #b24t-panel.b24t-help-mode {
+      outline: 3px solid rgba(108,108,255,0.5);
+    }
+    .b24t-help-mode #b24t-body {
+      pointer-events: none;
+    }
+    /* Clickable zones in help mode */
+    .b24t-help-zone {
+      position: absolute;
+      cursor: help;
+      border-radius: 6px;
+      transition: background 0.15s;
+      z-index: 2147483500;
+    }
+    .b24t-help-zone:hover {
+      background: rgba(108,108,255,0.18) !important;
+      outline: 2px solid rgba(108,108,255,0.5);
+    }
+    /* Help tooltip */
+    .b24t-help-tip {
+      position: fixed;
+      z-index: 2147483647;
+      max-width: 280px;
+      background: #1a1a2e;
+      border: 1px solid rgba(108,108,255,0.4);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 11px;
+      color: #b0b0c8;
+      line-height: 1.6;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+      pointer-events: none;
+      animation: b24t-slidein 0.2s cubic-bezier(0.34,1.56,0.64,1);
+    }
+    .b24t-help-tip strong { color: #e2e2e8; display: block; margin-bottom: 4px; font-size: 12px; }
+
+    /* Help overlay (wyszarzenie panelu) */
+    #b24t-help-overlay {
+      position: absolute; inset: 0;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(2px);
+      border-radius: 14px;
+      z-index: 2147483490;
+      pointer-events: none;
+      animation: b24t-fadein 0.25s ease;
+    }
+    #b24t-help-close {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(108,108,255,0.15);
+      border: 1px solid rgba(108,108,255,0.3);
+      border-radius: 10px;
+      padding: 10px 18px;
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 11px; color: #9090ff;
+      cursor: pointer;
+      z-index: 2147483495;
+      pointer-events: all;
+      white-space: nowrap;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      transition: background 0.15s;
+    }
+    #b24t-help-close:hover { background: rgba(108,108,255,0.25); }
+  `;
+  document.head.appendChild(s);
+}
+
+// ── ONBOARDING STEPS ──
+function getOnboardingSteps() {
+  return [
+    // 0 — Powitanie (centrum ekranu, bez spotlightu)
+    {
+      target: null,
+      title: '👋 Cześć! Witaj w B24 Tagger!',
+      body: `Zanim zaczniesz — pozwól, że w kilku krokach oprowadzę Cię po wtyczce. <strong>Zajmie to dosłownie chwilę.</strong><br><br>Ten onboarding pojawi się tylko raz i <strong>nie można go pominąć</strong> 😄 — chcemy mieć pewność, że wiesz jak korzystać z narzędzia!`,
+      tail: 'none',
+      emoji: true,
+    },
+    // 1 — O projekcie (centrum ekranu)
+    {
+      target: null,
+      title: '🛠️ Czym jest B24 Tagger?',
+      body: `To <strong>autorski projekt członka Insights24</strong>, stworzony od zera, żeby przyspieszyć i ułatwić pracę annotatorską w Brand24.<br><br>Wtyczka cały czas się <strong>rozwija</strong> — nowe funkcje, poprawki i ulepszenia pojawiają się regularnie. Jesteś jednym z pierwszych użytkowników! 🚀`,
+      tail: 'none',
+    },
+    // 2 — Header / topbar
+    {
+      target: '#b24t-topbar',
+      title: '🏠 Header wtyczki',
+      body: `Na samej górze znajdziesz:<br>
+        <span class="ob-tag">B24 Tagger BETA</span> — nazwa i wersja<br>
+        <span class="ob-tag">Status badge</span> — aktualny stan (Idle / Running / Done)<br>
+        <span class="ob-tag">☀️🌙 Toggle</span> — przełącz jasny/ciemny motyw<br>
+        <span class="ob-tag">⚙</span> — funkcje opcjonalne (więcej za chwilę)<br>
+        <span class="ob-tag">?</span> — tryb pomocy<br>
+        <span class="ob-tag">▼</span> — zwiń/rozwiń panel<br><br>
+        Panel możesz <strong>przeciągać</strong> chwytając za header! 🖱️`,
+      tail: 'bottom',
+    },
+    // 3 — Meta bar (token)
+    {
+      target: '#b24t-meta-bar',
+      title: '🔑 Pasek statusu',
+      body: `Tu widzisz dwie ważne informacje:<br><br>
+        <strong>● Token API</strong> — zielony = wtyczka jest połączona z Brand24 i gotowa do pracy. Żółty = czeka na inicjalizację (otwórz widok Mentions).<br><br>
+        <strong>Timer sesji</strong> — mierzy czas trwania aktualnej operacji tagowania.`,
+      tail: 'bottom',
+    },
+    // 4 — Subbar (changelog + update)
+    {
+      target: '#b24t-subbar',
+      title: '📋 Pasek narzędzi',
+      body: `Dwa przyciski QoL:<br><br>
+        <strong>📋 Changelog & Feedback</strong> — lista zmian w każdej wersji, planowane funkcje i możliwość wysłania feedbacku bezpośrednio na Slack.<br><br>
+        <strong>↑ Sprawdź aktualizacje</strong> — ręczne sprawdzenie nowej wersji. Btw — wtyczka <strong>aktualizuje się automatycznie</strong> przez Tampermonkey! 🎉`,
+      tail: 'bottom',
+    },
+    // 5 — Zakładki
+    {
+      target: '#b24t-tabs',
+      title: '📑 Zakładki — tryby pracy',
+      body: `Cztery tryby pracy:<br><br>
+        <span class="ob-tag">📄 Plik</span> — główny tryb: wgraj plik CSV/JSON z labelkami i otaguj setki wzmianek automatycznie<br>
+        <span class="ob-tag">⚡ Quick Tag</span> — błyskawiczne tagowanie bez pliku, na podstawie aktualnego widoku Brand24<br>
+        <span class="ob-tag">🗑 Quick Delete</span> — masowe usuwanie wzmianek po tagu lub aktualnym widoku<br>
+        <span class="ob-tag">📋 Historia</span> — ostatnie 20 sesji ze statystykami`,
+      tail: 'bottom',
+    },
+    // 6 — Zakładka Plik — sekcja projekt
+    {
+      target: '#b24t-main-tab .b24t-section:first-child',
+      title: '🗂️ Sekcja: Projekt',
+      body: `Tutaj wyświetla się <strong>aktualnie wykryty projekt Brand24</strong> — nazwa i ID.<br><br>
+        Wtyczka wykrywa projekt automatycznie na podstawie URL. Przejdź do widoku <strong>Mentions</strong> konkretnego projektu, żeby projekt się tu pojawił.`,
+      tail: 'bottom',
+    },
+    // 7 — Plik źródłowy
+    {
+      target: '#b24t-file-zone',
+      title: '📂 Wgrywanie pliku',
+      body: `Kliknij lub przeciągnij plik z ocenami wzmianek.<br><br>
+        Obsługiwane formaty: <strong>JSON</strong> (zalecany!), CSV, XLSX<br><br>
+        <strong>⚠️ Ważne:</strong> używaj formatu JSON — XLSX może obcinać długie ID z TikToka i Twittera (19 cyfr)!<br><br>
+        Wymagane kolumny: <span class="ob-tag">url</span> <span class="ob-tag">assessment</span><br>
+        Opcjonalne: <span class="ob-tag">created_date</span> <span class="ob-tag">text</span>`,
+      tail: 'top',
+    },
+    // 8 — Quick Tag
+    {
+      target: '[data-tab="quicktag"]',
+      title: '⚡ Quick Tag',
+      body: `Zakładka do tagowania <strong>bez pliku</strong> — działa na aktualnym widoku Brand24.<br><br>
+        Ustaw filtry w Brand24 (zakres dat, tagi, frazy) → przejdź do Quick Tag → wybierz tag → kliknij <strong>Taguj widok</strong>.<br><br>
+        Wtyczka pobiera wzmianki dokładnie z tego samego widoku który masz otwarty i masowo je taguje. Idealne do szybkich operacji! ⚡`,
+      tail: 'bottom',
+    },
+    // 9 — Quick Delete
+    {
+      target: '[data-tab="delete"]',
+      title: '🗑️ Quick Delete',
+      body: `Masowe usuwanie wzmianek — dwa tryby:<br><br>
+        <strong>Po tagu</strong> — usuwa wszystkie wzmianki oznaczone wybranym tagiem w zakresie dat<br><br>
+        <strong>Aktualny widok</strong> — usuwa wzmianki dokładnie z widoku który masz otwarty<br><br>
+        Każda operacja wymaga <strong>potwierdzenia</strong> — nie ma przypadkowych kasowań! 🛡️`,
+      tail: 'bottom',
+    },
+    // 10 — Historia
+    {
+      target: '[data-tab="history"]',
+      title: '📋 Historia sesji',
+      body: `Pełna historia ostatnich <strong>20 sesji</strong> tagowania.<br><br>
+        Dla każdej sesji widzisz: projekt, datę, czas trwania, liczbę otagowanych/pominiętych wzmianek i inne statystyki.<br><br>
+        Przydatne do audytu i sprawdzenia co dokładnie było tagowane poprzednim razem. 🕐`,
+      tail: 'bottom',
+    },
+    // 11 — Akcje (Start / Pause / Stop)
+    {
+      target: '#b24t-actions',
+      title: '▶️ Przyciski akcji',
+      body: `Na dole panelu (w zakładce Plik) znajdziesz główne przyciski operacji:<br><br>
+        <strong>Start</strong> — uruchamia tagowanie lub wznawia po pauzie<br>
+        <strong>Pause</strong> — bezpieczne zatrzymanie po aktualnej stronie<br>
+        <strong>Test Run</strong> — symulacja bez zapisu — sprawdź dopasowanie zanim ruszysz na poważnie!<br><br>
+        Zawsze zacznij od <strong>Test Run</strong> przy nowym pliku! ✅`,
+      tail: 'top',
+    },
+    // 12 — Funkcje opcjonalne (⚙)
+    {
+      target: '#b24t-btn-features',
+      title: '⚙️ Funkcje opcjonalne',
+      body: `Przycisk ⚙ otwiera panel z funkcjami, które możesz włączyć na żądanie.<br><br>
+        Każda z nich ma <strong>własny mini-tutorial</strong>, który pojawi się automatycznie przy pierwszym włączeniu — więc nie musisz znać szczegółów z góry! 🎯<br><br>
+        Odkrywaj funkcje w swoim tempie.`,
+      tail: 'bottom',
+    },
+    // 13 — Tryb pomocy (?)
+    {
+      target: '#b24t-btn-help',
+      title: '❓ Tryb pomocy',
+      body: `Ten przycisk uruchamia <strong>interaktywny tryb pomocy</strong>.<br><br>
+        Panel zostanie "wyszarzony", a Ty możesz <strong>klikać na dowolne elementy</strong> interfejsu żeby dowiedzieć się co robią — każdy element ma swój opis.<br><br>
+        Wróć tu kiedy zapomnisz do czego służy jakiś przycisk! 🔍`,
+      tail: 'bottom',
+    },
+    // 14 — Finał
+    {
+      target: null,
+      title: '🎉 Gotowy do pracy!',
+      body: `To tyle! Teraz wiesz jak działa B24 Tagger.<br><br>
+        <strong>Szybki start:</strong><br>
+        1️⃣ Przejdź do widoku Mentions w Brand24<br>
+        2️⃣ Wgraj plik JSON z labelkami<br>
+        3️⃣ Zrób <strong>Test Run</strong> żeby sprawdzić dopasowanie<br>
+        4️⃣ Kliknij <strong>Start</strong> i obserwuj progress!<br><br>
+        Pytania? Kliknij <span class="ob-tag">📋 Changelog & Feedback</span> → zakładka Feedback 💬`,
+      tail: 'none',
+    },
+  ];
+}
+
+// ── GŁÓWNA FUNKCJA ONBOARDINGU ──
+function showOnboarding(onComplete) {
+  if (document.getElementById('b24t-ob-overlay')) return; // guard
+
+  injectOnboardingStyles();
+
+  const steps = getOnboardingSteps();
+  let currentStep = 0;
+  let animating = false;
+
+  // Tworzę overlay + spotlight + bubble
+  const overlay = document.createElement('div');
+  overlay.id = 'b24t-ob-overlay';
+  document.body.appendChild(overlay);
+
+  const spotlight = document.createElement('div');
+  spotlight.id = 'b24t-ob-spotlight';
+  spotlight.classList.add('ob-hidden');
+  document.body.appendChild(spotlight);
+
+  const bubble = document.createElement('div');
+  bubble.id = 'b24t-ob-bubble';
+  bubble.classList.add('ob-entering');
+  document.body.appendChild(bubble);
+
+  // Aktywuj overlay z opóźnieniem
+  requestAnimationFrame(() => {
+    overlay.classList.add('ob-active');
+  });
+
+  function getTargetRect(selector) {
+    if (!selector) return null;
+    const el = document.querySelector(selector);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { top: r.top, left: r.left, width: r.width, height: r.height, el };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // SETUP CHECK (first run)
-  // ─────────────────────────────────────────────────────────────────────────────
+  function positionSpotlight(rect) {
+    const pad = 6;
+    if (!rect) {
+      spotlight.classList.add('ob-hidden');
+      spotlight.style.cssText = 'width:0;height:0;top:0;left:0;';
+      return;
+    }
+    spotlight.classList.remove('ob-hidden');
+    spotlight.classList.add('ob-pulse');
+    spotlight.style.cssText = `
+      top: ${rect.top - pad}px;
+      left: ${rect.left - pad}px;
+      width: ${rect.width + pad * 2}px;
+      height: ${rect.height + pad * 2}px;
+    `;
+  }
 
-  function showSetupWizard(onComplete) {
-    let step = 0;
-    const steps = [
-      {
-        title: 'Witaj w B24 Tagger',
-        desc: 'Automatyczne tagowanie wzmianek Brand24 na podstawie pliku z labelkami. Skonfigurujmy wtyczkę — zajmie to chwilę.',
-        checks: [],
-        next: 'Dalej →',
-      },
-      {
-        title: 'Weryfikacja środowiska',
-        desc: 'Sprawdzam czy wszystko jest gotowe do pracy.',
-        checks: [
-          { label: 'Strona Brand24', check: () => window.location.hostname.includes('brand24') },
-          { label: 'Widok Mentions (przejdź do projektu)', check: () => !!getProjectId() },
-          { label: 'Token API (poczekaj chwilę)', check: () => !!state.tokenHeaders },
-        ],
-        next: 'Kontynuuj →',
-      },
-      {
-        title: 'Format pliku',
-        desc: 'Wtyczka przyjmuje pliki CSV, JSON lub XLSX.\n\nWymagane kolumny: url (adres wzmianki), assessment (labelka np. RELEVANT / IRRELEVANT).\nOpcjonalne: created_date, text, id.\n\nWtyczka automatycznie wykrywa kolumny — możesz też ustawić je ręcznie po wgraniu pliku.',
-        checks: [],
-        next: 'Rozumiem →',
-      },
-      {
-        title: 'Mapowanie i narzędzia',
-        desc: 'Po wgraniu pliku:\n• Dopasuj każdą labelkę do tagu Brand24 (wtyczka zapamięta wybór)\n• Użyj Match Preview żeby sprawdzić % dopasowania przed startem\n• Użyj Audit Mode żeby porównać plik z Brand24 bez tagowania\n\nW zakładkach Quick Tag i Quick Delete możesz tagować i usuwać wzmianki bez pliku — na podstawie aktualnego widoku Brand24.',
-        checks: [],
-        next: 'Rozumiem →',
-      },
-      {
-        title: 'Historia i feedback',
-        desc: 'Zakładka Historia przechowuje ostatnie 20 sesji z pełnymi statystykami.\n\nPrzycisk ZMIANY w panelu otwiera dziennik zmian i planowane funkcje.\n\nMożesz też wysłać nam feedback bezpośrednio na Slack — kliknij ZMIANY → zakładka Feedback.',
-        checks: [],
-        next: 'Rozumiem →',
-      },
-      {
-        title: 'Gotowy do pracy!',
-        desc: 'Zawsze zacznij od Test Run żeby sprawdzić czy matching działa poprawnie przed właściwą sesją.\n\nPrzycisk ? w panelu otworzy tę pomoc ponownie w każdej chwili.',
-        checks: [],
-        next: 'Zacznijmy!',
-      },
-    ];
+  function positionBubble(rect, tailHint) {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const bw = 340; // max bubble width
+    const bh = bubble.offsetHeight || 250;
+    const margin = 16;
 
-    const overlay = document.createElement('div');
-    overlay.id = 'b24t-setup';
+    if (!rect) {
+      // Centrum ekranu
+      bubble.style.left = Math.max(margin, (vw - bw) / 2) + 'px';
+      bubble.style.top = Math.max(margin, (vh - bh) / 2) + 'px';
+      bubble.setAttribute('data-tail', 'none');
+      return;
+    }
 
-    const render = () => {
-      const s = steps[step];
-      const dots = steps.map((_, i) =>
-        `<div class="b24t-dot ${i < step ? 'done' : i === step ? 'active' : ''}"></div>`
-      ).join('');
+    let tail = tailHint || 'bottom';
+    let left, top;
 
-      // Run checks
-      const checkHtml = s.checks.map(c => {
-        const ok = c.check();
-        return `<div class="b24t-check-row">
-          <span class="b24t-check-icon ${ok ? 'b24t-check-ok' : 'b24t-check-fail'}">${ok ? '✓' : '✗'}</span>
-          <span class="b24t-check-label">${c.label}</span>
-        </div>`;
-      }).join('');
+    // Próbuj nad elementem
+    if (tailHint === 'bottom' || !tailHint) {
+      top = rect.top - bh - 18;
+      if (top < margin) {
+        // Nie ma miejsca nad — daj pod
+        top = rect.top + rect.height + 18;
+        tail = 'top';
+      }
+    } else if (tailHint === 'top') {
+      top = rect.top + rect.height + 18;
+      if (top + bh > vh - margin) {
+        top = rect.top - bh - 18;
+        tail = 'bottom';
+      }
+    }
 
-      const canContinue = s.checks.length === 0 || s.checks.every(c => c.check());
+    // Poziomo: wyśrodkuj nad elementem, ale nie wychodź poza ekran
+    left = rect.left + rect.width / 2 - bw / 2;
+    left = Math.max(margin, Math.min(left, vw - bw - margin));
 
-      overlay.innerHTML = `
-        <div class="b24t-setup-card">
-          <div class="b24t-setup-header">
-            <span class="b24t-setup-logo">B24 TAGGER</span>
-            <span class="b24t-setup-step">Krok ${step + 1} z ${steps.length}</span>
-          </div>
-          <div class="b24t-progress-dots">${dots}</div>
-          <div class="b24t-setup-title">${s.title}</div>
-          <div class="b24t-setup-desc" style="white-space:pre-line;">${s.desc}</div>
-          ${checkHtml}
-          <div class="b24t-setup-nav">
-            ${step > 0 ? '<button class="b24t-btn-secondary" id="b24t-setup-back" style="flex:0.5;">← Wstecz</button>' : '<div></div>'}
-            <button class="b24t-btn-primary" id="b24t-setup-next" ${canContinue ? '' : 'disabled'}>${s.next}</button>
-          </div>
+    // Dodatkowe sprawdzenie — czy bubble nie nakrywa elementu
+    if (tail === 'bottom' && top + bh > rect.top - 4) {
+      top = rect.top + rect.height + 18;
+      tail = 'top';
+    }
+
+    bubble.style.left = left + 'px';
+    bubble.style.top = top + 'px';
+    bubble.setAttribute('data-tail', tail);
+  }
+
+  function renderStep(idx) {
+    if (animating) return;
+    animating = true;
+
+    const step = steps[idx];
+    const dots = steps.map((_, i) => {
+      let cls = '';
+      if (i < idx) cls = 'ob-dot-done';
+      else if (i === idx) cls = 'ob-dot-active';
+      return `<div class="ob-dot ${cls}"></div>`;
+    }).join('');
+
+    // Animacja wyjścia
+    bubble.classList.remove('ob-visible');
+    bubble.classList.add('ob-exiting');
+
+    setTimeout(() => {
+      // Update spotlight
+      const rect = getTargetRect(step.target);
+      positionSpotlight(rect);
+
+      // Render bubble content
+      bubble.innerHTML = `
+        <div class="ob-dots">${dots}</div>
+        <div class="ob-bubble-step">Krok ${idx + 1} z ${steps.length}</div>
+        <div class="ob-bubble-title">${step.title}</div>
+        <div class="ob-bubble-body">${step.body}</div>
+        <div class="ob-nav">
+          ${idx > 0
+            ? `<button class="ob-btn-back" id="ob-btn-back">← Wstecz</button>`
+            : `<span class="ob-step-counter">${idx + 1} / ${steps.length}</span>`}
+          <button class="ob-btn-next" id="ob-btn-next">
+            ${idx < steps.length - 1 ? 'Dalej →' : '🎉 Zaczynamy!'}
+          </button>
         </div>
       `;
 
-      overlay.querySelector('#b24t-setup-next').addEventListener('click', () => {
-        if (step < steps.length - 1) { step++; render(); }
-        else {
-          overlay.remove();
-          lsSet(LS.SETUP_DONE, true);
-          onComplete();
-        }
+      // Reset animacja
+      bubble.classList.remove('ob-exiting');
+      bubble.classList.add('ob-entering');
+
+      // Pozycjonuj bubble po wyrenderowaniu
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          positionBubble(rect, step.tail);
+          bubble.classList.remove('ob-entering');
+          bubble.classList.add('ob-visible');
+          animating = false;
+        });
       });
 
-      const backBtn = overlay.querySelector('#b24t-setup-back');
-      if (backBtn) backBtn.addEventListener('click', () => { step--; render(); });
+      // Bind nav
+      document.getElementById('ob-btn-next').addEventListener('click', () => {
+        if (idx < steps.length - 1) {
+          currentStep++;
+          renderStep(currentStep);
+        } else {
+          finishOnboarding();
+        }
+      });
+      const backBtn = document.getElementById('ob-btn-back');
+      if (backBtn) backBtn.addEventListener('click', () => {
+        currentStep--;
+        renderStep(currentStep);
+      });
 
-      // Auto-refresh checks every second on step 1
-      if (step === 1 && !canContinue) {
-        setTimeout(() => { if (overlay.isConnected) render(); }, 1000);
-      }
-    };
-
-    render();
-    document.body.appendChild(overlay);
+    }, 220);
   }
+
+  function finishOnboarding() {
+    // Fade out
+    overlay.style.background = 'rgba(0,0,0,0)';
+    bubble.style.opacity = '0';
+    bubble.style.transform = 'scale(0.9) translateY(-10px)';
+    spotlight.style.opacity = '0';
+
+    setTimeout(() => {
+      overlay.remove();
+      spotlight.remove();
+      bubble.remove();
+      lsSet(LS.SETUP_DONE, true);
+      if (onComplete) onComplete();
+    }, 350);
+  }
+
+  // Dostosuj pozycję bubble przy resize
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      const step = steps[currentStep];
+      const rect = getTargetRect(step.target);
+      positionSpotlight(rect);
+      positionBubble(rect, step.tail);
+    }, 100);
+  });
+
+  // Start
+  renderStep(0);
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELP MODE — Tryb pomocy (przycisk ?)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Definicje stref klikania w trybie pomocy
+function getHelpZones() {
+  return [
+    {
+      selector: '#b24t-topbar',
+      title: 'Header — pasek tytułowy',
+      desc: 'Możesz przeciągać panel trzymając za ten obszar. Zawiera: status sesji, przełącznik motywu, przyciski funkcji opcjonalnych, pomocy i zwijania.',
+    },
+    {
+      selector: '#b24t-theme-toggle',
+      title: '☀️🌙 Przełącznik motywu',
+      desc: 'Przełącza między jasnym (Brand24) a ciemnym (fioletowy gradient) motywem. Ustawienie jest zapamiętywane.',
+    },
+    {
+      selector: '#b24t-status-badge',
+      title: 'Status badge',
+      desc: 'Aktualny stan wtyczki: Idle (gotowa), Running (taguje), Paused (wstrzymana), Done (zakończone), Error (błąd).',
+    },
+    {
+      selector: '#b24t-btn-features',
+      title: '⚙ Funkcje opcjonalne',
+      desc: 'Otwiera modal z funkcjami które możesz włączyć — np. Narzędzia Annotatora. Każda funkcja ma własny tutorial.',
+    },
+    {
+      selector: '#b24t-btn-collapse',
+      title: '▼ Zwiń / Rozwiń',
+      desc: 'Zwija panel do samego headera — przydatne gdy chcesz mieć panel pod ręką ale nie zajmował miejsca.',
+    },
+    {
+      selector: '#b24t-meta-bar',
+      title: 'Pasek statusu API',
+      desc: 'Zielona kropka = token API aktywny, wtyczka połączona z Brand24. Żółta = oczekuje. Timer pokazuje czas bieżącej sesji tagowania.',
+    },
+    {
+      selector: '#b24t-subbar',
+      title: 'Pasek narzędzi',
+      desc: '"Changelog & Feedback" otwiera dziennik zmian i zakładkę feedbacku. "Sprawdź aktualizacje" ręcznie wyzwala sprawdzenie nowej wersji (autoaktualizacja przez Tampermonkey działa w tle).',
+    },
+    {
+      selector: '#b24t-tabs',
+      title: 'Zakładki trybów pracy',
+      desc: 'Cztery tryby: Plik (główny, praca z CSV/JSON), Quick Tag (bez pliku), Quick Delete (masowe usuwanie), Historia (ostatnie sesje).',
+    },
+    {
+      selector: '#b24t-file-zone',
+      title: 'Strefa wgrywania pliku',
+      desc: 'Kliknij lub przeciągnij plik CSV/JSON/XLSX z ocenami wzmianek. Zalecany format: JSON (XLSX może obcinać 19-cyfrowe ID TikTok/Twitter).',
+    },
+    {
+      selector: '#b24t-actions',
+      title: 'Przyciski akcji',
+      desc: 'Start — uruchamia/wznawia tagowanie. Pause — bezpieczna pauza. Test Run — symulacja bez zapisu (zawsze sprawdź najpierw!). Match Preview — sprawdza % dopasowania URL.',
+    },
+    {
+      selector: '#b24t-project-name',
+      title: 'Wykryty projekt',
+      desc: 'Automatycznie wykryty projekt Brand24. Przejdź do widoku Mentions konkretnego projektu żeby tu pojawił się jego nazwa i ID.',
+    },
+    {
+      selector: '.b24t-section-label',
+      title: 'Nagłówek sekcji',
+      desc: 'Kolorowe nagłówki oznaczają poszczególne sekcje panelu: Projekt, Plik źródłowy, Mapowanie, Opcje, Progress, Statystyki i Log.',
+    },
+  ];
+}
+
+let helpModeActive = false;
+let helpZoneElements = [];
+let helpTipElement = null;
+
+function toggleHelpMode() {
+  if (helpModeActive) {
+    exitHelpMode();
+  } else {
+    enterHelpMode();
+  }
+}
+
+function enterHelpMode() {
+  const panel = document.getElementById('b24t-panel');
+  if (!panel) return;
+
+  helpModeActive = true;
+
+  // Overlay na panel
+  const overlay = document.createElement('div');
+  overlay.id = 'b24t-help-overlay';
+  panel.style.position = 'fixed'; // ensure relative positioning
+  panel.appendChild(overlay);
+
+  // Przycisk zamknięcia na środku
+  const closeBtn = document.createElement('button');
+  closeBtn.id = 'b24t-help-close';
+  closeBtn.innerHTML = '🔍 Tryb pomocy — kliknij element żeby dowiedzieć się więcej<br><small style="opacity:0.6;font-size:9px;">Kliknij tutaj aby wyjść</small>';
+  panel.appendChild(closeBtn);
+  closeBtn.addEventListener('click', exitHelpMode);
+
+  // Dodaj strefy klikania
+  const zones = getHelpZones();
+  zones.forEach(z => {
+    const targetEl = panel.querySelector(z.selector) || document.querySelector(z.selector);
+    if (!targetEl) return;
+
+    const panelRect = panel.getBoundingClientRect();
+    const targetRect = targetEl.getBoundingClientRect();
+
+    const zone = document.createElement('div');
+    zone.className = 'b24t-help-zone';
+    zone.style.top = (targetRect.top - panelRect.top) + 'px';
+    zone.style.left = (targetRect.left - panelRect.left) + 'px';
+    zone.style.width = targetRect.width + 'px';
+    zone.style.height = targetRect.height + 'px';
+    zone.style.background = 'rgba(108,108,255,0.06)';
+    zone.title = z.title;
+
+    zone.addEventListener('mouseenter', (e) => showHelpTip(e, z));
+    zone.addEventListener('mouseleave', hideHelpTip);
+    zone.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showHelpTip(e, z, true); // sticky on click
+    });
+
+    panel.appendChild(zone);
+    helpZoneElements.push(zone);
+  });
+}
+
+function exitHelpMode() {
+  helpModeActive = false;
+  hideHelpTip();
+
+  const panel = document.getElementById('b24t-panel');
+  if (panel) {
+    const overlay = document.getElementById('b24t-help-overlay');
+    const closeBtn = document.getElementById('b24t-help-close');
+    if (overlay) overlay.remove();
+    if (closeBtn) closeBtn.remove();
+  }
+
+  helpZoneElements.forEach(z => z.remove());
+  helpZoneElements = [];
+}
+
+function showHelpTip(e, zone, sticky = false) {
+  hideHelpTip();
+
+  const tip = document.createElement('div');
+  tip.className = 'b24t-help-tip';
+  tip.id = 'b24t-help-tip-el';
+  tip.innerHTML = `<strong>${zone.title}</strong>${zone.desc}`;
+  document.body.appendChild(tip);
+  helpTipElement = tip;
+
+  // Pozycjonuj
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const tipW = 280;
+  const tipH = tip.offsetHeight || 100;
+
+  let left = e.clientX + 14;
+  let top = e.clientY + 14;
+
+  if (left + tipW > vw - 10) left = e.clientX - tipW - 14;
+  if (top + tipH > vh - 10) top = e.clientY - tipH - 14;
+
+  tip.style.left = Math.max(10, left) + 'px';
+  tip.style.top = Math.max(10, top) + 'px';
+
+  if (sticky) {
+    tip.style.pointerEvents = 'all';
+    const closeX = document.createElement('button');
+    closeX.style.cssText = 'position:absolute;top:6px;right:8px;background:none;border:none;color:#666688;cursor:pointer;font-size:13px;line-height:1;padding:0;';
+    closeX.textContent = '×';
+    closeX.addEventListener('click', hideHelpTip);
+    tip.appendChild(closeX);
+  }
+}
+
+function hideHelpTip() {
+  if (helpTipElement) {
+    helpTipElement.remove();
+    helpTipElement = null;
+  }
+  // Also remove any stranded tip
+  const old = document.getElementById('b24t-help-tip-el');
+  if (old) old.remove();
+}
 
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -3872,6 +4532,20 @@
 
   const CHANGELOG = [
     {
+      version: '0.8.0',
+      date: '2026-03-27',
+      label: 'UX Update',
+      labelColor: '#2563eb',
+      changes: [
+        { type: 'new', text: 'Nowy onboarding — dynamiczny tour z dymkami (spotlight + strzałki), prezentuje wszystkie funkcje wtyczki krok po kroku' },
+        { type: 'new', text: 'Tryb pomocy (?) — kliknij elementy interfejsu żeby dowiedzieć się co robią; panel zostaje "wyszarzony", każdy element opisany' },
+        { type: 'new', text: 'Czcionka zmieniona na Inter — czytelniejsza w UI niż SF Mono, natywnie obsługiwana przez Google Fonts' },
+        { type: 'change', text: 'Light mode: przeprojektowane kolory na niebieski (2563eb) — wyraźniejszy kontrast, czytelniejsze etykiety i granice sekcji' },
+        { type: 'change', text: 'Annotator tab trigger powiększony — większy padding i font-weight' },
+        { type: 'fix', text: 'Light mode: wyeliminowane zlewanie się elementów przez zbyt bliskie odcienie zielonego' },
+      ]
+    },
+    {
       version: '0.7.0',
       date: '2026-03-27',
       label: 'Redesign',
@@ -4406,7 +5080,7 @@
 
     const modal = document.createElement('div');
     modal.id = 'b24t-feedback-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'SF Mono\',\'Fira Code\',monospace;';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;';
 
     modal.innerHTML =
       '<div style="background:#0f0f13;border:1px solid #2a2a35;border-radius:14px;width:440px;box-shadow:0 20px 60px rgba(0,0,0,0.8);">' +
@@ -4445,6 +5119,12 @@
             '<button id="b24t-fb-cancel" style="flex:1;background:#1a1a22;color:var(--b24t-text-meta);border:1px solid #2a2a35;border-radius:6px;padding:8px;font-size:12px;cursor:pointer;font-family:inherit;">Anuluj</button>' +
             '<button id="b24t-fb-send" style="flex:2;background:#6c6cff;color:#fff;border:none;border-radius:6px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Wyślij feedback</button>' +
           '</div>' +
+          // Ukryty reset onboardingu — dyskretny, na samym dole
+          '<div style="margin-top:20px;padding-top:14px;border-top:1px solid #1a1a28;text-align:center;">' +
+            '<button id="b24t-fb-reset-onboarding" style="background:none;border:none;color:#333348;font-size:10px;cursor:pointer;font-family:inherit;letter-spacing:0.02em;transition:color 0.2s;padding:4px 8px;border-radius:4px;">' +
+              '↺ Powtórz onboarding' +
+            '</button>' +
+          '</div>' +
         '</div>' +
       '</div>';
 
@@ -4473,6 +5153,22 @@
     document.getElementById('b24t-fb-cancel').addEventListener('click', closeModal);
     modal.addEventListener('click', function(e) { if (e.target === modal) closeModal(); });
 
+    // Reset onboarding — dyskretny przycisk na dole Feedback
+    var resetObBtn = document.getElementById('b24t-fb-reset-onboarding');
+    if (resetObBtn) {
+      resetObBtn.addEventListener('mouseenter', function() { this.style.color = '#6c6cff'; });
+      resetObBtn.addEventListener('mouseleave', function() { this.style.color = '#333348'; });
+      resetObBtn.addEventListener('click', function() {
+        closeModal();
+        lsSet(LS.SETUP_DONE, false);
+        setTimeout(function() {
+          showOnboarding(function() {
+            addLog('✓ Onboarding zakończony ponownie.', 'success');
+          });
+        }, 300);
+      });
+    }
+
     document.getElementById('b24t-fb-send').addEventListener('click', function() {
       const text = document.getElementById('b24t-fb-text').value.trim();
       const statusEl = document.getElementById('b24t-fb-status');
@@ -4497,13 +5193,13 @@
       html +=
         '<div style="margin-bottom:' + (idx < DEV_CHANGELOG.length - 1 ? '16' : '0') + 'px;">' +
           '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
-            '<span style="font-size:12px;font-weight:700;color:#e2e2e8;font-family:\'SF Mono\',monospace;">v' + v.version + '</span>' +
+            '<span style="font-size:12px;font-weight:700;color:#e2e2e8;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;">v' + v.version + '</span>' +
             '<span style="font-size:10px;color:var(--b24t-text-faint);">' + v.date + '</span>' +
           '</div>' +
           v.notes.map(function(n) {
             return '<div style="display:flex;gap:8px;align-items:flex-start;padding:2px 0;">' +
               '<span style="flex-shrink:0;color:#6c6cff;font-size:10px;">›</span>' +
-              '<span style="font-size:10px;color:var(--b24t-text-faint);line-height:1.5;font-family:\'SF Mono\',monospace;">' + n + '</span>' +
+              '<span style="font-size:10px;color:var(--b24t-text-faint);line-height:1.5;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;">' + n + '</span>' +
             '</div>';
           }).join('') +
         '</div>' +
@@ -4512,7 +5208,7 @@
 
     const modal = document.createElement('div');
     modal.id = 'b24t-devnotes-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483648;font-family:\'SF Mono\',\'Fira Code\',monospace;';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483648;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;';
     modal.innerHTML =
       '<div style="background:#0a0a0d;border:1px solid #2a2a35;border-radius:14px;width:520px;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.9);">' +
         '<div style="padding:16px 20px;border-bottom:1px solid var(--b24t-border-sub);flex-shrink:0;display:flex;align-items:center;gap:10px;">' +
@@ -4554,7 +5250,7 @@
       changelogHtml +=
         '<div style="margin-bottom:' + (idx < CHANGELOG.length - 1 ? '20' : '0') + 'px;">' +
           '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
-            '<span style="font-size:15px;font-weight:700;color:#e2e2e8;font-family:\'SF Mono\',monospace;">v' + v.version + '</span>' +
+            '<span style="font-size:15px;font-weight:700;color:#e2e2e8;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;">v' + v.version + '</span>' +
             '<span style="font-size:12px;font-weight:600;background:' + v.labelColor + '22;color:' + v.labelColor + ';padding:2px 10px;border-radius:99px;">' + v.label + '</span>' +
             '<span style="font-size:11px;color:var(--b24t-text-faint);margin-left:auto;">' + v.date + '</span>' +
           '</div>' +
@@ -4584,7 +5280,7 @@
 
     const modal = document.createElement('div');
     modal.id = 'b24t-whats-new-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'SF Mono\',\'Fira Code\',monospace;';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;';
 
     modal.innerHTML =
       // Outer container - wider, flex column
@@ -5314,7 +6010,7 @@
 
     const modal = document.createElement('div');
     modal.id = 'b24t-features-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'SF Mono\',monospace;backdrop-filter:blur(4px);animation:b24t-fadein 0.2s ease;';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;backdrop-filter:blur(4px);animation:b24t-fadein 0.2s ease;';
 
     let checkboxesHtml = OPTIONAL_FEATURES.map(function(f) {
       const checked = features[f.id] ? 'checked' : '';
@@ -5721,9 +6417,9 @@
     var tab = document.createElement('div');
     tab.id = 'b24t-annotator-tab';
     tab.setAttribute('data-b24t-theme', currentTheme);
-    tab.style.cssText = 'position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:2147483640;border-right:none;border-radius:8px 0 0 8px;padding:14px 8px;cursor:pointer;display:none;flex-direction:column;align-items:center;gap:6px;font-family:\'SF Mono\',monospace;font-size:13px;user-select:none;transition:transform 0.2s,box-shadow 0.2s,background 0.3s,border-color 0.3s,color 0.3s;';
+    tab.style.cssText = 'position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:2147483640;border-right:none;border-radius:10px 0 0 10px;padding:18px 11px;cursor:pointer;display:none;flex-direction:column;align-items:center;gap:7px;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;font-size:14px;font-weight:600;letter-spacing:0.04em;user-select:none;transition:transform 0.2s,box-shadow 0.2s,background 0.3s,border-color 0.3s,color 0.3s;';
     // inline colors that adapt via JS (CSS vars not available in inline style)
-    tab.innerHTML = '<span style="writing-mode:vertical-rl;text-orientation:mixed;letter-spacing:.05em;">Narzędzia</span><span style="font-size:14px;">‹</span>';
+    tab.innerHTML = '<span style="writing-mode:vertical-rl;text-orientation:mixed;letter-spacing:.08em;font-size:13px;font-weight:600;">Narzędzia</span><span style="font-size:18px;line-height:1;">‹</span>';
     tab.title = 'Otwórz Narzędzia Annotatora';
     tab.addEventListener('click', function() { openAnnotatorPanel(); });
     document.body.appendChild(tab);
@@ -5732,7 +6428,7 @@
     var panel = document.createElement('div');
     panel.id = 'b24t-annotator-panel';
     panel.setAttribute('data-b24t-theme', currentTheme);
-    panel.style.cssText = 'position:fixed;right:12px;top:80px;width:420px;z-index:2147483641;border-radius:14px;display:none;overflow:hidden;animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);font-family:\'SF Mono\',\'Fira Code\',monospace;font-size:15px;';
+    panel.style.cssText = 'position:fixed;right:12px;top:80px;width:420px;z-index:2147483641;border-radius:14px;display:none;overflow:hidden;animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;font-size:15px;';
 
     panel.innerHTML =
       // Header with gradient
@@ -5768,9 +6464,9 @@
     function styleTab() {
       var isDark = (document.documentElement.getAttribute('data-b24t-theme') === 'dark');
       tab.style.background = isDark ? '#1a1a28' : '#ffffff';
-      tab.style.border = isDark ? '1px solid #2a2a35' : '1px solid #e0e2ef';
-      tab.style.color = isDark ? '#9090cc' : '#5B4FFF';
-      tab.style.boxShadow = isDark ? '-2px 0 8px rgba(0,0,0,0.4)' : '-2px 0 12px rgba(91,79,255,0.12)';
+      tab.style.border = isDark ? '1px solid #2a2a35' : '1px solid #c8cde0';
+      tab.style.color = isDark ? '#9090cc' : '#2563eb';
+      tab.style.boxShadow = isDark ? '-3px 0 12px rgba(0,0,0,0.5)' : '-3px 0 16px rgba(37,99,235,0.15)';
     }
     styleTab();
     // Watch for theme changes
@@ -6330,7 +7026,7 @@
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div id="b24t-del-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;flex:1;"></div>
-          <div id="b24t-del-timer" style="font-size:11px;color:#8888aa;font-family:'SF Mono',monospace;margin-left:8px;">00:00</div>
+          <div id="b24t-del-timer" style="font-size:11px;color:#8888aa;font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
         </div>
 
         <!-- Run button -->
@@ -6378,7 +7074,7 @@
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div id="b24t-delview-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;flex:1;"></div>
-          <div id="b24t-delview-timer" style="font-size:11px;color:#8888aa;font-family:'SF Mono',monospace;margin-left:8px;">00:00</div>
+          <div id="b24t-delview-timer" style="font-size:11px;color:#8888aa;font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
         </div>
 
         <!-- Run button -->
@@ -6804,7 +7500,7 @@ Tej operacji nie można cofnąć.`)) {
         <!-- Status + timer -->
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div id="b24t-qt-status" class="b24t-qt-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;flex:1;"></div>
-          <div id="b24t-qt-timer" style="font-size:11px;color:#8888aa;font-family:'SF Mono',monospace;margin-left:8px;">00:00</div>
+          <div id="b24t-qt-timer" style="font-size:11px;color:#8888aa;font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
         </div>
 
         <!-- Run button -->
@@ -7005,7 +7701,7 @@ Tej operacji nie można cofnąć.`)) {
     // First run setup
     if (!lsGet(LS.SETUP_DONE)) {
       setTimeout(() => {
-        showSetupWizard(() => {
+        showOnboarding(() => {
           addLog('✓ Setup zakończony. Możesz zaczynać!', 'success');
         });
       }, 1500);

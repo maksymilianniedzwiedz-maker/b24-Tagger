@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.9.0
+// @version      0.9.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.9.0';
+  const VERSION = '0.9.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2001,6 +2001,76 @@
         transition: background 0.3s, border-color 0.3s, box-shadow 0.3s;
       }
 
+      /* ── CROSS-PROJECT DELETE PANEL ── */
+      #b24t-xproject-panel {
+        position: fixed;
+        top: 0; bottom: 0;
+        width: 0;
+        overflow: hidden;
+        background: var(--b24t-bg);
+        border-left: 1px solid var(--b24t-border);
+        box-shadow: -4px 0 24px rgba(0,0,0,0.18);
+        z-index: 2147483645;
+        display: flex;
+        flex-direction: column;
+        font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+        transition: width 0.32s cubic-bezier(0.4,0,0.2,1), right 0.32s cubic-bezier(0.4,0,0.2,1);
+      }
+      #b24t-xproject-panel.open { width: 320px; }
+      #b24t-xproject-header {
+        padding: 12px 14px;
+        background: var(--b24t-err-bg);
+        border-bottom: 1px solid color-mix(in srgb, var(--b24t-err) 25%, transparent);
+        flex-shrink: 0;
+        display: flex; align-items: center; gap: 8px;
+      }
+      #b24t-xproject-header .xp-title {
+        font-size: 13px; font-weight: 700;
+        color: var(--b24t-err); flex: 1;
+      }
+      #b24t-xproject-close {
+        background: none; border: none;
+        color: var(--b24t-err); font-size: 18px;
+        cursor: pointer; line-height: 1; padding: 2px 6px;
+        border-radius: 4px; transition: background 0.15s;
+      }
+      #b24t-xproject-close:hover { background: var(--b24t-err-bg); }
+      #b24t-xproject-body {
+        flex: 1; overflow-y: auto; padding: 12px 14px;
+      }
+      #b24t-xproject-body::-webkit-scrollbar { width: 3px; }
+      #b24t-xproject-body::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
+      .xp-project-row {
+        display: flex; align-items: center;
+        gap: 8px; padding: 7px 0;
+        border-bottom: 1px solid var(--b24t-border-sub);
+        font-size: 12px; color: var(--b24t-text-muted);
+      }
+      .xp-project-row .xp-name { flex: 1; font-weight: 500; }
+      .xp-project-row .xp-count {
+        font-size: 11px; font-weight: 700;
+        color: var(--b24t-err); min-width: 28px; text-align: right;
+      }
+      .xp-project-row .xp-status {
+        font-size: 10px; color: var(--b24t-text-faint);
+      }
+      #b24t-xproject-footer {
+        padding: 10px 14px;
+        border-top: 1px solid var(--b24t-border-sub);
+        flex-shrink: 0;
+      }
+      #b24t-xproject-run {
+        width: 100%;
+        background: var(--b24t-err);
+        color: #fff; border: none;
+        border-radius: 8px; padding: 9px;
+        font-size: 13px; font-weight: 700;
+        font-family: inherit; cursor: pointer;
+        transition: opacity 0.15s, transform 0.1s;
+      }
+      #b24t-xproject-run:hover { opacity: 0.88; }
+      #b24t-xproject-run:disabled { opacity: 0.4; cursor: not-allowed; }
+
       /* ── SHIMMER LOADING ── */
       .b24t-shimmer {
         background: linear-gradient(90deg,
@@ -3506,7 +3576,28 @@ function getOnboardingSteps() {
         Wróć tu kiedy zapomnisz do czego służy jakiś przycisk! 🔍`,
       tail: 'bottom',
     },
-    // 14 — Resize panelu
+    // 14 — Changelog: Co nowego & Planowane
+    {
+      target: '#b24t-btn-changelog',
+      title: '📰 Co nowego & Planowane',
+      body: `Przycisk <strong>📋 Changelog & Feedback</strong> otwiera okno z trzema zakładkami:<br><br>
+        <span class="ob-tag">📰 Co nowego</span> — pełna lista zmian per wersja<br>
+        <span class="ob-tag">🗓 Planowane</span> — co będzie w następnych wersjach<br>
+        <span class="ob-tag">💬 Feedback</span> — bugi i sugestie prosto do autora<br><br>
+        Wtyczka <strong>aktualizuje się automatycznie</strong> przez Tampermonkey — sprawdzaj tu co zostało zmienione!`,
+      tail: 'bottom',
+    },
+    // 15 — Bug Report — co jest wysyłane
+    {
+      target: '#b24t-btn-changelog',
+      title: '🐛 Bug Report — co jest wysyłane?',
+      body: `W zakładce <strong>Feedback</strong> możesz zgłosić problem lub zaproponować funkcję.<br><br>
+        Do Bug Reportu <strong>automatycznie dołączane</strong> są dane techniczne:<br>
+        <span class="ob-tag">wersja</span> <span class="ob-tag">ID projektu</span> <span class="ob-tag">status sesji</span> <span class="ob-tag">ostatnie 30 wpisów logu</span> <span class="ob-tag">crash log</span><br><br>
+        <strong>Nie są wysyłane</strong> treści wzmianek ani zawartość wgranych plików. Raport trafia bezpośrednio do autora na Slack. 🔒`,
+      tail: 'bottom',
+    },
+    // 16 — Resize panelu
     {
       target: '#b24t-panel',
       title: '↔️ Zmiana rozmiaru panelu',
@@ -3515,7 +3606,7 @@ function getOnboardingSteps() {
         Wybrany rozmiar jest <strong>zapamiętywany</strong> między sesjami — panel zawsze otworzy się z Twoimi ustawieniami. 📐`,
       tail: 'left',
     },
-    // 15 — Drag
+    // 17 — Drag
     {
       target: '#b24t-topbar',
       title: '🖱️ Przeciąganie panelu',
@@ -3523,7 +3614,7 @@ function getOnboardingSteps() {
         Pozycja jest zapamiętywana między sesjami — panel wróci dokładnie tam gdzie go zostawisz. 📌`,
       tail: 'bottom',
     },
-    // 16 — Finał
+    // 18 — Finał
     {
       target: null,
       title: '🎉 Gotowy do pracy!',
@@ -3562,13 +3653,14 @@ function showOnboarding(onComplete) {
     // Ustaw stałą pozycję: prawy-dolny róg z marginesem
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const pw = Math.min(440, vw - 24);  // szerokość panelu, max ekran - margines
-    panel.style.left   = Math.max(12, vw - pw - 16) + 'px';
-    panel.style.top    = Math.max(12, vh - panel.offsetHeight - 16) + 'px';
+    const pw = Math.min(440, vw - 24);
+    const ph = panel.offsetHeight || 480;
+    // Centrum ekranu — bubble ma zawsze miejsce po bokach i górze
+    panel.style.width  = pw + 'px';
+    panel.style.left   = Math.round((vw - pw) / 2) + 'px';
+    panel.style.top    = Math.max(12, Math.round((vh - ph) / 2)) + 'px';
     panel.style.right  = 'auto';
     panel.style.bottom = 'auto';
-    panel.style.width  = pw + 'px';
-    // Zablokuj resize i drag podczas onboardingu
     panel.setAttribute('data-ob-locked', '1');
   }
 
@@ -3777,13 +3869,14 @@ function showOnboarding(onComplete) {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
       if (!panel) return;
-      // Ponownie snap panel do rogu po resize okna
+      // Re-centruj panel po resize okna
       const vw2 = window.innerWidth;
       const vh2 = window.innerHeight;
       const pw2 = Math.min(440, vw2 - 24);
-      panel.style.left  = Math.max(12, vw2 - pw2 - 16) + 'px';
-      panel.style.top   = Math.max(12, vh2 - panel.offsetHeight - 16) + 'px';
+      const ph2 = panel.offsetHeight || 480;
       panel.style.width = pw2 + 'px';
+      panel.style.left  = Math.round((vw2 - pw2) / 2) + 'px';
+      panel.style.top   = Math.max(12, Math.round((vh2 - ph2) / 2)) + 'px';
       // Reposition spotlight + bubble
       const step = steps[currentStep];
       const rect = getTargetRect(step.target);
@@ -4397,6 +4490,28 @@ function hideHelpTip() {
 
   const CHANGELOG = [
     {
+      version: '0.9.2',
+      date: '2026-03-28',
+      label: 'Poprawki',
+      labelColor: '#facc15',
+      changes: [
+        { type: 'ui',  text: 'Annotators Tab — pełna nazwa triggera, szerszy padding' },
+        { type: 'fix', text: 'DEV patch notes uzupełnione od 0.6.0 — każde wdrożenie ma teraz wpis' },
+        { type: 'fix', text: 'Zasada wersjonowania: 0.x.0 = nowa sesja, 0.x.y = kolejny deploy w tej samej' },
+      ],
+    },
+    {
+      version: '0.9.1',
+      date: '2026-03-28',
+      label: 'Onboarding fix',
+      labelColor: '#6c6cff',
+      changes: [
+        { type: 'fix', text: 'Panel wyśrodkowany na czas onboardingu' },
+        { type: 'new', text: 'Onboarding: szczegółowy krok o Bug Report (co jest wysyłane)' },
+        { type: 'new', text: 'Onboarding: krok Co nowego & Planowane' },
+      ],
+    },
+    {
       version: '0.9.0',
       date: '2026-03-27',
       label: 'Optymalizacja',
@@ -4419,12 +4534,12 @@ function hideHelpTip() {
       label: 'UX Update',
       labelColor: '#2563eb',
       changes: [
-        { type: 'new', text: 'Nowy onboarding — dynamiczny tour z dymkami (spotlight + strzałki), prezentuje wszystkie funkcje wtyczki krok po kroku' },
-        { type: 'new', text: 'Tryb pomocy (?) — kliknij elementy interfejsu żeby dowiedzieć się co robią; panel zostaje "wyszarzony", każdy element opisany' },
-        { type: 'new', text: 'Czcionka zmieniona na Inter — czytelniejsza w UI niż SF Mono, natywnie obsługiwana przez Google Fonts' },
-        { type: 'change', text: 'Light mode: przeprojektowane kolory na niebieski (2563eb) — wyraźniejszy kontrast, czytelniejsze etykiety i granice sekcji' },
-        { type: 'change', text: 'Annotator tab trigger powiększony — większy padding i font-weight' },
-        { type: 'fix', text: 'Light mode: wyeliminowane zlewanie się elementów przez zbyt bliskie odcienie zielonego' },
+        { type: 'new', text: 'New onboarding experience' },
+        { type: 'new', text: 'Help mode (? button)' },
+        { type: 'ui',  text: 'Switched font to Inter' },
+        { type: 'ui',  text: 'Light mode color improvements' },
+        { type: 'ui',  text: 'Annotator tab enlarged' },
+        { type: 'fix', text: 'Light mode element blending fixed' },
       ]
     },
     {
@@ -4433,14 +4548,9 @@ function hideHelpTip() {
       label: 'Redesign',
       labelColor: '#1e7d3a',
       changes: [
-        { type: 'new', text: 'Light mode: paleta Brand24 — biały/szary/zielony, gradient na całym panelu, naprzemienne tła sekcji z lewym paskiem akcentowym' },
-        { type: 'new', text: 'Dark mode: bogatszy gradient indygo→fiolet→magneta (#6c5fff→#9b6bff→#c060ff), więcej głębi' },
-        { type: 'new', text: 'Sekcje z silnymi obramowaniami (2px) i wyraźnym kontrastem — łatwiej czytać układ panelu' },
-        { type: 'new', text: 'Nowe zmienne tekstowe --b24t-text-label i --b24t-text-meta — lepiej dobrane do obu trybów' },
-        { type: 'change', text: 'Subbar naprawiony — hardkodowane ciemne kolory zastąpione CSS variables (działa w light mode)' },
-        { type: 'change', text: 'Annotator panel: szerokość 300→420px, czcionka 13→15px, tab trigger powiększony' },
-        { type: 'change', text: 'Kafelki Annotatora: liczby 16px/700 → 22px/800, etykiety pogrubione i większe' },
-        { type: 'change', text: 'Topbar z efektem świetlnym (radial gradient), stat-karty z paskiem akcentowym na dole' },
+        { type: 'ui', text: 'Light mode & dark mode visual overhaul' },
+        { type: 'ui', text: 'Annotator panel enlarged (420px, 15px font)' },
+        { type: 'fix', text: 'Subbar color fix for light mode' },
       ]
     },
     {
@@ -4449,13 +4559,10 @@ function hideHelpTip() {
       label: 'Redesign',
       labelColor: '#5B4FFF',
       changes: [
-        { type: 'new', text: 'Light mode domyślny: schemat kolorystyczny Brand24 (biały + gradient indygo #5B4FFF→#7C3AED)' },
-        { type: 'new', text: 'Dark mode: przełącznik slider w topbarze (☀️/🌙), zapamiętywany między sesjami' },
-        { type: 'new', text: 'CSS Custom Properties (--b24t-*) — spójny design system, łatwe dostosowanie' },
-        { type: 'new', text: 'Micro-animacje: slide-in paneli, fade-in logów, pulse na badge Running, hover na kafelkach' },
-        { type: 'change', text: 'Narzędzia Annotatora: ujednolicone czcionki 13px (było 10-11px), spójne z głównym panelem' },
-        { type: 'change', text: 'Topbar z gradientem, przyciski z semi-transparentnym tłem, progress bar z gradientem' },
-        { type: 'change', text: 'Wszystkie modalne (Features, Report, Confirm) zaktualizowane do nowego design systemu' },
+        { type: 'new', text: 'Light mode default with Brand24 palette' },
+        { type: 'new', text: 'Dark mode toggle (☀️/🌙)' },
+        { type: 'new', text: 'CSS custom properties design system' },
+        { type: 'ui',  text: 'Micro-animations throughout' },
       ]
     },
     {
@@ -5391,6 +5498,105 @@ function hideHelpTip() {
 
   const DEV_CHANGELOG = [
     {
+      version: '0.9.2',
+      date: '2026-03-28',
+      notes: [
+        'Nowa zasada wersjonowania: nowa rozmowa = nowy minor (0.x.0), kolejne deploye w tej samej rozmowie = patch (0.x.y)',
+        'DEV_CHANGELOG: dodano brakujące wpisy od 0.6.0 do 0.9.2 + logika auto-wypełniania (zasada: każde wdrożenie = wpis)',
+        'Annotators Tab: zmiana nazwy triggera z "Narzędzia" / "Annotators" na pełne "Annotators Tab" + poszerzony padding',
+        'CHANGELOG: skrócono opisy starszych wersji (0.6.0, 0.7.0, 0.8.0) — pełne opisy zostają w DEV_CHANGELOG',
+      ]
+    },
+    {
+      version: '0.9.1',
+      date: '2026-03-28',
+      notes: [
+        'Onboarding: panel blokowany w centrum ekranu (nie prawy-dolny róg) podczas całego toru',
+        'Onboarding: krok 14 rozbity na dwa — "Co nowego & Planowane" + "Bug Report — co jest wysyłane?"',
+        'Onboarding: szczegółowy opis danych wysyłanych z Bug Reportem (wersja, projekt, 30 log lines, crash log, brak treści wzmianek)',
+        'Onboarding: krok resize przenumerowany na 16, krok drag na 17, finał na 18',
+        'Changelog 0.8.0, 0.7.0, 0.6.0: skrócono wpisy w CHANGELOG (pełne zostają w DEV_CHANGELOG)',
+        'Tab trigger: "Narzędzia" → "Annotators" (etap przejściowy)',
+      ]
+    },
+    {
+      version: '0.9.0',
+      date: '2026-03-28',
+      notes: [
+        'Optymalizacja kodu: usunięto 15 zduplikowanych definicji funkcji (378 linii)',
+        'Fix: duplicate saveSessionToHistory() + playDoneSound() w startRun — wywoływane 2x z rzędu',
+        'Fix: zduplikowane HTML bloki w buildPanel (file-validation, column-override, match-preview)',
+        'Fix: zduplikowany event listener na #b24t-col-override-toggle',
+        'Fix: usunięto martwy stub parseXLSX (zastąpiony przez parseXLSXFile)',
+        'Fix: usunięto zbędny wrapper fetchMentionsPage (bezpośrednie wywołania getMentions)',
+        'Perf: normalizeUrl — regex kompilowany raz (const _RX_*), wywoływana tysiące razy per sesja',
+        'Perf: tab switching — DOM refs cachowane raz w tabEls{} zamiast getElementById przy każdym kliknięciu',
+        'Fix: usunięto martwe zmienne state.auditMode, state.columnOverride, titleEl, prioColor',
+        'Fix: onboarding z-index — overlay 2147483640, spotlight 2147483644, bubble 2147483647 (nad panelem)',
+        'Fix: positionBubble przepisany — sprawdza spaceAbove/Below/Left/Right, brak edge case z dziubkiem do (0,0)',
+        'Fix: blokada drag + resize podczas onboardingu (data-ob-locked atrybut)',
+        'Onboarding: panel snapuje się do centrum ekranu na czas toru',
+        'Onboarding: dodano kroki resize panelu i drag (przeciąganie)',
+        'Tabs: przeprojektowane na pill/liquid glass style (border-radius:20px, gradient, inset shadow)',
+        'Quick Tag: naprawiono rozmiary czcionek (10px→12-13px) i kolory (--b24t-text-muted zamiast hardkodowanych)',
+      ]
+    },
+    {
+      version: '0.8.0',
+      date: '2026-03-27',
+      notes: [
+        'showOnboarding() — 18-krokowy dynamiczny tour z dymkami, spotlight i strzałką',
+        'injectOnboardingStyles() — pełny zestaw CSS: overlay, spotlight (box-shadow cutout), bubble, dots, nav',
+        'getOnboardingSteps() — tablica 18 kroków z target selector, tail hint i treścią',
+        'positionBubble() — inteligentne pozycjonowanie: sprawdza miejsce góra/dół/lewo/prawo, responsive bw',
+        'positionSpotlight() — animowany highlight elementu z pulse outline',
+        'Onboarding blokuje panel (data-ob-locked) i snapuje do centrum ekranu',
+        'Reset onboardingu: Changelog → Feedback → przycisk "↺ Powtórz onboarding"',
+        'toggleHelpMode() / enterHelpMode() / exitHelpMode() — tryb pomocy (przycisk ?)',
+        'Strefy klikania w help mode na document.body poziomie (nie wewnątrz panelu — overflow:hidden)',
+        '#b24t-help-panel-overlay, .b24t-help-zone, .b24t-help-tip — fixed positioning',
+        'setupResize() — Windows-style resize wszystkich krawędzi i rogów, min/max, localStorage',
+        'Inter font lazy-load z Google Fonts (wagi 300-800) w injectStyles()',
+        'Light mode: primary #2563eb (niebieski Brand24), wysoki kontrast WCAG AA+',
+        'Dark mode: trójkolorowy gradient indygo→fiolet→magneta',
+        'Annotator tab trigger: padding 18px 11px, font-weight:600, font-size:14px',
+      ]
+    },
+    {
+      version: '0.7.1',
+      date: '2026-03-27',
+      notes: [
+        'Wyczyszczono sekcję PLANNED_FEATURES — usunięto zrealizowane funkcje',
+        'Zaktualizowano opis AI API w planowanych',
+      ]
+    },
+    {
+      version: '0.7.0',
+      date: '2026-03-27',
+      notes: [
+        'Pełny redesign UI: light mode Brand24 z gradientowym panelem, dark mode z trójkolorowym gradientem',
+        'Annotator panel powiększony: 300→420px szerokość, 13→15px czcionka',
+        'Nowe zmienne CSS: --b24t-text-label, --b24t-text-meta',
+        'Subbar naprawiony: hardkodowane ciemne kolory → CSS variables',
+        'Kafelki annotatora: liczby 16px/700 → 22px/800, etykiety pogrubione',
+        'Topbar: efekt świetlny (radial gradient), stat-karty z paskiem akcentowym',
+        'Sekcje z 2px obramowaniami i wyraźnym kontrastem',
+      ]
+    },
+    {
+      version: '0.6.0',
+      date: '2026-03-27',
+      notes: [
+        'Light mode jako domyślny: schemat Brand24 (biały + gradient indygo #5B4FFF→#7C3AED)',
+        'Dark mode: przełącznik slider ☀️/🌙 w topbarze, zapamiętywany w localStorage',
+        'CSS Custom Properties — pełny design system przez --b24t-* variables',
+        'Micro-animacje: b24t-slidein, b24t-fadein, b24t-pulse-ring, b24t-shimmer',
+        'Narzędzia Annotatora: czcionki ujednolicone do 13px',
+        'Wszystkie modale zaktualizowane do nowego design systemu',
+        'document.documentElement.setAttribute("data-b24t-theme", theme) — zmiana motywu',
+      ]
+    },
+    {
       version: '0.5.12',
       date: '2026-03-27',
       notes: [
@@ -5886,6 +6092,9 @@ function hideHelpTip() {
 
   function applyFeatures() {
     const features = loadFeatures();
+    // Pokaż opcję "Wszystkie projekty" w Quick Delete tylko gdy Annotators włączone
+    const apLabel = document.getElementById('b24t-del-allprojects-label');
+    if (apLabel) apLabel.style.display = features.includes('annotator_tools') ? 'flex' : 'none';
 
     // Narzędzia Annotatora — floating panel
     const tab = document.getElementById('b24t-annotator-tab');
@@ -6315,10 +6524,10 @@ function hideHelpTip() {
     var tab = document.createElement('div');
     tab.id = 'b24t-annotator-tab';
     tab.setAttribute('data-b24t-theme', currentTheme);
-    tab.style.cssText = 'position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:2147483640;border-right:none;border-radius:10px 0 0 10px;padding:18px 11px;cursor:pointer;display:none;flex-direction:column;align-items:center;gap:7px;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;font-size:14px;font-weight:600;letter-spacing:0.04em;user-select:none;transition:transform 0.2s,box-shadow 0.2s,background 0.3s,border-color 0.3s,color 0.3s;';
+    tab.style.cssText = 'position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:2147483640;border-right:none;border-radius:10px 0 0 10px;padding:18px 13px;cursor:pointer;display:none;flex-direction:column;align-items:center;gap:7px;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;font-size:14px;font-weight:600;letter-spacing:0.04em;user-select:none;transition:transform 0.2s,box-shadow 0.2s,background 0.3s,border-color 0.3s,color 0.3s;';
     // inline colors that adapt via JS (CSS vars not available in inline style)
-    tab.innerHTML = '<span style="writing-mode:vertical-rl;text-orientation:mixed;letter-spacing:.08em;font-size:13px;font-weight:600;">Narzędzia</span><span style="font-size:18px;line-height:1;">‹</span>';
-    tab.title = 'Otwórz Narzędzia Annotatora';
+    tab.innerHTML = '<span style="writing-mode:vertical-rl;text-orientation:mixed;letter-spacing:.08em;font-size:13px;font-weight:600;">Annotators Tab</span><span style="font-size:18px;line-height:1;">‹</span>';
+    tab.title = 'Otwórz Annotators';
     tab.addEventListener('click', function() { openAnnotatorPanel(); });
     document.body.appendChild(tab);
 
@@ -6842,6 +7051,152 @@ function hideHelpTip() {
   // QUICK DELETE TAB
   // ───────────────────────────────────────────
 
+  // ─── ALL-PROJECTS DELETE SIDE PANEL ───────────────────────────────
+  // Wysuwa się z prawej krawędzi przy zaznaczeniu "Wszystkie projekty"
+  function buildAllProjectsPanel() {
+    if (document.getElementById('b24t-del-allprojects-panel')) return;
+    const el = document.createElement('div');
+    el.id = 'b24t-del-allprojects-panel';
+    el.style.cssText = [
+      'position:fixed',
+      'top:0', 'bottom:0',
+      'right:0',
+      'width:280px',
+      'background:var(--b24t-bg)',
+      'border-left:1px solid var(--b24t-border)',
+      'box-shadow:-6px 0 24px rgba(0,0,0,0.25)',
+      'z-index:2147483646',
+      'display:none',
+      'flex-direction:column',
+      'font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif',
+      'animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1)',
+    ].join(';');
+    el.innerHTML =
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--b24t-accent-grad);flex-shrink:0;">' +
+        '<span style="font-size:13px;font-weight:700;color:#fff;">🗂 Wszystkie projekty</span>' +
+        '<button id="b24t-ap-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;border-radius:5px;padding:2px 8px;cursor:pointer;font-size:14px;">×</button>' +
+      '</div>' +
+      '<div style="padding:10px 14px;background:var(--b24t-bg-elevated);border-bottom:1px solid var(--b24t-border);flex-shrink:0;">' +
+        '<div id="b24t-ap-tag-name" style="font-size:12px;font-weight:600;color:var(--b24t-text-muted);">Wybierz tag, aby załadować dane</div>' +
+        '<div style="font-size:11px;color:var(--b24t-text-faint);margin-top:2px;">Wzmianki z tym tagiem we wszystkich znanych projektach</div>' +
+      '</div>' +
+      '<div id="b24t-ap-list" style="flex:1;overflow-y:auto;padding:8px 0;">' +
+        '<div style="padding:20px;text-align:center;font-size:12px;color:var(--b24t-text-faint);">—</div>' +
+      '</div>' +
+      '<div style="padding:10px 14px;border-top:1px solid var(--b24t-border);flex-shrink:0;">' +
+        '<div id="b24t-ap-total" style="font-size:11px;color:var(--b24t-text-faint);margin-bottom:8px;"></div>' +
+        '<button id="b24t-ap-delete-all" class="b24t-btn-danger" style="width:100%;padding:8px;display:none;">' +
+          '🗑 Usuń z wszystkich projektów' +
+        '</button>' +
+      '</div>';
+    document.body.appendChild(el);
+
+    // Close button
+    document.getElementById('b24t-ap-close').addEventListener('click', () => {
+      el.style.display = 'none';
+      // Odznacz radio i wróć do "view"
+      const viewRadio = document.querySelector('input[name="b24t-del-scope"][value="view"]');
+      if (viewRadio) { viewRadio.checked = true; viewRadio.dispatchEvent(new Event('change')); }
+    });
+
+    // Delete all button
+    document.getElementById('b24t-ap-delete-all').addEventListener('click', async () => {
+      const tagId = parseInt(document.getElementById('b24t-del-tag')?.value);
+      if (!tagId) return;
+      const tagName = Object.entries(state.tags).find(([,id]) => id === tagId)?.[0] || String(tagId);
+      const confirmed = await confirmDeleteWarning();
+      if (!confirmed) return;
+      const projects = getKnownProjects().filter(p => p._tagCount > 0);
+      if (!projects.length) { addLog('Brak projektów z tym tagiem.', 'warn'); return; }
+      const btn = document.getElementById('b24t-ap-delete-all');
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Usuwam...'; }
+      for (const p of projects) {
+        addLog(`→ Usuwam "${tagName}" z projektu ${p.name} (${p._tagCount} wzmianek)...`, 'info');
+        await runDeleteByTag(tagId, tagName, p._dateFrom, p._dateTo, () => {});
+        addLog(`✓ ${p.name}: gotowe`, 'success');
+      }
+      if (btn) { btn.disabled = false; btn.textContent = '🗑 Usuń z wszystkich projektów'; }
+      addLog('✅ Usuwanie ze wszystkich projektów zakończone.', 'success');
+      refreshAllProjectsPanel();
+    });
+  }
+
+  async function refreshAllProjectsPanel() {
+    buildAllProjectsPanel();
+    const tagId = parseInt(document.getElementById('b24t-del-tag')?.value);
+    const list = document.getElementById('b24t-ap-list');
+    const tagNameEl = document.getElementById('b24t-ap-tag-name');
+    const totalEl = document.getElementById('b24t-ap-total');
+    const delBtn = document.getElementById('b24t-ap-delete-all');
+
+    if (!tagId) {
+      if (list) list.innerHTML = '<div style="padding:20px;text-align:center;font-size:12px;color:var(--b24t-text-faint);">Wybierz tag, aby zobaczyć dane</div>';
+      return;
+    }
+
+    const tagName = Object.entries(state.tags).find(([,id]) => id === tagId)?.[0] || String(tagId);
+    if (tagNameEl) tagNameEl.textContent = `Tag: ${tagName}`;
+    if (list) list.innerHTML = '<div style="padding:20px;text-align:center;"><div class="b24t-shimmer" style="height:14px;border-radius:4px;margin-bottom:8px;"></div><div class="b24t-shimmer" style="height:14px;border-radius:4px;width:70%;"></div></div>';
+
+    const projects = getKnownProjects();
+    if (!projects.length) {
+      if (list) list.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--b24t-text-faint);">Brak znanych projektów. Najpierw wejdź w widok Mentions każdego projektu, żeby wtyczka go zapamiętała.</div>';
+      return;
+    }
+
+    // Pobierz dane dla każdego projektu
+    const now = new Date();
+    const defaultDateTo   = now.toISOString().substring(0,10);
+    const defaultDateFrom = new Date(now.setFullYear(now.getFullYear()-1)).toISOString().substring(0,10);
+    const results = [];
+
+    for (const p of projects) {
+      try {
+        // Szybkie sprawdzenie: pobierz pierwszą stronę i zlicz wzmianki z tagiem
+        const page = await getMentions(p.id, defaultDateFrom, defaultDateTo, [tagId], 1);
+        const count = page.count || 0;
+        const dateFrom = count > 0 ? (page.results[page.results.length-1]?.createdDate?.substring(0,10) || defaultDateFrom) : null;
+        const dateTo   = count > 0 ? (page.results[0]?.createdDate?.substring(0,10) || defaultDateTo)   : null;
+        p._tagCount = count;
+        p._dateFrom = dateFrom || defaultDateFrom;
+        p._dateTo   = dateTo   || defaultDateTo;
+        results.push({ p, count, dateFrom, dateTo });
+      } catch(e) {
+        p._tagCount = 0;
+        results.push({ p, count: -1, error: e.message });
+      }
+    }
+
+    // Render listy
+    const totalCount = results.reduce((s, r) => s + Math.max(0, r.count), 0);
+    if (totalEl) totalEl.textContent = totalCount > 0 ? `Łącznie: ${totalCount} wzmianek` : 'Brak wzmianek z tym tagiem';
+    if (delBtn) delBtn.style.display = totalCount > 0 ? 'block' : 'none';
+
+    if (list) {
+      if (!results.length) {
+        list.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--b24t-text-faint);">Brak projektów</div>';
+      } else {
+        list.innerHTML = results.map(({ p, count, dateFrom, dateTo, error }) => {
+          const hasData = count > 0;
+          const errored = count < 0;
+          return '<div style="padding:10px 14px;border-bottom:1px solid var(--b24t-border-sub);">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">' +
+              '<span style="font-size:12px;font-weight:600;color:var(--b24t-text);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + p.name + '">' + p.name + '</span>' +
+              (errored
+                ? '<span style="font-size:10px;color:var(--b24t-err);">błąd</span>'
+                : '<span style="font-size:13px;font-weight:700;color:' + (hasData ? 'var(--b24t-err)' : 'var(--b24t-text-faint)') + ';">' + (hasData ? count : '0') + '</span>'
+              ) +
+            '</div>' +
+            (hasData
+              ? '<div style="font-size:10px;color:var(--b24t-text-faint);">' + (dateFrom || '?') + ' → ' + (dateTo || '?') + '</div>'
+              : '<div style="font-size:10px;color:var(--b24t-text-faint);">brak wzmianek z tym tagiem</div>'
+            ) +
+          '</div>';
+        }).join('');
+      }
+    }
+  }
+
   function buildDeleteTab() {
     const div = document.createElement('div');
     div.id = 'b24t-delete-tab';
@@ -6875,6 +7230,10 @@ function hideHelpTip() {
           <label class="b24t-radio">
             <input type="radio" name="b24t-del-scope" value="custom">
             <span>Własny zakres</span>
+          </label>
+          <label class="b24t-radio" id="b24t-del-allprojects-label" style="display:none;">
+            <input type="radio" name="b24t-del-scope" value="allprojects">
+            <span>Wszystkie projekty</span>
           </label>
         </div>
 
@@ -7012,6 +7371,16 @@ function hideHelpTip() {
       r.addEventListener('change', (e) => {
         document.getElementById('b24t-del-custom-dates').style.display =
           e.target.value === 'custom' ? 'flex' : 'none';
+        // Side panel "Wszystkie projekty"
+        const ap = document.getElementById('b24t-del-allprojects-panel');
+        if (ap) {
+          if (e.target.value === 'allprojects') {
+            ap.style.display = 'block';
+            refreshAllProjectsPanel();
+          } else {
+            ap.style.display = 'none';
+          }
+        }
       });
     });
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.9.3
+// @version      0.9.4
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.9.3';
+  const VERSION = '0.9.4';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4490,6 +4490,15 @@ function hideHelpTip() {
 
   const CHANGELOG = [
     {
+      version: '0.9.4',
+      date: '2026-03-28',
+      label: 'Hotfix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Crash przy starcie: features.includes is not a function — features jest obiektem, nie tablicą' },
+      ],
+    },
+    {
       version: '0.9.3',
       date: '2026-03-28',
       label: 'Nowość',
@@ -5509,6 +5518,16 @@ function hideHelpTip() {
 
   const DEV_CHANGELOG = [
     {
+      version: '0.9.4',
+      date: '2026-03-28',
+      notes: [
+        'HOTFIX: applyFeatures() — features.includes('annotator_tools') crashował bo features = {} (obiekt), nie [] (tablica)',
+        'Poprawka: features.includes(...) → features.annotator_tools (spójne z resztą kodu który używa features.xxx)',
+        'Crash w applyFeatures() blokował całe init() po budowie panelu — stąd ? button, Zapisz i Annotators Tab nie działały',
+        'loadFeatures() zwraca {} z JSON.parse(lsGet(LS.FEATURES, '{}')), nie tablicę — features.annotator_tools = true/false',
+      ]
+    },
+    {
       version: '0.9.3',
       date: '2026-03-28',
       notes: [
@@ -6122,7 +6141,7 @@ function hideHelpTip() {
     const features = loadFeatures();
     // Pokaż opcję "Wszystkie projekty" w Quick Delete tylko gdy Annotators włączone
     const apLabel = document.getElementById('b24t-del-allprojects-label');
-    if (apLabel) apLabel.style.display = features.includes('annotator_tools') ? 'flex' : 'none';
+    if (apLabel) apLabel.style.display = features.annotator_tools ? 'flex' : 'none';
 
     // Narzędzia Annotatora — floating panel
     const tab = document.getElementById('b24t-annotator-tab');

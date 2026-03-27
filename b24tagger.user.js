@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.5.8
+// @version      0.5.9
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.5.8';
+  const VERSION = '0.5.9';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2108,22 +2108,6 @@
       state.soundEnabled = e.target.checked;
     });
 
-    // Match Preview
-    panel.querySelector('#b24t-btn-preview')?.addEventListener('click', async () => {
-      if (!state.file) { addLog('Wgraj plik przed Match Preview.', 'warn'); return; }
-      if (!state.tokenHeaders) { addLog('Token nie jest gotowy.', 'warn'); return; }
-      const preview = await runMatchPreview();
-      if (preview) renderMatchPreview(preview);
-    });
-
-    // Audit Mode
-    panel.querySelector('#b24t-btn-audit')?.addEventListener('click', async () => {
-      if (!state.file) { addLog('Wgraj plik przed Audit Mode.', 'warn'); return; }
-      if (!Object.keys(state.mapping).length) { addLog('Skonfiguruj mapowanie przed Audit Mode.', 'warn'); return; }
-      if (state.status === 'running') { addLog('Sesja już uruchomiona.', 'warn'); return; }
-      await runAuditMode();
-    });
-
     // Column override toggle
     panel.querySelector('#b24t-col-override-toggle')?.addEventListener('click', () => {
       const box = document.getElementById('b24t-column-override');
@@ -3576,6 +3560,16 @@
 
   const CHANGELOG = [
     {
+      version: '0.5.9',
+      date: '2026-03-27',
+      label: 'Bugfix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Naprawiono podwójne wykonanie Match Preview i Audit Mode przy każdym kliknięciu' },
+        { type: 'fix', text: 'Naprawiono podwójne wywołanie wireHistoryTab()' },
+      ]
+    },
+    {
       version: '0.5.8',
       date: '2026-03-27',
       label: 'Bugfix',
@@ -4420,6 +4414,16 @@
   // ─────────────────────────────────────────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.5.9',
+      date: '2026-03-27',
+      notes: [
+        'Bug: w wireEvents() btn-preview i btn-audit miały addEventListener wywoływane dwa razy — drugi blok był pozostałością po refactorze',
+        'Bug: wireHistoryTab() wywoływane dwa razy w init sequence (linie 6088-6089)',
+        'Fix: usunięto drugi blok listenerów dla preview/audit/col-override-toggle w wireEvents()',
+        'Fix: usunięto drugi wireHistoryTab() z init sequence',
+      ]
+    },
     {
       version: '0.5.8',
       date: '2026-03-27',
@@ -6085,7 +6089,6 @@ Tej operacji nie można cofnąć.`)) {
     wireEvents(panel);
     wireDeleteEvents(panel);
     wireQuickTagEvents(panel);
-    wireHistoryTab();
     wireHistoryTab();
 
     // Tab switching

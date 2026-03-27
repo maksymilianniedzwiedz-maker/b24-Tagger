@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.7.0
+// @version      0.7.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const VERSION = '0.7.0';
+  const VERSION = '0.7.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4301,17 +4301,11 @@
 
   // Planned features list
   const PLANNED_FEATURES = [
-    { priority: 'ai',     text: 'Dostęp do AI API — tłumaczenie wzmianek, klasyfikacja, Batch Review Mode, integracja z Rosettą', next: false },
-    { priority: 'high',   text: 'Dashboard Annotatora — licznik wzmianek bieżącego miesiąca, postęp, dni do końca miesiąca', next: true  },
+    { priority: 'ai',     text: 'Dostęp do AI API — tłumaczenie wzmianek na bieżąco, automatyczna klasyfikacja, tryb tworzenia customowych klasyfikatorów (do automatycznej klasyfikacji) i inne...', next: false },
     { priority: 'high',   text: 'Podgląd wzmianki on-hover — najedź na URL w logu żeby zobaczyć treść i autora', next: false },
     { priority: 'high',   text: 'Szybkie filtry w Quick Tag — builder filtrów (źródło, sentyment, daty) bez dotykania UI Brand24', next: false },
-    { priority: 'high',   text: 'Tryb "Continue from date" — automatyczna kontynuacja od ostatniej przetworzonej daty', next: false },
     { priority: 'medium', text: 'Bulk rename / merge tagów — zmiana nazwy tagu i scalanie tagów w projekcie', next: false },
-    { priority: 'medium', text: 'Statystyki projektu — trendy relevant/irrelevant w czasie',                    next: false },
-    { priority: 'medium', text: 'Eksport / import konfiguracji — szybki onboarding nowych analityków',         next: false },
     { priority: 'low',    text: 'Wieloprojektowość — jeden plik z wzmiankami z wielu projektów',              next: false },
-    { priority: 'low',    text: 'Skróty klawiszowe — Ctrl+Enter, Escape, Ctrl+Shift+B',                        next: false },
-    { priority: 'low',    text: 'Scheduler — zaplanowane automatyczne uruchomienie o wybranej godzinie',       next: false },
   ];
 
   function sendToSlack(payload, onSuccess, onError) {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.9.7
+// @version      0.9.8
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.9.7';
+  const VERSION = '0.9.8';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4490,6 +4490,18 @@ function hideHelpTip() {
 
   const CHANGELOG = [
     {
+      version: '0.9.8',
+      date: '2026-03-28',
+      label: 'UX',
+      labelColor: '#60a5fa',
+      changes: [
+        { type: 'ui',  text: 'Annotators Tab: zakładki 📊 Projekt / 🏷 Tagi w stylu liquid glass — identyczne z głównymi zakładkami panelu' },
+        { type: 'ux',  text: 'Annotators Tab → Tagi: spinner podczas ładowania zamiast skeleton per projekt — lista pojawia się dopiero po załadowaniu wszystkich danych' },
+        { type: 'ux',  text: 'Cross-project delete panel: spinner podczas ładowania zamiast skeleton per projekt' },
+        { type: 'fix', text: 'Cross-project delete panel: nie rozciąga się do dołu ekranu — teraz dopasowuje się do zawartości (height:auto)' },
+      ],
+    },
+    {
       version: '0.9.7',
       date: '2026-03-28',
       label: 'Hotfix',
@@ -5600,6 +5612,18 @@ function hideHelpTip() {
 
   const DEV_CHANGELOG = [
     {
+      version: '0.9.8',
+      date: '2026-03-28',
+      notes: [
+        '[UI]    buildAnnotatorPanel(): zakładki .b24t-ann-tab zmienione z inline-styled border-bottom na klasy .b24t-tab + .b24t-tab-active — CSS liquid glass z głównego panelu działa automatycznie.',
+        '[UI]    buildAnnotatorPanel(): container zakładek zmieniony z border-bottom:2px na gap:5px + padding jak #b24t-tabs w głównym panelu.',
+        '[UX]    buildAnnotatorPanel() tab switching: stary kod manipulował borderBottomColor/color/fontWeight inline. Nowy: classList.remove/add("b24t-tab-active") — spójne z głównym panelem.',
+        '[UX]    loadAnnotatorTagStats(): skeleton per projekt zastąpiony spinnerem (b24t-spin animation) + licznik "X / N". Projekty z count=0 nie trafiają do results w ogóle. Render finalny po zakończeniu wszystkich requestów.',
+        '[UX]    refreshAllProjectsPanel(): skeleton per projekt zastąpiony spinnerem + licznik. Tylko projekty z count > 0 trafiają do results — eliminuje iterację po wynikach z filtrowaniem.',
+        '[FIX]   _positionXProjectPanel(): usunięto hardkodowane height:(window.innerHeight - r.top - 8)px które rozciągało panel do dołu ekranu. Teraz height:auto, maxHeight:(window.innerHeight - r.top - 16)px.',
+      ]
+    },
+    {
       version: '0.9.7',
       date: '2026-03-28',
       notes: [
@@ -6707,10 +6731,10 @@ function hideHelpTip() {
         '<span style="font-size:15px;font-weight:700;flex:1;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.2);">🛠 Annotators Tab</span>' +
         '<button id="b24t-ann-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:18px;line-height:1;padding:2px 8px;border-radius:5px;transition:background 0.15s;">×</button>' +
       '</div>' +
-      // Tabs
-      '<div style="display:flex;background:var(--b24t-bg-deep);border-bottom:2px solid var(--b24t-border);">' +
-        '<button class="b24t-ann-tab b24t-ann-tab-active" data-ann-tab="project" style="flex:1;padding:10px 4px;font-size:15px;background:none;border:none;border-bottom:2px solid var(--b24t-primary);color:var(--b24t-primary);font-family:inherit;cursor:pointer;font-weight:700;margin-bottom:-2px;transition:color 0.15s,border-color 0.15s,background 0.15s;">📊 Projekt</button>' +
-        '<button class="b24t-ann-tab" data-ann-tab="tagstats" style="flex:1;padding:10px 4px;font-size:15px;background:none;border:none;border-bottom:2px solid transparent;color:var(--b24t-text-muted);font-family:inherit;cursor:pointer;margin-bottom:-2px;transition:color 0.15s,border-color 0.15s,background 0.15s;">🏷 Tagi</button>' +
+      // Tabs — liquid glass, identyczny styl jak główny panel
+      '<div style="display:flex;align-items:center;gap:5px;padding:6px 10px;background:var(--b24t-bg-deep);border-bottom:1px solid var(--b24t-border-sub);">' +
+        '<button class="b24t-tab b24t-ann-tab b24t-tab-active" data-ann-tab="project">📊 Projekt</button>' +
+        '<button class="b24t-tab b24t-ann-tab" data-ann-tab="tagstats">🏷 Tagi</button>' +
       '</div>' +
       // Project tab
       '<div id="b24t-ann-tab-project" class="b24t-ann-content" style="display:block;background:var(--b24t-bg);">' +
@@ -6753,21 +6777,19 @@ function hideHelpTip() {
       themeTrack.addEventListener('click', function() { setTimeout(styleTab, 50); });
     }
 
-    // Tab switching
+    // Tab switching — liquid glass używa b24t-tab-active class jak główny panel
     panel.querySelectorAll('.b24t-ann-tab').forEach(function(btn) {
       btn.addEventListener('click', function() {
         var tabName = btn.dataset.annTab;
         panel.querySelectorAll('.b24t-ann-tab').forEach(function(b) {
-          b.style.borderBottomColor = 'transparent';
-          b.style.color = 'var(--b24t-text-muted)';
-          b.style.fontWeight = 'normal';
+          b.classList.remove('b24t-tab-active');
         });
-        btn.style.borderBottomColor = 'var(--b24t-primary)';
-        btn.style.color = 'var(--b24t-primary)';
-        btn.style.fontWeight = '700';
+        btn.classList.add('b24t-tab-active');
         panel.querySelectorAll('.b24t-ann-content').forEach(function(el) { el.style.display = 'none'; });
         var content = document.getElementById('b24t-ann-tab-' + tabName);
         if (content) { content.style.display = 'block'; content.style.animation = 'b24t-fadein 0.2s ease'; }
+        // Lazy load — załaduj dane dopiero gdy zakładka Tagi jest otwierana po raz pierwszy
+        if (tabName === 'tagstats' && !annotatorData.tagstats) loadAnnotatorTagStats();
       });
     });
 
@@ -6920,67 +6942,58 @@ function hideHelpTip() {
     if (!projects.length) { el.innerHTML = '<div style="font-size:11px;color:var(--b24t-text-faint);">Brak projektów. Odwiedź każdy projekt raz.</div>'; return; }
     var dates = getAnnotatorDates();
 
-    // Skeleton loader — każdy projekt jako osobna linia
-    el.innerHTML = projects.map(function(p) {
-      return '<div class="b24t-ann-skel-row" data-pid="' + p.id + '" style="padding:8px 10px;border-bottom:1px solid var(--b24t-border-sub);display:flex;align-items:center;justify-content:space-between;gap:6px;">' +
-        '<span style="font-size:12px;color:var(--b24t-text-muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + p.name + '">' + p.name + '</span>' +
-        '<span style="font-size:11px;color:var(--b24t-text-faint);">ładuję…</span>' +
+    // Spinner — ładowanie w tle, bez skeleton per projekt
+    el.innerHTML =
+      '<div style="padding:20px 0;text-align:center;">' +
+        '<div style="font-size:22px;animation:b24t-spin 1s linear infinite;display:inline-block;">↻</div>' +
+        '<div id="b24t-ann-ts-counter" style="font-size:10px;color:var(--b24t-text-faint);margin-top:6px;">0 / ' + projects.length + '</div>' +
       '</div>';
-    }).join('') + '<div id="b24t-ann-skel-summary" style="padding:8px 10px;font-size:10px;color:var(--b24t-text-faint);text-align:right;">0 / ' + projects.length + '</div>';
+
+    // Dodaj animację spin jeśli nie istnieje
+    if (!document.getElementById('b24t-spin-style')) {
+      var s = document.createElement('style');
+      s.id = 'b24t-spin-style';
+      s.textContent = '@keyframes b24t-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}';
+      document.head.appendChild(s);
+    }
 
     var results = [];
-    var done = 0;
-
     for (var i = 0; i < projects.length; i++) {
       var p = projects[i];
-      // Aktualizuj placeholder dla tego projektu
-      var row = el.querySelector('.b24t-ann-skel-row[data-pid="' + p.id + '"]');
-      if (row) row.querySelector('span:last-child').textContent = '↻';
+      // Aktualizuj licznik w spinnerze
+      var counter = document.getElementById('b24t-ann-ts-counter');
+      if (counter) counter.textContent = (i + 1) + ' / ' + projects.length;
       try {
-        // Dwa szybkie requesty zamiast pobierania wszystkich stron
-        var reqPage  = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.reqVerId],  1);
+        var reqPage  = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.reqVerId],   1);
         var delPage  = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.toDeleteId], 1);
         var reqVer   = reqPage.count  || 0;
         var toDelete = delPage.count  || 0;
-        results.push({ name: p.name, id: p.id, reqVer: reqVer, toDelete: toDelete });
-        // Aktualizuj wiersz — ukryj od razu jeśli oba zero (nie zajmuje miejsca)
-        done++;
-        if (row) {
-          if (reqVer === 0 && toDelete === 0) {
-            row.style.display = 'none';
-          } else {
-            row.querySelector('span:last-child').innerHTML =
-              '<span style="color:var(--b24t-warn);font-weight:700;margin-right:6px;">' + (reqVer  || '—') + '</span>' +
-              '<span style="color:var(--b24t-err);font-weight:700;">'                  + (toDelete || '—') + '</span>';
-          }
+        if (reqVer > 0 || toDelete > 0) {
+          results.push({ name: p.name, id: p.id, reqVer: reqVer, toDelete: toDelete });
         }
       } catch(e) {
-        results.push({ name: p.name, id: p.id, reqVer: 0, toDelete: 0 });
-        done++;
-        if (row) row.querySelector('span:last-child').textContent = 'błąd';
+        // Pomiń projekty z błędem — nie blokuj pozostałych
       }
-      var summEl = el.querySelector('#b24t-ann-skel-summary');
-      if (summEl) summEl.textContent = done + ' / ' + projects.length;
     }
 
     annotatorData.tagstats = { results: results, dates: dates };
 
-    // Render finalny — pokaż tylko projekty z danymi lub komunikat "czyste"
-    var filtered = results.filter(function(r) { return r.reqVer > 0 || r.toDelete > 0; })
-      .sort(function(a, b) { return (b.reqVer + b.toDelete) - (a.reqVer + a.toDelete); });
-
-    if (!filtered.length) {
+    // Render finalny — tylko projekty z danymi
+    if (!results.length) {
       el.innerHTML = '<div style="text-align:center;color:var(--b24t-ok);font-size:13px;padding:12px 0;font-weight:600;">✓ Wszystkie projekty czyste!</div>';
       return;
     }
 
-    var rows = filtered.map(function(p) {
+    results.sort(function(a, b) { return (b.reqVer + b.toDelete) - (a.reqVer + a.toDelete); });
+
+    var rows = results.map(function(p) {
       return '<tr>' +
         '<td style="padding:6px 10px;font-size:12px;color:var(--b24t-text);border-bottom:1px solid var(--b24t-border-sub);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + p.name + '">' + p.name + '</td>' +
         '<td style="padding:6px 8px;font-size:13px;font-weight:700;color:' + (p.reqVer  > 0 ? 'var(--b24t-warn)' : 'var(--b24t-text-faint)') + ';text-align:center;border-bottom:1px solid var(--b24t-border-sub);">' + (p.reqVer  || '—') + '</td>' +
         '<td style="padding:6px 8px;font-size:13px;font-weight:700;color:' + (p.toDelete > 0 ? 'var(--b24t-err)'  : 'var(--b24t-text-faint)') + ';text-align:center;border-bottom:1px solid var(--b24t-border-sub);">' + (p.toDelete || '—') + '</td>' +
       '</tr>';
     }).join('');
+
     el.innerHTML =
       '<div style="font-size:11px;color:var(--b24t-text-faint);padding:6px 0 8px;">' + dates.dateFrom + ' – ' + dates.dateTo + '</div>' +
       '<table style="width:100%;border-collapse:collapse;">' +
@@ -7293,11 +7306,11 @@ function hideHelpTip() {
       el.style.right  = (vw - r.left + 6) + 'px';
       el.style.left   = 'auto';
     }
-    // Wyrównaj góra/dół do panelu głównego, nie do ekranu
+    // Wyrównaj góra do panelu głównego, NIE rozciągaj do dołu — panel ma auto height
     el.style.top    = r.top + 'px';
     el.style.bottom = 'auto';
-    el.style.height = (window.innerHeight - r.top - 8) + 'px';
-    el.style.maxHeight = (window.innerHeight - r.top - 8) + 'px';
+    el.style.height = 'auto';
+    el.style.maxHeight = (window.innerHeight - r.top - 16) + 'px';
   }
 
   function buildAllProjectsPanel() {
@@ -7420,13 +7433,14 @@ To jest NIEODWRACALNE.`)) return;
       return;
     }
 
-    // Skeleton loader — każdy projekt jako osobna linia
-    if (list) list.innerHTML = projects.map(p =>
-      '<div style="padding:10px 14px;border-bottom:1px solid var(--b24t-border-sub);display:flex;align-items:center;justify-content:space-between;">' +
-        '<span style="font-size:12px;color:var(--b24t-text-muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + p.name + '</span>' +
-        '<span style="font-size:11px;color:var(--b24t-text-faint);">ładuję…</span>' +
-      '</div>'
-    ).join('');
+    // Spinner — ładuj w tle, bez skeleton per projekt
+    if (list) list.innerHTML =
+      '<div style="padding:20px 0;text-align:center;">' +
+        '<div style="font-size:22px;animation:b24t-spin 1s linear infinite;display:inline-block;">↻</div>' +
+        '<div id="b24t-ap-spinner-counter" style="font-size:10px;color:var(--b24t-text-faint);margin-top:6px;">0 / ' + projects.length + '</div>' +
+      '</div>';
+    if (totalEl) totalEl.innerHTML = '';
+    if (delBtn) delBtn.style.display = 'none';
 
     // Zakres dat: domyślnie ostatnie 12 miesięcy (API wymaga zakresu)
     const now = new Date();
@@ -7435,28 +7449,23 @@ To jest NIEODWRACALNE.`)) return;
 
     const results = [];
 
-    // Pobierz sekwencyjnie per projekt (każdy projekt = osobne żądanie do innego projectId)
+    // Pobierz sekwencyjnie per projekt
     for (let i = 0; i < projects.length; i++) {
       const p = projects[i];
-      // Aktualizuj placeholder dla tego projektu
-      const rows = list ? list.querySelectorAll('div[style*="border-bottom"]') : [];
-      if (rows[i]) rows[i].querySelector('span:last-child').textContent = '↻';
+      const spinnerCounter = list ? list.querySelector('#b24t-ap-spinner-counter') : null;
+      if (spinnerCounter) spinnerCounter.textContent = (i + 1) + ' / ' + projects.length;
       try {
-        // Pobierz pierwszą stronę z filtrem po tagId — count = ile wzmianek z tym tagiem
         const page = await getMentions(p.id, defaultDateFrom, defaultDateTo, [tagId], 1);
         const count = page.count || 0;
-        // Zakres dat wzmianek z tego tagu: najstarsza i najnowsza z pierwszej strony
-        // (brand24 sortuje malejąco, więc results[0] = najnowsza, results[last] = najstarsza)
-        const newest = page.results?.[0]?.createdDate?.substring(0, 10) || defaultDateTo;
-        const oldest = page.results?.[page.results.length - 1]?.createdDate?.substring(0, 10) || defaultDateFrom;
-        p._tagCount = count;
-        // Dla zakresu użyj pełnego defaultowego jeśli jest więcej stron niż 1
-        // (pierwsza strona może nie mieć najstarszego)
-        p._dateFrom = count > 60 ? defaultDateFrom : oldest;
-        p._dateTo   = newest;
-        results.push({ p, count, hasData: count > 0 });
+        if (count > 0) {
+          const newest = page.results?.[0]?.createdDate?.substring(0, 10) || defaultDateTo;
+          const oldest = page.results?.[page.results.length - 1]?.createdDate?.substring(0, 10) || defaultDateFrom;
+          p._tagCount = count;
+          p._dateFrom = count > 60 ? defaultDateFrom : oldest;
+          p._dateTo   = newest;
+          results.push({ p, count, hasData: true });
+        }
       } catch (e) {
-        p._tagCount = 0;
         results.push({ p, count: -1, error: e.message });
       }
     }

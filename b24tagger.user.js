@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.12.0
+// @version      0.13.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.12.0';
+  const VERSION = '0.13.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -477,6 +477,15 @@
     const gr = untaggedOnly ? [state.untaggedId] : [];
     const map = {};
     const CONCURRENCY = 10; // parallel requests per batch
+
+    // Fallback gdy daty są puste lub nieprawidłowe (plik bez kolumny daty)
+    const isInvalidDate = function(d) { return !d || d === '9999' || d === '0000' || !/^\d{4}-\d{2}-\d{2}$/.test(d); };
+    if (isInvalidDate(dateFrom) || isInvalidDate(dateTo)) {
+      const fallback = getAnnotatorDates();
+      addLog(`⚠ Brak dat w pliku — używam fallback: ${fallback.label} (${fallback.dateFrom} → ${fallback.dateTo})`, 'warn');
+      dateFrom = fallback.dateFrom;
+      dateTo   = fallback.dateTo;
+    }
 
     updateProgress('map', 0, '?');
     addLog(`→ Budowanie mapy URL (${untaggedOnly ? 'Untagged' : 'pełny zakres'}) [${CONCURRENCY}x równolegle]`, 'info');
@@ -1555,6 +1564,8 @@
         box-shadow: var(--b24t-shadow);
         user-select: none;
         overflow: hidden;
+        display: flex;
+        flex-direction: column;
         transition: box-shadow 0.25s ease, background 0.3s ease, border-color 0.3s ease, color 0.3s ease;
         animation: b24t-slidein 0.35s cubic-bezier(0.34,1.56,0.64,1) both;
       }
@@ -1686,7 +1697,7 @@
       #b24t-session-timer-sub { color: var(--b24t-text-faint) !important; }
 
       /* ── BODY ── */
-      #b24t-body { overflow-y: auto; max-height: 72vh; background: var(--b24t-panel-grad); transition: background 0.3s; }
+      #b24t-body { overflow-y: auto; flex: 1; min-height: 0; max-height: 72vh; background: var(--b24t-panel-grad); transition: background 0.3s; }
       #b24t-body::-webkit-scrollbar { width: 3px; }
       #b24t-body::-webkit-scrollbar-track { background: transparent; }
       #b24t-body::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
@@ -1847,6 +1858,7 @@
         display: flex; gap: 6px; padding: 10px 14px;
         background: var(--b24t-section-grad-c);
         border-top: 2px solid var(--b24t-border);
+        flex-shrink: 0;
         transition: background 0.3s, border-color 0.3s;
       }
       .b24t-btn-primary {
@@ -2301,12 +2313,15 @@
         <!-- PLIK -->
         <div class="b24t-section">
           <div class="b24t-section-label">Plik źródłowy</div>
-          <div class="b24t-file-zone" id="b24t-file-zone">
-            <span class="b24t-file-icon">📄</span>
-            <div>
-              <div class="b24t-file-name" id="b24t-file-name">Kliknij aby wgrać plik...</div>
-              <div class="b24t-file-meta" id="b24t-file-meta">CSV, JSON lub XLSX</div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div class="b24t-file-zone" id="b24t-file-zone" style="flex:1;">
+              <span class="b24t-file-icon">📄</span>
+              <div>
+                <div class="b24t-file-name" id="b24t-file-name">Kliknij aby wgrać plik...</div>
+                <div class="b24t-file-meta" id="b24t-file-meta">CSV, JSON lub XLSX</div>
+              </div>
             </div>
+            <button id="b24t-btn-clear-file" title="Usuń plik" style="display:none;background:#2a1f1f;border:1px solid #5a2a2a;color:#f87171;border-radius:7px;padding:7px 10px;font-size:13px;cursor:pointer;flex-shrink:0;transition:background 0.15s,border-color 0.15s;">✕</button>
           </div>
           <input type="file" id="b24t-file-input" accept=".csv,.json,.xlsx" style="display:none">
           <div class="b24t-date-range" id="b24t-date-range" style="display:none">
@@ -2498,7 +2513,11 @@
     var saved = lsGet(lsKey);
     if (saved) {
       if (saved.width)  panel.style.width  = Math.min(maxW, Math.max(minW, saved.width))  + 'px';
-      if (saved.height) panel.style.maxHeight = Math.min(maxH, Math.max(minH, saved.height)) + 'px';
+      if (saved.height) {
+        var h = Math.min(maxH, Math.max(minH, saved.height));
+        panel.style.height = h + 'px';
+        panel.style.maxHeight = h + 'px';
+      }
     }
 
     // Dodaj CSS cursor na krawędziach przez mousemove
@@ -2593,15 +2612,11 @@
       panel.style.right  = 'auto';
       panel.style.bottom = 'auto';
 
-      // Dla main panelu: maxHeight kontroluje ciało, nie panel sam
+      // Dla main panelu: panel ma display:flex flex-direction:column, body ma flex:1 min-height:0
+      // Wystarczy ustawić height na panel — flex rozkłada przestrzeń automatycznie
       if (opts.useMaxHeight) {
+        panel.style.height = newH + 'px';
         panel.style.maxHeight = newH + 'px';
-        var body = panel.querySelector('#b24t-body');
-        if (body) {
-          // maxHeight panelu minus stałe elementy (topbar ~40 + metabar ~28 + subbar ~34 + tabs ~40 + actions ~56 ≈ 198px)
-          var fixedPx = 198;
-          body.style.maxHeight = Math.max(80, newH - fixedPx) + 'px';
-        }
       } else {
         panel.style.height = newH + 'px';
       }
@@ -2700,6 +2715,15 @@
     const fileInput = panel.querySelector('#b24t-file-input');
     fileZone.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', (e) => handleFileUpload(e.target.files[0]));
+
+    // Clear file button
+    const clearFileBtn = panel.querySelector('#b24t-btn-clear-file');
+    if (clearFileBtn) {
+      clearFileBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        clearFile();
+      });
+    }
 
     // Drag & drop on file zone
     fileZone.addEventListener('dragover', (e) => { e.preventDefault(); fileZone.style.borderColor = '#6c6cff'; });
@@ -2966,6 +2990,8 @@
       document.getElementById('b24t-file-meta').textContent =
         `${meta.totalRows} wierszy · ${Object.keys(meta.assessments).map(k => `${meta.assessments[k]} ${k.toLowerCase()}`).join(' · ')}` +
         (meta.noAssessment > 0 ? ` · ${meta.noAssessment} bez labela ℹ` : '');
+      const clearBtnEl = document.getElementById('b24t-btn-clear-file');
+      if (clearBtnEl) clearBtnEl.style.display = 'block';
 
       if (meta.minDate && meta.maxDate) {
         document.getElementById('b24t-date-from').textContent = meta.minDate;
@@ -2998,12 +3024,62 @@
       updateStatsUI();
       addLog(`✓ Plik załadowany: ${meta.totalRows} wierszy, ${Object.keys(meta.assessments).length} typów labelek`, 'success');
       addLog(`→ Wykryte kolumny: url="${colMap.url || 'BRAK!'}" | assessment="${colMap.assessment || 'BRAK!'}" | date="${colMap.date || 'BRAK!'}"`, 'info');
-      if (!colMap.url) addLog('✕ BŁĄD: Nie wykryto kolumny URL! Matching nie zadziała.', 'error');
+
+      // Walidacja krytyczna — blokuje Start jeśli brak URL/dat
+      const fileWarnings = validateFile(rows, colMap);
+      renderFileValidation(fileWarnings);
+      if (fileWarnings.some(w => w.type === 'error')) {
+        addLog('⛔ Plik ma błędy krytyczne — Start zablokowany. Sprawdź ostrzeżenia nad mapowaniem.', 'error');
+      }
 
     } catch (e) {
       addLog(`✕ Błąd pliku: ${e.message}`, 'error');
       alert(`Błąd wczytywania pliku: ${e.message}`);
     }
+  }
+
+  function clearFile() {
+    if (state.status === 'running' || state.status === 'paused') {
+      addLog('⚠ Nie można usunąć pliku podczas aktywnej sesji.', 'warn');
+      return;
+    }
+    // Reset state
+    state.file = null;
+    state.mapping = {};
+    state.partitions = [];
+    state.currentPartitionIdx = 0;
+    state.urlMap = {};
+    state.matchPreview = null;
+
+    // Reset file UI
+    const fileNameEl = document.getElementById('b24t-file-name');
+    const fileMetaEl = document.getElementById('b24t-file-meta');
+    const dateRangeEl = document.getElementById('b24t-date-range');
+    const fileInput = document.getElementById('b24t-file-input');
+    const clearBtn = document.getElementById('b24t-btn-clear-file');
+    if (fileNameEl) fileNameEl.textContent = 'Kliknij aby wgrać plik...';
+    if (fileMetaEl) fileMetaEl.textContent = 'CSV, JSON lub XLSX';
+    if (dateRangeEl) dateRangeEl.style.display = 'none';
+    if (fileInput) fileInput.value = '';
+    if (clearBtn) clearBtn.style.display = 'none';
+
+    // Hide dependent sections
+    const sectionsToHide = ['b24t-file-validation','b24t-mapping-section','b24t-settings-section',
+                            'b24t-partition-section','b24t-match-preview','b24t-column-override-section'];
+    sectionsToHide.forEach(function(id) {
+      const el = document.getElementById(id);
+      if (el) { el.style.display = 'none'; if (el.dataset) el.dataset.hasErrors = ''; }
+    });
+
+    // Reset validation block and re-enable start buttons
+    _updateStartBtnBlock();
+
+    // Clear mapping rows
+    const mappingRows = document.getElementById('b24t-mapping-rows');
+    if (mappingRows) mappingRows.innerHTML = '';
+
+    updateStatsUI();
+    addLog('🗑 Plik usunięty. Wgraj nowy plik.', 'info');
   }
 
   async function parseXLSXFile(file) {
@@ -3221,6 +3297,12 @@
     if (!state.file) { showError('Najpierw wgraj plik z wzmiankami.'); return; }
     if (!Object.keys(state.mapping).length) { showError('Skonfiguruj mapowanie labelek.'); return; }
     if (!state.projectId) { showError('Przejdź do zakładki Mentions projektu Brand24.'); return; }
+    // Guard: blokada przy błędach krytycznych pliku (brak URL / brak dat)
+    const valEl = document.getElementById('b24t-file-validation');
+    if (valEl && valEl.dataset.hasErrors === '1') {
+      showError('Plik ma błędy krytyczne — sprawdź ostrzeżenia w sekcji "Plik źródłowy".');
+      return;
+    }
 
     // Potwierdzenie przy dużej liczbie wzmianek (200+) — tylko w trybie właściwym
     if (!state.testRunMode && state.file && state.file.rows && state.file.rows.length >= 200) {
@@ -4545,6 +4627,21 @@ function showOnboarding(onComplete) {
 
   function validateFile(rows, colMap) {
     const warnings = [];
+    // BŁĘDY KRYTYCZNE — blokują Start
+    if (!colMap.url) {
+      warnings.push({ type: 'error', msg: 'Brak kolumny URL — matching wzmianek nie zadziała. Sprawdź plik lub użyj "Zmień wykryte kolumny".' });
+    }
+    if (!colMap.assessment) {
+      warnings.push({ type: 'error', msg: 'Brak kolumny z labelką (assessment) — nie wiadomo jak tagować wzmianki.' });
+    }
+    if (colMap.date) {
+      const validDates = rows.filter(function(r){ return /^\d{4}-\d{2}-\d{2}/.test((r[colMap.date] || '')); });
+      if (validDates.length === 0) {
+        warnings.push({ type: 'error', msg: 'Kolumna daty wykryta ("' + colMap.date + '"), ale wszystkie wartości są puste — zakres dat nieznany. Matching użyje bieżącego miesiąca jako fallback.' });
+      }
+    } else {
+      warnings.push({ type: 'error', msg: 'Brak kolumny z datami — zakres dat nieznany. Matching użyje bieżącego miesiąca jako fallback. Upewnij się że plik zawiera kolumnę "created_date" lub "date".' });
+    }
     const urlSet = new Set();
     let dupUrls = 0, noUrl = 0, noAssessment = 0, badUrl = 0;
     rows.forEach(function(row) {
@@ -4576,13 +4673,50 @@ function showOnboarding(onComplete) {
   function renderFileValidation(warnings) {
     const el = document.getElementById('b24t-file-validation');
     if (!el) return;
-    if (!warnings.length) { el.style.display = 'none'; return; }
+    if (!warnings.length) {
+      el.style.display = 'none';
+      el.dataset.hasErrors = '';
+      _updateStartBtnBlock();
+      return;
+    }
+    const hasErrors = warnings.some(function(w){ return w.type === 'error'; });
+    el.dataset.hasErrors = hasErrors ? '1' : '';
     el.style.display = 'block';
+    el.style.borderColor = hasErrors ? '#f87171' : 'var(--b24t-border)';
     el.innerHTML = warnings.map(function(w) {
+      var color, icon;
+      if (w.type === 'error')      { color = '#f87171'; icon = '✕'; }
+      else if (w.type === 'warn')  { color = '#facc15'; icon = '⚠'; }
+      else                          { color = 'var(--b24t-text-faint)'; icon = 'ℹ'; }
       return '<div style="display:flex;gap:6px;align-items:flex-start;padding:4px 0;border-bottom:1px solid var(--b24t-border-sub);">' +
-        '<span style="flex-shrink:0;' + (w.type === 'warn' ? 'color:#facc15;' : 'color:var(--b24t-text-faint);') + '">' + (w.type === 'warn' ? '⚠' : 'ℹ') + '</span>' +
-        '<span style="font-size:10px;color:#9090bb;">' + w.msg + '</span></div>';
-    }).join('');
+        '<span style="flex-shrink:0;color:' + color + ';">' + icon + '</span>' +
+        '<span style="font-size:10px;color:' + (w.type === 'error' ? '#f8a4a4' : '#9090bb') + ';">' + w.msg + '</span></div>';
+    }).join('') + (hasErrors
+      ? '<div style="margin-top:6px;font-size:10px;color:#f87171;font-weight:600;">⛔ Start zablokowany — popraw błędy lub użyj ręcznego mapowania kolumn.</div>'
+      : '');
+    _updateStartBtnBlock();
+  }
+
+  function _updateStartBtnBlock() {
+    var startBtn = document.getElementById('b24t-btn-start');
+    var previewBtn = document.getElementById('b24t-btn-preview');
+    var auditBtn = document.getElementById('b24t-btn-audit');
+    var el = document.getElementById('b24t-file-validation');
+    var blocked = !!(el && el.dataset.hasErrors === '1');
+    if (startBtn) {
+      startBtn.disabled = blocked;
+      startBtn.title = blocked ? 'Zablokowany — plik ma błędy krytyczne (brak URL lub daty)' : '';
+      startBtn.style.opacity = blocked ? '0.45' : '';
+      startBtn.style.cursor = blocked ? 'not-allowed' : '';
+    }
+    if (previewBtn) {
+      previewBtn.disabled = blocked;
+      previewBtn.style.opacity = blocked ? '0.45' : '';
+    }
+    if (auditBtn) {
+      auditBtn.disabled = blocked;
+      auditBtn.style.opacity = blocked ? '0.45' : '';
+    }
   }
 
   // ───────────────────────────────────────────
@@ -4771,6 +4905,19 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   const CHANGELOG = [
+    {
+      version: '0.13.0',
+      date: '2026-03-28',
+      label: 'Fix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Panel główny: stopka (Pauza / Stop / Eksport) zawsze widoczna przy resize — panel używa teraz flex-direction:column, body wypełnia dostępną przestrzeń, stopka ma flex-shrink:0' },
+        { type: 'fix', text: 'Panel Annotatorski: zawartość zakładek scrolluje wewnątrz panelu przy zmianie rozmiaru — dodano flex layout i overflow-y:auto na content divach' },
+        { type: 'fix', text: 'Tagowanie plikiem bez dat: gdy created_date jest puste w całym pliku, matching używa teraz bieżącego miesiąca jako fallback zamiast wysyłać absurdalne daty (9999 / 0000) do API' },
+        { type: 'new', text: 'Walidacja pliku: przy wczytaniu sprawdzane są błędy krytyczne (brak kolumny URL, brak dat) — czerwone ostrzeżenia blokują Start do czasu poprawy lub ręcznego mapowania kolumn' },
+        { type: 'new', text: 'Usuń plik: przycisk "x" przy wczytanym pliku resetuje stan bez przeładowania strony — usuwa plik, mapowanie, partycje i wszystkie sekcje zależne' },
+      ]
+    },
     {
       version: '0.12.0',
       date: '2026-03-28',
@@ -6015,6 +6162,29 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.13.0',
+      date: '2026-03-28',
+      notes: [
+        '[FIX]  #b24t-panel CSS: dodano display:flex; flex-direction:column — panel jest teraz flex kontenerem; rozwiazuje problem z obcinanym #b24t-actions przy resize',
+        '[FIX]  #b24t-body CSS: dodano flex:1; min-height:0 — body wypelnia dostepna przestrzen miedzy tabs a stopka; max-height:72vh pozostaje jako natural limit',
+        '[FIX]  #b24t-actions CSS: dodano flex-shrink:0 — stopka nigdy nie jest sciskana przez panel przy zmniejszaniu',
+        '[FIX]  setupResize() useMaxHeight branch: zamiast recznie obliczac fixedPx=198 i ustawiac body.style.maxHeight, teraz ustawiamy panel.style.height — flex layout rozklada reszte automatycznie. Usunieto blad gdzie fixedPx=198 bylo zbyt male (realne ~230px)',
+        '[FIX]  setupResize() restore: zapisany height jest teraz ustawiany przez panel.style.height + panel.style.maxHeight (wczesniej tylko maxHeight)',
+        '[FIX]  #b24t-annotator-panel: panel dostaje flex-direction:column w cssText; wszystkie .b24t-ann-content dostaja flex:1;overflow-y:auto;min-height:0',
+        '[FIX]  openAnnotatorPanel(): ustawia display:flex zamiast display:block — panel musi byc flex dla poprawnego flex-direction:column layoutu',
+        '[FIX]  annotator tab switching: content.style.display="flex" zamiast "block"',
+        '[FIX]  buildUrlMap(): dodano isInvalidDate() guard — wykrywa puste daty (null, "9999", "0000", nieprawidlowy format); fallback na getAnnotatorDates() biezacy miesiac; loguje warn z zakresem fallback',
+        '[NEW]  validateFile(): 3 nowe bledy krytyczne (type:"error"): brak kolumny URL, brak kolumny assessment, kolumna dat wykryta ale wszystkie wartosci puste',
+        '[NEW]  renderFileValidation(): obsluguje type:"error" (czerwony, ikona x); ustawia el.dataset.hasErrors; wywoluje _updateStartBtnBlock()',
+        '[NEW]  _updateStartBtnBlock(): blokuje/odblokowuje #b24t-btn-start, #b24t-btn-preview, #b24t-btn-audit na podstawie el.dataset.hasErrors; opacity:0.45 + cursor:not-allowed',
+        '[NEW]  handleFileUpload(): wywoluje validateFile() + renderFileValidation() po zaladowaniu; loguje blad krytyczny jesli hasErrors',
+        '[NEW]  initRun(): guard sprawdza valEl.dataset.hasErrors przed startem sesji — ostatnia linia obrony',
+        '[NEW]  clearFile(): resetuje state.file, mapping, partitions, urlMap, matchPreview; chowa sekcje (mapping, settings, partition, validation, match-preview, column-override); resetuje file zone UI; wywoluje _updateStartBtnBlock()',
+        '[NEW]  HTML: przycisk #b24t-btn-clear-file (x) obok file zone, display:none domyslnie; pokazywany po zaladowaniu pliku; chowany po clearFile()',
+        '[WIRE]  wireEvents(): podpieto click na #b24t-btn-clear-file -> clearFile() z e.stopPropagation()',
+      ]
+    },
     {
       version: '0.12.0',
       date: '2026-03-28',
@@ -7425,7 +7595,7 @@ function showOnboarding(onComplete) {
     var panel = document.createElement('div');
     panel.id = 'b24t-annotator-panel';
     panel.setAttribute('data-b24t-theme', currentTheme);
-    panel.style.cssText = 'position:fixed;right:12px;top:80px;width:420px;z-index:2147483641;border-radius:14px;display:none;overflow:hidden;animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;font-size:15px;';
+    panel.style.cssText = 'position:fixed;right:12px;top:80px;width:420px;z-index:2147483641;border-radius:14px;display:none;flex-direction:column;overflow:hidden;animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;font-size:15px;';
 
     panel.innerHTML =
       // Header with gradient
@@ -7441,21 +7611,21 @@ function showOnboarding(onComplete) {
         '<button class="b24t-tab b24t-ann-tab" data-ann-tab="overall">📈 Overall</button>' +
       '</div>' +
       // Project tab
-      '<div id="b24t-ann-tab-project" class="b24t-ann-content" style="display:block;background:var(--b24t-bg);">' +
+      '<div id="b24t-ann-tab-project" class="b24t-ann-content" style="display:block;background:var(--b24t-bg);flex:1;overflow-y:auto;min-height:0;">' +
         '<div id="b24t-ann-project-content" style="padding:16px;font-size:14px;color:var(--b24t-text-faint);">↻ Ładowanie...</div>' +
         '<div style="padding:0 16px 14px;"><button id="b24t-ann-project-refresh" style="width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:7px;padding:9px;font-size:13px;font-family:inherit;cursor:pointer;transition:background 0.15s,transform 0.1s;">↻ Odśwież</button></div>' +
       '</div>' +
       // Tags tab
-      '<div id="b24t-ann-tab-tagstats" class="b24t-ann-content" style="display:none;background:var(--b24t-bg);">' +
+      '<div id="b24t-ann-tab-tagstats" class="b24t-ann-content" style="display:none;background:var(--b24t-bg);flex:1;overflow-y:auto;min-height:0;">' +
         '<div id="b24t-ann-tagstats-content" style="padding:16px;font-size:14px;color:var(--b24t-text-faint);">↻ Ładowanie...</div>' +
         '<div style="padding:0 16px 14px;"><button id="b24t-ann-tagstats-refresh" style="width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:7px;padding:9px;font-size:13px;font-family:inherit;cursor:pointer;transition:background 0.15s,transform 0.1s;">↻ Odśwież</button></div>' +
       '</div>' +
       // Groups tab
-      '<div id="b24t-ann-tab-groups" class="b24t-ann-content" style="display:none;background:var(--b24t-bg);overflow-y:auto;">' +
+      '<div id="b24t-ann-tab-groups" class="b24t-ann-content" style="display:none;background:var(--b24t-bg);flex:1;overflow-y:auto;min-height:0;">' +
         '<div id="b24t-ann-tab-groups-content"></div>' +
       '</div>' +
       // Overall Stats tab
-      '<div id="b24t-ann-tab-overall" class="b24t-ann-content" style="display:none;background:var(--b24t-bg);">' +
+      '<div id="b24t-ann-tab-overall" class="b24t-ann-content" style="display:none;background:var(--b24t-bg);flex:1;overflow-y:auto;min-height:0;">' +
         '<div id="b24t-ann-tab-overall-content"></div>' +
       '</div>';
 
@@ -7499,7 +7669,7 @@ function showOnboarding(onComplete) {
         btn.classList.add('b24t-tab-active');
         panel.querySelectorAll('.b24t-ann-content').forEach(function(el) { el.style.display = 'none'; });
         var content = document.getElementById('b24t-ann-tab-' + tabName);
-        if (content) { content.style.display = 'block'; content.style.animation = 'b24t-fadein 0.2s ease'; }
+        if (content) { content.style.display = 'flex'; content.style.animation = 'b24t-fadein 0.2s ease'; }
         // Jeśli bgCache gorący — renderuj od razu, potem cichy refetch
         if (tabName === 'tagstats') {
           var tsEl = document.getElementById('b24t-ann-tagstats-content');
@@ -7571,7 +7741,7 @@ function showOnboarding(onComplete) {
     panel.style.animation = 'none';
     panel.offsetHeight; // reflow
     panel.style.animation = 'b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1)';
-    panel.style.display = 'block';
+    panel.style.display = 'flex';
     if (tab) tab.style.display = 'none';
     if (!annotatorData.project)  loadAnnotatorProject();
     // Tagstats — jeśli bgCache gorący renderuj od razu bez spinnera

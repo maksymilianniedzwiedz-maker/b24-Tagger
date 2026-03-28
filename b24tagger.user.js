@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.17.7
+// @version      0.17.8
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.17.7';
+  const VERSION = '0.17.8';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5229,7 +5229,13 @@ function showOnboarding(onComplete) {
   // cb(result) where result = 'exists' | 'not_found' | 'no_token' | 'error'
   function _newsCheckUrlExists(url, cb) {
     if (!state.tokenHeaders) { cb('no_token'); return; }
-    if (!state.projectId) { cb('error'); return; }
+    // Pobierz projectId z state lub bezpośrednio z URL (News dziala na panel/results)
+    var pid = state.projectId;
+    if (!pid) {
+      var pm = window.location.pathname.match(/\/panel\/results\/(\d+)/);
+      pid = pm ? parseInt(pm[1]) : null;
+    }
+    if (!pid) { cb('error', 0, [], 'brak projectId'); return; }
     // Use sq (search query) filter with URL — Brand24 searches across url/title/content
     // Use wide date range to maximize coverage
     var today = _localDateStr(new Date());
@@ -5238,7 +5244,7 @@ function showOnboarding(onComplete) {
       return _localDateStr(d);
     })();
     var variables = {
-      projectId: state.projectId,
+      projectId: pid,
       dateRange: { from: yearAgo, to: today },
       filters: { va: 1, rt: [], se: [], vi: null, gr: [], sq: url, do: '', au: '', lem: false, ctr: [], nctr: false, is: [0, 10], tp: null, lang: [], nlang: false },
       page: 1,

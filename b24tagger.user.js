@@ -4704,9 +4704,7 @@ function showOnboarding(onComplete) {
       label: 'Nowość',
       labelColor: '#6c6cff',
       changes: [
-        { type: 'new', text: 'Annotators Tab — nowe zakładki:
-* Grupy — tworzenie i zarządzanie grupami projektów (nazwane zestawy projektów)
-* Overall Stats — sumaryczne statystyki across projektów dla wybranej grupy' },
+        { type: 'new', text: 'Annotators Tab — nowe zakładki:\n* Grupy — tworzenie i zarządzanie grupami projektów\n* Overall Stats — sumaryczne statystyki across projektów dla wybranej grupy' },
         { type: 'new', text: 'Grupy projektów: integracja z panelem "Wszystkie projekty" — można ograniczyć cross-delete do wybranej grupy' },
         { type: 'new', text: 'Overall Stats: konfigurowalne per-grupa ustawienie tagu "Relevantne", spinner gdy cache zimny, natychmiastowy render z cache' },
       ]

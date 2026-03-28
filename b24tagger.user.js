@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.15.2
+// @version      0.15.3
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.15.2';
+  const VERSION = '0.15.3';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6123,6 +6123,15 @@ function showOnboarding(onComplete) {
 
   const CHANGELOG = [
     {
+      version: '0.15.3',
+      date: '2026-03-28',
+      label: 'Fix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Przywrocono dzialanie feedback i bug report — Slack webhook URL uzupelniony. Kopia skryptu trafia teraz rowniez do prywatnego repo i24dev przy kazdym deployu.' },
+      ]
+    },
+    {
       version: '0.15.2',
       date: '2026-03-28',
       label: 'Fix + UX',
@@ -6841,8 +6850,9 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
   // KONFIGURACJA — uzupełnij przed użyciem
   // ───────────────────────────────────────────
-  // Slack Webhook URL — jak go zdobyć: https://api.slack.com/apps → Incoming Webhooks
-  const SLACK_WEBHOOK_URL = 'TWOJ_SLACK_WEBHOOK_URL';
+  // Slack Webhook URL — przechowywany w localStorage (klucz: b24tagger_slack_webhook)
+  // Ustaw raz w konsoli: localStorage.setItem('b24tagger_slack_webhook', 'https://hooks.slack.com/...')
+  const SLACK_WEBHOOK_URL = localStorage.getItem('b24tagger_slack_webhook') || '';
   const RAW_URL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/b24tagger.user.js';
 
   // Planned features list
@@ -7427,6 +7437,14 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.15.3',
+      date: '2026-03-28',
+      notes: [
+        '[ARCH] SLACK_WEBHOOK_URL: przeniesiony z hardkodu do localStorage (klucz: b24tagger_slack_webhook). Publiczne repo nie trzyma juz webhooka — GitHub secret scanning blokowal push. URL ustawiany jednorazowo przez konsole przegladarki.',
+        '[ARCH] Dual-deploy: skrypt trafia teraz rowniez do i24dev/i24_analytics branch I24-maks-czyszczenie pod sciezka Tagger/b24tagger.user.js przy kazdym deployu',
+      ]
+    },
     {
       version: '0.15.2',
       date: '2026-03-28',

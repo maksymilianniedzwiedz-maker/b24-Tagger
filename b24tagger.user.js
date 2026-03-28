@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.17.4
+// @version      0.17.5
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.17.4';
+  const VERSION = '0.17.5';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5225,6 +5225,40 @@ function showOnboarding(onComplete) {
   }
 
   // ── CMS DOMAIN CHECK ──
+  // Check if a URL already exists as a mention in current project via getMentions GQL
+  // cb(result) where result = 'exists' | 'not_found' | 'no_token' | 'error'
+  function _newsCheckUrlExists(url, cb) {
+    if (!state.tokenHeaders) { cb('no_token'); return; }
+    if (!state.projectId) { cb('error'); return; }
+    // Use sq (search query) filter with URL — Brand24 searches across url/title/content
+    // Use wide date range to maximize coverage
+    var today = _localDateStr();
+    var yearAgo = (function() {
+      var d = new Date(); d.setFullYear(d.getFullYear() - 2);
+      return d.toISOString().slice(0, 10);
+    })();
+    var variables = {
+      projectId: state.projectId,
+      dateRange: { from: yearAgo, to: today },
+      filters: { va: 1, rt: [], se: [], vi: null, gr: [], sq: url, do: '', au: '', lem: false, ctr: [], nctr: false, is: [0, 10], tp: null, lang: [], nlang: false },
+      page: 1,
+      order: 0,
+    };
+    var query = 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count results{id url openUrl}}}';
+    gqlRetry('getMentions', variables, query).then(function(data) {
+      if (!data || !data.results) { cb('error'); return; }
+      // Check if any result URL matches our URL (normalize trailing slash)
+      var norm = url.replace(/\/+$/, '').toLowerCase();
+      var found = data.results.some(function(m) {
+        var mu = (m.url || m.openUrl || '').replace(/\/+$/, '').toLowerCase();
+        return mu === norm || mu.includes(norm) || norm.includes(mu);
+      });
+      cb(found ? 'exists' : (data.count > 0 ? 'sq_results_no_match' : 'not_found'), data.count, data.results.slice(0, 3));
+    }).catch(function(e) {
+      cb('error', 0, [], e.message);
+    });
+  }
+
   function _newsCmsStatus() {
     // Returns domain only — CMS tag availability is checked via state.tags in _newsCheckTagDodane()
     var host = window.location.hostname;
@@ -5967,6 +6001,29 @@ function showOnboarding(onComplete) {
       var subStatus = document.getElementById('b24t-news-submit-status');
       if (subStatus) { subStatus.textContent = ''; subStatus.style.color = ''; }
       renderUrlList();
+      // Sprawdz czy URL juz istnieje w projekcie via getMentions GQL
+      (function(checkUrl) {
+        var ss = document.getElementById('b24t-news-submit-status');
+        if (ss) { ss.textContent = '⏳ Sprawdzam czy wzmianka już istnieje...'; ss.style.color = '#a78bfa'; }
+        _newsCheckUrlExists(checkUrl, function(result, count, matches) {
+          var ss2 = document.getElementById('b24t-news-submit-status');
+          if (!ss2) return;
+          if (result === 'exists') {
+            ss2.textContent = '⚠ Brand24: wzmianka z tym URL już istnieje w projekcie!';
+            ss2.style.color = '#f59e0b';
+          } else if (result === 'sq_results_no_match') {
+            ss2.textContent = 'ℹ Znaleziono ' + count + ' wzmianek dla domeny, ale ten URL nie pasuje.';
+            ss2.style.color = '#a78bfa';
+          } else if (result === 'not_found') {
+            ss2.textContent = '✓ URL nie znaleziony w projekcie.';
+            ss2.style.color = '#22c55e';
+          } else if (result === 'no_token') {
+            ss2.textContent = '';
+          } else {
+            ss2.textContent = '';
+          }
+        });
+      })(entry.url);
       // Prefill daty rok+miesiąc natychmiast — GM fetch nadpisze jeśli znajdzie pełną datę
       var _dateElPre = document.getElementById('b24t-news-f-date');
       var _dateIconPre = document.getElementById('b24t-news-date-detect-icon');

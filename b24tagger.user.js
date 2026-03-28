@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.17.8
+// @version      0.17.9
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.17.8';
+  const VERSION = '0.17.9';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5226,40 +5226,53 @@ function showOnboarding(onComplete) {
 
   // ── CMS DOMAIN CHECK ──
   // Check if a URL already exists as a mention in current project via getMentions GQL
+  // Wzorowane na fetchProjectTagCounts — używa origFetch bezpośrednio
   // cb(result) where result = 'exists' | 'not_found' | 'no_token' | 'error'
   function _newsCheckUrlExists(url, cb) {
     if (!state.tokenHeaders) { cb('no_token'); return; }
-    // Pobierz projectId z state lub bezpośrednio z URL (News dziala na panel/results)
     var pid = state.projectId;
     if (!pid) {
       var pm = window.location.pathname.match(/\/panel\/results\/(\d+)/);
       pid = pm ? parseInt(pm[1]) : null;
     }
     if (!pid) { cb('error', 0, [], 'brak projectId'); return; }
-    // Use sq (search query) filter with URL — Brand24 searches across url/title/content
-    // Use wide date range to maximize coverage
+
     var today = _localDateStr(new Date());
     var yearAgo = (function() {
       var d = new Date(); d.setFullYear(d.getFullYear() - 2);
       return _localDateStr(d);
     })();
-    var variables = {
-      projectId: pid,
-      dateRange: { from: yearAgo, to: today },
-      filters: { va: 1, rt: [], se: [], vi: null, gr: [], sq: url, do: '', au: '', lem: false, ctr: [], nctr: false, is: [0, 10], tp: null, lang: [], nlang: false },
-      page: 1,
-      order: 0,
+
+    // Filtry identyczne jak w fetchProjectTagCounts — minimalne i bezpieczne
+    // sq = search query po URL
+    var filters = {
+      va: 1, rt: [], se: [], vi: null, gr: [], sq: url, do: '', au: '',
+      lem: false, ctr: [], nctr: false, is: [0, 10], tp: null, anom: '',
+      lang: [], nlang: false, aue: null, htg: null, mt: false, mtri: null, cxs: []
     };
-    var query = 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count results{id url openUrl}}}';
-    gqlRetry('getMentions', variables, query).then(function(data) {
-      if (!data || !data.results) { cb('error'); return; }
-      // Check if any result URL matches our URL (normalize trailing slash)
+    var gqlQuery = 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count results{id url openUrl}}}';
+
+    origFetch('/api/graphql', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: Object.assign({}, state.tokenHeaders, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        operationName: 'getMentions',
+        variables: { projectId: pid, dateRange: { from: yearAgo, to: today }, filters: filters, page: 1, order: 0 },
+        query: gqlQuery
+      })
+    }).then(function(r) { return r.json(); }).then(function(data) {
+      console.log('[B24T] checkUrlExists raw response:', JSON.stringify(data).substring(0, 300));
+      if (data.errors) { cb('error', 0, [], data.errors[0]?.message || 'GQL error'); return; }
+      var res = data?.data?.getMentions;
+      if (!res) { cb('error', 0, [], 'brak getMentions w response'); return; }
       var norm = url.replace(/\/+$/, '').toLowerCase();
-      var found = data.results.some(function(m) {
+      var found = (res.results || []).some(function(m) {
         var mu = (m.url || m.openUrl || '').replace(/\/+$/, '').toLowerCase();
         return mu === norm || mu.includes(norm) || norm.includes(mu);
       });
-      cb(found ? 'exists' : (data.count > 0 ? 'sq_results_no_match' : 'not_found'), data.count, data.results.slice(0, 3));
+      console.log('[B24T] checkUrlExists count:', res.count, 'found:', found);
+      cb(found ? 'exists' : (res.count > 0 ? 'sq_results_no_match' : 'not_found'), res.count, (res.results || []).slice(0, 3));
     }).catch(function(e) {
       cb('error', 0, [], e.message);
     });

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.17.2
+// @version      0.17.3
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.17.2';
+  const VERSION = '0.17.3';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5991,54 +5991,63 @@ function showOnboarding(onComplete) {
       var langMap = _newsGetLangMap();
       var expectedLangs = pc ? (langMap[pc] || []) : [];
 
+      function _processHtml(html) {
+        // Date detection
+        var detectedDate = _newsDetectDateFromHtml(html);
+        if (detectedDate && dateEl) {
+          dateEl.value = detectedDate;
+          if (dateIcon) {
+            dateIcon.style.display = 'inline';
+            dateIcon.title = 'Data wykryta automatycznie ze strony (' + detectedDate + ') — mozesz ja edytowac';
+          }
+        }
+        // Language check
+        var detectedLang = _newsDetectLangFromResponse(html, url);
+        var langWarn = document.getElementById('b24t-news-lang-warn');
+        var forceBtn = document.getElementById('b24t-news-lang-force-open');
+        if (pc && expectedLangs.length > 0 && detectedLang && !expectedLangs.includes(detectedLang)) {
+          if (langWarn) {
+            langWarn.innerHTML = '<strong>' + detectedLang + '</strong> — oczekiwano: <strong>' + expectedLangs.join(', ') + '</strong> (projekt ' + pc + ')';
+            langWarn.innerHTML = '⚠ Wykryty jezyk: ' + langWarn.innerHTML;
+            langWarn.style.display = '';
+            var addBtn = document.createElement('button');
+            addBtn.textContent = '+ Dodaj ' + detectedLang + ' do mapy dla ' + pc;
+            addBtn.style.cssText = 'display:inline-block;margin-top:5px;font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:#f59e0b;cursor:pointer;';
+            addBtn.addEventListener('click', function() {
+              var m = _newsGetLangMap();
+              m[pc] = (m[pc] || []).concat([detectedLang]);
+              _newsSaveLangMap(m);
+              addBtn.textContent = '✓ Dodano';
+              addBtn.disabled = true;
+            });
+            langWarn.appendChild(addBtn);
+          }
+          if (forceBtn) forceBtn.style.display = '';
+        } else {
+          if (langWarn) langWarn.style.display = 'none';
+          if (forceBtn) forceBtn.style.display = 'none';
+          if (pc && detectedLang && expectedLangs.length === 0) {
+            var m = _newsGetLangMap();
+            m[pc] = [detectedLang];
+            _newsSaveLangMap(m);
+          }
+        }
+      }
+
+      // Dodaj trailing slash jesli brak — unikamy 301 redirect
+      var fetchUrl = url.replace(/\/?(\?|#|$)/, '/$1');
+
       GM_xmlhttpRequest({
         method: 'GET',
-        url: url,
-        timeout: 8000,
+        url: fetchUrl,
+        timeout: 10000,
+        redirect: 'follow',
+        headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'en-US,en;q=0.9' },
         onload: function(resp) {
           var html = resp.responseText || '';
-          // Date detection
-          var detectedDate = _newsDetectDateFromHtml(html);
-          if (detectedDate && dateEl) {
-            dateEl.value = detectedDate;
-            if (dateIcon) {
-              dateIcon.style.display = 'inline';
-              dateIcon.title = 'Data wykryta automatycznie ze strony (' + detectedDate + ') — możesz ją edytować';
-            }
+          if (html.length > 100) {
+            _processHtml(html);
           }
-          // Language check
-          var detectedLang = _newsDetectLangFromResponse(html, url);
-          var langWarn = document.getElementById('b24t-news-lang-warn');
-          var forceBtn = document.getElementById('b24t-news-lang-force-open');
-          if (pc && expectedLangs.length > 0 && detectedLang && !expectedLangs.includes(detectedLang)) {
-            if (langWarn) {
-              langWarn.innerHTML = '⚠ Wykryty język: <strong>' + detectedLang + '</strong> — oczekiwano: <strong>' + expectedLangs.join(', ') + '</strong> (projekt ' + pc + ')';
-              langWarn.style.display = '';
-              // Offer add to map
-              var addBtn = document.createElement('button');
-              addBtn.textContent = '+ Dodaj ' + detectedLang + ' do mapy dla ' + pc;
-              addBtn.style.cssText = 'display:inline-block;margin-top:5px;font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:#f59e0b;cursor:pointer;';
-              addBtn.addEventListener('click', function() {
-                var m = _newsGetLangMap();
-                m[pc] = (m[pc] || []).concat([detectedLang]);
-                _newsSaveLangMap(m);
-                addBtn.textContent = '✓ Dodano';
-                addBtn.disabled = true;
-              });
-              langWarn.appendChild(addBtn);
-            }
-            if (forceBtn) forceBtn.style.display = '';
-          } else {
-            if (langWarn) langWarn.style.display = 'none';
-            if (forceBtn) forceBtn.style.display = 'none';
-            if (pc && detectedLang && expectedLangs.length === 0) {
-              // Auto-learn: no entries yet → silent add
-              var m = _newsGetLangMap();
-              m[pc] = [detectedLang];
-              _newsSaveLangMap(m);
-            }
-          }
-          // Open in sized window
           _newsOpenUrl(url);
         },
         onerror: function() { _newsOpenUrl(url); },
@@ -6360,6 +6369,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.17.3",
+      "date": "2026-03-28",
+      "label": "Fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News: GM fetch z trailing slash, redirect:follow"},
+        {"type": "fix", "text": "News: uproszczona logika fetchowania i wykrywania daty"}
+      ]
+    },
+    {
       "version": "0.17.2",
       "date": "2026-03-28",
       "label": "Fix",
@@ -6448,15 +6467,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "new", "text": "Glowny panel: przycisk schowaj do boku (pulsujacy)"},
         {"type": "new", "text": "News: osobny przycisk boczny pod Annotators Tab"}
-      ]
-    },
-    {
-      "version": "0.16.5",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News: token CSRF pobierany z add-new-mention (pewne zrodlo)"}
       ]
     },
   ];;;;;;;;;;;

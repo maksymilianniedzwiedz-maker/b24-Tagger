@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.10.2
+// @version      0.10.3
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.10.2';
+  const VERSION = '0.10.3';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -42,6 +42,7 @@
     UI_ANN_SIZE:      'b24tagger_ann_size',
     GROUPS:           'b24tagger_groups',
     STATS_CFG:        'b24tagger_stats_config',
+    PROJECT_NAMES:    'b24tagger_project_names',
   };
   const MAX_BATCH_SIZE = 500;
   const HEALTH_CHECK_INTERVAL = 30000;
@@ -94,6 +95,52 @@
   const lsSet = (key, val) => {
     try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
   };
+
+  // ── PROJECT NAME RESOLVER ──────────────────────────────────────────────────
+  // Trwały słownik {projectId: "Nazwa"} niezależny od struktury LS.PROJECTS.
+  // Zapisywany TYLKO gdy mamy pewną nazwę (nie fallback "Project XXXXXXX").
+  // Priorytet przy odczycie nazwy: PROJECT_NAMES > LS.PROJECTS.name > state > fallback
+
+  function _pnGet(projectId) {
+    var names = lsGet(LS.PROJECT_NAMES, {});
+    return names[String(projectId)] || null;
+  }
+
+  function _pnSet(projectId, name) {
+    if (!projectId || !name) return;
+    // Nie zapisuj fallbackowych nazw
+    var isFallback = !name || name === 'Brand24' || name === 'Panel Brand24' ||
+                     /^Project\s+\d+$/.test(name) || /^Projekt\s+\d+$/.test(name) ||
+                     name.length < 3;
+    if (isFallback) return;
+    var names = lsGet(LS.PROJECT_NAMES, {});
+    if (names[String(projectId)] === name) return; // bez zmian
+    names[String(projectId)] = name;
+    lsSet(LS.PROJECT_NAMES, names);
+  }
+
+  function _pnResolve(projectId) {
+    // 1. Trwały cache nazw
+    var cached = _pnGet(projectId);
+    if (cached) return cached;
+    // 2. Aktualny state (jeśli to bieżący projekt)
+    if (state.projectId === parseInt(projectId) && state.projectName &&
+        !/^Project\s+\d+$/.test(state.projectName) && !/^Projekt\s+\d+$/.test(state.projectName)) {
+      return state.projectName;
+    }
+    // 3. LS.PROJECTS.name
+    var projects = lsGet(LS.PROJECTS, {});
+    var pData = projects[String(projectId)];
+    var lsName = pData && typeof pData === 'object' ? pData.name : null;
+    if (lsName && lsName !== 'Brand24' && lsName !== 'Panel Brand24' &&
+        !/^Project\s+\d+$/.test(lsName) && lsName.length >= 3) {
+      // Okazja żeby zapisać do PROJECT_NAMES
+      _pnSet(projectId, lsName);
+      return lsName;
+    }
+    // 4. Fallback — ID projektu (przynajmniej wiadomo co to)
+    return 'Projekt ' + projectId;
+  }
 
   // ───────────────────────────────────────────
   // URL NORMALIZATION
@@ -3210,6 +3257,7 @@
         const t = document.title.split(' - ')[0].trim();
         if (t && t !== 'Brand24' && t !== 'Panel Brand24' && t.length >= 3) {
           state.projectName = t;
+          _pnSet(projectId, t); // zapisz trwale do PROJECT_NAMES
           const el = document.getElementById('b24t-project-name');
           if (el) el.textContent = state.projectName;
           return true;
@@ -3244,6 +3292,8 @@
         updatedAt: new Date().toISOString(),
       };
       lsSet(LS.PROJECTS, projects);
+      // Zapisz nazwę do trwałego resolvera — _pnSet ignoruje fallbacki
+      _pnSet(projectId, state.projectName);
 
       addLog(`✓ Projekt załadowany: ${state.projectName} (${Object.keys(state.tags).length} tagów)`, 'success');
 
@@ -4699,6 +4749,15 @@ function showOnboarding(onComplete) {
 
   const CHANGELOG = [
     {
+      version: '0.10.3',
+      date: '2026-03-28',
+      label: 'Fix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Nazwy projektów — trwały resolver: wtyczka teraz zapamiętuje poprawne nazwy niezależnie od tego kiedy tytuł strony był gotowy; naprawia wyświetlanie ID zamiast nazwy we wszystkich miejscach' },
+      ]
+    },
+    {
       version: '0.10.2',
       date: '2026-03-28',
       label: 'Fix',
@@ -5911,6 +5970,23 @@ function showOnboarding(onComplete) {
 
   const DEV_CHANGELOG = [
     {
+      version: '0.10.3',
+      date: '2026-03-28',
+      notes: [
+        '[NEW]  LS.PROJECT_NAMES = b24tagger_project_names — trwały słownik {projectId: name} niezależny od LS.PROJECTS',
+        '[NEW]  _pnGet(projectId) — odczyt nazwy z PROJECT_NAMES',
+        '[NEW]  _pnSet(projectId, name) — zapis nazwy do PROJECT_NAMES; ignoruje fallbacki (Brand24, Project N, Projekt N, <3 znaki)',
+        '[NEW]  _pnResolve(projectId) — priorytet: PROJECT_NAMES > state.projectName (gdy bieżący) > LS.PROJECTS.name > Projekt N',
+        '[FIX]  detectProject(): updateName() wywołuje _pnSet(projectId, t) po poprawnej detekcji tytułu (retry też)',
+        '[FIX]  detectProject(): _pnSet(projectId, state.projectName) po getTags() — drugi punkt zapisu',
+        '[ARCH] init(): bootstrap — skanuje LS.PROJECTS i wywołuje _pnSet dla każdego projektu z dobrą nazwą',
+        '[REFACTOR] getKnownProjects(): name = _pnResolve(parseInt(id)) — cały ręczny fallback usunięty',
+        '[REFACTOR] getKnownProjectsList(): name = _pnResolve(pid)',
+        '[REFACTOR] _fetchOverallStats(): name = _pnResolve(pid)',
+        '[DESIGN] _pnSet jest idempotentna — wielokrotne wywołania z tą samą nazwą nie powodują zbędnych zapisów (early return gdy wartość niezmieniona)',
+      ]
+    },
+    {
       version: '0.10.2',
       date: '2026-03-28',
       notes: [
@@ -6790,13 +6866,9 @@ function showOnboarding(onComplete) {
     var allProjects = Object.entries(projects).map(function([id, p]) {
       const reqVerId   = (p.tagIds && p.tagIds['REQUIRES_VERIFICATION']) || globalReqVerId;
       const toDeleteId = (p.tagIds && p.tagIds['TO_DELETE'])             || globalToDeleteId;
-      // name może być string bezpośrednio lub w polu name obiektu — obsłuż oba formaty
-      var name = (p && typeof p === 'object' && p.name && p.name.length > 0)
-        ? p.name
-        : (state.projectId === parseInt(id) && state.projectName ? state.projectName : ('Projekt ' + id));
       return {
         id: parseInt(id),
-        name: name,
+        name: _pnResolve(parseInt(id)),
         reqVerId,
         toDeleteId,
       };
@@ -8061,12 +8133,8 @@ To jest NIEODWRACALNE.`)) return;
   function getKnownProjectsList() {
     var projects = lsGet(LS.PROJECTS, {});
     return Object.entries(projects).map(function(entry) {
-      var pid = entry[0];
-      var pData = entry[1];
-      var name = (pData && typeof pData === 'object' && pData.name && pData.name.length > 0)
-        ? pData.name
-        : (state.projectId === parseInt(pid) && state.projectName ? state.projectName : ('Projekt ' + pid));
-      return { id: parseInt(pid), name: name };
+      var pid = parseInt(entry[0]);
+      return { id: pid, name: _pnResolve(pid) };
     }).filter(function(p) { return p.id > 0; })
       .sort(function(a, b) { return a.name.localeCompare(b.name); });
   }
@@ -8241,7 +8309,7 @@ To jest NIEODWRACALNE.`)) return;
       var pid = group.projectIds[i];
       var pData = projects[pid];
       if (!pData) { results.push({ pid: pid, name: 'ID:' + pid, error: 'projekt nieznany' }); continue; }
-      var name = (typeof pData === 'object' ? pData.name : null) || ('ID:' + pid);
+      var name = _pnResolve(pid);
       var tagIds   = pData.tagIds || {};
       // Szukamy reqVer i toDel w tagIds map
       var reqVerId = null, toDelId = null;
@@ -9202,6 +9270,18 @@ Tej operacji nie można cofnąć.`)) {
   function init() {
     // Only run on Mentions page
     if (!window.location.pathname.includes('/panel/results/')) return;
+
+    // Bootstrap PROJECT_NAMES: przeskanuj LS.PROJECTS i zapisz dobre nazwy do resolvera
+    (function() {
+      var projects = lsGet(LS.PROJECTS, {});
+      Object.entries(projects).forEach(function(entry) {
+        var pid = entry[0];
+        var pData = entry[1];
+        if (pData && typeof pData === 'object' && pData.name) {
+          _pnSet(parseInt(pid), pData.name); // _pnSet ignoruje złe nazwy automatycznie
+        }
+      });
+    })();
 
     injectStyles();
     const panel = buildPanel();

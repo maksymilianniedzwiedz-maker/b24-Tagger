@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.15.3
+// @version      0.15.4
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.15.3';
+  const VERSION = '0.15.4';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6123,6 +6123,15 @@ function showOnboarding(onComplete) {
 
   const CHANGELOG = [
     {
+      version: '0.15.4',
+      date: '2026-03-28',
+      label: 'New',
+      labelColor: '#6c6cff',
+      changes: [
+        { type: 'new', text: 'Bug Report otwiera teraz formularz Google Forms z automatycznie wypelnionymi danymi technicznymi (wersja, projekt, URL, logi, data). Uzykownik wpisuje tylko opis problemu i klika Submit.' },
+      ]
+    },
+    {
       version: '0.15.3',
       date: '2026-03-28',
       label: 'Fix',
@@ -6855,6 +6864,16 @@ function showOnboarding(onComplete) {
   const SLACK_WEBHOOK_URL = localStorage.getItem('b24tagger_slack_webhook') || '';
   const RAW_URL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/b24tagger.user.js';
 
+  // Google Forms — bug report i feedback
+  const BUG_FORM_BASE = 'https://docs.google.com/forms/d/e/1FAIpQLSdfddWBtp-0ZiMP5u51vaQmNvIg423MyjOzQdMZb6BEyCe0GA/viewform';
+  const BUG_FORM_FIELDS = {
+    version:   'entry.769760752',
+    project:   'entry.668506048',
+    url:       'entry.1459869471',
+    logs:      'entry.1505126804',
+    datetime:  'entry.1776456134',
+  };
+
   // Planned features list
   const PLANNED_FEATURES = [
     { priority: 'ai',     text: 'Dostęp do AI API — tłumaczenie wzmianek na bieżąco, automatyczna klasyfikacja, tryb tworzenia customowych klasyfikatorów (do automatycznej klasyfikacji) i inne...', next: false },
@@ -6882,6 +6901,22 @@ function showOnboarding(onComplete) {
       fetch(SLACK_WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         .then(function() { onSuccess(); }).catch(function() { onError('fetch'); });
     }
+  }
+
+  function openBugReportForm(description) {
+    var data = buildBugReportData();
+    var logs = data.recentLogs.slice(-20).join('\n');
+    var project = (data.projectName || '') + (data.projectId ? ' (' + data.projectId + ')' : '');
+    var dt = data.localTime || new Date().toLocaleString('pl-PL');
+    var params = [
+      'entry.378076813'        + '=' + encodeURIComponent(description || ''),
+      BUG_FORM_FIELDS.version  + '=' + encodeURIComponent(data.version || VERSION),
+      BUG_FORM_FIELDS.project  + '=' + encodeURIComponent(project),
+      BUG_FORM_FIELDS.url      + '=' + encodeURIComponent(data.url || window.location.href),
+      BUG_FORM_FIELDS.logs     + '=' + encodeURIComponent(logs.substring(0, 2000)),
+      BUG_FORM_FIELDS.datetime + '=' + encodeURIComponent(dt),
+    ].join('&');
+    window.open(BUG_FORM_BASE + '?' + params, '_blank');
   }
 
   function sendBugReport(description, onDone) {
@@ -7380,13 +7415,10 @@ function showOnboarding(onComplete) {
           if (statusEl) { statusEl.textContent = '⚠ Opisz problem przed wysłaniem'; statusEl.style.color = '#facc15'; }
           return;
         }
-        if (statusEl) { statusEl.textContent = '→ Wysyłam bug report z logami...'; statusEl.style.color = '#7878aa'; }
-        if (sendBtn) sendBtn.disabled = true;
-        sendBugReport(bugs, function() {
-          addLog('✓ Bug Report wysłany — dziękujemy!', 'success');
-          if (statusEl) { statusEl.textContent = '✓ Wysłano z pełnymi logami. Dziękujemy!'; statusEl.style.color = '#4ade80'; }
-          setTimeout(function() { closeWnm(); }, 1800);
-        });
+        openBugReportForm(bugs);
+        addLog('✓ Formularz Bug Report otwarty w nowej karcie', 'success');
+        if (statusEl) { statusEl.textContent = '✓ Otwarty formularz z wypełnionymi danymi. Opisz błąd i wyślij!'; statusEl.style.color = '#4ade80'; }
+        setTimeout(function() { closeWnm(); }, 2000);
       } else {
         const ideas = document.getElementById('b24t-wnm-fb-ideas')?.value.trim() || '';
         if (!ideas) {
@@ -7437,6 +7469,15 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.15.4',
+      date: '2026-03-28',
+      notes: [
+        '[NEW]  openBugReportForm(description): buduje prefill URL dla Google Forms Bug Report. Pola: opis (entry.378076813), wersja (entry.769760752), projekt (entry.668506048), URL (entry.1459869471), logi -20 linii (entry.1505126804), datetime (entry.1776456134)',
+        '[NEW]  BUG_FORM_BASE + BUG_FORM_FIELDS: stale z URL i entry ID formularza Bug Report',
+        '[ARCH] sendBugReport/sendSuggestion zachowane jako legacy — uzywane przez crash banner. Handler przycisku w modalu teraz wywoluje openBugReportForm() zamiast sendBugReport()',
+      ]
+    },
     {
       version: '0.15.3',
       date: '2026-03-28',

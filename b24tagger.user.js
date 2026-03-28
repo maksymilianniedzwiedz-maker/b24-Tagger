@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.17.10
+// @version      0.18.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.17.10';
+  const VERSION = '0.18.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5809,6 +5809,7 @@ function showOnboarding(onComplete) {
     // ─── URL LIST ───
     function _statusDot(s) {
       if (s === 'match')        return { dot: '●', color: '#22c55e', label: 'Trafienie keyword — relevantny' };
+      if (s === 'inproject')    return { dot: '●', color: '#64748b', label: 'Już w projekcie (ten miesiąc)' };
       if (s === 'wrongcountry') return { dot: '●', color: '#f97316', label: 'Keyword pasuje, ale URL wskazuje inny kraj' };
       if (s === 'opened')       return { dot: '●', color: '#a78bfa', label: 'Otwarty — w trakcie weryfikacji' };
       if (s === 'added')        return { dot: '✓', color: '#15803d', label: 'Dodany do Brand24' };
@@ -5817,7 +5818,7 @@ function showOnboarding(onComplete) {
     }
 
     function _newsUrlCounts() {
-      var c = { match: 0, wrongcountry: 0, nomatch: 0, opened: 0, added: 0, error: 0, total: 0 };
+      var c = { match: 0, wrongcountry: 0, nomatch: 0, inproject: 0, opened: 0, added: 0, error: 0, total: 0 };
       newsState.urls.forEach(function(u) { c[u.status] = (c[u.status] || 0) + 1; c.total++; });
       return c;
     }
@@ -5860,6 +5861,23 @@ function showOnboarding(onComplete) {
         });
         bar.appendChild(b2);
       }
+      if ((counts.inproject || 0) > 0) {
+        var bip = document.createElement('button');
+        bip.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid rgba(100,116,139,0.4);background:rgba(100,116,139,0.1);color:#94a3b8;cursor:pointer;white-space:nowrap;';
+        bip.textContent = '\u2715 Usu\u0144 ju\u017c w proj. (' + counts.inproject + ')';
+        bip.title = 'Usuwa URLe kt\u00f3re s\u0105 ju\u017c w projekcie w tym miesi\u0105cu';
+        bip.addEventListener('click', function() {
+          _newsRemoveByStatus(function(u) { return u.status === 'inproject'; });
+        });
+        bar.appendChild(bip);
+      }
+      var bcheck = document.createElement('button');
+      bcheck.id = 'b24t-news-recheck-btn';
+      bcheck.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid ' + t.borderSub + ';background:transparent;color:' + t.textMuted + ';cursor:pointer;white-space:nowrap;';
+      bcheck.textContent = '\u21ba Sprawd\u017a w proj.';
+      bcheck.title = 'Ponownie sprawdza kt\u00f3re URLe s\u0105 ju\u017c w projekcie (ten miesi\u0105c)';
+      bcheck.addEventListener('click', function() { _newsRunProjectCheck(); });
+      bar.appendChild(bcheck);
       if (counts.total > 0) {
         var b3 = document.createElement('button');
         b3.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid ' + t.borderSub + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;white-space:nowrap;';
@@ -5869,6 +5887,56 @@ function showOnboarding(onComplete) {
         });
         bar.appendChild(b3);
       }
+    }
+
+    // ─── PROJECT URL CHECK ───
+    async function _newsRunProjectCheck() {
+      if (!state.projectId) return;
+      var recheckBtn = document.getElementById('b24t-news-recheck-btn');
+      var origLabel = recheckBtn ? recheckBtn.textContent : '';
+      if (recheckBtn) { recheckBtn.disabled = true; recheckBtn.textContent = '⟳ Pobieranie…'; }
+      if (importInfo) { importInfo.textContent = '⟳ Sprawdzam wzmianki w projekcie…'; importInfo.style.display = ''; importInfo.style.color = '#a78bfa'; }
+
+      try {
+        var now = new Date();
+        var dateFrom = _localDateStr(new Date(now.getFullYear(), now.getMonth(), 1));
+        var dateTo   = _localDateStr(now);
+        var projectUrls = new Set();
+        var page = 1;
+        var total = null;
+        var perPage = 100;
+        while (true) {
+          var res = await getMentions(state.projectId, dateFrom, dateTo, [], page);
+          if (!res) break;
+          if (total === null) total = res.count || 0;
+          var results = res.results || [];
+          results.forEach(function(m) { if (m.url) projectUrls.add(m.url); });
+          if (results.length < perPage || projectUrls.size >= total) break;
+          page++;
+          if (page > 50) break; // safety cap
+        }
+
+        var matchedCount = 0;
+        newsState.urls.forEach(function(entry) {
+          if (entry.status === 'inproject') entry.status = 'pending'; // reset poprzednich
+        });
+        newsState.urls.forEach(function(entry) {
+          if (projectUrls.has(entry.url)) {
+            entry.status = 'inproject';
+            matchedCount++;
+          }
+        });
+
+        var infoMsg = '✓ Sprawdzono ' + projectUrls.size + ' wzmianek';
+        if (matchedCount > 0) infoMsg += ' — ' + matchedCount + ' URL' + (matchedCount === 1 ? '' : 'i') + ' już w projekcie';
+        else infoMsg += ' — brak duplikatów';
+        if (importInfo) { importInfo.textContent = infoMsg; importInfo.style.color = matchedCount > 0 ? '#f59e0b' : '#22c55e'; }
+      } catch(e) {
+        if (importInfo) { importInfo.textContent = '✗ Błąd sprawdzania: ' + e.message; importInfo.style.color = '#ef4444'; }
+      }
+
+      if (recheckBtn) { recheckBtn.disabled = false; recheckBtn.textContent = origLabel; }
+      renderUrlList();
     }
 
     function renderUrlList() {
@@ -5902,7 +5970,7 @@ function showOnboarding(onComplete) {
 
       var counts = _newsUrlCounts();
       var handled = (counts.added || 0) + (counts.error || 0);
-      var workable = counts.total - (counts.nomatch || 0) - (counts.wrongcountry || 0);
+      var workable = counts.total - (counts.nomatch || 0) - (counts.wrongcountry || 0) - (counts.inproject || 0);
       if (progressLbl) progressLbl.textContent = handled + ' / ' + workable + ' relevantnych';
       if (progressBar) progressBar.style.width = (workable > 0 ? Math.round(handled / workable * 100) : 0) + '%';
 
@@ -5911,7 +5979,7 @@ function showOnboarding(onComplete) {
       newsState.urls.forEach(function(entry, idx) {
         var isActive = idx === newsState.activeIdx;
         var sd = _statusDot(entry.status);
-        var isIrrelevant = entry.status === 'nomatch' || entry.status === 'wrongcountry';
+        var isIrrelevant = entry.status === 'nomatch' || entry.status === 'wrongcountry' || entry.status === 'inproject';
         var row = document.createElement('div');
         row.className = 'b24t-news-url-row';
         row.dataset.idx = idx;
@@ -6110,6 +6178,7 @@ function showOnboarding(onComplete) {
       renderChips();
       renderUrlList();
       if (pasteArea) pasteArea.value = '';
+      _newsRunProjectCheck();
     }
 
     if (importBtn) importBtn.addEventListener('click', importUrls);
@@ -6122,7 +6191,7 @@ function showOnboarding(onComplete) {
     if (nextBtn) {
       nextBtn.addEventListener('click', function() {
         // Only navigate to relevant (match/opened) — skip nomatch and wrongcountry
-        function isWorkable(s) { return s === 'match' || s === 'pending' || s === 'opened'; }
+        function isWorkable(s) { return s === 'match' || s === 'pending' || s === 'opened'; } // inproject celowo pomijany
         var start = newsState.activeIdx + 1;
         for (var i = start; i < newsState.urls.length; i++) {
           if (isWorkable(newsState.urls[i].status)) { activateUrl(i); return; }

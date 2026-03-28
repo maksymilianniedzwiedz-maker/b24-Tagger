@@ -46,6 +46,7 @@
     NEWS_KEYWORDS:    'b24tagger_news_keywords',
     NEWS_SESSION_URLS:'b24tagger_news_session_urls',
     NEWS_LANG_MAP:    'b24tagger_news_lang_map',
+    NEWS_WIN_SIZE:    'b24tagger_news_win_size',
   };
   const MAX_BATCH_SIZE = 500;
   const HEALTH_CHECK_INTERVAL = 30000;
@@ -5107,6 +5108,26 @@ function showOnboarding(onComplete) {
     return 'match';
   }
 
+  // ── NEWS URL OPENER (sized window) ──
+  var NEWS_WIN_SIZES = {
+    '900x700':  { w: 900,  h: 700  },
+    '1100x800': { w: 1100, h: 800  },
+    '800x600':  { w: 800,  h: 600  },
+    'half':     { w: null, h: null }, // dynamic — half screen
+  };
+  function _newsOpenUrl(url) {
+    var sizeKey = lsGet(LS.NEWS_WIN_SIZE, '900x700');
+    var sz = NEWS_WIN_SIZES[sizeKey] || NEWS_WIN_SIZES['900x700'];
+    var w = sz.w || Math.round(window.screen.availWidth / 2);
+    var h = sz.h || Math.round(window.screen.availHeight * 0.85);
+    // Position: top-left corner of screen so Brand24 (usually right side) stays visible
+    var left = 0;
+    var top  = Math.round((window.screen.availHeight - h) / 2);
+    var features = 'width=' + w + ',height=' + h + ',left=' + left + ',top=' + top +
+                   ',resizable=yes,scrollbars=yes,toolbar=no,menubar=no,location=yes,status=no';
+    window.open(url, '_b24tnews', features);
+  }
+
   // ── CSRF TOKEN RESOLUTION ──
   function _newsGetTknB24(cb) {
     // 1. DOM input (available on most Brand24 pages)
@@ -5290,7 +5311,7 @@ function showOnboarding(onComplete) {
     var p1 = _newsPanelBase('b24t-news-p1', PANEL_W, topList, baseRight, 2147483632);
 
     var hdr1 = _newsPanelHeader('📋 Lista URLi', closeNewsPanels,
-      '<button id="b24t-news-langmap-btn" title="Mapa języków" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;margin-right:6px;">⚙ Języki</button>'
+      '<div id="b24t-news-winsize-wrap" style="position:relative;margin-right:6px;"><button id="b24t-news-winsize-btn" title="Rozmiar okna" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;">▢ Okno</button><div id="b24t-news-winsize-menu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:#1e1b3a;border:1px solid rgba(139,92,246,0.4);border-radius:8px;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,0.4);z-index:2147483699;overflow:hidden;"><div class="b24t-wsz" data-sz="900x700" style="padding:7px 14px;font-size:11px;color:#e2e8f0;cursor:pointer;">900×700 (domyślne)</div><div class="b24t-wsz" data-sz="1100x800" style="padding:7px 14px;font-size:11px;color:#e2e8f0;cursor:pointer;">1100×800 (duże)</div><div class="b24t-wsz" data-sz="800x600" style="padding:7px 14px;font-size:11px;color:#e2e8f0;cursor:pointer;">800×600 (kompakt)</div><div class="b24t-wsz" data-sz="half" style="padding:7px 14px;font-size:11px;color:#e2e8f0;cursor:pointer;">½ekranu (dyn.)</div></div></div><button id="b24t-news-langmap-btn" title="Mapa języków" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;margin-right:6px;">⚙ Języki</button>'
     );
     _newsDraggable(hdr1, p1);
 
@@ -5611,6 +5632,56 @@ function showOnboarding(onComplete) {
     var langMapBtn = document.getElementById('b24t-news-langmap-btn');
     if (langMapBtn) langMapBtn.addEventListener('click', _newsOpenLangMapEditor);
 
+    // ─── WINDOW SIZE DROPDOWN ───
+    (function() {
+      var wBtn  = document.getElementById('b24t-news-winsize-btn');
+      var wMenu = document.getElementById('b24t-news-winsize-menu');
+      if (!wBtn || !wMenu) return;
+
+      // Mark active option on open
+      function refreshActive() {
+        var cur = lsGet(LS.NEWS_WIN_SIZE, '900x700');
+        wMenu.querySelectorAll('.b24t-wsz').forEach(function(el) {
+          var active = el.getAttribute('data-sz') === cur;
+          el.style.background = active ? 'rgba(139,92,246,0.25)' : 'transparent';
+          el.style.color = active ? '#a78bfa' : '#e2e8f0';
+          el.style.fontWeight = active ? '700' : '400';
+        });
+        // Update button label to show current size
+        var labels = {'900x700':'900×700','1100x800':'1100×800','800x600':'800×600','half':'½ekranu'};
+        wBtn.textContent = '▢ ' + (labels[cur] || cur);
+      }
+      refreshActive();
+
+      wBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var open = wMenu.style.display !== 'none';
+        wMenu.style.display = open ? 'none' : 'block';
+        if (!open) refreshActive();
+      });
+
+      wMenu.querySelectorAll('.b24t-wsz').forEach(function(el) {
+        el.addEventListener('mouseenter', function() {
+          el.style.background = 'rgba(139,92,246,0.15)';
+        });
+        el.addEventListener('mouseleave', function() {
+          var cur = lsGet(LS.NEWS_WIN_SIZE, '900x700');
+          el.style.background = el.getAttribute('data-sz') === cur ? 'rgba(139,92,246,0.25)' : 'transparent';
+        });
+        el.addEventListener('click', function(e) {
+          e.stopPropagation();
+          lsSet(LS.NEWS_WIN_SIZE, el.getAttribute('data-sz'));
+          wMenu.style.display = 'none';
+          refreshActive();
+        });
+      });
+
+      // Close on outside click
+      document.addEventListener('click', function() {
+        wMenu.style.display = 'none';
+      });
+    })();
+
     // ─── CHIPS ───
     function renderChips() {
       var cc = newsState.detectedCountry || 'DEFAULT';
@@ -5881,11 +5952,11 @@ function showOnboarding(onComplete) {
               _newsSaveLangMap(m);
             }
           }
-          // Open in new tab
-          window.open(url, '_blank');
+          // Open in sized window
+          _newsOpenUrl(url);
         },
-        onerror: function() { window.open(url, '_blank'); },
-        ontimeout: function() { window.open(url, '_blank'); },
+        onerror: function() { _newsOpenUrl(url); },
+        ontimeout: function() { _newsOpenUrl(url); },
       });
     }
 
@@ -5894,7 +5965,7 @@ function showOnboarding(onComplete) {
     if (forceOpenBtn) {
       forceOpenBtn.addEventListener('click', function() {
         var fUrl = document.getElementById('b24t-news-f-url');
-        if (fUrl && fUrl.value) window.open(fUrl.value, '_blank');
+        if (fUrl && fUrl.value) _newsOpenUrl(fUrl.value);
         forceOpenBtn.style.display = 'none';
       });
     }
@@ -6179,6 +6250,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.16.3",
+      "date": "2026-03-28",
+      "label": "New",
+      "labelColor": "#6c6cff",
+      "changes": [
+        {"type": "new", "text": "News: URL otwiera sie w nowym oknie (nie karcie)"},
+        {"type": "new", "text": "News: wybor rozmiaru okna w naglowku P1 (4 opcje)"}
+      ]
+    },
+    {
       "version": "0.16.2",
       "date": "2026-03-28",
       "label": "Fix",
@@ -6266,20 +6347,7 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "News: nowy layout paneli, Import przyklejony pod Listą"}
       ]
     },
-    {
-      "version": "0.15.0",
-      "date": "2026-03-28",
-      "label": "New",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Zwijanie panelu naprawione"},
-        {"type": "fix", "text": "Annotators Tab: Overall — naprawiony layout"},
-        {"type": "new", "text": "Moduł News w Annotators Tab — 3 draggable panele"},
-        {"type": "new", "text": "News: auto-detekcja daty publikacji artykułu"},
-        {"type": "new", "text": "News: tag \'dodane\' z weryfikacją dostępności w projekcie"}
-      ]
-    },
-  ];;
+  ];;;
 
   function _fetchChangelog(onDone) {
     const CACHE_KEY = 'b24tagger_cl_cache';

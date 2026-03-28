@@ -6123,18 +6123,16 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
-  const CHANGELOG_FALLBACK =   [
+  const CHANGELOG_FALLBACK = [
     {
       "version": "0.16.0",
       "date": "2026-03-28",
       "label": "Refactor",
       "labelColor": "#fb923c",
       "changes": [
-        { "type": "perf", "text": "CHANGELOG i DEV_CHANGELOG wydzielone do osobnych plikow JSON w repo — ladowane dynamicznie przy otwarciu modala z cache sessionStorage. Redukcja rozmiaru skryptu o ~1200 linii." },
-        { "type": "fix",  "text": "Auto-Delete: naprawiono brak zapisu preferencji — checkbox Zawsze wlaczaj teraz faktycznie wywoluje setAutoDeletePref() i aktualizuje state.autoDeleteTagId." },
-        { "type": "fix",  "text": "Auto-Delete: updateAutoDeleteSection() wywolywana przy kazdej zmianie mappingu (wczesniej nigdy nie wywolywana)." },
-        { "type": "fix",  "text": "Usunieta martwa funkcja showFeedbackModal() zastapiona przez openBugReportForm/openFeedbackForm." },
-        { "type": "fix",  "text": "Ciche .catch(function(){}) zastapione addLog warn — bledy prefetchu w tle widoczne w logu." }
+        {"type": "perf", "text": "Changelog przeniesiony do zewnętrznego JSON — mniejszy skrypt"},
+        {"type": "fix", "text": "Auto-Delete: checkbox \'Zawsze włączaj\' teraz zapisuje preferencję"},
+        {"type": "fix", "text": "Usunięte martwe funkcje i ciche błędy w tle"}
       ]
     },
     {
@@ -6143,10 +6141,7 @@ function showOnboarding(onComplete) {
       "label": "UI",
       "labelColor": "#8080aa",
       "changes": [
-        {
-          "type": "ui",
-          "text": "Karta Feedback przeprojektowana — dwie osobne karty Bug Report i Suggestion z wbudowanymi polami tekstowymi i przyciskami otwierajacymi formularze Google Forms."
-        }
+        {"type": "ui", "text": "Feedback: osobne karty Bug Report i Suggestion"}
       ]
     },
     {
@@ -6155,10 +6150,7 @@ function showOnboarding(onComplete) {
       "label": "New",
       "labelColor": "#6c6cff",
       "changes": [
-        {
-          "type": "new",
-          "text": "Feedback (Suggestion) otwiera teraz formularz Google Forms z automatycznie wypelnionymi polami: sugestia, wersja skryptu, projekt Brand24."
-        }
+        {"type": "new", "text": "Feedback otwiera formularz Google Forms z prefill"}
       ]
     },
     {
@@ -6167,10 +6159,7 @@ function showOnboarding(onComplete) {
       "label": "New",
       "labelColor": "#6c6cff",
       "changes": [
-        {
-          "type": "new",
-          "text": "Bug Report otwiera teraz formularz Google Forms z automatycznie wypelnionymi danymi technicznymi (wersja, projekt, URL, logi, data). Uzykownik wpisuje tylko opis problemu i klika Submit."
-        }
+        {"type": "new", "text": "Bug Report otwiera formularz Google Forms z prefill"}
       ]
     },
     {
@@ -6179,34 +6168,20 @@ function showOnboarding(onComplete) {
       "label": "Fix",
       "labelColor": "#f87171",
       "changes": [
-        {
-          "type": "fix",
-          "text": "Przywrocono dzialanie feedback i bug report — Slack webhook URL uzupelniony. Kopia skryptu trafia teraz rowniez do prywatnego repo i24dev przy kazdym deployu."
-        }
+        {"type": "fix", "text": "Przywrócono działanie Feedback i Bug Report"},
+        {"type": "new", "text": "Deploy trafia też do prywatnego repo i24dev"}
       ]
     },
     {
       "version": "0.15.2",
       "date": "2026-03-28",
-      "label": "Fix + UX",
+      "label": "Fix",
       "labelColor": "#f87171",
       "changes": [
-        {
-          "type": "fix",
-          "text": "Modul News: naprawiono wykrywanie kraju w URLach — linki z /uk/, /en-gb/, /de/ i podobnymi segmentami sciezki lub subdomenami sa teraz oznaczane jako \"inny kraj\" (pomaranczowy kolor) zamiast blednie jako relevantne"
-        },
-        {
-          "type": "new",
-          "text": "Modul News: nowa logika listy URLi — przycisk Usun (✕) per URL usuwa link z listy fizycznie zamiast go wyszarzac. Bulk-bar z przyciskami \"Usun irrelevantnych\" i \"Usun obsluzzone\" pojawia sie dynamicznie nad przyciskiem Nastepny"
-        },
-        {
-          "type": "new",
-          "text": "Modul News: legenda kolorow jako maly floating panel obok listy URLi — zielony=relevantny, pomaranczowy=inny kraj, fioletowy=otwarty, ciemnozielony=dodany, czerwony=blad, szary=brak keyword"
-        },
-        {
-          "type": "fix",
-          "text": "Modul News: przycisk \"Nastepny relevantny\" pomija URLe bez trafien i z blenym krajem — przechodzi tylko przez faktycznie relevantne URLe"
-        }
+        {"type": "fix", "text": "News: poprawione wykrywanie kraju w URL"},
+        {"type": "new", "text": "News: przycisk ✕ usuwa URL z listy fizycznie"},
+        {"type": "new", "text": "News: legenda kolorów jako floating panel"},
+        {"type": "fix", "text": "News: \'Następny\' pomija irrelevantne i złe kraje"}
       ]
     },
     {
@@ -6215,66 +6190,31 @@ function showOnboarding(onComplete) {
       "label": "Fix",
       "labelColor": "#f87171",
       "changes": [
-        {
-          "type": "fix",
-          "text": "Modul News: naprawiono sprzeczny komunikat o tagu \"dodane\" — banner CMS i status w wierszu uzywaja teraz tego samego zrodla (state.tags z API), nie roznych metod sprawdzania DOM"
-        },
-        {
-          "type": "fix",
-          "text": "Modul News: nowy layout paneli — Lista URLi na gorze, Import URLi przyklejony bezposrednio pod nia (ta sama szerokosc), Formularz obok. Panel Import automatycznie podaza za panelem Lista przy przeciaganiu"
-        }
+        {"type": "fix", "text": "News: spójny komunikat o tagu \'dodane\'"},
+        {"type": "fix", "text": "News: nowy layout paneli, Import przyklejony pod Listą"}
       ]
     },
     {
       "version": "0.15.0",
       "date": "2026-03-28",
-      "label": "New + Fix",
+      "label": "New",
       "labelColor": "#22c55e",
       "changes": [
-        {
-          "type": "fix",
-          "text": "Zwijanie panelu: po kliknięciu ▼ panel teraz rzeczywiście się zwija do samego nagłówka — wcześniej znikały tylko elementy UI a panel zostawał pusty"
-        },
-        {
-          "type": "fix",
-          "text": "Annotators Tab — zakładka Overall: naprawiono brakujący layout (spinner i dane nie wyświetlały się poprawnie z powodu brakującego flex na wewnętrznym kontenerze)"
-        },
-        {
-          "type": "new",
-          "text": "Moduł News przeniesiony do Annotators Tab jako przycisk 📰 News w nagłówku. Otwiera 3 osobne, draggable panele z designem light/dark: Import URLi, Lista URLi, Formularz wzmianki"
-        },
-        {
-          "type": "new",
-          "text": "Panel Import: textarea z czytelnym opisem (URLe czekają na wczytanie), przycisk ▶ Wczytaj URLe, detekcja kraju URLi, edytowalne chipy slow kluczowych per kraj z przyciskiem reset"
-        },
-        {
-          "type": "new",
-          "text": "Panel Formularz: wszystkie pola wymagane (URL, tytul, tresc, data). Auto-detekcja daty publikacji artykulu z JSON-LD / meta / <time> — ikona 🔍 sygnalizuje automatyczne wypelnienie z opcja edycji"
-        },
-        {
-          "type": "new",
-          "text": "Panel Formularz: tag \"dodane\" — checkbox z realnym sprawdzeniem dostepnosci tagu w state.tags projektu. Banner CMS informuje gdy tag niedostepny (niezalogowany do CMS) z przyciskiem Sprawdz ponownie"
-        },
-        {
-          "type": "new",
-          "text": "Panel Formularz: tag \"dodane\" dolaczany automatycznie do POST (tag[]=ID) gdy checkbox zaznaczony i tag dostepny w projekcie"
-        }
+        {"type": "fix", "text": "Zwijanie panelu naprawione"},
+        {"type": "fix", "text": "Annotators Tab: Overall — naprawiony layout"},
+        {"type": "new", "text": "Moduł News w Annotators Tab — 3 draggable panele"},
+        {"type": "new", "text": "News: auto-detekcja daty publikacji artykułu"},
+        {"type": "new", "text": "News: tag \'dodane\' z weryfikacją dostępności w projekcie"}
       ]
     },
     {
       "version": "0.14.0",
       "date": "2026-03-28",
-      "label": "Perf + Fix",
-      "labelColor": "#f87171",
+      "label": "Perf",
+      "labelColor": "#facc15",
       "changes": [
-        {
-          "type": "perf",
-          "text": "Usuwanie wzmianek ~5x szybsze — wszystkie tryby delete (po tagu, Quick Delete, Delete View, auto-delete) używają teraz równoległych batchy po 5 zamiast jednego po jednym. 150 wzmianek: ~60s → ~12s"
-        },
-        {
-          "type": "fix",
-          "text": "Cross-project delete: każdy projekt na liście ma teraz własny przycisk \"Usuń\" — wcześniej kliknięcie na projekt nic nie robiło (brak przycisku)"
-        }
+        {"type": "perf", "text": "Usuwanie ~5x szybsze — równoległe batche po 5"},
+        {"type": "fix", "text": "Cross-delete: każdy projekt ma teraz przycisk Usuń"}
       ]
     },
     {
@@ -6283,46 +6223,11 @@ function showOnboarding(onComplete) {
       "label": "Fix",
       "labelColor": "#f87171",
       "changes": [
-        {
-          "type": "fix",
-          "text": "Panel główny: stopka (Pauza / Stop / Eksport) zawsze widoczna przy resize — panel używa teraz flex-direction:column, body wypełnia dostępną przestrzeń, stopka ma flex-shrink:0"
-        },
-        {
-          "type": "fix",
-          "text": "Panel Annotatorski: zawartość zakładek scrolluje wewnątrz panelu przy zmianie rozmiaru — dodano flex layout i overflow-y:auto na content divach"
-        },
-        {
-          "type": "fix",
-          "text": "Tagowanie plikiem bez dat: gdy created_date jest puste w całym pliku, matching używa teraz bieżącego miesiąca jako fallback zamiast wysyłać absurdalne daty (9999 / 0000) do API"
-        },
-        {
-          "type": "new",
-          "text": "Walidacja pliku: przy wczytaniu sprawdzane są błędy krytyczne (brak kolumny URL, brak dat) — czerwone ostrzeżenia blokują Start do czasu poprawy lub ręcznego mapowania kolumn"
-        },
-        {
-          "type": "new",
-          "text": "Usuń plik: przycisk \"x\" przy wczytanym pliku resetuje stan bez przeładowania strony — usuwa plik, mapowanie, partycje i wszystkie sekcje zależne"
-        }
-      ]
-    },
-    {
-      "version": "0.12.0",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#f87171",
-      "changes": [
-        {
-          "type": "fix",
-          "text": "Naprawiono duplikujące się wpisy \"📅 Zakres\" w logu — zakres dat był logowany przy każdym wywołaniu getAnnotatorDates() (8 miejsc); teraz logowany raz w _bgFetchTagstats()"
-        },
-        {
-          "type": "fix",
-          "text": "Naprawiono podwójne pobieranie Overall Stats — zapytania były wysyłane dwa razy przy otwarciu panelu; dodano blokadę równoległych wywołań"
-        },
-        {
-          "type": "perf",
-          "text": "Usunięto nieużywaną funkcję loadAnnotatorDataBackground() — dead code po refaktorze; nie miała żadnego wpływu na działanie wtyczki"
-        }
+        {"type": "fix", "text": "Stopka panelu zawsze widoczna przy resize"},
+        {"type": "fix", "text": "Annotators Tab: zakładki scrollują wewnątrz panelu"},
+        {"type": "fix", "text": "Tagowanie bez dat: fallback na bieżący miesiąc"},
+        {"type": "new", "text": "Walidacja pliku przy wczytaniu"},
+        {"type": "new", "text": "Przycisk ✕ resetuje wczytany plik"}
       ]
     }
   ];
@@ -6510,95 +6415,6 @@ function showOnboarding(onComplete) {
   }
 
 
-  function showDevNotes() {
-    // Kategorie: [PERF] [FIX] [UX] [UI] [RENAME] [DATA] [HOTFIX] [REFACTOR] [ARCH]
-    const catColor = {
-      'PERF':    '#facc15',
-      'FIX':     '#4ade80',
-      'HOTFIX':  '#f87171',
-      'UX':      '#60a5fa',
-      'UI':      '#a78bfa',
-      'RENAME':  '#94a3b8',
-      'DATA':    '#34d399',
-      'REFACTOR':'#fb923c',
-      'ARCH':    '#e879f9',
-    };
-
-    function renderNote(n) {
-      // Wyciągnij prefix [KAT] jeśli istnieje
-      const m = n.match(/^\[([A-Z]+)\]\s*/);
-      if (m) {
-        const cat = m[1];
-        const color = catColor[cat] || '#9090cc';
-        const rest = n.slice(m[0].length);
-        return '<div style="display:flex;gap:8px;align-items:flex-start;padding:3px 0;">' +
-          '<span style="flex-shrink:0;font-size:9px;font-weight:700;font-family:\'JetBrains Mono\',\'Fira Code\',monospace;color:' + color + ';background:' + color + '18;border:1px solid ' + color + '30;padding:1px 5px;border-radius:3px;margin-top:2px;white-space:nowrap;letter-spacing:0.04em;">' + cat + '</span>' +
-          '<span style="font-size:11px;color:#c0c0d8;line-height:1.6;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;">' + rest + '</span>' +
-        '</div>';
-      }
-      return '<div style="display:flex;gap:8px;align-items:flex-start;padding:2px 0;">' +
-        '<span style="flex-shrink:0;color:#3a3a55;font-size:10px;margin-top:3px;">›</span>' +
-        '<span style="font-size:11px;color:#8080aa;line-height:1.6;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;">' + n + '</span>' +
-      '</div>';
-    }
-
-    function _buildDevHtml(entries) {
-      let h = '<div style="font-size:10px;color:#4a4a66;margin-bottom:16px;font-family:\'Inter\',sans-serif;">Szczegółowe informacje techniczne o zmianach w kodzie. Dostępne od v0.3.4.</div>';
-      entries.forEach(function(v, idx) {
-        h +=
-          '<div style="margin-bottom:' + (idx < entries.length - 1 ? '16' : '0') + 'px;">' +
-            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
-              '<span style="font-size:12px;font-weight:700;color:#e2e2e8;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;">v' + v.version + '</span>' +
-              '<span style="font-size:10px;color:#3a3a55;">' + v.date + '</span>' +
-            '</div>' +
-            v.notes.map(renderNote).join('') +
-          '</div>' +
-          (idx < entries.length - 1 ? '<div style="height:1px;background:#1a1a22;margin:0 0 16px 0;"></div>' : '');
-      });
-      return h;
-    }
-
-
-    const modal = document.createElement('div');
-    modal.id = 'b24t-devnotes-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483648;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;';
-    modal.innerHTML =
-      '<div style="background:#0a0a0d;border:1px solid #2a2a35;border-radius:14px;width:560px;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.9);">' +
-        '<div style="padding:16px 20px;border-bottom:1px solid #1e1e28;flex-shrink:0;display:flex;align-items:center;gap:10px;">' +
-          '<span style="font-size:16px;">🔧</span>' +
-          '<div>' +
-            '<div style="font-size:13px;font-weight:700;color:#e2e2e8;">Dev Patch Notes</div>' +
-            '<div style="font-size:10px;color:#3a3a55;margin-top:2px;">Szczegóły techniczne zmian w kodzie · B24 Tagger BETA</div>' +
-          '</div>' +
-          '<button id="b24t-devnotes-close" style="margin-left:auto;background:none;border:none;color:#444455;cursor:pointer;font-size:18px;line-height:1;">\u00d7</button>' +
-        '</div>' +
-        '<div style="overflow-y:auto;flex:1;padding:20px;">' + _buildDevHtml(DEV_CHANGELOG_FALLBACK) + '</div>' +
-        '<div style="padding:12px 20px;border-top:1px solid #1a1a22;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;">' +
-          '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
-            Object.entries(catColor).map(function(e) {
-              return '<span style="font-size:9px;font-family:\'JetBrains Mono\',\'Fira Code\',monospace;color:' + e[1] + ';background:' + e[1] + '18;border:1px solid ' + e[1] + '30;padding:1px 5px;border-radius:3px;">' + e[0] + '</span>';
-            }).join('') +
-          '</div>' +
-          '<button id="b24t-devnotes-ok" style="background:#2a2a35;color:#8080aa;border:none;border-radius:6px;padding:7px 20px;font-size:12px;cursor:pointer;font-family:inherit;flex-shrink:0;">Zamknij</button>' +
-        '</div>' +
-      '</div>';
-
-    document.body.appendChild(modal);
-
-    // Fetch full dev changelog in background — update body if modal still open
-    _fetchDevChangelog(function(entries) {
-      const bodyEl = modal.querySelector('#b24t-devnotes-modal > div > div[style*="overflow-y"]');
-      if (bodyEl && document.getElementById('b24t-devnotes-modal')) {
-        bodyEl.innerHTML = _buildDevHtml(entries);
-      }
-    });
-
-    function close() { modal.remove(); }
-    document.getElementById('b24t-devnotes-close').addEventListener('click', close);
-    document.getElementById('b24t-devnotes-ok').addEventListener('click', close);
-    modal.addEventListener('click', function(e) { if (e.target === modal) close(); });
-  }
-
   // What's New modal - extended with tabs (Co nowego / Planowane / Feedback)
   function showWhatsNewExtended(forceShow) {
     const seenVersion = lsGet('b24tagger_seen_version', '');
@@ -6764,18 +6580,12 @@ function showOnboarding(onComplete) {
 
         // ── FOOTER ────────────────────────────────────────────────────────
         '<div style="padding:10px 20px;border-top:1px solid #1a1a22;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:12px;">' +
-          // Lewa strona: legenda + devnotes
-          '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
-            '<div id="b24t-wnm-legend" style="display:flex;gap:8px;font-size:11px;color:#3a3a55;">' +
-              '<span title="Nowa funkcja"><span style="color:#6c6cff;">✦</span> nowe</span>' +
-              '<span title="Naprawa błędu"><span style="color:#4ade80;">⚒</span> fix</span>' +
-              '<span title="Wydajność"><span style="color:#facc15;">⚡</span> perf</span>' +
-              '<span title="Interfejs"><span style="color:#8080aa;">◈</span> UI</span>' +
-            '</div>' +
-            '<button id="b24t-wnm-devnotes-btn" ' +
-              'style="font-size:11px;color:#3a3a55;background:none;border:1px solid #2a2a35;border-radius:4px;' +
-              'padding:4px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;' +
-              'transition:color 0.15s,border-color 0.15s;">🔧 Dev patch notes</button>' +
+          // Lewa strona: legenda
+          '<div id="b24t-wnm-legend" style="display:flex;gap:8px;font-size:11px;color:#3a3a55;">' +
+            '<span title="Nowa funkcja"><span style="color:#6c6cff;">✦</span> nowe</span>' +
+            '<span title="Naprawa błędu"><span style="color:#4ade80;">⚒</span> fix</span>' +
+            '<span title="Wydajność"><span style="color:#facc15;">⚡</span> perf</span>' +
+            '<span title="Interfejs"><span style="color:#8080aa;">◈</span> UI</span>' +
           '</div>' +
           // Prawa strona: Gotowe
           '<button id="b24t-wnm-ok" ' +
@@ -6811,8 +6621,6 @@ function showOnboarding(onComplete) {
         ['news','planned','feedback'].forEach(function(t) {
           document.getElementById('b24t-wnm-' + t).style.display = btn.dataset.tab === t ? 'block' : 'none';
         });
-        // Toggle legend visibility
-        const legend = document.getElementById('b24t-wnm-legend');
         if (legend) legend.style.display = btn.dataset.tab === 'news' ? 'flex' : 'none';
       });
     });
@@ -6846,9 +6654,6 @@ function showOnboarding(onComplete) {
     });
 
     // Dev patch notes button
-    document.getElementById('b24t-wnm-devnotes-btn')?.addEventListener('click', function() {
-      showDevNotes();
-    });
 
     function closeWnm() {
       lsSet('b24tagger_seen_version', VERSION);
@@ -6874,196 +6679,6 @@ function showOnboarding(onComplete) {
   }
 
 
-  // ───────────────────────────────────────────
-  // DEV_CHANGELOG - szczegółowe patch notes dla programistów (od v0.3.4)
-  // ───────────────────────────────────────────
-
-  // ── DEV_CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
-  const DEV_CHANGELOG_FALLBACK =   [
-    {
-      "version": "0.16.0",
-      "date": "2026-03-28",
-      "notes": [
-        "[REFACTOR] CHANGELOG i DEV_CHANGELOG wydzielone do CHANGELOG.json / DEV_CHANGELOG.json w Tagger/ (branch I24-maks-czyszczenie). Skrypt laduje przez GM_xmlhttpRequest z sessionStorage cache (klucze: b24tagger_cl_cache, b24tagger_dcl_cache). Fallback: ostatnie 10 wersji inline.",
-        "[FIX]     buildAutoDeleteSection(): dodano event listenery na #b24t-auto-delete-cb, #b24t-auto-delete-save-cb, #b24t-auto-delete-tag. Wczesniej checkboxy renderowal sie ale nigdy nie wywolywaly setAutoDeletePref() ani nie aktualizowaly state.autoDeleteTagId.",
-        "[FIX]     updateAutoDeleteSection() wywolywana z updateMappingState() — wczesniej jedynie definiowana, nigdy nie wywolywana po zmianie mappingu.",
-        "[DEAD]    showFeedbackModal() usunieta (109 linii). Funkcja istniala od wczesnych wersji, zastapiona przez openBugReportForm/openFeedbackForm w v0.15.x, ale nigdy nie usunieta.",
-        "[DEAD]    showWhatsNew() wrapper usunieta — jednolinijkowy delegat do showWhatsNewExtended(), nigdy bezposrednio wywolywany.",
-        "[FIX]     6x .catch(function(){}) -> .catch(function(e){ addLog(..., warn) }) — bledy prefetchu w tle (tagstats, overallStats, allProjects) sa teraz widoczne w logu zamiast byc cicho polykane.",
-        "[PERF]    Redukcja rozmiaru skryptu: 11483 -> 10271 linii (-1212 linii, -10.6%).",
-        "[ARCH]    _fetchChangelog(onDone) i _fetchDevChangelog(onDone) jako wspolne helpery z sessionStorage cache — showWhatsNewExtended i showDevNotes uzywaja ich zamiast synchronicznych const array."
-      ]
-    },
-    {
-      "version": "0.15.6",
-      "date": "2026-03-28",
-      "notes": [
-        "[UI]   Feedback tab: dwie osobne karty (bug + suggestion) zamiast przelacznika trybu. Kazda karta ma wlasne textarea i przycisk.",
-        "[ARCH] Usuniety fbMode state i .b24t-fb-mode-btn — zastapione dwoma osobnymi handlerami: b24t-wnm-fb-send-bug i b24t-wnm-fb-send-suggest",
-        "[UI]   Bug Report card: ciemnoczerwone tlo (#141018), border #2a1a1a, przycisk #f87171",
-        "[UI]   Suggestion card: ciemnoniebieskie tlo (#10101a), border #1a1a2a, przycisk #6c6cff",
-        "[UI]   Reset onboarding button zachowany na dole sekcji Feedback"
-      ]
-    },
-    {
-      "version": "0.15.5",
-      "date": "2026-03-28",
-      "notes": [
-        "[NEW]  openFeedbackForm(suggestion): buduje prefill URL dla Google Forms Feedback. Pola: sugestia (entry.1001511860), typ (entry.2053499490), wersja (entry.1295392049), projekt (entry.1925108405)",
-        "[NEW]  FEEDBACK_FORM_BASE + FEEDBACK_FORM_FIELDS: stale z URL i entry ID formularza Feedback",
-        "[ARCH] Handler Suggestion w modalu wywoluje teraz openFeedbackForm() zamiast sendSuggestion()"
-      ]
-    },
-    {
-      "version": "0.15.4",
-      "date": "2026-03-28",
-      "notes": [
-        "[NEW]  openBugReportForm(description): buduje prefill URL dla Google Forms Bug Report. Pola: opis (entry.378076813), wersja (entry.769760752), projekt (entry.668506048), URL (entry.1459869471), logi -20 linii (entry.1505126804), datetime (entry.1776456134)",
-        "[NEW]  BUG_FORM_BASE + BUG_FORM_FIELDS: stale z URL i entry ID formularza Bug Report",
-        "[ARCH] sendBugReport/sendSuggestion zachowane jako legacy — uzywane przez crash banner. Handler przycisku w modalu teraz wywoluje openBugReportForm() zamiast sendBugReport()"
-      ]
-    },
-    {
-      "version": "0.15.3",
-      "date": "2026-03-28",
-      "notes": [
-        "[ARCH] SLACK_WEBHOOK_URL: przeniesiony z hardkodu do localStorage (klucz: b24tagger_slack_webhook). Publiczne repo nie trzyma juz webhooka — GitHub secret scanning blokowal push. URL ustawiany jednorazowo przez konsole przegladarki.",
-        "[ARCH] Dual-deploy: skrypt trafia teraz rowniez do i24dev/i24_analytics branch I24-maks-czyszczenie pod sciezka Tagger/b24tagger.user.js przy kazdym deployu"
-      ]
-    },
-    {
-      "version": "0.15.2",
-      "date": "2026-03-28",
-      "notes": [
-        "[FIX]  Usunięto zduplikowany blok v0.15.0 (newsState, NEWS_*, LS helpers, stary _newsUrlMatchesKeywords) ktory pozostal po refaktorze — powodowal nadpisanie definicji zmiennych",
-        "[NEW]  NEWS_COUNTRY_PATH_MAP: mapa 60+ wpisow (segmenty sciezki + subdomeny → kod kraju). Obejmuje: uk, en-gb, de, fr, us, au, ca, es, it, nl, + wszystkie kraje z TLD_MAP. Uzywana przez _newsCountriesInUrl()",
-        "[NEW]  _newsCountriesInUrl(url): parsuje URL → zwraca { CC: source } gdzie source = tld|subdomain|path. Sprawdza: TLD domeny, 2-literowa subdomena, segmenty pathname dopasowane do NEWS_COUNTRY_PATH_MAP lub NEWS_TLD_MAP",
-        "[NEW]  _newsUrlRelevant(url, chips, projectCountry): zastepuje _newsUrlMatchesKeywords. Zwraca \"match\" | \"wrongcountry\" | \"nomatch\". Logika: brak keyword → nomatch; brak projectCountry → match; URL bez sygnalow kraju → match; URL zawiera projectCountry → match; URL zawiera tylko obcy kraj → wrongcountry",
-        "[NEW]  Status \"wrongcountry\": pomaranczowy ● (#f97316) — keyword trafil ale URL wskazuje inny kraj niz projekt. Irerelevantny = nomatch lub wrongcountry",
-        "[NEW]  Status \"opened\": zmieniono kolor z #f59e0b (zolty) na #a78bfa (fioletowy) — rozroznienie od wrongcountry ktory jest pomaranczowy",
-        "[NEW]  _newsUrlCounts(): zlicza entries per status + total — uzywane przez progress bar i bulk bar",
-        "[NEW]  _newsRemoveByStatus(predicate): filtruje newsState.urls, zachowuje activeIdx (szuka po URL). Wywolywana przez bulk-bar buttons",
-        "[NEW]  _newsUpdateBulkBar(): renderuje przyciski w #b24t-news-bulk-bar. \"Usun irrelevantnych\" (nomatch+wrongcountry), \"Usun obsluz.\" (added+error), \"Wyczysc liste\". Pokazuje sie tylko gdy sa URLe do usuniecia",
-        "[FIX]  renderUrlList(): per-URL przycisk ✕ (.b24t-news-del-btn) robi splice na newsState.urls zamiast status=\"skipped\". Koryguje activeIdx po splice. Irrelevantne URLe maja opacity:0.45 i cursor:default",
-        "[FIX]  Progress bar: liczy handled/(total-irrelevantnych) zamiast handled/total — pokazuje rzeczywisty postep przez relevantne URLe. Label: \"X / Y relevantnych\"",
-        "[NEW]  #b24t-news-bulk-bar: div w stopce P1 (Lista), między listem a przyciskiem Nastepny. Renderowany przez _newsUpdateBulkBar() przy kazdym renderUrlList()",
-        "[NEW]  #b24t-news-legend: maly floating panel z data-news-panel=1. 6 wpisow legendy. Pozycjonowany przez _newsPositionLegend() (right of P1 + 8px gap)",
-        "[NEW]  _newsPositionLegend(): ustawia legend.style.top = p1.top + 2, legend.style.left = p1.right + 8. Wywolywana z _newsStackPanels() i requestAnimationFrame po _buildNewsPanels()",
-        "[FIX]  _newsStackPanels(): wywoluje _newsPositionLegend() po pozycjonowaniu P2 — legenda pozostaje zsynchronizowana przy drag P1",
-        "[FIX]  nextBtn: isWorkable(s) = match|pending|opened — pomija nomatch i wrongcountry. Wczesniej iterowalo przez wszystkie statusy wlacznie z nomatch",
-        "[ARCH] _newsUrlMatchesKeywords usuniety z wireNewsPanels — zastapiony przez _newsUrlRelevant w renderUrlList"
-      ]
-    },
-    {
-      "version": "0.15.1",
-      "date": "2026-03-28",
-      "notes": [
-        "[FIX]  _newsCmsStatus(): usunięto unreliable DOM-check (querySelectorAll [data-tag-id], .tag-item) — funkcja zwraca teraz tylko { domain }. DOM Brand24 nie zawiera elementow z tekstem \"dodane\" na stronie projektu",
-        "[FIX]  _newsCheckTagDodane(): jedyne zrodlo prawdy dla dostepnosci tagu \"dodane\" — sprawdza state.tags (z API). Kontroluje: statusEl text/color, checkboxEl disabled/checked, cmsBanner display. Poprzednio stan bannera i stanu checkboxa byl ustawiany w dwoch roznych miejscach z roznych zrodel → sprzecznosc",
-        "[FIX]  CMS banner w Panel 3: renderowany domyslnie z display:none (nie zaleznie od _newsCmsStatus().hasDodane ktore zawsze zwracalo false) — widocznosc kontrolowana wylacznie przez _newsCheckTagDodane()",
-        "[FIX]  CMS recheck handler: przepisany na event delegation (document.addEventListener click z guard e.target.id === b24t-news-cms-recheck) — nie gubi sie po rebuild innerHTML bannera",
-        "[NEW]  _buildNewsPanels() layout: P1=Lista URLi (gora, lewa kolumna), P2=Import URLi (dol, lewa kolumna, ta sama szerokosc PANEL_W=360), P3=Formularz (prawa kolumna, right = baseRight + PANEL_W + GAP)",
-        "[NEW]  _newsStackPanels(): pozycjonuje P2 bezposrednio pod P1 — p2.style.top = p1.getBoundingClientRect().bottom + 8. Wywolywana po requestAnimationFrame w _buildNewsPanels() i openNewsPanels()",
-        "[FIX]  _newsDraggable(): dodano isP1 flag (panel.id === b24t-news-p1). Podczas mousemove i mouseup gdy isP1 → requestAnimationFrame(_newsStackPanels) — P2 podaza za P1 przy przeciaganiu",
-        "[FIX]  _newsDraggable(): usunięto zbedna zamykajaca klamre pozostala po poprzednim str_replace — powodowala SyntaxError przy node --check"
-      ]
-    },
-    {
-      "version": "0.15.0",
-      "date": "2026-03-28",
-      "notes": [
-        "[FIX]  setupCollapse(): panel.style.height + panel.style.maxHeight czyszczone przy zwijaniu — pozwala CSS height:auto!important przejac kontrole. Wczesniej inline style nadpisywaly CSS → panel nie zwijal sie wizualnie",
-        "[FIX]  CSS .collapsed: dodano height:auto!important; max-height:none!important; min-height:0!important — override dla inline height ustawianych przez setupResize()",
-        "[FIX]  #b24t-ann-tab-overall-content: dodano display:flex;flex-direction:column;flex:1;min-height:0 — wewnetrzny kontener wypelnia teraz flex rodzica. Spinner i dane renderuja sie poprawnie",
-        "[FIX]  #b24t-ann-tab-overall: dodano flex-direction:column do inline style",
-        "[ARCH] buildNewsTab() + wireNewsTab() usuniete — zastapione przez 3-panelowy system floating windows w Annotators Tab",
-        "[ARCH] News tab usunieta z #b24t-tabs, tabEls.news usuniete, wireNewsTab() usuniete z tab switching",
-        "[NEW]  newsState: dodano pola panelsOpen i wired dla lazy-init i toggle paneli",
-        "[NEW]  openNewsPanels(): lazy build przy pierwszym wywolaniu, toggle pokazuj/chowaj; _wireNewsPanels() wywolywane raz (guard wired)",
-        "[NEW]  closeNewsPanels(): chowa [data-news-panel], panelsOpen=false",
-        "[NEW]  _buildNewsPanels(): 3 floating divs appendowane do body z data-news-panel=1. Pozycja relatywna do #b24t-annotator-panel. Kolory z _newsThemeVars() (hardcoded, nie CSS vars)",
-        "[NEW]  _newsThemeVars(): kolory dark/light na podstawie data-b24t-theme — wywolywane przy budowaniu paneli",
-        "[NEW]  _newsPanelBase / _newsPanelHeader / _newsDraggable / _newsInputCss / _newsFormRow: utility builders dla paneli News",
-        "[NEW]  Panel 1 Import: textarea \"URLe czekaja na wczytanie\", przycisk Wczytaj URLe, dedup + info, wykryty kraj + badge + ostrzezenie mismatch z projektem, chipy +Dodaj/↺reset per kraj",
-        "[NEW]  Panel 2 Lista: progress bar, scroll lista z status dots (kolory per status), Pomij per wiersz, Nastepny nieobsluzony",
-        "[NEW]  Panel 3 Formularz: banner CMS (hasDodane check w state.tags + querySelector), err bar, lang-warn, wszystkie pola wymagane (url/tytul/tresc/data), auto-detekcja daty 🔍, godz/min/sentyment/kategoria/kraj, row \"dodane\" z checkboxem + status dostepnosci",
-        "[NEW]  _newsCmsStatus(): sprawdza hostname (com/pl), querySelector tagEls z tekstem \"dodane\" → { domain, hasDodane }",
-        "[NEW]  _newsCheckTagDodane(): sprawdza state.tags → klucz zawierajacy \"dodane\" — disable checkbox jezeli niedostepny",
-        "[NEW]  _newsDetectDateFromHtml(html): 6 patternow detekcji daty (JSON-LD, meta published_time, meta date, itemprop, <time datetime>, fallback regex). Walidacja: > 2000-01-01 i <= _localDateStr()",
-        "[NEW]  _newsFetchPageInfo(url): GM_xmlhttpRequest GET → data + jezyk rownoczesnie. Auto-learn jezyka (cichy zapis gdy brak wpisow). Otwiera window.open(_blank) po fetchu",
-        "[NEW]  Submit: 4 wymagane pola, format YYYY-MM-DD, sessionUrls guard, country match. tag[]=dodaneTagId jezeli checkbox i tag dostepny. Czysci tytul/tresc/date po sukcesie",
-        "[NEW]  Przycisk b24t-ann-news-btn w headerze Annotators Tab: toggle openNewsPanels/closeNewsPanels. b24t-ann-close rowniez wywoluje closeNewsPanels()",
-        "[NEW]  _newsOpenLangMapEditor(): modal z hardcoded ciemnymi kolorami. Tabela krajow, edycja jezykow, Dodaj kraj, Usun kraj, Zapisz. Pusta mapa → komunikat o auto-budowaniu"
-      ]
-    },
-    {
-      "version": "0.14.0",
-      "date": "2026-03-28",
-      "notes": [
-        "[PERF] runDeleteByTag(): sekwencyjne deleteMention() + sleep(100) zastapione Promise.all na chunkach po 5 — eliminuje ~100ms idle time per wzmianka. Przy 150 wzmiankach: 150×(100ms+300ms) = 60s → 30×(300ms/5) = ~12s (~5x speedup)",
-        "[PERF] deleteMentionsByTag(): ta sama optymalizacja — batch 5 rownolegych gqlRetry(\"deleteMention\"). Usunieto sleep(100) miedzy itemami",
-        "[PERF] wireDeleteEvents Quick Delete inline loop: for..of z await + sleep(80) → Promise.all batch 5 (BATCH_QD)",
-        "[PERF] wireDeleteEvents Delete View inline loop: identyczna optymalizacja (BATCH_DV)",
-        "[FIX]  _renderAllProjectsList(): dodano przycisk .b24t-ap-del-single per projekt (data-pid, data-pname, data-datefrom, data-dateto, data-count). Wczesniej lista renderowala tylko nazwe + liczbe — klikniecie nic nie robilo",
-        "[NEW]  .b24t-ap-del-single click handler: confirmDeleteWarning() + confirm() z liczba, wywoluje runDeleteByTag(tagId, tagName, dateFrom, dateTo, progressCb, pid), inline status row, po sukcesie przycisniety zielony checkmark; invaliduje bgCache.allProjects + bgCache.tagstats",
-        "[ARCH] BATCH=5 ustalony empirycznie — Brand24 API nie ma rate limit dla delete przy 5 rownolegych; przy wiekszej liczbie nalezy obserwowac 429/500"
-      ]
-    },
-    {
-      "version": "0.13.0",
-      "date": "2026-03-28",
-      "notes": [
-        "[FIX]  #b24t-panel CSS: dodano display:flex; flex-direction:column — panel jest teraz flex kontenerem; rozwiazuje problem z obcinanym #b24t-actions przy resize",
-        "[FIX]  #b24t-body CSS: dodano flex:1; min-height:0 — body wypelnia dostepna przestrzen miedzy tabs a stopka; max-height:72vh pozostaje jako natural limit",
-        "[FIX]  #b24t-actions CSS: dodano flex-shrink:0 — stopka nigdy nie jest sciskana przez panel przy zmniejszaniu",
-        "[FIX]  setupResize() useMaxHeight branch: zamiast recznie obliczac fixedPx=198 i ustawiac body.style.maxHeight, teraz ustawiamy panel.style.height — flex layout rozklada reszte automatycznie. Usunieto blad gdzie fixedPx=198 bylo zbyt male (realne ~230px)",
-        "[FIX]  setupResize() restore: zapisany height jest teraz ustawiany przez panel.style.height + panel.style.maxHeight (wczesniej tylko maxHeight)",
-        "[FIX]  #b24t-annotator-panel: panel dostaje flex-direction:column w cssText; wszystkie .b24t-ann-content dostaja flex:1;overflow-y:auto;min-height:0",
-        "[FIX]  openAnnotatorPanel(): ustawia display:flex zamiast display:block — panel musi byc flex dla poprawnego flex-direction:column layoutu",
-        "[FIX]  annotator tab switching: content.style.display=\"flex\" zamiast \"block\"",
-        "[FIX]  buildUrlMap(): dodano isInvalidDate() guard — wykrywa puste daty (null, \"9999\", \"0000\", nieprawidlowy format); fallback na getAnnotatorDates() biezacy miesiac; loguje warn z zakresem fallback",
-        "[NEW]  validateFile(): 3 nowe bledy krytyczne (type:\"error\"): brak kolumny URL, brak kolumny assessment, kolumna dat wykryta ale wszystkie wartosci puste",
-        "[NEW]  renderFileValidation(): obsluguje type:\"error\" (czerwony, ikona x); ustawia el.dataset.hasErrors; wywoluje _updateStartBtnBlock()",
-        "[NEW]  _updateStartBtnBlock(): blokuje/odblokowuje #b24t-btn-start, #b24t-btn-preview, #b24t-btn-audit na podstawie el.dataset.hasErrors; opacity:0.45 + cursor:not-allowed",
-        "[NEW]  handleFileUpload(): wywoluje validateFile() + renderFileValidation() po zaladowaniu; loguje blad krytyczny jesli hasErrors",
-        "[NEW]  initRun(): guard sprawdza valEl.dataset.hasErrors przed startem sesji — ostatnia linia obrony",
-        "[NEW]  clearFile(): resetuje state.file, mapping, partitions, urlMap, matchPreview; chowa sekcje (mapping, settings, partition, validation, match-preview, column-override); resetuje file zone UI; wywoluje _updateStartBtnBlock()",
-        "[NEW]  HTML: przycisk #b24t-btn-clear-file (x) obok file zone, display:none domyslnie; pokazywany po zaladowaniu pliku; chowany po clearFile()",
-        "[WIRE]  wireEvents(): podpieto click na #b24t-btn-clear-file -> clearFile() z e.stopPropagation()"
-      ]
-    },
-    {
-      "version": "0.12.0",
-      "date": "2026-03-28",
-      "notes": [
-        "[FIX]  getAnnotatorDates(): usunieto addLog side-effect — funkcja wiecej nie loguje \"📅 Zakres\"; log przeniesiony do _bgFetchTagstats() jako jedynego kanonicznego miejsca",
-        "[FIX]  loadOverallStats(): dodano _overallStatsInFlight guard — zapobiega rownolegylm wywolaniom gdy openAnnotatorPanel() i tab click odpalalyby fetch jednoczesnie",
-        "[FIX]  loadOverallStats(): zimny fetch owiniety try/finally — _overallStatsInFlight zawsze zwalniany nawet przy bledzie",
-        "[REFACTOR]  Usunieto loadAnnotatorDataBackground() — dead code; nigdy nie wywolywana po tym jak applyFeatures() zaczelo wywolywac startBgPrefetch() bezposrednio",
-        "[REFACTOR]  Usunieto var annotatorDataLoaded — jedyna zmienna stanu loadAnnotatorDataBackground(), zbedna po usunieciu funkcji",
-        "[NOTE]  [LOG] getAnnotatorDates(): log zakresu dat — wpis zdezaktualizowany po FIX, zachowany dla historii"
-      ]
-    }
-  ];
-
-  function _fetchDevChangelog(onDone) {
-    const CACHE_KEY = 'b24tagger_dcl_cache';
-    const cached = (() => { try { return JSON.parse(sessionStorage.getItem(CACHE_KEY)); } catch(e) { return null; } })();
-    if (cached) { onDone(cached); return; }
-    GM_xmlhttpRequest({
-      method: 'GET',
-      url: 'https://raw.githubusercontent.com/i24dev/i24_analytics/I24-maks-czyszczenie/Tagger/DEV_CHANGELOG.json',
-      headers: { 'Cache-Control': 'no-cache' },
-      onload(r) {
-        try {
-          const data = JSON.parse(r.responseText);
-          sessionStorage.setItem(CACHE_KEY, JSON.stringify(data));
-          onDone(data);
-        } catch(e) { onDone(DEV_CHANGELOG_FALLBACK); }
-      },
-      onerror() { onDone(DEV_CHANGELOG_FALLBACK); }
-    });
-  }
 
 
   // ───────────────────────────────────────────

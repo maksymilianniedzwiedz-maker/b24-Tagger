@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.18.1
+// @version      0.18.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
 // @match        https://panel.brand24.pl/*
+// @match        *://*/*
 // @updateURL    https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/b24tagger.user.js
 // @downloadURL  https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/b24tagger.user.js
 // @grant        GM_xmlhttpRequest
@@ -19,11 +20,99 @@
 (function () {
   'use strict';
 
+  // ── NEWS DATE RELAY: gdy skrypt odpala się na stronie artykułu (nie Brand24) ──
+  // Czyta datę z DOM i odsyła przez postMessage do Brand24 (window.opener)
+  var _isB24 = /brand24\.com|panel\.brand24\.pl/.test(location.hostname);
+  if (!_isB24 && window.name === '_b24tnews' && window.opener) {
+    (function() {
+      function _extractDate() {
+        var patterns = [
+          // JSON-LD datePublished / dateCreated
+          function() {
+            var scripts = document.querySelectorAll('script[type="application/ld+json"]');
+            for (var i = 0; i < scripts.length; i++) {
+              try {
+                var data = JSON.parse(scripts[i].textContent);
+                var graphs = data['@graph'] || [data];
+                for (var j = 0; j < graphs.length; j++) {
+                  var d = graphs[j].datePublished || graphs[j].dateCreated;
+                  if (d) return d.substring(0, 10);
+                }
+              } catch(e) {}
+            }
+            return null;
+          },
+          // meta article:published_time
+          function() {
+            var el = document.querySelector('meta[property="article:published_time"]');
+            return el ? (el.getAttribute('content') || '').substring(0, 10) : null;
+          },
+          // meta name=date lub name=pubdate
+          function() {
+            var el = document.querySelector('meta[name="date"], meta[name="pubdate"], meta[name="publication_date"]');
+            return el ? (el.getAttribute('content') || '').substring(0, 10) : null;
+          },
+          // itemprop=datePublished
+          function() {
+            var el = document.querySelector('[itemprop="datePublished"]');
+            if (!el) return null;
+            return (el.getAttribute('datetime') || el.getAttribute('content') || el.textContent || '').substring(0, 10);
+          },
+          // <time datetime=...>
+          function() {
+            var el = document.querySelector('time[datetime]');
+            return el ? (el.getAttribute('datetime') || '').substring(0, 10) : null;
+          },
+          // data-date attributes
+          function() {
+            var el = document.querySelector('[data-publish-date],[data-pub-date],[data-created-date],[data-article-date],[data-date]');
+            if (!el) return null;
+            var attrs = ['data-publish-date','data-pub-date','data-created-date','data-article-date','data-date'];
+            for (var i = 0; i < attrs.length; i++) {
+              var v = el.getAttribute(attrs[i]);
+              if (v) return v.substring(0, 10);
+            }
+            return null;
+          },
+        ];
+        for (var i = 0; i < patterns.length; i++) {
+          try {
+            var result = patterns[i]();
+            if (result && /^\d{4}-\d{2}-\d{2}$/.test(result) && result > '2000-01-01') return result;
+          } catch(e) {}
+        }
+        return null;
+      }
+
+      function _trySend() {
+        var date = _extractDate();
+        if (date) {
+          try { window.opener.postMessage({ type: 'b24t_news_date', date: date, url: location.href }, '*'); } catch(e) {}
+          return true;
+        }
+        return false;
+      }
+
+      // Spróbuj natychmiast (DOM może być już gotowy)
+      if (!_trySend()) {
+        // Poczekaj na DOMContentLoaded
+        document.addEventListener('DOMContentLoaded', function() {
+          if (!_trySend()) {
+            // Ostatnia próba po pełnym load (lazy-loaded schema scripts)
+            window.addEventListener('load', function() { _trySend(); });
+          }
+        });
+      }
+    })();
+    return; // Nie inicjalizuj reszty wtyczki na zewnętrznych stronach
+  }
+
+
   // ───────────────────────────────────────────
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.18.1';
+  const VERSION = '0.18.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6112,6 +6201,8 @@ function showOnboarding(onComplete) {
         }
       }
 
+      // GM fetch jako fallback dla stron bez bot-protection (Cloudflare itp. zablokuje)
+      // Główna metoda to postMessage relay z @match *://*/*
       // Trailing slash tylko gdy URL nie ma rozszerzenia w ścieżce i nie ma już slash-a
       var fetchUrl = (function(u) {
         try {
@@ -6125,7 +6216,7 @@ function showOnboarding(onComplete) {
       GM_xmlhttpRequest({
         method: 'GET',
         url: fetchUrl,
-        timeout: 10000,
+        timeout: 5000,
         redirect: 'follow',
         headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'en-US,en;q=0.9' },
         onload: function(resp) {
@@ -6138,6 +6229,28 @@ function showOnboarding(onComplete) {
         ontimeout: function() {},
       });
     }
+
+    // ── postMessage listener: data z okna artykułu (relay z @match *://*/*) ──
+    window.addEventListener('message', function(ev) {
+      if (!ev.data || ev.data.type !== 'b24t_news_date') return;
+      var date = ev.data.date;
+      var url  = ev.data.url;
+      if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+      // Sprawdź czy aktywny URL pasuje do nadawcy
+      var activeEntry = newsState.activeIdx >= 0 ? newsState.urls[newsState.activeIdx] : null;
+      if (!activeEntry) return;
+      // Porównaj URL (ignoruj trailing slash)
+      var normalize = function(u) { return u ? u.replace(/\/+$/, '') : ''; };
+      if (url && normalize(url) !== normalize(activeEntry.url)) return;
+      var dateEl = document.getElementById('b24t-news-f-date');
+      if (!dateEl) return;
+      dateEl.value = date;
+      var dateIcon = document.getElementById('b24t-news-date-detect-icon');
+      if (dateIcon) {
+        dateIcon.style.display = 'inline';
+        dateIcon.title = 'Data wykryta automatycznie ze strony (' + date + ') — możesz ją edytować';
+      }
+    }, false);
 
     // Force open button
     var forceOpenBtn = document.getElementById('b24t-news-lang-force-open');

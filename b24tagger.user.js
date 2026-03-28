@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.16.10
+// @version      0.16.11
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.16.10';
+  const VERSION = '0.16.11';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5355,16 +5355,20 @@ function showOnboarding(onComplete) {
   function closeNewsPanels() {
     document.querySelectorAll('[data-news-panel]').forEach(function(el) { el.style.display = 'none'; });
     newsState.panelsOpen = false;
+    // Restore side tab visibility so user can reopen
     var nst = document.getElementById('b24t-news-side-tab');
-    if (nst) nst.classList.remove('active');
+    if (nst) {
+      nst.classList.remove('active');
+      nst.style.display = 'flex';
+    }
   }
 
   function _buildNewsPanels() {
     var t = _newsThemeVars();
-    var annPanel = document.getElementById('b24t-annotator-panel');
-    var annRect = annPanel ? annPanel.getBoundingClientRect() : null;
-    // Right-edge of Annotators Tab panel + gap
-    var baseRight = annRect ? (window.innerWidth - annRect.left + 10) : 450;
+    // Position panels relative to right edge — use annTab strip width (always visible) or fixed offset
+    var annTab = document.getElementById('b24t-annotator-tab');
+    var annTabW = annTab ? annTab.getBoundingClientRect().width : 40;
+    var baseRight = annTabW + 10;
     var PANEL_W = 360;
     var GAP = 10;
     var topList   = 80;
@@ -6313,6 +6317,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.16.11",
+      "date": "2026-03-28",
+      "label": "Fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News side tab: nie otwiera Annotators Tab"},
+        {"type": "fix", "text": "News side tab: znika gdy News otwarte, wraca po zamknieciu"},
+        {"type": "fix", "text": "News panele: pozycjonowanie niezalezne od Annotators Panel"}
+      ]
+    },
+    {
       "version": "0.16.10",
       "date": "2026-03-28",
       "label": "Fix",
@@ -6398,16 +6413,7 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "News: token CSRF pobierany z DOM, cookie lub GM fetch"}
       ]
     },
-    {
-      "version": "0.16.1",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News: wersja poprzednia (0.16.1)"}
-      ]
-    },
-  ];;;;;;;;;;
+  ];;;;;;;;;;;
 
   function _fetchChangelog(onDone) {
     const CACHE_KEY = 'b24tagger_cl_cache';
@@ -10009,14 +10015,16 @@ Tej operacji nie można cofnąć.`)) {
         '<span style="font-size:16px;line-height:1;">&#128240;</span>' +
         '<span style="writing-mode:vertical-rl;text-orientation:mixed;letter-spacing:.07em;font-size:11px;font-weight:700;">News</span>';
       newsSideTab.addEventListener('click', function() {
-        var annPanel = document.getElementById('b24t-annotator-panel');
-        if (!annPanel) return;
-        // If annotator panel is closed, open it first
-        if (annPanel.style.display === 'none' || annPanel.style.display === '') {
-          openAnnotatorPanel();
+        // Fully independent — no annotator panel interaction
+        if (newsState.panelsOpen) {
+          closeNewsPanels();
+          newsSideTab.classList.remove('active');
+        } else {
+          openNewsPanels();
+          newsSideTab.classList.add('active');
         }
-        if (newsState.panelsOpen) { closeNewsPanels(); newsSideTab.classList.remove('active'); }
-        else { openNewsPanels(); newsSideTab.classList.add('active'); }
+        // Hide the side tab while news is open, restore on close
+        newsSideTab.style.display = newsState.panelsOpen ? 'flex' : 'none';
       });
       newsSideTab.style.display = 'none'; // shown by features.annotator_tools check
       document.body.appendChild(newsSideTab);

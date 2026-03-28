@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.16.6
+// @version      0.16.7
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.16.6';
+  const VERSION = '0.16.7';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6310,6 +6310,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.16.7",
+      "date": "2026-03-28",
+      "label": "Fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Side tabs: poprawiona logika widocznosci przy starcie"}
+      ]
+    },
+    {
       "version": "0.16.6",
       "date": "2026-03-28",
       "label": "New",
@@ -6394,16 +6403,7 @@ function showOnboarding(onComplete) {
         {"type": "new", "text": "Feedback otwiera formularz Google Forms z prefill"}
       ]
     },
-    {
-      "version": "0.15.4",
-      "date": "2026-03-28",
-      "label": "New",
-      "labelColor": "#6c6cff",
-      "changes": [
-        {"type": "new", "text": "Bug Report otwiera formularz Google Forms z prefill"}
-      ]
-    },
-  ];;;;;;
+  ];;;;;;;
 
   function _fetchChangelog(onDone) {
     const CACHE_KEY = 'b24tagger_cl_cache';
@@ -9998,6 +9998,10 @@ Tej operacji nie można cofnąć.`)) {
       if (lsGet('b24tagger_panel_hidden')) {
         panel.style.display = 'none';
         mainTab.style.display = 'flex';
+      } else {
+        // Ensure panel is visible if not explicitly hidden
+        if (panel.style.display === 'none') panel.style.display = 'flex';
+        mainTab.style.display = 'none';
       }
     })();
 
@@ -10019,6 +10023,7 @@ Tej operacji nie można cofnąć.`)) {
         if (newsState.panelsOpen) { closeNewsPanels(); newsSideTab.classList.remove('active'); }
         else { openNewsPanels(); newsSideTab.classList.add('active'); }
       });
+      newsSideTab.style.display = 'none'; // shown by features.annotator_tools check
       document.body.appendChild(newsSideTab);
     })();
 

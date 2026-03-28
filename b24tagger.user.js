@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.9.9
+// @version      0.9.10
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.9.9';
+  const VERSION = '0.9.10';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2093,7 +2093,7 @@
         position: fixed;
         cursor: help;
         border-radius: 7px;
-        z-index: 2147483495;
+        z-index: 2147483520;
         border: 2px solid rgba(108,108,255,0.0);
         background: rgba(108,108,255,0.0);
         transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
@@ -2106,7 +2106,7 @@
       }
       .b24t-help-tip {
         position: fixed;
-        z-index: 2147483647;
+        z-index: 2147483540;
         max-width: 280px;
         background: #1a1a2e;
         border: 1px solid rgba(108,108,255,0.4);
@@ -2124,7 +2124,7 @@
       #b24t-help-panel-overlay {
         position: fixed;
         border-radius: 14px;
-        z-index: 2147483490;
+        z-index: 2147483510;
         pointer-events: none;
         background: rgba(0,0,0,0.52);
         backdrop-filter: blur(1.5px);
@@ -2139,7 +2139,7 @@
         font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
         font-size: 11px; color: #9090ff;
         cursor: pointer;
-        z-index: 2147483498;
+        z-index: 2147483530;
         pointer-events: all;
         white-space: nowrap;
         box-shadow: 0 4px 20px rgba(0,0,0,0.6);
@@ -3290,34 +3290,41 @@
     if (!panel) return;
 
     helpModeActive = true;
+
+    // Obniż z-index panelu żeby overlay i strefy mogły być nad nim
+    // (panel ma z-index: 2147483647 = max CSS, overlay nie może być wyżej bez JS)
+    panel.dataset.prevZIndex = panel.style.zIndex || '';
+    panel.style.zIndex = '2147483500';
+
     const panelRect = panel.getBoundingClientRect();
 
-    // Overlay DOKŁADNIE na panel - na poziomie body żeby uniknąć overflow:hidden
+    // Overlay DOKŁADNIE na panel
     const overlay = document.createElement('div');
     overlay.id = 'b24t-help-panel-overlay';
     overlay.style.top    = panelRect.top + 'px';
     overlay.style.left   = panelRect.left + 'px';
     overlay.style.width  = panelRect.width + 'px';
     overlay.style.height = panelRect.height + 'px';
+    overlay.style.zIndex = '2147483510';
     document.body.appendChild(overlay);
 
-    // Przycisk "Wyjdź z trybu pomocy" - na dole panelu
+    // Przycisk "Wyjdź z trybu pomocy"
     const closeBtn = document.createElement('button');
     closeBtn.id = 'b24t-help-close';
     closeBtn.innerHTML = '🔍 Tryb pomocy — kliknij element aby poznać jego funkcję &nbsp; <span style="opacity:0.55;font-size:9px;">[ kliknij tutaj aby wyjść ]</span>';
     closeBtn.style.top  = (panelRect.bottom - 44) + 'px';
     closeBtn.style.left = (panelRect.left + panelRect.width / 2) + 'px';
     closeBtn.style.transform = 'translateX(-50%)';
+    closeBtn.style.zIndex = '2147483530';
     document.body.appendChild(closeBtn);
     closeBtn.addEventListener('click', exitHelpMode);
 
-    // Strefy klikania - na body poziomie z fixed pozycjami z getBoundingClientRect
+    // Strefy klikania — nad overlayem, pod close
     const zones = getHelpZones();
     zones.forEach(function(z) {
       const targetEl = document.querySelector(z.selector);
       if (!targetEl) return;
       const r = targetEl.getBoundingClientRect();
-      // Pomiń elementy poza panelem lub ukryte
       if (r.width === 0 || r.height === 0) return;
 
       const zone = document.createElement('div');
@@ -3326,6 +3333,7 @@
       zone.style.left   = r.left + 'px';
       zone.style.width  = r.width + 'px';
       zone.style.height = r.height + 'px';
+      zone.style.zIndex = '2147483520';
       zone.title = z.title;
 
       zone.addEventListener('mouseenter', function(e) { showHelpTip(e, z); });
@@ -3345,6 +3353,10 @@
     helpModeActive = false;
     helpStickyTip = false;
     hideHelpTip();
+
+    // Przywróć z-index panelu
+    const panel = document.getElementById('b24t-panel');
+    if (panel) panel.style.zIndex = panel.dataset.prevZIndex || '2147483647';
 
     var overlay = document.getElementById('b24t-help-panel-overlay');
     var closeBtn = document.getElementById('b24t-help-close');
@@ -4484,6 +4496,15 @@ function getHelpZones() {
 
   const CHANGELOG = [
     {
+      version: '0.9.10',
+      date: '2026-03-28',
+      label: 'Hotfix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Tryb pomocy (?) działa poprawnie — overlay i strefy widoczne nad panelem, tooltopy po kliknięciu elementu' },
+      ],
+    },
+    {
       version: '0.9.9',
       date: '2026-03-28',
       label: 'Hotfix',
@@ -5614,6 +5635,16 @@ function getHelpZones() {
   // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.9.10',
+      date: '2026-03-28',
+      notes: [
+        '[HOTFIX] #b24t-panel ma z-index:2147483647 (CSS max). Overlay (2147483490), strefy (2147483495) i close (2147483498) — wszystkie niżej → renderowały się POD panelem.',
+        '[FIX]    enterHelpMode(): panel.style.zIndex obniżony do 2147483500 na czas help mode (zapisany w panel.dataset.prevZIndex). Hierarchia: panel=2147483500 < overlay=2147483510 < strefy=2147483520 < close=2147483530 < tooltip=2147483540.',
+        '[FIX]    exitHelpMode(): panel.style.zIndex przywracany z dataset.prevZIndex (lub 2147483647 domyślnie).',
+        '[FIX]    CSS z-indexy w injectStyles() zaktualizowane do nowej hierarchii (były: overlay=490, strefy=495, close=498, tip=647).',
+      ]
+    },
     {
       version: '0.9.9',
       date: '2026-03-28',

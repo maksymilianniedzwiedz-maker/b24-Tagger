@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.9.8
+// @version      0.9.9
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.9.8';
+  const VERSION = '0.9.9';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2081,6 +2081,72 @@
         animation: b24t-shimmer 1.5s infinite;
         border-radius: 4px;
       }
+
+      /* ── HELP MODE ── */
+      #b24t-panel.b24t-help-mode {
+        outline: 3px solid rgba(108,108,255,0.5);
+      }
+      .b24t-help-mode #b24t-body {
+        pointer-events: none;
+      }
+      .b24t-help-zone {
+        position: fixed;
+        cursor: help;
+        border-radius: 7px;
+        z-index: 2147483495;
+        border: 2px solid rgba(108,108,255,0.0);
+        background: rgba(108,108,255,0.0);
+        transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+        box-sizing: border-box;
+      }
+      .b24t-help-zone:hover {
+        background: rgba(108,108,255,0.13) !important;
+        border-color: rgba(108,108,255,0.65) !important;
+        box-shadow: 0 0 0 4px rgba(108,108,255,0.07);
+      }
+      .b24t-help-tip {
+        position: fixed;
+        z-index: 2147483647;
+        max-width: 280px;
+        background: #1a1a2e;
+        border: 1px solid rgba(108,108,255,0.4);
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+        font-size: 11px;
+        color: #b0b0c8;
+        line-height: 1.6;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+        pointer-events: none;
+        animation: b24t-slidein 0.2s cubic-bezier(0.34,1.56,0.64,1);
+      }
+      .b24t-help-tip strong { color: #e2e2e8; display: block; margin-bottom: 4px; font-size: 12px; }
+      #b24t-help-panel-overlay {
+        position: fixed;
+        border-radius: 14px;
+        z-index: 2147483490;
+        pointer-events: none;
+        background: rgba(0,0,0,0.52);
+        backdrop-filter: blur(1.5px);
+        animation: b24t-fadein 0.25s ease;
+      }
+      #b24t-help-close {
+        position: fixed;
+        background: rgba(15,15,25,0.96);
+        border: 1px solid rgba(108,108,255,0.45);
+        border-radius: 10px;
+        padding: 9px 18px;
+        font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+        font-size: 11px; color: #9090ff;
+        cursor: pointer;
+        z-index: 2147483498;
+        pointer-events: all;
+        white-space: nowrap;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+        transition: background 0.15s, border-color 0.15s;
+        letter-spacing: 0.02em;
+      }
+      #b24t-help-close:hover { background: rgba(25,25,50,0.98); border-color: rgba(108,108,255,0.75); }
     `;
     document.head.appendChild(style);
   }
@@ -3206,6 +3272,130 @@
   // HELP / TUTORIAL
   // ───────────────────────────────────────────
 
+  let helpModeActive = false;
+  let helpZoneElements = [];
+  let helpTipElement = null;
+  let helpStickyTip = false;
+
+  function toggleHelpMode() {
+    if (helpModeActive) {
+      exitHelpMode();
+    } else {
+      enterHelpMode();
+    }
+  }
+
+  function enterHelpMode() {
+    const panel = document.getElementById('b24t-panel');
+    if (!panel) return;
+
+    helpModeActive = true;
+    const panelRect = panel.getBoundingClientRect();
+
+    // Overlay DOKŁADNIE na panel - na poziomie body żeby uniknąć overflow:hidden
+    const overlay = document.createElement('div');
+    overlay.id = 'b24t-help-panel-overlay';
+    overlay.style.top    = panelRect.top + 'px';
+    overlay.style.left   = panelRect.left + 'px';
+    overlay.style.width  = panelRect.width + 'px';
+    overlay.style.height = panelRect.height + 'px';
+    document.body.appendChild(overlay);
+
+    // Przycisk "Wyjdź z trybu pomocy" - na dole panelu
+    const closeBtn = document.createElement('button');
+    closeBtn.id = 'b24t-help-close';
+    closeBtn.innerHTML = '🔍 Tryb pomocy — kliknij element aby poznać jego funkcję &nbsp; <span style="opacity:0.55;font-size:9px;">[ kliknij tutaj aby wyjść ]</span>';
+    closeBtn.style.top  = (panelRect.bottom - 44) + 'px';
+    closeBtn.style.left = (panelRect.left + panelRect.width / 2) + 'px';
+    closeBtn.style.transform = 'translateX(-50%)';
+    document.body.appendChild(closeBtn);
+    closeBtn.addEventListener('click', exitHelpMode);
+
+    // Strefy klikania - na body poziomie z fixed pozycjami z getBoundingClientRect
+    const zones = getHelpZones();
+    zones.forEach(function(z) {
+      const targetEl = document.querySelector(z.selector);
+      if (!targetEl) return;
+      const r = targetEl.getBoundingClientRect();
+      // Pomiń elementy poza panelem lub ukryte
+      if (r.width === 0 || r.height === 0) return;
+
+      const zone = document.createElement('div');
+      zone.className = 'b24t-help-zone';
+      zone.style.top    = r.top + 'px';
+      zone.style.left   = r.left + 'px';
+      zone.style.width  = r.width + 'px';
+      zone.style.height = r.height + 'px';
+      zone.title = z.title;
+
+      zone.addEventListener('mouseenter', function(e) { showHelpTip(e, z); });
+      zone.addEventListener('mouseleave', function() { if (!helpStickyTip) hideHelpTip(); });
+      zone.addEventListener('click', function(e) {
+        e.stopPropagation();
+        helpStickyTip = true;
+        showHelpTip(e, z, true);
+      });
+
+      document.body.appendChild(zone);
+      helpZoneElements.push(zone);
+    });
+  }
+
+  function exitHelpMode() {
+    helpModeActive = false;
+    helpStickyTip = false;
+    hideHelpTip();
+
+    var overlay = document.getElementById('b24t-help-panel-overlay');
+    var closeBtn = document.getElementById('b24t-help-close');
+    if (overlay) overlay.remove();
+    if (closeBtn) closeBtn.remove();
+
+    helpZoneElements.forEach(function(z) { z.remove(); });
+    helpZoneElements = [];
+  }
+
+  function showHelpTip(e, zone, sticky) {
+    sticky = sticky || false;
+    hideHelpTip();
+
+    var tip = document.createElement('div');
+    tip.className = 'b24t-help-tip';
+    tip.id = 'b24t-help-tip-el';
+    tip.innerHTML = '<strong>' + zone.title + '</strong>' + zone.desc;
+    if (sticky) {
+      tip.style.pointerEvents = 'all';
+      var closeX = document.createElement('button');
+      closeX.style.cssText = 'position:absolute;top:5px;right:8px;background:none;border:none;color:#555577;cursor:pointer;font-size:14px;line-height:1;padding:0;';
+      closeX.textContent = '×';
+      closeX.addEventListener('click', function() { helpStickyTip = false; hideHelpTip(); });
+      tip.appendChild(closeX);
+    }
+    document.body.appendChild(tip);
+    helpTipElement = tip;
+
+    // Pozycjonuj inteligentnie
+    var vw = window.innerWidth;
+    var vh = window.innerHeight;
+    var tipW = 280;
+    var tipH = tip.offsetHeight || 110;
+    var cx = e.clientX, cy = e.clientY;
+
+    var left = cx + 16;
+    var top  = cy + 16;
+    if (left + tipW > vw - 12) left = cx - tipW - 16;
+    if (top + tipH > vh - 12)  top  = cy - tipH - 16;
+    tip.style.left = Math.max(10, left) + 'px';
+    tip.style.top  = Math.max(10, top)  + 'px';
+  }
+
+  function hideHelpTip() {
+    helpStickyTip = false;
+    if (helpTipElement) { helpTipElement.remove(); helpTipElement = null; }
+    var old = document.getElementById('b24t-help-tip-el');
+    if (old) old.remove();
+  }
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ONBOARDING v2 — Dynamiczny tour z dymkami
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3364,77 +3554,6 @@ function injectOnboardingStyles() {
       50%       { outline-color: rgba(160,140,255,1.0); }
     }
     #b24t-ob-spotlight.ob-pulse { animation: ob-pulse 1.6s ease-in-out infinite; }
-
-    /* ── HELP MODE ── */
-    #b24t-panel.b24t-help-mode {
-      outline: 3px solid rgba(108,108,255,0.5);
-    }
-    .b24t-help-mode #b24t-body {
-      pointer-events: none;
-    }
-    /* Clickable zones in help mode - fixed na body poziomie */
-    .b24t-help-zone {
-      position: fixed;
-      cursor: help;
-      border-radius: 7px;
-      z-index: 2147483495;
-      border: 2px solid rgba(108,108,255,0.0);
-      background: rgba(108,108,255,0.0);
-      transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
-      box-sizing: border-box;
-    }
-    .b24t-help-zone:hover {
-      background: rgba(108,108,255,0.13) !important;
-      border-color: rgba(108,108,255,0.65) !important;
-      box-shadow: 0 0 0 4px rgba(108,108,255,0.07);
-    }
-    /* Help tooltip */
-    .b24t-help-tip {
-      position: fixed;
-      z-index: 2147483647;
-      max-width: 280px;
-      background: #1a1a2e;
-      border: 1px solid rgba(108,108,255,0.4);
-      border-radius: 10px;
-      padding: 10px 14px;
-      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
-      font-size: 11px;
-      color: #b0b0c8;
-      line-height: 1.6;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
-      pointer-events: none;
-      animation: b24t-slidein 0.2s cubic-bezier(0.34,1.56,0.64,1);
-    }
-    .b24t-help-tip strong { color: #e2e2e8; display: block; margin-bottom: 4px; font-size: 12px; }
-
-    /* Help overlay (wyszarzenie panelu) */
-    /* Help mode - overlay i strefy na body poziomie (panel ma overflow:hidden) */
-    #b24t-help-panel-overlay {
-      position: fixed;
-      border-radius: 14px;
-      z-index: 2147483490;
-      pointer-events: none;
-      background: rgba(0,0,0,0.52);
-      backdrop-filter: blur(1.5px);
-      animation: b24t-fadein 0.25s ease;
-    }
-    #b24t-help-close {
-      position: fixed;
-      background: rgba(15,15,25,0.96);
-      border: 1px solid rgba(108,108,255,0.45);
-      border-radius: 10px;
-      padding: 9px 18px;
-      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
-      font-size: 11px; color: #9090ff;
-      cursor: pointer;
-      z-index: 2147483498;
-      pointer-events: all;
-      white-space: nowrap;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.6);
-      transition: background 0.15s, border-color 0.15s;
-      letter-spacing: 0.02em;
-    }
-    #b24t-help-close:hover { background: rgba(25,25,50,0.98); border-color: rgba(108,108,255,0.75); }
   `;
   document.head.appendChild(s);
 }
@@ -3959,131 +4078,6 @@ function getHelpZones() {
   ];
 }
 
-let helpModeActive = false;
-let helpZoneElements = [];
-let helpTipElement = null;
-let helpStickyTip = false;
-
-function toggleHelpMode() {
-  if (helpModeActive) {
-    exitHelpMode();
-  } else {
-    enterHelpMode();
-  }
-}
-
-function enterHelpMode() {
-  const panel = document.getElementById('b24t-panel');
-  if (!panel) return;
-
-  helpModeActive = true;
-  const panelRect = panel.getBoundingClientRect();
-
-  // Overlay DOKŁADNIE na panel - na poziomie body żeby uniknąć overflow:hidden
-  const overlay = document.createElement('div');
-  overlay.id = 'b24t-help-panel-overlay';
-  overlay.style.top    = panelRect.top + 'px';
-  overlay.style.left   = panelRect.left + 'px';
-  overlay.style.width  = panelRect.width + 'px';
-  overlay.style.height = panelRect.height + 'px';
-  document.body.appendChild(overlay);
-
-  // Przycisk "Wyjdź z trybu pomocy" - na dole panelu
-  const closeBtn = document.createElement('button');
-  closeBtn.id = 'b24t-help-close';
-  closeBtn.innerHTML = '🔍 Tryb pomocy — kliknij element aby poznać jego funkcję &nbsp; <span style="opacity:0.55;font-size:9px;">[ kliknij tutaj aby wyjść ]</span>';
-  closeBtn.style.top  = (panelRect.bottom - 44) + 'px';
-  closeBtn.style.left = (panelRect.left + panelRect.width / 2) + 'px';
-  closeBtn.style.transform = 'translateX(-50%)';
-  document.body.appendChild(closeBtn);
-  closeBtn.addEventListener('click', exitHelpMode);
-
-  // Strefy klikania - na body poziomie z fixed pozycjami z getBoundingClientRect
-  const zones = getHelpZones();
-  zones.forEach(function(z) {
-    const targetEl = document.querySelector(z.selector);
-    if (!targetEl) return;
-    const r = targetEl.getBoundingClientRect();
-    // Pomiń elementy poza panelem lub ukryte
-    if (r.width === 0 || r.height === 0) return;
-
-    const zone = document.createElement('div');
-    zone.className = 'b24t-help-zone';
-    zone.style.top    = r.top + 'px';
-    zone.style.left   = r.left + 'px';
-    zone.style.width  = r.width + 'px';
-    zone.style.height = r.height + 'px';
-    zone.title = z.title;
-
-    zone.addEventListener('mouseenter', function(e) { showHelpTip(e, z); });
-    zone.addEventListener('mouseleave', function() { if (!helpStickyTip) hideHelpTip(); });
-    zone.addEventListener('click', function(e) {
-      e.stopPropagation();
-      helpStickyTip = true;
-      showHelpTip(e, z, true);
-    });
-
-    document.body.appendChild(zone);
-    helpZoneElements.push(zone);
-  });
-}
-
-function exitHelpMode() {
-  helpModeActive = false;
-  helpStickyTip = false;
-  hideHelpTip();
-
-  var overlay = document.getElementById('b24t-help-panel-overlay');
-  var closeBtn = document.getElementById('b24t-help-close');
-  if (overlay) overlay.remove();
-  if (closeBtn) closeBtn.remove();
-
-  helpZoneElements.forEach(function(z) { z.remove(); });
-  helpZoneElements = [];
-}
-
-function showHelpTip(e, zone, sticky) {
-  sticky = sticky || false;
-  hideHelpTip();
-
-  var tip = document.createElement('div');
-  tip.className = 'b24t-help-tip';
-  tip.id = 'b24t-help-tip-el';
-  tip.innerHTML = '<strong>' + zone.title + '</strong>' + zone.desc;
-  if (sticky) {
-    tip.style.pointerEvents = 'all';
-    var closeX = document.createElement('button');
-    closeX.style.cssText = 'position:absolute;top:5px;right:8px;background:none;border:none;color:#555577;cursor:pointer;font-size:14px;line-height:1;padding:0;';
-    closeX.textContent = '×';
-    closeX.addEventListener('click', function() { helpStickyTip = false; hideHelpTip(); });
-    tip.appendChild(closeX);
-  }
-  document.body.appendChild(tip);
-  helpTipElement = tip;
-
-  // Pozycjonuj inteligentnie
-  var vw = window.innerWidth;
-  var vh = window.innerHeight;
-  var tipW = 280;
-  var tipH = tip.offsetHeight || 110;
-  var cx = e.clientX, cy = e.clientY;
-
-  var left = cx + 16;
-  var top  = cy + 16;
-  if (left + tipW > vw - 12) left = cx - tipW - 16;
-  if (top + tipH > vh - 12)  top  = cy - tipH - 16;
-  tip.style.left = Math.max(10, left) + 'px';
-  tip.style.top  = Math.max(10, top)  + 'px';
-}
-
-function hideHelpTip() {
-  helpStickyTip = false;
-  if (helpTipElement) { helpTipElement.remove(); helpTipElement = null; }
-  var old = document.getElementById('b24t-help-tip-el');
-  if (old) old.remove();
-}
-
-
   // ───────────────────────────────────────────
   // F1 - MATCH PREVIEW
 
@@ -4489,6 +4483,15 @@ function hideHelpTip() {
   // ───────────────────────────────────────────
 
   const CHANGELOG = [
+    {
+      version: '0.9.9',
+      date: '2026-03-28',
+      label: 'Hotfix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Przycisk ? (tryb pomocy) w końcu działa — był martwy od zawsze z powodu błędu zakresu JS' },
+      ],
+    },
     {
       version: '0.9.8',
       date: '2026-03-28',
@@ -5611,6 +5614,15 @@ function hideHelpTip() {
   // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.9.9',
+      date: '2026-03-28',
+      notes: [
+        '[HOTFIX] toggleHelpMode(), enterHelpMode(), exitHelpMode(), showHelpTip(), hideHelpTip() oraz zmienne helpModeActive/helpZoneElements/helpTipElement/helpStickyTip były zadeklarowane POZA IIFE (bez wcięcia, na poziomie modułu). Tampermonkey z grantem GM_xmlhttpRequest opakowuje kod w sandbox — let/function poza IIFE nie są widoczne wewnątrz niej jako globalne. Efekt: addEventListener(\'click\', toggleHelpMode) rejestrował undefined → cichy błąd → przycisk ? nigdy nie reagował.',
+        '[HOTFIX] Naprawka: przeniesiono cały blok (zmienne + 5 funkcji) DO wnętrza IIFE z prawidłowym wcięciem 2 spacji. Zakres rozwiązany.',
+        '[HOTFIX] CSS help mode (.b24t-help-zone, #b24t-help-panel-overlay, .b24t-help-tip, #b24t-help-close) był wyłącznie w injectOnboardingStyles() — wywoływanej tylko przez showOnboarding(). Jeśli użytkownik nie przeszedł onboardingu w sesji, tryb pomocy działał bez styli. Przeniesiono CSS do injectStyles() — zawsze dostępne od init().',
+      ]
+    },
     {
       version: '0.9.8',
       date: '2026-03-28',

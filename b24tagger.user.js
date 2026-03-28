@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.17.3
+// @version      0.17.4
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.17.3';
+  const VERSION = '0.17.4';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6235,7 +6235,7 @@ function showOnboarding(onComplete) {
             var isOk = resp.status >= 200 && resp.status < 400 && !isDuplicate;
             if (isDuplicate) {
               _newsMarkSessionUrl(fUrl);
-              if (subStatus) { subStatus.textContent = '⚠ Duplikat — wzmianka już istnieje.'; subStatus.style.color = '#f59e0b'; }
+              if (subStatus) { subStatus.textContent = '⚠ Brand24: taka wzmianka już istnieje.'; subStatus.style.color = '#f59e0b'; }
               if (newsState.activeIdx >= 0) newsState.urls[newsState.activeIdx].status = 'error';
               var tcD = document.getElementById('b24t-news-f-content');
               var ttD = document.getElementById('b24t-news-f-title');
@@ -6369,6 +6369,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.17.4",
+      "date": "2026-03-28",
+      "label": "Fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News: komunikat duplikatu wskazuje na feedback Brand24"}
+      ]
+    },
+    {
       "version": "0.17.3",
       "date": "2026-03-28",
       "label": "Fix",
@@ -6457,16 +6466,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "Side tabs: poprawiona logika widocznosci przy starcie"}
-      ]
-    },
-    {
-      "version": "0.16.6",
-      "date": "2026-03-28",
-      "label": "New",
-      "labelColor": "#6c6cff",
-      "changes": [
-        {"type": "new", "text": "Glowny panel: przycisk schowaj do boku (pulsujacy)"},
-        {"type": "new", "text": "News: osobny przycisk boczny pod Annotators Tab"}
       ]
     },
   ];;;;;;;;;;;

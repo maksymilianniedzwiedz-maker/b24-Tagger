@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.14.0
+// @version      0.15.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.14.0';
+  const VERSION = '0.15.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -43,6 +43,9 @@
     GROUPS:           'b24tagger_groups',
     STATS_CFG:        'b24tagger_stats_config',
     PROJECT_NAMES:    'b24tagger_project_names',
+    NEWS_KEYWORDS:    'b24tagger_news_keywords',
+    NEWS_SESSION_URLS:'b24tagger_news_session_urls',
+    NEWS_LANG_MAP:    'b24tagger_news_lang_map',
   };
   const MAX_BATCH_SIZE = 500;
   const HEALTH_CHECK_INTERVAL = 30000;
@@ -2285,6 +2288,7 @@
         <button class="b24t-tab" data-tab="quicktag">⚡ Quick Tag</button>
         <button class="b24t-tab" data-tab="delete">🗑 Quick Delete</button>
         <button class="b24t-tab" data-tab="history">📋 Historia</button>
+        <button class="b24t-tab" data-tab="news">📰 News</button>
         <!-- Annotator Tools uses floating panel, no tab here -->
       </div>
 
@@ -2460,8 +2464,7 @@
       <!-- QUICK TAG TAB (injected by JS) -->
       <div id="b24t-quicktag-tab-placeholder"></div>
 
-      <!-- HISTORY TAB (injected by JS) -->
-      <div id="b24t-history-tab-placeholder"></div>
+      <!-- HISTORY TAB (injected by JS) -->\n      <div id=\"b24t-history-tab-placeholder\"></div>\n\n      <!-- NEWS TAB (injected by JS) -->\n      <div id="b24t-news-tab-placeholder"></div>
 
       <!-- Annotator Tools: floating panel, no inline tabs -->
       <!-- Annotator Tools: moved to floating panel -->
@@ -4901,10 +4904,843 @@ function showOnboarding(onComplete) {
 
 
   // ───────────────────────────────────────────
+  // NEWS MODULE — v0.15.0
+  // ───────────────────────────────────────────
+
+  var newsState = {
+    urls: [],          // { url, status, opened, submitted, country }
+    activeIdx: -1,
+    sessionUrls: {},   // url → true (submitted this session)
+    detectedCountry: null,
+  };
+
+  var NEWS_DEFAULT_KEYWORDS = [
+    'hm-', '-hm-', '-hm', '/hm/', '/hm',
+    'h-m', 'h&m', 'h%26m', 'hennes', 'mauritz',
+  ];
+  var NEWS_KEYWORD_EXCLUSIONS = ['h-mart'];
+
+  var NEWS_TLD_MAP = {
+    pl:'PL', tr:'TR', gr:'GR', hr:'HR', ro:'RO', bg:'BG',
+    hu:'HU', cz:'CZ', sk:'SK', lt:'LT', lv:'LV', ee:'EE',
+    rs:'RS', ge:'GE', ua:'UA', ba:'BA', mk:'MK', al:'AL',
+    xk:'XK', kz:'KZ', me:'ME', md:'MD', am:'AM', az:'AZ',
+  };
+
+  // Extract 2-letter country code from URL (TLD + known subdomains)
+  function _newsCountryFromUrl(url) {
+    try {
+      var h = new URL(url).hostname.toLowerCase();
+      // Subdomain pattern: tr.example.com, pl.example.com
+      var subMatch = h.match(/^([a-z]{2})\./);
+      if (subMatch && NEWS_TLD_MAP[subMatch[1]]) return NEWS_TLD_MAP[subMatch[1]];
+      // TLD
+      var parts = h.split('.');
+      var tld = parts[parts.length - 1];
+      return NEWS_TLD_MAP[tld] || null;
+    } catch(e) { return null; }
+  }
+
+  // Detect dominant country from URL list (>30% threshold)
+  function _newsDetectCountryFromUrls(urls) {
+    var counts = {};
+    urls.forEach(function(u) {
+      var c = _newsCountryFromUrl(u.url);
+      if (c) counts[c] = (counts[c] || 0) + 1;
+    });
+    var total = urls.length;
+    var best = null; var bestN = 0;
+    Object.keys(counts).forEach(function(c) {
+      if (counts[c] > bestN) { bestN = counts[c]; best = c; }
+    });
+    if (best && bestN / total >= 0.3) return best;
+    return null;
+  }
+
+  // Get project country from project name (H&M_TR → TR)
+  function _newsProjectCountry() {
+    var name = (state.projectName || '').toUpperCase();
+    var m = name.match(/_([A-Z]{2})$/);
+    return m ? m[1] : null;
+  }
+
+  // LS helpers for news
+  function _newsGetKeywords(countryCode) {
+    var all = lsGet(LS.NEWS_KEYWORDS, {});
+    return all[countryCode] || NEWS_DEFAULT_KEYWORDS.slice();
+  }
+  function _newsSaveKeywords(countryCode, chips) {
+    var all = lsGet(LS.NEWS_KEYWORDS, {});
+    all[countryCode] = chips;
+    lsSet(LS.NEWS_KEYWORDS, all);
+  }
+  function _newsGetLangMap() {
+    return lsGet(LS.NEWS_LANG_MAP, {});
+  }
+  function _newsSaveLangMap(map) {
+    lsSet(LS.NEWS_LANG_MAP, map);
+  }
+  function _newsGetSessionUrls() {
+    return lsGet(LS.NEWS_SESSION_URLS, {});
+  }
+  function _newsMarkSessionUrl(url) {
+    var s = _newsGetSessionUrls();
+    s[url] = true;
+    lsSet(LS.NEWS_SESSION_URLS, s);
+  }
+
+  // URL matches any keyword chip (case-insensitive), not matching exclusions
+  function _newsUrlMatchesKeywords(url, chips) {
+    var lurl = url.toLowerCase();
+    var excluded = NEWS_KEYWORD_EXCLUSIONS.some(function(ex) { return lurl.indexOf(ex) !== -1; });
+    if (excluded) return false;
+    return chips.some(function(chip) { return lurl.indexOf(chip.toLowerCase()) !== -1; });
+  }
+
+  // ── BUILD HTML ──
+  function buildNewsTab() {
+    var div = document.createElement('div');
+    div.id = 'b24t-news-tab';
+    div.style.display = 'none';
+    div.innerHTML = [
+      '<div style="display:flex;gap:8px;height:100%;min-height:0;">',
+
+        // LEFT PANEL
+        '<div id="b24t-news-left" style="flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;">',
+
+          // Import area
+          '<div>',
+            '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">',
+              '<span style="font-size:11px;font-weight:600;opacity:0.7;">IMPORT URLI</span>',
+              '<div style="display:flex;gap:4px;">',
+                '<button id="b24t-news-import-btn" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-accent);color:#fff;cursor:pointer;">Wklej</button>',
+                '<button id="b24t-news-clear-btn" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid var(--b24t-border);background:transparent;color:var(--b24t-text-muted);cursor:pointer;">Wyczyść</button>',
+              '</div>',
+            '</div>',
+            '<textarea id="b24t-news-paste-area" rows="3" placeholder="Wklej URLe (jeden na linię)..." style="width:100%;box-sizing:border-box;font-size:10px;padding:6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);resize:vertical;font-family:monospace;"></textarea>',
+          '</div>',
+
+          // Keywords / chips
+          '<div id="b24t-news-chips-section">',
+            '<div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;">',
+              '<span style="font-size:11px;font-weight:600;opacity:0.7;">SŁOWA KLUCZOWE</span>',
+              '<span id="b24t-news-country-badge" style="font-size:9px;padding:1px 5px;border-radius:10px;background:var(--b24t-accent);color:#fff;display:none;"></span>',
+              '<button id="b24t-news-add-chip-btn" title="Dodaj słowo kluczowe" style="margin-left:auto;font-size:10px;padding:1px 7px;border-radius:6px;border:1px solid var(--b24t-border);background:transparent;color:var(--b24t-text-muted);cursor:pointer;">+ Dodaj</button>',
+            '</div>',
+            '<div id="b24t-news-chips" style="display:flex;flex-wrap:wrap;gap:4px;min-height:24px;"></div>',
+          '</div>',
+
+          // Country mismatch warning
+          '<div id="b24t-news-country-warn" style="display:none;background:#7c3aed22;border:1px solid #7c3aed55;border-radius:6px;padding:5px 8px;font-size:10px;color:#a78bfa;"></div>',
+
+          // Progress bar
+          '<div id="b24t-news-progress-wrap" style="display:none;">',
+            '<div style="display:flex;justify-content:space-between;font-size:10px;opacity:0.6;margin-bottom:2px;">',
+              '<span>Postęp</span>',
+              '<span id="b24t-news-progress-label">0 / 0</span>',
+            '</div>',
+            '<div style="height:4px;border-radius:2px;background:var(--b24t-border);">',
+              '<div id="b24t-news-progress-bar" style="height:4px;border-radius:2px;background:var(--b24t-accent);width:0%;transition:width 0.3s;"></div>',
+            '</div>',
+          '</div>',
+
+          // URL list
+          '<div id="b24t-news-url-list" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:3px;min-height:0;">',
+            '<div id="b24t-news-empty" style="font-size:11px;opacity:0.4;text-align:center;padding:16px 0;">Brak URLi — wklej adresy powyżej</div>',
+          '</div>',
+
+          // Next button
+          '<button id="b24t-news-next-btn" style="display:none;font-size:11px;padding:5px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);cursor:pointer;width:100%;">▼ Otwórz następny</button>',
+
+        '</div>',
+
+        // DIVIDER
+        '<div style="width:1px;background:var(--b24t-border);flex-shrink:0;"></div>',
+
+        // RIGHT PANEL — mention form
+        '<div id="b24t-news-right" style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;">',
+
+          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px;">',
+            '<span style="font-size:11px;font-weight:600;opacity:0.7;">FORMULARZ WZMIANKI</span>',
+            '<button id="b24t-news-lang-map-btn" title="Edytuj mapę języków" style="font-size:10px;padding:2px 7px;border-radius:6px;border:1px solid var(--b24t-border);background:transparent;color:var(--b24t-text-muted);cursor:pointer;">⚙ Języki</button>',
+          '</div>',
+
+          '<div id="b24t-news-form-warn" style="display:none;background:#ef444422;border:1px solid #ef444455;border-radius:6px;padding:5px 8px;font-size:10px;color:#f87171;"></div>',
+          '<div id="b24t-news-lang-warn" style="display:none;background:#f59e0b22;border:1px solid #f59e0b55;border-radius:6px;padding:5px 8px;font-size:10px;color:#fbbf24;line-height:1.4;"></div>',
+
+          // URL field
+          '<div>',
+            '<label style="font-size:10px;opacity:0.6;display:block;margin-bottom:2px;">URL wzmianki</label>',
+            '<div style="display:flex;gap:4px;">',
+              '<input id="b24t-news-f-url" type="text" readonly style="flex:1;font-size:10px;padding:4px 6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);font-family:monospace;opacity:0.7;" placeholder="(wybierz URL z listy)">',
+              '<button id="b24t-news-lang-force-open" style="display:none;font-size:9px;padding:3px 6px;border-radius:6px;border:1px solid #f59e0b55;background:transparent;color:#fbbf24;cursor:pointer;" title="Otwórz mimo ostrzeżenia językowego">Otwórz</button>',
+            '</div>',
+          '</div>',
+
+          // Title
+          '<div>',
+            '<label style="font-size:10px;opacity:0.6;display:block;margin-bottom:2px;">Tytuł (opcjonalny)</label>',
+            '<input id="b24t-news-f-title" type="text" style="width:100%;box-sizing:border-box;font-size:10px;padding:4px 6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);" placeholder="Wklej tytuł artykułu...">',
+          '</div>',
+
+          // Content
+          '<div style="flex:1;display:flex;flex-direction:column;">',
+            '<label style="font-size:10px;opacity:0.6;display:block;margin-bottom:2px;">Treść <span style="color:#ef4444;">*</span></label>',
+            '<textarea id="b24t-news-f-content" rows="4" style="flex:1;width:100%;box-sizing:border-box;font-size:10px;padding:4px 6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);resize:none;" placeholder="Wklej treść artykułu (wymagane)..."></textarea>',
+          '</div>',
+
+          // Category + Country row
+          '<div style="display:flex;gap:6px;">',
+            '<div style="flex:1;">',
+              '<label style="font-size:10px;opacity:0.6;display:block;margin-bottom:2px;">Kategoria</label>',
+              '<input id="b24t-news-f-category" type="text" value="7 (News)" readonly style="width:100%;box-sizing:border-box;font-size:10px;padding:4px 6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);opacity:0.6;">',
+            '</div>',
+            '<div style="flex:1;">',
+              '<label style="font-size:10px;opacity:0.6;display:block;margin-bottom:2px;">Kraj</label>',
+              '<input id="b24t-news-f-country" type="text" readonly style="width:100%;box-sizing:border-box;font-size:10px;padding:4px 6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);opacity:0.6;" placeholder="(z projektu)">',
+            '</div>',
+          '</div>',
+
+          // Date + time row
+          '<div style="display:flex;gap:6px;">',
+            '<div style="flex:2;">',
+              '<label style="font-size:10px;opacity:0.6;display:block;margin-bottom:2px;">Data (YYYY-MM-DD) <span style="color:#ef4444;">*</span></label>',
+              '<input id="b24t-news-f-date" type="text" style="width:100%;box-sizing:border-box;font-size:10px;padding:4px 6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);" placeholder="np. 2026-03-28">',
+            '</div>',
+            '<div style="flex:1;">',
+              '<label style="font-size:10px;opacity:0.6;display:block;margin-bottom:2px;">Godzina</label>',
+              '<input id="b24t-news-f-hour" type="text" value="12" style="width:100%;box-sizing:border-box;font-size:10px;padding:4px 6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);">',
+            '</div>',
+            '<div style="flex:1;">',
+              '<label style="font-size:10px;opacity:0.6;display:block;margin-bottom:2px;">Minuta</label>',
+              '<input id="b24t-news-f-minute" type="text" value="00" style="width:100%;box-sizing:border-box;font-size:10px;padding:4px 6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);">',
+            '</div>',
+          '</div>',
+
+          // Sentiment
+          '<div>',
+            '<label style="font-size:10px;opacity:0.6;display:block;margin-bottom:2px;">Sentyment</label>',
+            '<select id="b24t-news-f-sentiment" style="width:100%;box-sizing:border-box;font-size:10px;padding:4px 6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);">',
+              '<option value="0">0 — Neutral</option>',
+              '<option value="1">1 — Positive</option>',
+              '<option value="-1">-1 — Negative</option>',
+            '</select>',
+          '</div>',
+
+          // Submit button
+          '<button id="b24t-news-submit-btn" style="padding:7px;border-radius:8px;border:none;background:var(--b24t-accent);color:#fff;font-size:12px;font-weight:600;cursor:pointer;width:100%;">✚ Dodaj wzmiankę do Brand24</button>',
+          '<div id="b24t-news-submit-status" style="font-size:10px;text-align:center;min-height:14px;"></div>',
+
+        '</div>',
+      '</div>',
+    ].join('');
+    return div;
+  }
+
+  // ── WIRE LOGIC ──
+  function wireNewsTab() {
+    var projectId = state.projectId;
+    var projectCountry = _newsProjectCountry();
+    var sessionUrls = _newsGetSessionUrls();
+
+    // ─── CHIP RENDERING ───
+    function renderChips(countryCode) {
+      var chips = _newsGetKeywords(countryCode || 'DEFAULT');
+      var container = document.getElementById('b24t-news-chips');
+      if (!container) return;
+      container.innerHTML = '';
+      chips.forEach(function(kw, i) {
+        var chip = document.createElement('span');
+        chip.style.cssText = 'display:inline-flex;align-items:center;gap:3px;font-size:10px;padding:2px 6px;border-radius:10px;background:var(--b24t-accent-light,rgba(99,102,241,0.15));color:var(--b24t-accent);border:1px solid var(--b24t-accent-alpha,rgba(99,102,241,0.3));cursor:default;';
+        chip.innerHTML = '<span>' + kw.replace(/</g,'&lt;') + '</span><span data-idx="' + i + '" style="cursor:pointer;opacity:0.5;margin-left:2px;" class="b24t-chip-remove">✕</span>';
+        container.appendChild(chip);
+      });
+      // Remove listeners
+      container.querySelectorAll('.b24t-chip-remove').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var idx = parseInt(btn.dataset.idx);
+          var cc = newsState.detectedCountry || 'DEFAULT';
+          var kws = _newsGetKeywords(cc);
+          kws.splice(idx, 1);
+          _newsSaveKeywords(cc, kws);
+          renderChips(cc);
+          renderUrlList();
+        });
+      });
+    }
+
+    // ─── URL LIST RENDERING ───
+    function _statusDot(entry) {
+      var s = entry.status;
+      if (s === 'match')     return '<span style="color:#22c55e;" title="Trafienie keyword">●</span>';
+      if (s === 'opened')    return '<span style="color:#f59e0b;" title="Otwarty, brak decyzji">●</span>';
+      if (s === 'skipped')   return '<span style="color:#6b7280;" title="Pominięty">●</span>';
+      if (s === 'added')     return '<span style="color:#15803d;font-weight:700;" title="Dodany do Brand24">✓</span>';
+      if (s === 'error')     return '<span style="color:#ef4444;" title="Błąd / duplikat">✗</span>';
+      if (s === 'nomatch')   return '<span style="color:#374151;" title="Brak trafienia">○</span>';
+      return '<span>○</span>';
+    }
+
+    function renderUrlList() {
+      var list = document.getElementById('b24t-news-url-list');
+      var empty = document.getElementById('b24t-news-empty');
+      var progress = document.getElementById('b24t-news-progress-wrap');
+      var progressBar = document.getElementById('b24t-news-progress-bar');
+      var progressLabel = document.getElementById('b24t-news-progress-label');
+      var nextBtn = document.getElementById('b24t-news-next-btn');
+      if (!list) return;
+
+      // Remove old rows
+      list.querySelectorAll('.b24t-news-url-row').forEach(function(r) { r.remove(); });
+
+      if (newsState.urls.length === 0) {
+        if (empty) empty.style.display = '';
+        if (progress) progress.style.display = 'none';
+        if (nextBtn) nextBtn.style.display = 'none';
+        return;
+      }
+      if (empty) empty.style.display = 'none';
+      if (progress) progress.style.display = '';
+
+      // Count handled
+      var handled = newsState.urls.filter(function(u) {
+        return u.status === 'added' || u.status === 'error' || u.status === 'skipped';
+      }).length;
+      var total = newsState.urls.length;
+      if (progressLabel) progressLabel.textContent = handled + ' / ' + total;
+      if (progressBar) progressBar.style.width = (total > 0 ? Math.round(handled / total * 100) : 0) + '%';
+      if (nextBtn) nextBtn.style.display = '';
+
+      var cc = newsState.detectedCountry || 'DEFAULT';
+      var chips = _newsGetKeywords(cc);
+
+      newsState.urls.forEach(function(entry, idx) {
+        var row = document.createElement('div');
+        row.className = 'b24t-news-url-row';
+        var isActive = idx === newsState.activeIdx;
+        var isMatch = _newsUrlMatchesKeywords(entry.url, chips);
+        if (entry.status === 'pending') entry.status = isMatch ? 'match' : 'nomatch';
+
+        row.style.cssText = [
+          'display:flex;align-items:center;gap:5px;padding:4px 6px;border-radius:6px;',
+          'border:1px solid ' + (isActive ? 'var(--b24t-accent)' : 'transparent') + ';',
+          'background:' + (isActive ? 'var(--b24t-accent-light,rgba(99,102,241,0.1))' : 'var(--b24t-bg-secondary)') + ';',
+          'cursor:pointer;min-width:0;',
+        ].join('');
+        row.dataset.idx = idx;
+
+        var shortUrl = entry.url.replace(/^https?:\/\//, '').substring(0, 45);
+        if (entry.url.replace(/^https?:\/\//, '').length > 45) shortUrl += '…';
+
+        row.innerHTML = [
+          '<span style="flex-shrink:0;width:12px;text-align:center;font-size:11px;">' + _statusDot(entry) + '</span>',
+          '<span style="flex:1;min-width:0;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:monospace;" title="' + entry.url.replace(/"/g,'&quot;') + '">' + shortUrl + '</span>',
+          '<button class="b24t-news-skip-btn" data-idx="' + idx + '" style="flex-shrink:0;font-size:9px;padding:1px 5px;border-radius:4px;border:1px solid var(--b24t-border);background:transparent;color:var(--b24t-text-muted);cursor:pointer;">Pomiń</button>',
+        ].join('');
+
+        list.appendChild(row);
+
+        // Click to activate
+        row.addEventListener('click', function(e) {
+          if (e.target.classList.contains('b24t-news-skip-btn')) return;
+          activateUrl(idx);
+        });
+      });
+
+      // Skip buttons
+      list.querySelectorAll('.b24t-news-skip-btn').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          var idx = parseInt(btn.dataset.idx);
+          newsState.urls[idx].status = 'skipped';
+          renderUrlList();
+        });
+      });
+    }
+
+    // ─── ACTIVATE URL (open + fill form) ───
+    function activateUrl(idx) {
+      var entry = newsState.urls[idx];
+      if (!entry) return;
+      newsState.activeIdx = idx;
+      entry.status = 'opened';
+      entry.opened = true;
+
+      // Fill form URL
+      var fUrl = document.getElementById('b24t-news-f-url');
+      if (fUrl) fUrl.value = entry.url;
+
+      // Fill country
+      var pc = projectCountry || _newsProjectCountry();
+      var fCountry = document.getElementById('b24t-news-f-country');
+      if (fCountry) fCountry.value = pc || '';
+
+      // Clear lang warn
+      var langWarn = document.getElementById('b24t-news-lang-warn');
+      var forceOpenBtn = document.getElementById('b24t-news-lang-force-open');
+      if (langWarn) { langWarn.style.display = 'none'; langWarn.textContent = ''; }
+      if (forceOpenBtn) forceOpenBtn.style.display = 'none';
+
+      // Clear submit status
+      var subStatus = document.getElementById('b24t-news-submit-status');
+      if (subStatus) subStatus.textContent = '';
+
+      renderUrlList();
+      openUrlWithLangCheck(entry.url, idx);
+    }
+
+    // ─── OPEN URL WITH LANG CHECK ───
+    function openUrlWithLangCheck(url, idx, force) {
+      var langMap = _newsGetLangMap();
+      var pc = projectCountry || _newsProjectCountry();
+      var expectedLangs = pc ? (langMap[pc] || []) : [];
+
+      if (!force && pc && expectedLangs.length > 0) {
+        // Fetch page to detect lang
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url: url,
+          timeout: 8000,
+          onload: function(resp) {
+            var detectedLang = _newsDetectLangFromResponse(resp.responseText, url);
+            var langWarn = document.getElementById('b24t-news-lang-warn');
+            var forceOpenBtn = document.getElementById('b24t-news-lang-force-open');
+            if (detectedLang && !expectedLangs.includes(detectedLang)) {
+              // Show warning
+              if (langWarn) {
+                langWarn.textContent = '⚠ Wykryto język: ' + detectedLang + ' — oczekiwano: ' + expectedLangs.join(', ') + ' (projekt ' + pc + '). Otwierasz mimo to?';
+                langWarn.style.display = '';
+              }
+              if (forceOpenBtn) forceOpenBtn.style.display = '';
+              // Still open in new tab
+              window.open(url, '_blank');
+              // Offer to add language to map
+              _newsOfferAddLang(pc, detectedLang);
+            } else {
+              // Lang ok — open
+              if (langWarn) langWarn.style.display = 'none';
+              if (forceOpenBtn) forceOpenBtn.style.display = 'none';
+              window.open(url, '_blank');
+              // Update map if unknown language found
+              if (detectedLang && !expectedLangs.includes(detectedLang) && expectedLangs.length === 0) {
+                _newsOfferAddLang(pc, detectedLang);
+              }
+            }
+          },
+          onerror: function() {
+            // Can't fetch — open without check
+            window.open(url, '_blank');
+          },
+          ontimeout: function() {
+            window.open(url, '_blank');
+          },
+        });
+      } else {
+        window.open(url, '_blank');
+      }
+    }
+
+    // ─── DETECT LANG FROM PAGE RESPONSE ───
+    function _newsDetectLangFromResponse(html, url) {
+      // 1. <html lang="...">
+      var m = html && html.match(/<html[^>]+lang=["']([a-z]{2})/i);
+      if (m) return m[1].toLowerCase();
+      // 2. <meta http-equiv="content-language" content="...">
+      var m2 = html && html.match(/content-language[^>]+content=["']([a-z]{2})/i);
+      if (m2) return m2[1].toLowerCase();
+      // 3. subdomain
+      try {
+        var h = new URL(url).hostname.toLowerCase().split('.');
+        if (h.length >= 3 && h[0].length === 2) return h[0];
+      } catch(e) {}
+      return null;
+    }
+
+    // ─── OFFER ADD LANG TO MAP ───
+    function _newsOfferAddLang(countryCode, lang) {
+      var map = _newsGetLangMap();
+      var existing = map[countryCode] || [];
+      if (existing.includes(lang)) return;
+      // Show inline suggestion in lang warn
+      var langWarn = document.getElementById('b24t-news-lang-warn');
+      if (langWarn) {
+        var addBtn = document.createElement('button');
+        addBtn.textContent = '+ Dodaj ' + lang + ' do mapy dla ' + countryCode;
+        addBtn.style.cssText = 'margin-top:4px;font-size:9px;padding:2px 7px;border-radius:5px;border:1px solid #f59e0b55;background:transparent;color:#fbbf24;cursor:pointer;display:block;';
+        addBtn.addEventListener('click', function() {
+          var m2 = _newsGetLangMap();
+          m2[countryCode] = (m2[countryCode] || []).concat([lang]);
+          _newsSaveLangMap(m2);
+          addBtn.textContent = '✓ Dodano ' + lang + ' do mapy dla ' + countryCode;
+          addBtn.disabled = true;
+        });
+        langWarn.appendChild(addBtn);
+      }
+    }
+
+    // ─── LANG MAP EDITOR MODAL ───
+    function openLangMapEditor() {
+      if (document.getElementById('b24t-news-langmap-modal')) return;
+      var map = _newsGetLangMap();
+      var overlay = document.createElement('div');
+      overlay.id = 'b24t-news-langmap-modal';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:2147483646;display:flex;align-items:center;justify-content:center;';
+
+      function buildModalContent() {
+        var keys = Object.keys(map).sort();
+        var rows = keys.map(function(cc) {
+          var langs = (map[cc] || []).join(', ');
+          return '<tr>' +
+            '<td style="padding:4px 8px;font-weight:600;font-size:11px;color:#e2e8f0;">' + cc + '</td>' +
+            '<td style="padding:4px 8px;">' +
+              '<input data-cc="' + cc + '" class="b24t-lm-input" type="text" value="' + langs + '" ' +
+              'style="background:#1e1e2e;border:1px solid #3a3a4a;border-radius:4px;color:#e2e8f0;font-size:10px;padding:2px 6px;width:120px;">' +
+            '</td>' +
+            '<td style="padding:4px 8px;">' +
+              '<button data-cc="' + cc + '" class="b24t-lm-del" style="font-size:9px;padding:1px 6px;border-radius:4px;border:1px solid #ef444455;background:transparent;color:#f87171;cursor:pointer;">Usuń</button>' +
+            '</td>' +
+          '</tr>';
+        }).join('');
+
+        return '<div style="background:#16161f;border:1px solid #3a3a4a;border-radius:12px;padding:20px;min-width:340px;max-width:420px;max-height:80vh;overflow-y:auto;color:#e2e8f0;">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
+            '<span style="font-size:13px;font-weight:700;">⚙ Mapa języków projektów</span>' +
+            '<button id="b24t-lm-close" style="background:transparent;border:none;color:#9ca3af;cursor:pointer;font-size:16px;">✕</button>' +
+          '</div>' +
+          '<p style="font-size:10px;color:#9ca3af;margin:0 0 10px 0;">Mapa buduje się automatycznie z Twojej pracy. Możesz ręcznie edytować kody języków (np. tr, pl, el) oddzielone przecinkami. Jeśli kraj nie ma wpisów — detekcja języka jest pomijana.</p>' +
+          '<table style="width:100%;border-collapse:collapse;">' +
+            '<thead><tr>' +
+              '<th style="font-size:10px;opacity:0.5;text-align:left;padding:2px 8px;">Kraj</th>' +
+              '<th style="font-size:10px;opacity:0.5;text-align:left;padding:2px 8px;">Języki (kody)</th>' +
+              '<th></th>' +
+            '</tr></thead>' +
+            '<tbody id="b24t-lm-body">' + rows + '</tbody>' +
+          '</table>' +
+          '<div style="display:flex;gap:8px;margin-top:14px;align-items:center;">' +
+            '<input id="b24t-lm-new-cc" type="text" placeholder="Kraj (np. TR)" maxlength="3" style="background:#1e1e2e;border:1px solid #3a3a4a;border-radius:4px;color:#e2e8f0;font-size:10px;padding:4px 6px;width:60px;">' +
+            '<input id="b24t-lm-new-langs" type="text" placeholder="Języki (np. tr)" style="background:#1e1e2e;border:1px solid #3a3a4a;border-radius:4px;color:#e2e8f0;font-size:10px;padding:4px 6px;flex:1;">' +
+            '<button id="b24t-lm-add" style="font-size:10px;padding:4px 8px;border-radius:6px;border:none;background:#6366f1;color:#fff;cursor:pointer;">Dodaj</button>' +
+          '</div>' +
+          '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">' +
+            '<button id="b24t-lm-save" style="font-size:11px;padding:5px 14px;border-radius:7px;border:none;background:#6366f1;color:#fff;cursor:pointer;font-weight:600;">Zapisz</button>' +
+          '</div>' +
+        '</div>';
+      }
+
+      overlay.innerHTML = buildModalContent();
+      document.body.appendChild(overlay);
+
+      function saveAndClose() {
+        // Read all rows
+        overlay.querySelectorAll('.b24t-lm-input').forEach(function(inp) {
+          var cc = inp.dataset.cc;
+          var langs = inp.value.split(',').map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
+          map[cc] = langs;
+        });
+        _newsSaveLangMap(map);
+        overlay.remove();
+      }
+
+      overlay.querySelector('#b24t-lm-close').addEventListener('click', function() { overlay.remove(); });
+      overlay.querySelector('#b24t-lm-save').addEventListener('click', saveAndClose);
+
+      overlay.querySelector('#b24t-lm-add').addEventListener('click', function() {
+        var cc = (overlay.querySelector('#b24t-lm-new-cc').value || '').toUpperCase().trim();
+        var langs = overlay.querySelector('#b24t-lm-new-langs').value.split(',').map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
+        if (!cc || langs.length === 0) return;
+        map[cc] = (map[cc] || []).concat(langs.filter(function(l) { return !(map[cc] || []).includes(l); }));
+        overlay.querySelector('#b24t-lm-new-cc').value = '';
+        overlay.querySelector('#b24t-lm-new-langs').value = '';
+        overlay.innerHTML = buildModalContent();
+        wireModalEvents();
+      });
+
+      function wireModalEvents() {
+        var closeBtn = overlay.querySelector('#b24t-lm-close');
+        var saveBtn = overlay.querySelector('#b24t-lm-save');
+        var addBtn = overlay.querySelector('#b24t-lm-add');
+        if (closeBtn) closeBtn.addEventListener('click', function() { overlay.remove(); });
+        if (saveBtn) saveBtn.addEventListener('click', saveAndClose);
+        if (addBtn) addBtn.addEventListener('click', function() {
+          var cc = (overlay.querySelector('#b24t-lm-new-cc').value || '').toUpperCase().trim();
+          var langs = overlay.querySelector('#b24t-lm-new-langs').value.split(',').map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
+          if (!cc || langs.length === 0) return;
+          map[cc] = (map[cc] || []).concat(langs.filter(function(l) { return !(map[cc] || []).includes(l); }));
+          overlay.querySelector('#b24t-lm-new-cc').value = '';
+          overlay.querySelector('#b24t-lm-new-langs').value = '';
+          overlay.innerHTML = buildModalContent();
+          wireModalEvents();
+        });
+        overlay.querySelectorAll('.b24t-lm-del').forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            delete map[btn.dataset.cc];
+            overlay.innerHTML = buildModalContent();
+            wireModalEvents();
+          });
+        });
+      }
+      wireModalEvents();
+
+      // Click outside to close
+      overlay.addEventListener('click', function(e) {
+        if (e.target === overlay) overlay.remove();
+      });
+    }
+
+    // ─── PASTE + IMPORT ───
+    var importBtn = document.getElementById('b24t-news-import-btn');
+    var clearBtn  = document.getElementById('b24t-news-clear-btn');
+    var pasteArea = document.getElementById('b24t-news-paste-area');
+
+    function importUrls() {
+      var raw = pasteArea ? pasteArea.value : '';
+      var lines = raw.split('\n').map(function(l) { return l.trim(); }).filter(function(l) { return l.startsWith('http'); });
+
+      // Dedup
+      var seen = {};
+      lines = lines.filter(function(u) {
+        if (seen[u]) return false;
+        seen[u] = true;
+        return true;
+      });
+
+      newsState.urls = lines.map(function(u) {
+        return { url: u, status: 'pending', opened: false, submitted: false };
+      });
+      newsState.activeIdx = -1;
+
+      // Country detection
+      var detected = _newsDetectCountryFromUrls(newsState.urls);
+      newsState.detectedCountry = detected;
+
+      // Badge
+      var badge = document.getElementById('b24t-news-country-badge');
+      if (badge) {
+        if (detected) { badge.textContent = detected; badge.style.display = ''; }
+        else { badge.style.display = 'none'; }
+      }
+
+      // Country mismatch warning
+      var pc = _newsProjectCountry();
+      var warn = document.getElementById('b24t-news-country-warn');
+      if (warn) {
+        if (detected && pc && detected !== pc) {
+          warn.textContent = '⚠ URLe wskazują na kraj ' + detected + ', ale aktywny projekt to ' + pc + '. Sprawdź, czy wklejono właściwe URLe.';
+          warn.style.display = '';
+        } else {
+          warn.style.display = 'none';
+        }
+      }
+
+      // Load chips for detected country
+      renderChips(detected || 'DEFAULT');
+      renderUrlList();
+
+      // Pre-fill country in form
+      var fCountry = document.getElementById('b24t-news-f-country');
+      if (fCountry) fCountry.value = pc || detected || '';
+
+      if (pasteArea) pasteArea.value = '';
+    }
+
+    if (importBtn) importBtn.addEventListener('click', importUrls);
+    if (clearBtn) clearBtn.addEventListener('click', function() {
+      newsState.urls = [];
+      newsState.activeIdx = -1;
+      var fUrl = document.getElementById('b24t-news-f-url');
+      if (fUrl) fUrl.value = '';
+      renderUrlList();
+    });
+
+    // Also import on Ctrl+Enter in textarea
+    if (pasteArea) {
+      pasteArea.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); importUrls(); }
+      });
+    }
+
+    // ─── ADD CHIP ───
+    var addChipBtn = document.getElementById('b24t-news-add-chip-btn');
+    if (addChipBtn) {
+      addChipBtn.addEventListener('click', function() {
+        var kw = prompt('Nowe słowo kluczowe (fragment URLa):');
+        if (!kw || !kw.trim()) return;
+        var cc = newsState.detectedCountry || 'DEFAULT';
+        var chips = _newsGetKeywords(cc);
+        if (!chips.includes(kw.trim())) {
+          chips.push(kw.trim());
+          _newsSaveKeywords(cc, chips);
+        }
+        renderChips(cc);
+        renderUrlList();
+      });
+    }
+
+    // ─── LANG MAP BUTTON ───
+    var langMapBtn = document.getElementById('b24t-news-lang-map-btn');
+    if (langMapBtn) langMapBtn.addEventListener('click', openLangMapEditor);
+
+    // ─── FORCE OPEN BUTTON ───
+    var forceOpenBtn = document.getElementById('b24t-news-lang-force-open');
+    if (forceOpenBtn) {
+      forceOpenBtn.addEventListener('click', function() {
+        var fUrl = document.getElementById('b24t-news-f-url');
+        if (fUrl && fUrl.value) window.open(fUrl.value, '_blank');
+        forceOpenBtn.style.display = 'none';
+        var lw = document.getElementById('b24t-news-lang-warn');
+        if (lw) lw.style.display = 'none';
+      });
+    }
+
+    // ─── NEXT BUTTON ───
+    var nextBtn = document.getElementById('b24t-news-next-btn');
+    if (nextBtn) {
+      nextBtn.addEventListener('click', function() {
+        // Find next unhandled (match or pending, not skipped/added/error)
+        var start = newsState.activeIdx + 1;
+        for (var i = start; i < newsState.urls.length; i++) {
+          var s = newsState.urls[i].status;
+          if (s === 'match' || s === 'pending' || s === 'nomatch' || s === 'opened') {
+            activateUrl(i);
+            return;
+          }
+        }
+        // Wrap around
+        for (var j = 0; j < start; j++) {
+          var s2 = newsState.urls[j].status;
+          if (s2 === 'match' || s2 === 'pending' || s2 === 'nomatch' || s2 === 'opened') {
+            activateUrl(j);
+            return;
+          }
+        }
+      });
+    }
+
+    // ─── SUBMIT ───
+    var submitBtn = document.getElementById('b24t-news-submit-btn');
+    if (submitBtn) {
+      submitBtn.addEventListener('click', function() {
+        var fUrl     = (document.getElementById('b24t-news-f-url')     || {}).value || '';
+        var fTitle   = (document.getElementById('b24t-news-f-title')   || {}).value || '';
+        var fContent = (document.getElementById('b24t-news-f-content') || {}).value || '';
+        var fDate    = (document.getElementById('b24t-news-f-date')    || {}).value || '';
+        var fHour    = (document.getElementById('b24t-news-f-hour')    || {}).value || '12';
+        var fMinute  = (document.getElementById('b24t-news-f-minute')  || {}).value || '00';
+        var fSent    = (document.getElementById('b24t-news-f-sentiment')|| {}).value || '0';
+        var fCountry = (document.getElementById('b24t-news-f-country') || {}).value || '';
+        var formWarn = document.getElementById('b24t-news-form-warn');
+        var subStatus = document.getElementById('b24t-news-submit-status');
+
+        function showErr(msg) {
+          if (formWarn) { formWarn.textContent = msg; formWarn.style.display = ''; }
+          if (subStatus) subStatus.textContent = '';
+        }
+        function clearErr() { if (formWarn) formWarn.style.display = 'none'; }
+
+        clearErr();
+
+        // Validations
+        if (!fUrl) { showErr('Brak URLa. Wybierz URL z listy po lewej.'); return; }
+        if (!fContent.trim()) { showErr('Treść wzmianki jest wymagana.'); return; }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(fDate)) { showErr('Nieprawidlowy format daty — wymagany: YYYY-MM-DD'); return; }
+        if (_newsGetSessionUrls()[fUrl]) { showErr('Ten URL byl juz submitowany w tej sesji.'); return; }
+        var pc = _newsProjectCountry();
+        if (pc && fCountry && fCountry !== pc) { showErr('Kraj formularza (' + fCountry + ') niezgodny z projektem (' + pc + ').'); return; }
+
+        // Get CSRF token
+        var tknEl = document.querySelector('[name="tknB24"]');
+        if (!tknEl) { showErr('Nie znaleziono tokenu CSRF (tknB24). Upewnij sie, ze jestes na stronie Brand24.'); return; }
+        var tkn = tknEl.value;
+        var sid = state.projectId || '';
+        if (!sid) { showErr('Brak ID projektu. Przejdz na strone projektu Brand24.'); return; }
+
+        var body = [
+          'tknB24=' + encodeURIComponent(tkn),
+          'f=fser',
+          'search_id=' + encodeURIComponent(sid),
+          'mention_url=' + encodeURIComponent(fUrl),
+          'mention_title=' + encodeURIComponent(fTitle),
+          'mention_content=' + encodeURIComponent(fContent),
+          'mention_category=7',
+          'mention_country=' + encodeURIComponent(fCountry),
+          'mention_sentiment=' + encodeURIComponent(fSent),
+          'mention_created_date_day=' + encodeURIComponent(fDate),
+          'mention_created_date_hour=' + encodeURIComponent(fHour),
+          'mention_created_date_minute=' + encodeURIComponent(fMinute),
+        ].join('&');
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = '⏳ Wysyłam...';
+        if (subStatus) subStatus.textContent = '';
+
+        GM_xmlhttpRequest({
+          method: 'POST',
+          url: 'https://app.brand24.com/searches/add-new-mention/?sid=' + sid,
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          data: body,
+          onload: function(resp) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = '✚ Dodaj wzmiankę do Brand24';
+            var isDuplicate = resp.responseText && resp.responseText.indexOf('There is the entry with this address') !== -1;
+            var isOk = resp.status >= 200 && resp.status < 400 && !isDuplicate;
+            if (isDuplicate) {
+              _newsMarkSessionUrl(fUrl);
+              if (subStatus) { subStatus.textContent = '⚠ Duplikat — wzmianka juz istnieje w projekcie.'; subStatus.style.color = '#f59e0b'; }
+              if (newsState.activeIdx >= 0) newsState.urls[newsState.activeIdx].status = 'error';
+            } else if (isOk) {
+              _newsMarkSessionUrl(fUrl);
+              if (subStatus) { subStatus.textContent = '✓ Dodano do Brand24!'; subStatus.style.color = '#22c55e'; }
+              if (newsState.activeIdx >= 0) newsState.urls[newsState.activeIdx].status = 'added';
+              // Clear content + title for next mention
+              var tc = document.getElementById('b24t-news-f-content');
+              var tt = document.getElementById('b24t-news-f-title');
+              if (tc) tc.value = '';
+              if (tt) tt.value = '';
+            } else {
+              if (subStatus) { subStatus.textContent = '✗ Blad HTTP ' + resp.status; subStatus.style.color = '#ef4444'; }
+              if (newsState.activeIdx >= 0) newsState.urls[newsState.activeIdx].status = 'error';
+            }
+            renderUrlList();
+          },
+          onerror: function() {
+            submitBtn.disabled = false;
+            submitBtn.textContent = '✚ Dodaj wzmiankę do Brand24';
+            if (subStatus) { subStatus.textContent = '✗ Blad sieci — sprawdz polaczenie.'; subStatus.style.color = '#ef4444'; }
+          },
+        });
+      });
+    }
+
+    // ─── INITIAL RENDER ───
+    var pc = _newsProjectCountry();
+    var fCountry = document.getElementById('b24t-news-f-country');
+    if (fCountry && pc) fCountry.value = pc;
+    renderChips('DEFAULT');
+    renderUrlList();
+  }
+
+
+  // ───────────────────────────────────────────
   // CHANGELOG - historia wersji
   // ───────────────────────────────────────────
 
   const CHANGELOG = [
+    {
+      version: '0.15.0',
+      date: '2026-03-28',
+      label: 'New',
+      labelColor: '#22c55e',
+      changes: [
+        { type: 'new', text: 'Modul News: nowa zakładka do obsługi "zadania newsowego" H&M. Import URLi (bulk, jeden na linię), automatyczna deduplikacja, filtrowanie przez edytowalne chipy słow kluczowych, detekcja kraju URLi i porownanie z projektem' },
+        { type: 'new', text: 'Modul News: otwieranie stron w nowym oknie z detekcja jezyka (<html lang>, subdomena, meta). Jezeli strona ma nieznany jezyk dla danego kraju — Tagger pyta czy dodac go do mapy i proponuje odpowiedni przycisk' },
+        { type: 'new', text: 'Modul News: formularz dodawania wzmianki (URL, tytul, tresc, data, godzina, minuta, sentyment, kategoria=7 News, kraj z projektu). Submit przez GM_xmlhttpRequest z tokenem CSRF tknB24. Detekcja duplikatow po response Brand24' },
+        { type: 'new', text: 'Modul News: dynamiczna mapa projekt→jezyk. Buduje sie automatycznie z pracy annotatora (detekcja jezyka przy otwarciu strony). Edytowalna przez przycisk ⚙ Jezyki — modal z lista krajow + chipami jezykow per kraj. Zapisuje sie w localStorage' },
+        { type: 'new', text: 'Modul News: statusy URLi na liscie (zielony=trafienie, zolty=otwarty, szary=pominiety, ciemnozielony=dodany, czerwony=blad/duplikat), pasek postepu, przycisk "Otworz nastepny", chipy slow kluczowych per kraj zapisywane w localStorage' },
+      ]
+    },
     {
       version: '0.14.0',
       date: '2026-03-28',
@@ -6173,6 +7009,37 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.15.0',
+      date: '2026-03-28',
+      notes: [
+        '[NEW]  newsState: obiekt { urls[], activeIdx, sessionUrls{}, detectedCountry } — lokalny stan modulu News per sesje strony',
+        '[NEW]  NEWS_DEFAULT_KEYWORDS: domyslna lista chipow (/hm, h&m, hennes, mauritz itd.); NEWS_KEYWORD_EXCLUSIONS: ["h-mart"] — wykluczenia przed matchingiem',
+        '[NEW]  NEWS_TLD_MAP: mapa TLD domeny → kod kraju (pl,tr,gr,hr,ro,bg,hu,cz,sk,lt,lv,ee,rs,ge,ua,ba,mk,al,xk,kz,me,md,am,az)',
+        '[NEW]  _newsCountryFromUrl(url): wyciaga kod kraju z TLD lub subdomeny (np. tr.fashionnetwork.com → TR)',
+        '[NEW]  _newsDetectCountryFromUrls(urls): dominujacy kraj jezeli >30% URLi wskazuje na jeden kraj',
+        '[NEW]  _newsProjectCountry(): kraj z nazwy projektu — regex /_([A-Z]{2})$/ na state.projectName',
+        '[NEW]  _newsGetKeywords/SaveKeywords: LS.NEWS_KEYWORDS = { countryCode: [kw...] } — chipy per kraj; fallback na NEWS_DEFAULT_KEYWORDS',
+        '[NEW]  _newsGetLangMap/SaveLangMap: LS.NEWS_LANG_MAP = { "TR": ["tr"], ... } — pusta mapa na start; buduje sie z pracy annotatora',
+        '[NEW]  _newsGetSessionUrls/_newsMarkSessionUrl: LS.NEWS_SESSION_URLS = { url: true } — guard przed podwojnym submittem w sesji',
+        '[NEW]  _newsUrlMatchesKeywords(url, chips): sprawdza trafienie keyword (case-insensitive) z wylaczeniem NEWS_KEYWORD_EXCLUSIONS',
+        '[NEW]  buildNewsTab(): zwraca div#b24t-news-tab. Layout: lewy panel (textarea import, chips, country warn, progress bar, URL list, next btn) + prawy panel (formularz wzmianki z polami: url readonly, tytul, tresc, kategoria=7 locked, kraj locked, data, godzina, minuta, sentyment select)',
+        '[NEW]  wireNewsTab(): cala logika modulu News — wywolywana lazy (pierwszy klik w tab lub przy kazdom pokazaniu). Zawiera: renderChips, renderUrlList, activateUrl, openUrlWithLangCheck, _newsDetectLangFromResponse, _newsOfferAddLang, openLangMapEditor, import/clear, addChip, forceOpen, nextBtn, submit GM_xmlhttpRequest',
+        '[NEW]  renderChips(countryCode): renderuje chipy slow kluczowych z LS; chip ma przycisk ✕ usuwajacy go z LS i odswiezajacy liste',
+        '[NEW]  renderUrlList(): renderuje wiersze .b24t-news-url-row z kolorowym status dot + shortUrl + przycisk Pomij; aktualizuje progress bar; klik → activateUrl(idx)',
+        '[NEW]  activateUrl(idx): ustawia activeIdx, zmienia status na "opened", wypelnia form URL + kraj, czysci lang-warn, wywoluje openUrlWithLangCheck',
+        '[NEW]  openUrlWithLangCheck(url, idx, force): jesli kraj ma wpisy w LangMap i lang niezgodny → pokazuje ostrzezenie + oferuje _newsOfferAddLang. Niezaleznie otwiera window.open. GM_xmlhttpRequest GET do strony → parsuje <html lang>',
+        '[NEW]  _newsDetectLangFromResponse(html, url): priorytet: <html lang>, meta content-language, subdomena 2-literowa',
+        '[NEW]  _newsOfferAddLang(countryCode, lang): dodaje przycisk "Dodaj X do mapy dla Y" w lang-warn — annotator decyduje czy uczyc mape',
+        '[NEW]  openLangMapEditor(): modal hardcoded kolory (#16161f, #3a3a4a, #6366f1) — appendowany do document.body (nie CSS vars — zgodnie z HARD RULES). Tabela krajow + input jezykow, przycisk usun kraj, dodaj nowy kraj+jezyki, zapisz',
+        '[NEW]  Submit handler: walidacja (content wymagany, YYYY-MM-DD, sessionUrls guard, country match). CSRF token z document.querySelector("[name=tknB24]"). POST na /searches/add-new-mention/?sid=X przez GM_xmlhttpRequest z Content-Type: application/x-www-form-urlencoded. Detekcja duplikatu po "There is the entry with this address" w response. Status url: added/error',
+        '[NEW]  Tab button: <button class="b24t-tab" data-tab="news">📰 News</button> w #b24t-tabs',
+        '[NEW]  buildNewsTab() inject + wireNewsTab() przy pierwszym kliknieciu w tab (lazy init)',
+        '[NEW]  tabEls.news dodany do tab switching w init(). wireNewsTab() wywolywana przy tab === "news"',
+        '[NEW]  LS keys: NEWS_KEYWORDS (b24tagger_news_keywords), NEWS_SESSION_URLS (b24tagger_news_session_urls), NEWS_LANG_MAP (b24tagger_news_lang_map)',
+        '[ARCH] wireNewsTab() celowo nie ma guard "juz wired" — tab jest lazy i moze byc wielokrotnie wyswietlany; stan jest w newsState (nie w DOM)',
+      ]
+    },
     {
       version: '0.14.0',
       date: '2026-03-28',
@@ -9953,6 +10820,11 @@ Tej operacji nie można cofnąć.`)) {
     const placeholder = panel.querySelector('#b24t-quicktag-tab-placeholder');
     if (placeholder) placeholder.replaceWith(qtTab);
 
+    // Inject News tab
+    const newsTab = buildNewsTab();
+    const newsPlaceholder = panel.querySelector('#b24t-news-tab-placeholder');
+    if (newsPlaceholder) newsPlaceholder.replaceWith(newsTab);
+
     document.body.appendChild(panel);
     setupDragging(panel);
     setupCollapse(panel);
@@ -9968,6 +10840,7 @@ Tej operacji nie można cofnąć.`)) {
       quicktag: document.getElementById('b24t-quicktag-tab'),
       delete:   document.getElementById('b24t-delete-tab'),
       history:  document.getElementById('b24t-history-tab'),
+      news:     document.getElementById('b24t-news-tab'),
       actions:  document.getElementById('b24t-actions'),
     };
     const tabBtns = panel.querySelectorAll('.b24t-tab');
@@ -9980,7 +10853,9 @@ Tej operacji nie można cofnąć.`)) {
         if (tabEls.quicktag) tabEls.quicktag.style.display = tab === 'quicktag' ? 'block' : 'none';
         if (tabEls.delete)   tabEls.delete.style.display   = tab === 'delete'   ? 'block' : 'none';
         if (tabEls.history)  tabEls.history.style.display  = tab === 'history'  ? 'block' : 'none';
+        if (tabEls.news)     tabEls.news.style.display     = tab === 'news'     ? 'block' : 'none';
         if (tabEls.actions)  tabEls.actions.style.display  = tab === 'main'     ? 'flex'  : 'none';
+        if (tab === 'news') wireNewsTab();
       });
     });
 

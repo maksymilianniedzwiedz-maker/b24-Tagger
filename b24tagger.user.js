@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.10.0
+// @version      0.10.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.10.0';
+  const VERSION = '0.10.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4699,6 +4699,15 @@ function showOnboarding(onComplete) {
 
   const CHANGELOG = [
     {
+      version: '0.10.1',
+      date: '2026-03-28',
+      label: 'Fix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Overall Stats:\n* naprawiono brakujący kafelek "Wszystkie wzmianki"\n* dodano informację o okresie danych (bieżący miesiąc, wyjątek 1-2 dnia)\n* naprawiono wyświetlanie nazw projektów (pokazywało ID zamiast nazwy)' },
+      ]
+    },
+    {
       version: '0.10.0',
       date: '2026-03-28',
       label: 'Nowość',
@@ -5891,6 +5900,21 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.10.1',
+      date: '2026-03-28',
+      notes: [
+        '[FIX]  _fetchOverallStats: usunięto _getDefaultDateFrom/To() — używa getAnnotatorDates() (current month, wyjątek 1-2 dnia miesiąca)',
+        '[FIX]  _fetchOverallStats: dodano query getMentions(pid, dateFrom, dateTo, [], 1) jako counts[0] → total all mentions',
+        '[FIX]  _bgFetchOverallStats: cache teraz przechowuje dateFrom, dateTo, label obok results',
+        '[FIX]  renderOverallStatsData: sygnatura zmieniona na (el, results, group, cached); 4. argument cached zawiera dateFrom/dateTo/label',
+        '[FIX]  renderOverallStatsData: kafelek "Wszystkie" (totalAll) zawsze pierwsza karta; grid 3 lub 4 kolumny',
+        '[FIX]  renderOverallStatsData: periodHtml — wiersz z ikoną 📅 i zakresem dat nad kartami',
+        '[FIX]  renderOverallStatsData: tabela dodaje kolumnę ALL przed REL',
+        '[FIX]  getKnownProjectsList: dodano filter(p.id > 0) i poprawioną ekstrakcję name z obiektu LS.PROJECTS',
+        '[FIX]  Wszystkie wywołania renderOverallStatsData zaktualizowane o 4. argument (cached lub fresh)',
+      ]
+    },
     {
       version: '0.10.0',
       date: '2026-03-28',
@@ -8012,8 +8036,13 @@ To jest NIEODWRACALNE.`)) return;
   function getKnownProjectsList() {
     var projects = lsGet(LS.PROJECTS, {});
     return Object.entries(projects).map(function(entry) {
-      return { id: parseInt(entry[0]), name: entry[1].name || ('Projekt ' + entry[0]) };
-    }).sort(function(a, b) { return a.name.localeCompare(b.name); });
+      var pid = entry[0];
+      var pData = entry[1];
+      // name może być string (stary format) lub w polu name obiektu
+      var name = (typeof pData === 'object' ? pData.name : null) || ('Projekt ' + pid);
+      return { id: parseInt(pid), name: name };
+    }).filter(function(p) { return p.id > 0; })
+      .sort(function(a, b) { return a.name.localeCompare(b.name); });
   }
 
   function renderGroupsTab() {
@@ -8175,23 +8204,18 @@ To jest NIEODWRACALNE.`)) return;
     if (g) { g.relevantTagId = tagId; saveGroups(groups); }
   }
 
-  function _getDefaultDateFrom() {
-    var d = new Date(); d.setMonth(d.getMonth() - 1);
-    return d.toISOString().substring(0, 10);
-  }
-  function _getDefaultDateTo() {
-    return new Date().toISOString().substring(0, 10);
-  }
-
   async function _fetchOverallStats(group) {
     var projects = lsGet(LS.PROJECTS, {});
+    // Użyj tej samej logiki dat co zakładka Projekt — current month, wyjątek dla 1-2 dnia
+    var dates = getAnnotatorDates();
+    var dateFrom = dates.dateFrom;
+    var dateTo   = dates.dateTo;
     var results = [];
     for (var i = 0; i < group.projectIds.length; i++) {
       var pid = group.projectIds[i];
       var pData = projects[pid];
       if (!pData) { results.push({ pid: pid, name: 'ID:' + pid, error: 'projekt nieznany' }); continue; }
-      var dateFrom = pData.dateFrom || _getDefaultDateFrom();
-      var dateTo   = pData.dateTo   || _getDefaultDateTo();
+      var name = (typeof pData === 'object' ? pData.name : null) || ('ID:' + pid);
       var tagIds   = pData.tagIds || {};
       // Szukamy reqVer i toDel w tagIds map
       var reqVerId = null, toDelId = null;
@@ -8205,30 +8229,32 @@ To jest NIEODWRACALNE.`)) return;
       var relTagId = group.relevantTagId || null;
       try {
         var queries = [
+          getMentions(pid, dateFrom, dateTo, [], 1),   // total — bez filtra tagu
           relTagId ? getMentions(pid, dateFrom, dateTo, [relTagId], 1) : Promise.resolve({ count: null }),
           getMentions(pid, dateFrom, dateTo, [reqVerId], 1),
           getMentions(pid, dateFrom, dateTo, [toDelId],  1),
         ];
         var counts = await Promise.all(queries);
         results.push({
-          pid: pid, name: pData.name || ('ID:' + pid),
-          relevant: counts[0].count,
-          reqVer:   counts[1].count,
-          toDelete: counts[2].count,
+          pid: pid, name: name,
+          total:    counts[0].count,
+          relevant: counts[1].count,
+          reqVer:   counts[2].count,
+          toDelete: counts[3].count,
           dateFrom: dateFrom, dateTo: dateTo,
         });
       } catch(e) {
-        results.push({ pid: pid, name: pData.name || ('ID:' + pid), error: e.message });
+        results.push({ pid: pid, name: name, error: e.message });
       }
     }
-    return results;
+    return { results: results, dateFrom: dateFrom, dateTo: dateTo, label: dates.label };
   }
 
   async function _bgFetchOverallStats(group) {
     if (!state.tokenHeaders) return null;
     try {
-      var results = await _fetchOverallStats(group);
-      bgCache.overallStats = { groupId: group.id, results: results, ts: Date.now() };
+      var data = await _fetchOverallStats(group);
+      bgCache.overallStats = { groupId: group.id, results: data.results, dateFrom: data.dateFrom, dateTo: data.dateTo, label: data.label, ts: Date.now() };
       return bgCache.overallStats;
     } catch(e) { return null; }
   }
@@ -8290,15 +8316,15 @@ To jest NIEODWRACALNE.`)) return;
     var dataEl = el.querySelector('#b24t-overall-data');
     if (!dataEl) return;
     if (_bgCacheFresh(bgCache.overallStats) && bgCache.overallStats.groupId === group.id) {
-      renderOverallStatsData(dataEl, bgCache.overallStats.results, group);
+      renderOverallStatsData(dataEl, bgCache.overallStats.results, group, bgCache.overallStats);
       _bgFetchOverallStats(group).then(function(fresh) {
-        if (fresh && dataEl.isConnected) renderOverallStatsData(dataEl, fresh.results, group);
+        if (fresh && dataEl.isConnected) renderOverallStatsData(dataEl, fresh.results, group, fresh);
       }).catch(function(){});
       return;
     }
     dataEl.innerHTML = '<div style="padding:20px 0;text-align:center;"><div style="font-size:22px;animation:b24t-spin 1s linear infinite;display:inline-block;">&#8635;</div><div style="font-size:11px;color:var(--b24t-text-faint);margin-top:8px;">Pobieram statystyki...</div></div>';
     var fresh = await _bgFetchOverallStats(group);
-    if (fresh && dataEl.isConnected) renderOverallStatsData(dataEl, fresh.results, group);
+    if (fresh && dataEl.isConnected) renderOverallStatsData(dataEl, fresh.results, group, fresh);
   }
 
   function _statsCard(label, value, color, bgColor) {
@@ -8308,46 +8334,63 @@ To jest NIEODWRACALNE.`)) return;
     '</div>';
   }
 
-  function renderOverallStatsData(el, results, group) {
+  function renderOverallStatsData(el, results, group, cached) {
     if (!el) return;
     var hasRelevant = group.relevantTagId != null;
-    var totalRelevant = 0, totalReqVer = 0, totalToDelete = 0;
+    var totalAll = 0, totalRelevant = 0, totalReqVer = 0, totalToDelete = 0;
     results.forEach(function(r) {
       if (!r.error) {
-        if (r.relevant  != null) totalRelevant  += r.relevant;
-        if (r.reqVer    != null) totalReqVer    += r.reqVer;
-        if (r.toDelete  != null) totalToDelete  += r.toDelete;
+        if (r.total    != null) totalAll       += r.total;
+        if (r.relevant != null) totalRelevant  += r.relevant;
+        if (r.reqVer   != null) totalReqVer    += r.reqVer;
+        if (r.toDelete != null) totalToDelete  += r.toDelete;
       }
     });
-    var colCount = hasRelevant ? 3 : 2;
-    var cards = '';
+    // Kafelki — zawsze: Total + opcjonalnie Relevantne + zawsze REQ + DEL
+    var cards = _statsCard('Wszystkie', totalAll, 'var(--b24t-text-muted)', 'var(--b24t-bg-elevated)');
     if (hasRelevant) cards += _statsCard('Relevantne', totalRelevant, '#16a34a', '#dcfce7');
     cards += _statsCard('Do weryfikacji', totalReqVer, '#d97706', '#fef3c7');
-    cards += _statsCard('Do usuniecia', totalToDelete, '#dc2626', '#fee2e2');
+    cards += _statsCard('Do usunięcia', totalToDelete, '#dc2626', '#fee2e2');
+    var colCount = hasRelevant ? 4 : 3;
     var warnHtml = !hasRelevant
-      ? '<div style="margin-bottom:10px;padding:8px 10px;background:var(--b24t-warn-bg);border:1px solid color-mix(in srgb,var(--b24t-warn) 30%,transparent);border-radius:7px;font-size:11px;color:var(--b24t-warn);line-height:1.5;">Ustaw tag Relevantne w ustawieniach aby widziec pelne dane.</div>' : '';
+      ? '<div style="margin-bottom:8px;padding:7px 10px;background:var(--b24t-warn-bg);border:1px solid color-mix(in srgb,var(--b24t-warn) 30%,transparent);border-radius:7px;font-size:11px;color:var(--b24t-warn);line-height:1.5;">Ustaw tag Relevantne w ustawieniach (⚙) aby widzieć pełne dane.</div>' : '';
     var thREL = hasRelevant ? '<th style="padding:6px 8px;font-size:10px;color:#16a34a;text-align:right;font-weight:600;">REL</th>' : '';
     var tableRows = results.map(function(r) {
-      if (r.error) return '<tr><td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="' + (colCount + 1) + '" style="padding:6px 8px;font-size:10px;color:var(--b24t-err);">blad: ' + r.error + '</td></tr>';
+      if (r.error) return '<tr><td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="' + colCount + '" style="padding:6px 8px;font-size:10px;color:var(--b24t-err);">błąd: ' + r.error + '</td></tr>';
       var relTd = hasRelevant ? '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#16a34a;text-align:right;">' + (r.relevant != null ? r.relevant : '—') + '</td>' : '';
       return '<tr style="border-top:1px solid var(--b24t-border-sub);">' +
-        '<td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + r.name + '">' + r.name + '</td>' +
+        '<td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + r.name + '">' + r.name + '</td>' +
+        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-text-muted);text-align:right;">' + (r.total != null ? r.total : '—') + '</td>' +
         relTd +
-        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#d97706;text-align:right;">' + (r.reqVer != null ? r.reqVer : '—') + '</td>' +
+        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#d97706;text-align:right;">' + (r.reqVer  != null ? r.reqVer  : '—') + '</td>' +
         '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#dc2626;text-align:right;">' + (r.toDelete != null ? r.toDelete : '—') + '</td>' +
       '</tr>';
     }).join('');
-    el.innerHTML = warnHtml +
-      '<div style="display:grid;grid-template-columns:' + (hasRelevant ? '1fr 1fr 1fr' : '1fr 1fr') + ';gap:8px;margin-bottom:12px;">' + cards + '</div>' +
+    // Informacja o okresie — z cached lub z pierwszego wyniku
+    var dateFrom = (cached && cached.dateFrom) || (results[0] && results[0].dateFrom) || '';
+    var dateTo   = (cached && cached.dateTo)   || (results[0] && results[0].dateTo)   || '';
+    var label    = (cached && cached.label)    || '';
+    var periodHtml = (dateFrom && dateTo)
+      ? '<div style="display:flex;align-items:center;gap:6px;padding:6px 0;margin-bottom:8px;border-bottom:1px solid var(--b24t-border-sub);">' +
+          '<span style="font-size:11px;color:var(--b24t-text-faint);">📅 Okres:</span>' +
+          '<span style="font-size:11px;font-weight:600;color:var(--b24t-text-muted);">' + (label ? label + ' ' : '') + '(' + dateFrom + ' → ' + dateTo + ')</span>' +
+        '</div>'
+      : '';
+    el.innerHTML = periodHtml + warnHtml +
+      '<div style="display:grid;grid-template-columns:' + (hasRelevant ? '1fr 1fr 1fr 1fr' : '1fr 1fr 1fr') + ';gap:6px;margin-bottom:10px;">' + cards + '</div>' +
       '<div style="border:1px solid var(--b24t-border);border-radius:8px;overflow:hidden;">' +
         '<table style="width:100%;border-collapse:collapse;">' +
-          '<tr style="background:var(--b24t-bg-deep);"><th style="padding:6px 8px;font-size:10px;color:var(--b24t-text-faint);text-align:left;font-weight:600;">Projekt</th>' + thREL +
-          '<th style="padding:6px 8px;font-size:10px;color:#d97706;text-align:right;font-weight:600;">REQ</th>' +
-          '<th style="padding:6px 8px;font-size:10px;color:#dc2626;text-align:right;font-weight:600;">DEL</th></tr>' +
+          '<tr style="background:var(--b24t-bg-deep);">' +
+            '<th style="padding:6px 8px;font-size:10px;color:var(--b24t-text-faint);text-align:left;font-weight:600;">Projekt</th>' +
+            '<th style="padding:6px 8px;font-size:10px;color:var(--b24t-text-faint);text-align:right;font-weight:600;">ALL</th>' +
+            thREL +
+            '<th style="padding:6px 8px;font-size:10px;color:#d97706;text-align:right;font-weight:600;">REQ</th>' +
+            '<th style="padding:6px 8px;font-size:10px;color:#dc2626;text-align:right;font-weight:600;">DEL</th>' +
+          '</tr>' +
           tableRows +
         '</table>' +
       '</div>' +
-      '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:8px;text-align:right;">' + group.name + ' · ' + results.length + ' projektow</div>';
+      '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:6px;text-align:right;">' + group.name + ' · ' + results.length + ' projektów</div>';
   }
 
   function showOverallStatsSettings(group) {

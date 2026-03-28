@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.16.5
+// @version      0.16.6
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.16.5';
+  const VERSION = '0.16.6';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2077,6 +2077,41 @@
       .b24t-check-wait { color: var(--b24t-warn); }
       .b24t-setup-nav { display: flex; justify-content: space-between; margin-top: 24px; gap: 8px; }
 
+      /* ── SIDE TAB PULSE ANIMATION ── */
+      @keyframes b24t-tab-pulse {
+        0%   { background: #6366f1; box-shadow: 3px 0 14px rgba(99,102,241,0.7); }
+        25%  { background: #8b5cf6; box-shadow: 3px 0 20px rgba(139,92,246,0.85); }
+        50%  { background: #ec4899; box-shadow: 3px 0 20px rgba(236,72,153,0.85); }
+        75%  { background: #8b5cf6; box-shadow: 3px 0 20px rgba(139,92,246,0.85); }
+        100% { background: #6366f1; box-shadow: 3px 0 14px rgba(99,102,241,0.7); }
+      }
+      /* ── MAIN PANEL SIDE TAB ── */
+      #b24t-main-tab {
+        position: fixed; left: 0; top: 36%; transform: translateY(-50%);
+        z-index: 2147483645; border-radius: 0 10px 10px 0; border: none;
+        padding: 18px 11px; cursor: pointer; display: none;
+        flex-direction: column; align-items: center; gap: 7px;
+        font-family: 'Inter','Segoe UI',system-ui,sans-serif;
+        font-size: 12px; font-weight: 700; letter-spacing: 0.06em;
+        color: #fff; user-select: none;
+        animation: b24t-tab-pulse 2.5s ease-in-out infinite;
+        transition: transform 0.15s;
+      }
+      #b24t-main-tab:hover { transform: translateY(-50%) scale(1.08) !important; animation-play-state: paused; background: #7c3aed !important; }
+      /* ── NEWS SIDE TAB ── */
+      #b24t-news-side-tab {
+        position: fixed; right: 0; top: calc(50% + 90px); transform: translateY(0);
+        z-index: 2147483639; border-radius: 10px 0 0 10px; border: 1px solid rgba(255,255,255,0.12); border-right: none;
+        padding: 14px 10px; cursor: pointer; display: none;
+        flex-direction: column; align-items: center; gap: 5px;
+        font-family: 'Inter','Segoe UI',system-ui,sans-serif;
+        font-size: 11px; font-weight: 700; letter-spacing: 0.05em;
+        color: #c4b5fd; user-select: none;
+        background: #1a1a2e; box-shadow: -3px 0 12px rgba(0,0,0,0.5);
+        transition: transform 0.15s, background 0.15s;
+      }
+      #b24t-news-side-tab:hover { background: #25253f; transform: scale(1.06); }
+      #b24t-news-side-tab.active { background: #2d1b69; color: #a78bfa; border-color: rgba(139,92,246,0.4); }
       /* ── ANNOTATOR FLOATING PANEL ── */
       #b24t-annotator-tab {
         transition: opacity 0.2s, transform 0.2s;
@@ -2264,7 +2299,7 @@
           </div>
           <button class="b24t-icon-btn" id="b24t-btn-features" title="Dodatkowe funkcje" style="font-size:14px;">⚙</button>
           <button class="b24t-icon-btn" id="b24t-btn-help" title="Pomoc">?</button>
-          <button class="b24t-icon-btn" id="b24t-btn-collapse" title="Zwiń/Rozwiń">▼</button>
+          <button class="b24t-icon-btn" id="b24t-btn-collapse" title="Zwiń/Rozwiń">▼</button><button class="b24t-icon-btn" id="b24t-btn-hide-panel" title="Schowaj panel do boku" style="font-size:13px;">‹</button>
         </div>
       </div>
 
@@ -2713,11 +2748,21 @@
       btn.textContent = isCollapsed ? '▲' : '▼';
       lsSet(LS.UI_COLLAPSED, isCollapsed);
       if (isCollapsed) {
-        // Clear any inline height/maxHeight so CSS height:auto takes over
         panel.style.height = '';
         panel.style.maxHeight = '';
       }
     });
+
+    // Hide-to-side button (in collapsed header)
+    var hideBtn = panel.querySelector('#b24t-btn-hide-panel');
+    if (hideBtn) {
+      hideBtn.addEventListener('click', function() {
+        panel.style.display = 'none';
+        var mainTab = document.getElementById('b24t-main-tab');
+        if (mainTab) mainTab.style.display = 'flex';
+        lsSet('b24tagger_panel_hidden', true);
+      });
+    }
   }
 
   // ───────────────────────────────────────────
@@ -5307,6 +5352,8 @@ function showOnboarding(onComplete) {
   function closeNewsPanels() {
     document.querySelectorAll('[data-news-panel]').forEach(function(el) { el.style.display = 'none'; });
     newsState.panelsOpen = false;
+    var nst = document.getElementById('b24t-news-side-tab');
+    if (nst) nst.classList.remove('active');
   }
 
   function _buildNewsPanels() {
@@ -6263,6 +6310,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.16.6",
+      "date": "2026-03-28",
+      "label": "New",
+      "labelColor": "#6c6cff",
+      "changes": [
+        {"type": "new", "text": "Glowny panel: przycisk schowaj do boku (pulsujacy)"},
+        {"type": "new", "text": "News: osobny przycisk boczny pod Annotators Tab"}
+      ]
+    },
+    {
       "version": "0.16.5",
       "date": "2026-03-28",
       "label": "Fix",
@@ -6346,17 +6403,7 @@ function showOnboarding(onComplete) {
         {"type": "new", "text": "Bug Report otwiera formularz Google Forms z prefill"}
       ]
     },
-    {
-      "version": "0.15.3",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#f87171",
-      "changes": [
-        {"type": "fix", "text": "Przywrócono działanie Feedback i Bug Report"},
-        {"type": "new", "text": "Deploy trafia też do prywatnego repo i24dev"}
-      ]
-    },
-  ];;;;;
+  ];;;;;;
 
   function _fetchChangelog(onDone) {
     const CACHE_KEY = 'b24tagger_cl_cache';
@@ -6993,11 +7040,16 @@ function showOnboarding(onComplete) {
     const panel = document.getElementById('b24t-annotator-panel');
     if (features.annotator_tools) {
       if (tab) tab.style.display = 'flex';
+      // Show news side tab alongside annotator tab
+      var _nst = document.getElementById('b24t-news-side-tab');
+      if (_nst) _nst.style.display = 'flex';
       // Prefetch danych w tle — startBgPrefetch sam zarządza tokenem i cyklem
       startBgPrefetch();
     } else {
       if (tab) tab.style.display = 'none';
       if (panel) panel.style.display = 'none';
+      var _nst2 = document.getElementById('b24t-news-side-tab');
+      if (_nst2) _nst2.style.display = 'none';
     }
   }
 
@@ -9925,6 +9977,51 @@ Tej operacji nie można cofnąć.`)) {
     if (placeholder) placeholder.replaceWith(qtTab);
 
     document.body.appendChild(panel);
+
+    // ── MAIN PANEL SIDE TAB ──
+    (function() {
+      var mainTab = document.createElement('div');
+      mainTab.id = 'b24t-main-tab';
+      mainTab.title = 'Otwórz B24 Tagger';
+      mainTab.innerHTML =
+        '<span style="writing-mode:vertical-rl;text-orientation:mixed;letter-spacing:.08em;font-size:12px;font-weight:700;">B24 Tagger</span>' +
+        '<span style="font-size:17px;line-height:1;">›</span>';
+      mainTab.addEventListener('click', function() {
+        mainTab.style.display = 'none';
+        panel.style.display = 'flex';
+        var pos = lsGet(LS.UI_POS);
+        if (pos && pos.left) { panel.style.left = pos.left; panel.style.top = pos.top; }
+        lsSet('b24tagger_panel_hidden', false);
+      });
+      document.body.appendChild(mainTab);
+      // Restore hidden state
+      if (lsGet('b24tagger_panel_hidden')) {
+        panel.style.display = 'none';
+        mainTab.style.display = 'flex';
+      }
+    })();
+
+    // ── NEWS SIDE TAB ──
+    (function() {
+      var newsSideTab = document.createElement('div');
+      newsSideTab.id = 'b24t-news-side-tab';
+      newsSideTab.title = 'Otwórz News';
+      newsSideTab.innerHTML =
+        '<span style="font-size:16px;line-height:1;">&#128240;</span>' +
+        '<span style="writing-mode:vertical-rl;text-orientation:mixed;letter-spacing:.07em;font-size:11px;font-weight:700;">News</span>';
+      newsSideTab.addEventListener('click', function() {
+        var annPanel = document.getElementById('b24t-annotator-panel');
+        if (!annPanel) return;
+        // If annotator panel is closed, open it first
+        if (annPanel.style.display === 'none' || annPanel.style.display === '') {
+          openAnnotatorPanel();
+        }
+        if (newsState.panelsOpen) { closeNewsPanels(); newsSideTab.classList.remove('active'); }
+        else { openNewsPanels(); newsSideTab.classList.add('active'); }
+      });
+      document.body.appendChild(newsSideTab);
+    })();
+
     setupDragging(panel);
     setupCollapse(panel);
     setupResize(panel, LS.UI_SIZE, { minW: 360, maxW: 720, minH: 380, maxH: Math.round(window.innerHeight * 0.92), useMaxHeight: true });

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.16.11
+// @version      0.17.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.16.11';
+  const VERSION = '0.17.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5187,7 +5187,14 @@ function showOnboarding(onComplete) {
     var top  = Math.round((window.screen.availHeight - h) / 2);
     var features = 'width=' + w + ',height=' + h + ',left=' + left + ',top=' + top +
                    ',resizable=yes,scrollbars=yes,toolbar=no,menubar=no,location=yes,status=no';
-    window.open(url, '_b24tnews', features);
+    // Reuse existing window — open with features only on first call, then just navigate
+    var existingWin = window._b24tnewsWin;
+    if (existingWin && !existingWin.closed) {
+      existingWin.location.href = url;
+      existingWin.focus();
+    } else {
+      window._b24tnewsWin = window.open(url, '_b24tnews', features);
+    }
   }
 
   // ── CSRF TOKEN RESOLUTION ──
@@ -5508,7 +5515,8 @@ function showOnboarding(onComplete) {
     // ─── PANEL 3: Formularz wzmianki (right column) ───
     var p3 = _newsPanelBase('b24t-news-p3', PANEL_W, topList, baseRight + PANEL_W + GAP, 2147483630);
 
-    var hdr3 = _newsPanelHeader('✍ Formularz wzmianki', closeNewsPanels);
+    var clearBtnHtml = '<button id="b24t-news-clear-btn" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:10px;font-weight:600;padding:2px 8px;border-radius:5px;flex-shrink:0;margin-right:4px;letter-spacing:0.02em;" title="Wyczyść tytuł i treść">✕ Wyczyść</button>';
+    var hdr3 = _newsPanelHeader('✍ Formularz wzmianki', closeNewsPanels, clearBtnHtml);
     _newsDraggable(hdr3, p3);
 
     var body3 = document.createElement('div');
@@ -6105,6 +6113,22 @@ function showOnboarding(onComplete) {
       });
     }
 
+    // ─── CLEAR BUTTON ───
+    var clearBtn = document.getElementById('b24t-news-clear-btn');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', function() {
+        var el;
+        el = document.getElementById('b24t-news-f-title');   if (el) el.value = '';
+        el = document.getElementById('b24t-news-f-content'); if (el) el.value = '';
+        el = document.getElementById('b24t-news-f-date');    if (el) el.value = '';
+        el = document.getElementById('b24t-news-date-detect-icon'); if (el) el.style.display = 'none';
+        var subStatus = document.getElementById('b24t-news-submit-status');
+        if (subStatus) subStatus.textContent = '';
+        var formErr = document.getElementById('b24t-news-form-err');
+        if (formErr) formErr.style.display = 'none';
+      });
+    }
+
     // ─── SUBMIT ───
     var submitBtn = document.getElementById('b24t-news-submit-btn');
     if (submitBtn) {
@@ -6193,6 +6217,14 @@ function showOnboarding(onComplete) {
               _newsMarkSessionUrl(fUrl);
               if (subStatus) { subStatus.textContent = '⚠ Duplikat — wzmianka już istnieje.'; subStatus.style.color = '#f59e0b'; }
               if (newsState.activeIdx >= 0) newsState.urls[newsState.activeIdx].status = 'error';
+              var tcD = document.getElementById('b24t-news-f-content');
+              var ttD = document.getElementById('b24t-news-f-title');
+              var tdD = document.getElementById('b24t-news-f-date');
+              if (tcD) tcD.value = '';
+              if (ttD) ttD.value = '';
+              if (tdD) tdD.value = '';
+              var diD = document.getElementById('b24t-news-date-detect-icon');
+              if (diD) diD.style.display = 'none';
             } else if (isOk) {
               _newsMarkSessionUrl(fUrl);
               if (subStatus) { subStatus.textContent = '✓ Dodano do Brand24!'; subStatus.style.color = '#22c55e'; }
@@ -6317,6 +6349,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.17.0",
+      "date": "2026-03-28",
+      "label": "New",
+      "labelColor": "#6c6cff",
+      "changes": [
+        {"type": "new", "text": "News: przycisk Wyczysc czysci tytul i tresc w P3"},
+        {"type": "fix", "text": "News: auto-clear tytul/tresc po sukcesie i duplikacie"},
+        {"type": "fix", "text": "News: kolejne URL otwieraja sie w tym samym oknie"}
+      ]
+    },
+    {
       "version": "0.16.11",
       "date": "2026-03-28",
       "label": "Fix",
@@ -6402,15 +6445,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "new", "text": "News: URL otwiera sie w nowym oknie (nie karcie)"},
         {"type": "new", "text": "News: wybor rozmiaru okna w naglowku P1 (4 opcje)"}
-      ]
-    },
-    {
-      "version": "0.16.2",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News: token CSRF pobierany z DOM, cookie lub GM fetch"}
       ]
     },
   ];;;;;;;;;;;

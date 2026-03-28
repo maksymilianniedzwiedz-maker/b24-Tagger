@@ -4697,6 +4697,26 @@ function showOnboarding(onComplete) {
 
   const CHANGELOG = [
     {
+      version: '0.9.14',
+      date: '2026-03-28',
+      label: 'Fix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Annotators Tab: zakładka Tagi i otwarcie panelu korzystają teraz z cache — dane pojawiają się natychmiast bez ręcznego odświeżania' },
+      ],
+    },
+    {
+      version: '0.9.13',
+      date: '2026-03-28',
+      label: 'Perf',
+      labelColor: '#34d399',
+      changes: [
+        { type: 'new', text: 'Background prefetch: dane dla Annotators Tab i cross-delete ładują się w tle zaraz po włączeniu wtyczki — otwarcie panelu jest natychmiastowe' },
+        { type: 'perf', text: 'Cross-delete: panel "Wszystkie projekty" renderuje się od razu z cache (bez spinnera) jeśli dane mają mniej niż 5 minut' },
+        { type: 'perf', text: 'Automatyczne odświeżanie cache co 5 minut w tle — dane są zawsze aktualne bez ręcznej akcji' },
+      ],
+    },
+    {
       version: '0.9.12',
       date: '2026-03-28',
       label: 'Help mode',

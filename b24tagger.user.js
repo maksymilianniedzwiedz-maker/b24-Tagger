@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.17.0
+// @version      0.17.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.17.0';
+  const VERSION = '0.17.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5967,6 +5967,11 @@ function showOnboarding(onComplete) {
       var subStatus = document.getElementById('b24t-news-submit-status');
       if (subStatus) { subStatus.textContent = ''; subStatus.style.color = ''; }
       renderUrlList();
+      // Reset daty przed fetchem — prefill nastąpi po odpowiedzi
+      var _dateElReset = document.getElementById('b24t-news-f-date');
+      var _dateIconReset = document.getElementById('b24t-news-date-detect-icon');
+      if (_dateElReset) { _dateElReset.value = ''; }
+      if (_dateIconReset) { _dateIconReset.style.display = 'none'; }
       // Fetch page: detect lang + date
       _newsFetchPageInfo(entry.url);
     }
@@ -5994,6 +5999,16 @@ function showOnboarding(onComplete) {
               dateIcon.style.display = 'inline';
               dateIcon.title = 'Data wykryta automatycznie ze strony (' + detectedDate + ') — możesz ją edytować';
             }
+          } else if (dateEl) {
+            // Brak wykrytej daty — prefill rok i miesiąc z bieżącej daty, zostaw miejsce na dzień
+            var _now = new Date();
+            var _yy = _now.getFullYear();
+            var _mm = String(_now.getMonth() + 1).padStart(2, '0');
+            dateEl.value = _yy + '-' + _mm + '-';
+            dateEl.focus();
+            // Przesuń kursor na koniec (po myślniku)
+            try { dateEl.setSelectionRange(dateEl.value.length, dateEl.value.length); } catch(e) {}
+            if (dateIcon) dateIcon.style.display = 'none';
           }
           // Language check
           var detectedLang = _newsDetectLangFromResponse(html, url);
@@ -6349,6 +6364,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.17.1",
+      "date": "2026-03-28",
+      "label": "New",
+      "labelColor": "#6c6cff",
+      "changes": [
+        {"type": "new", "text": "News: data prefill rok+miesiac z biezacej daty"},
+        {"type": "new", "text": "News: auto-wykrywanie daty artykulu przez GM fetch"}
+      ]
+    },
+    {
       "version": "0.17.0",
       "date": "2026-03-28",
       "label": "New",
@@ -6435,16 +6460,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "News: token CSRF przechwytywany przy starcie strony (MutationObserver)"}
-      ]
-    },
-    {
-      "version": "0.16.3",
-      "date": "2026-03-28",
-      "label": "New",
-      "labelColor": "#6c6cff",
-      "changes": [
-        {"type": "new", "text": "News: URL otwiera sie w nowym oknie (nie karcie)"},
-        {"type": "new", "text": "News: wybor rozmiaru okna w naglowku P1 (4 opcje)"}
       ]
     },
   ];;;;;;;;;;;

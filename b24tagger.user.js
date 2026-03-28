@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.16.8
+// @version      0.16.9
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.16.8';
+  const VERSION = '0.16.9';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2086,7 +2086,7 @@
         100% { background: #6366f1; box-shadow: 3px 0 14px rgba(99,102,241,0.7); }
       }
       /* ── MAIN PANEL SIDE TAB ── */
-      #b24t-main-tab {
+      #b24t-panel-side-tab {
         position: fixed; left: 0; top: 36%; transform: translateY(-50%);
         z-index: 2147483645; border-radius: 0 10px 10px 0; border: none;
         padding: 18px 11px; cursor: pointer; display: none;
@@ -2097,7 +2097,7 @@
         animation: b24t-tab-pulse 2.5s ease-in-out infinite;
         transition: transform 0.15s;
       }
-      #b24t-main-tab:hover { transform: translateY(-50%) scale(1.08) !important; animation-play-state: paused; background: #7c3aed !important; }
+      #b24t-panel-side-tab:hover { transform: translateY(-50%) scale(1.08) !important; animation-play-state: paused; background: #7c3aed !important; }
       /* ── NEWS SIDE TAB ── */
       #b24t-news-side-tab {
         position: fixed; right: 0; top: calc(50% + 90px); transform: translateY(0);
@@ -2758,7 +2758,7 @@
     if (hideBtn) {
       hideBtn.addEventListener('click', function() {
         panel.style.display = 'none';
-        var mainTab = document.getElementById('b24t-main-tab');
+        var mainTab = document.getElementById('b24t-panel-side-tab');
         if (mainTab) {
           mainTab.style.display = 'flex';
           mainTab.style.cssText += ';display:flex!important;';
@@ -6313,6 +6313,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.16.9",
+      "date": "2026-03-28",
+      "label": "Fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Side tab: konflikt ID z zakladka Plik naprawiony"}
+      ]
+    },
+    {
       "version": "0.16.8",
       "date": "2026-03-28",
       "label": "Fix",
@@ -6399,16 +6408,7 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "Usunięte martwe funkcje i ciche błędy w tle"}
       ]
     },
-    {
-      "version": "0.15.6",
-      "date": "2026-03-28",
-      "label": "UI",
-      "labelColor": "#8080aa",
-      "changes": [
-        {"type": "ui", "text": "Feedback: osobne karty Bug Report i Suggestion"}
-      ]
-    },
-  ];;;;;;;;
+  ];;;;;;;;;
 
   function _fetchChangelog(onDone) {
     const CACHE_KEY = 'b24tagger_cl_cache';
@@ -9986,7 +9986,7 @@ Tej operacji nie można cofnąć.`)) {
     // ── MAIN PANEL SIDE TAB ──
     (function() {
       var mainTab = document.createElement('div');
-      mainTab.id = 'b24t-main-tab';
+      mainTab.id = 'b24t-panel-side-tab';
       mainTab.title = 'Otwórz B24 Tagger';
       mainTab.innerHTML =
         '<span style="writing-mode:vertical-rl;text-orientation:mixed;letter-spacing:.08em;font-size:12px;font-weight:700;">B24 Tagger</span>' +

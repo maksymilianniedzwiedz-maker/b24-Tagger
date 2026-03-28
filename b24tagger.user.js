@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.16.9
+// @version      0.16.10
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.16.9';
+  const VERSION = '0.16.10';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6313,6 +6313,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.16.10",
+      "date": "2026-03-28",
+      "label": "Fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News: panele niezalezne — zamkniecie Annotators nie zamyka News"},
+        {"type": "fix", "text": "Annotators Tab: usuniety przycisk News (jest osobny side tab)"}
+      ]
+    },
+    {
       "version": "0.16.9",
       "date": "2026-03-28",
       "label": "Fix",
@@ -6397,18 +6407,7 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "News: wersja poprzednia (0.16.1)"}
       ]
     },
-    {
-      "version": "0.16.0",
-      "date": "2026-03-28",
-      "label": "Refactor",
-      "labelColor": "#fb923c",
-      "changes": [
-        {"type": "perf", "text": "Changelog przeniesiony do zewnętrznego JSON — mniejszy skrypt"},
-        {"type": "fix", "text": "Auto-Delete: checkbox \'Zawsze włączaj\' teraz zapisuje preferencję"},
-        {"type": "fix", "text": "Usunięte martwe funkcje i ciche błędy w tle"}
-      ]
-    },
-  ];;;;;;;;;
+  ];;;;;;;;;;
 
   function _fetchChangelog(onDone) {
     const CACHE_KEY = 'b24tagger_cl_cache';
@@ -7607,7 +7606,7 @@ function showOnboarding(onComplete) {
       // Header with gradient
       '<div id="b24t-ann-header" style="display:flex;align-items:center;padding:12px 16px;background:var(--b24t-accent-grad);cursor:move;user-select:none;position:relative;overflow:hidden;">' +
         '<span style="font-size:15px;font-weight:700;flex:1;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.2);">🛠 Annotators Tab</span>' +
-        '<button id="b24t-ann-news-btn" title="Otwórz moduł News" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.3);color:#fff;cursor:pointer;font-size:12px;font-weight:600;padding:3px 10px;border-radius:6px;margin-right:6px;transition:background 0.15s;letter-spacing:0.03em;">📰 News</button>' +
+        '' +
         '<button id="b24t-ann-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:18px;line-height:1;padding:2px 8px;border-radius:5px;transition:background 0.15s;">×</button>' +
       '</div>' +
       // Tabs — liquid glass, identyczny styl jak główny panel
@@ -7713,20 +7712,9 @@ function showOnboarding(onComplete) {
       panel.style.display = 'none';
       var t = document.getElementById('b24t-annotator-tab');
       if (t) t.style.display = 'flex';
-      closeNewsPanels();
+      // News panels are independent — do NOT close them here
     });
 
-    // News button
-    var annNewsBtn = document.getElementById('b24t-ann-news-btn');
-    if (annNewsBtn) {
-      annNewsBtn.addEventListener('click', function() {
-        if (newsState.panelsOpen) {
-          closeNewsPanels();
-        } else {
-          openNewsPanels();
-        }
-      });
-    }
 
     // Refresh
     document.getElementById('b24t-ann-project-refresh').addEventListener('click', function() {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.10.1
+// @version      0.10.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.10.1';
+  const VERSION = '0.10.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4699,6 +4699,16 @@ function showOnboarding(onComplete) {
 
   const CHANGELOG = [
     {
+      version: '0.10.2',
+      date: '2026-03-28',
+      label: 'Fix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Daty we wszystkich narzędziach annotatorskich:\n* naprawiono błędny zakres (np. 28 luty – 28 marca zamiast 1 marca – dziś)\n* poprawiono konwersję dat — nie ma już przesunięcia UTC' },
+        { type: 'fix', text: 'Nazwy projektów w zakładce Grupy i panelu "Wszystkie projekty" — naprawiono wyświetlanie ID zamiast nazwy' },
+      ]
+    },
+    {
       version: '0.10.1',
       date: '2026-03-28',
       label: 'Fix',
@@ -5901,6 +5911,18 @@ function showOnboarding(onComplete) {
 
   const DEV_CHANGELOG = [
     {
+      version: '0.10.2',
+      date: '2026-03-28',
+      notes: [
+        '[FIX]  _localDateStr(d): nowy helper — formatuje lokalną datę jako YYYY-MM-DD bez UTC shift (d.getFullYear/Month/Date zamiast toISOString)',
+        '[FIX]  getAnnotatorDates(): używa _localDateStr() zamiast toISOString().split(T)[0] — eliminuje błąd -1 dnia w strefach UTC+',
+        '[FIX]  _bgFetchAllProjects(): dateFrom/dateTo przez getAnnotatorDates() zamiast hardcoded rok-temu; p._dateFrom/p._dateTo = realny zakres zapytania',
+        '[FIX]  loadAnnotatorTagStats(): inline date logic zastąpiona wywołaniem getAnnotatorDates()',
+        '[FIX]  getKnownProjects(): poprawiona ekstrakcja name — fallback do state.projectName gdy id pasuje, potem Projekt N',
+        '[FIX]  getKnownProjectsList(): analogiczny fix ekstrakcji name',
+      ]
+    },
+    {
       version: '0.10.1',
       date: '2026-03-28',
       notes: [
@@ -6768,9 +6790,13 @@ function showOnboarding(onComplete) {
     var allProjects = Object.entries(projects).map(function([id, p]) {
       const reqVerId   = (p.tagIds && p.tagIds['REQUIRES_VERIFICATION']) || globalReqVerId;
       const toDeleteId = (p.tagIds && p.tagIds['TO_DELETE'])             || globalToDeleteId;
+      // name może być string bezpośrednio lub w polu name obiektu — obsłuż oba formaty
+      var name = (p && typeof p === 'object' && p.name && p.name.length > 0)
+        ? p.name
+        : (state.projectId === parseInt(id) && state.projectName ? state.projectName : ('Projekt ' + id));
       return {
         id: parseInt(id),
-        name: p.name || ('Project ' + id),
+        name: name,
         reqVerId,
         toDeleteId,
       };
@@ -6907,19 +6933,10 @@ function showOnboarding(onComplete) {
       return;
     }
 
-    // Daty — bieżący miesiąc (lub poprzedni na 1-2 dzień)
-    const now = new Date();
-    const day = now.getDate();
-    let dateFrom, dateTo;
-    if (day <= 2) {
-      const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const last = new Date(now.getFullYear(), now.getMonth(), 0);
-      dateFrom = prev.toISOString().split('T')[0];
-      dateTo = last.toISOString().split('T')[0];
-    } else {
-      dateFrom = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-      dateTo = now.toISOString().split('T')[0];
-    }
+    // Daty — bieżący miesiąc (lub poprzedni na 1-2 dzień) — przez getAnnotatorDates (lokalne daty, bez UTC shift)
+    var _annDates = getAnnotatorDates();
+    var dateFrom = _annDates.dateFrom;
+    var dateTo   = _annDates.dateTo;
 
     // Pokaż loader z postępem
     el.innerHTML = '<div style="padding:20px;text-align:center;">' +
@@ -7156,21 +7173,20 @@ function showOnboarding(onComplete) {
     if (!state.tokenHeaders || !tagId) return;
     var projects = getKnownProjects();
     if (!projects.length) return;
-    var now = new Date();
-    var defaultDateTo   = now.toISOString().substring(0, 10);
-    var defaultDateFrom = new Date(new Date().setFullYear(now.getFullYear() - 1)).toISOString().substring(0, 10);
+    // Użyj tej samej logiki dat co reszta narzędzi annotatorskich
+    var dates = getAnnotatorDates();
+    var dateFrom = dates.dateFrom;
+    var dateTo   = dates.dateTo;
     var results = [];
     for (var i = 0; i < projects.length; i++) {
       var p = projects[i];
       try {
-        var page  = await getMentions(p.id, defaultDateFrom, defaultDateTo, [tagId], 1);
+        var page  = await getMentions(p.id, dateFrom, dateTo, [tagId], 1);
         var count = page.count || 0;
+        p._tagCount = count;
+        p._dateFrom = dateFrom;
+        p._dateTo   = dateTo;
         if (count > 0) {
-          var newest = page.results?.[0]?.createdDate?.substring(0, 10) || defaultDateTo;
-          var oldest = page.results?.[page.results.length - 1]?.createdDate?.substring(0, 10) || defaultDateFrom;
-          p._tagCount = count;
-          p._dateFrom = count > 60 ? defaultDateFrom : oldest;
-          p._dateTo   = newest;
           results.push({ p: p, count: count });
         }
       } catch(e) {
@@ -7402,17 +7418,26 @@ function showOnboarding(onComplete) {
     renderOverallStatsTab();
   }
 
+  // Formatuje lokalną datę jako YYYY-MM-DD (bez UTC shift)
+  function _localDateStr(d) {
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var dd = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + dd;
+  }
+
   function getAnnotatorDates() {
     var now = new Date(), day = now.getDate();
     var dateFrom, dateTo, label, daysLeft;
     if (day <= 2) {
       var prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       var last = new Date(now.getFullYear(), now.getMonth(), 0);
-      dateFrom = prev.toISOString().split('T')[0]; dateTo = last.toISOString().split('T')[0];
+      dateFrom = _localDateStr(prev);
+      dateTo   = _localDateStr(last);
       label = prev.toLocaleString('pl-PL', { month: 'long', year: 'numeric' }); daysLeft = 0;
     } else {
-      dateFrom = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-      dateTo = now.toISOString().split('T')[0];
+      dateFrom = _localDateStr(new Date(now.getFullYear(), now.getMonth(), 1));
+      dateTo   = _localDateStr(now);
       label = now.toLocaleString('pl-PL', { month: 'long', year: 'numeric' });
       daysLeft = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - day;
     }
@@ -8038,8 +8063,9 @@ To jest NIEODWRACALNE.`)) return;
     return Object.entries(projects).map(function(entry) {
       var pid = entry[0];
       var pData = entry[1];
-      // name może być string (stary format) lub w polu name obiektu
-      var name = (typeof pData === 'object' ? pData.name : null) || ('Projekt ' + pid);
+      var name = (pData && typeof pData === 'object' && pData.name && pData.name.length > 0)
+        ? pData.name
+        : (state.projectId === parseInt(pid) && state.projectName ? state.projectName : ('Projekt ' + pid));
       return { id: parseInt(pid), name: name };
     }).filter(function(p) { return p.id > 0; })
       .sort(function(a, b) { return a.name.localeCompare(b.name); });

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.9.13
+// @version      0.9.14
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.9.13';
+  const VERSION = '0.9.14';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5861,6 +5861,15 @@ function showOnboarding(onComplete) {
 
   const DEV_CHANGELOG = [
     {
+      version: '0.9.14',
+      date: '2026-03-28',
+      notes: [
+        '[FIX]  openAnnotatorPanel(): nie korzystał z bgCache.tagstats — sprawdzał tylko annotatorData.tagstats (null po zamknięciu panelu) i odpalał pełne ładowanie ze spinnerem. Teraz: jeśli bgCache gorący → renderAnnotatorTagStats() od razu + cichy refetch w tle.',
+        '[FIX]  Tab click (data-ann-tab="tagstats"): identyczny bug — sprawdzał annotatorData.tagstats zamiast bgCache. Naprawione analogicznie: _bgCacheFresh(bgCache.tagstats) → render natychmiastowy, fallback do loadAnnotatorTagStats() tylko gdy cache zimny.',
+        '[ROOT CAUSE] bgCache.tagstats był wypełniany przez startBgPrefetch() poprawnie, ale openAnnotatorPanel() i tab click omijały go — renderały puste dane i wymagały ręcznego ↺. Teraz wszystkie ścieżki wejścia do zakładki Tagi sprawdzają bgCache jako pierwsze.',
+      ],
+    },
+    {
       version: '0.9.13',
       date: '2026-03-28',
       notes: [
@@ -7200,8 +7209,20 @@ function showOnboarding(onComplete) {
         panel.querySelectorAll('.b24t-ann-content').forEach(function(el) { el.style.display = 'none'; });
         var content = document.getElementById('b24t-ann-tab-' + tabName);
         if (content) { content.style.display = 'block'; content.style.animation = 'b24t-fadein 0.2s ease'; }
-        // Lazy load — załaduj dane dopiero gdy zakładka Tagi jest otwierana po raz pierwszy
-        if (tabName === 'tagstats' && !annotatorData.tagstats) loadAnnotatorTagStats();
+        // Jeśli bgCache gorący — renderuj od razu, potem cichy refetch
+        if (tabName === 'tagstats') {
+          var tsEl = document.getElementById('b24t-ann-tagstats-content');
+          if (_bgCacheFresh(bgCache.tagstats) && tsEl) {
+            annotatorData.tagstats = bgCache.tagstats;
+            renderAnnotatorTagStats(tsEl, bgCache.tagstats);
+            // Cichy background refresh
+            _bgFetchTagstats().then(function(fresh) {
+              if (fresh && tsEl) renderAnnotatorTagStats(tsEl, fresh);
+            }).catch(function(){});
+          } else if (!annotatorData.tagstats) {
+            loadAnnotatorTagStats();
+          }
+        }
       });
     });
 
@@ -7256,7 +7277,17 @@ function showOnboarding(onComplete) {
     panel.style.display = 'block';
     if (tab) tab.style.display = 'none';
     if (!annotatorData.project)  loadAnnotatorProject();
-    if (!annotatorData.tagstats) loadAnnotatorTagStats();
+    // Tagstats — jeśli bgCache gorący renderuj od razu bez spinnera
+    var tsEl = document.getElementById('b24t-ann-tagstats-content');
+    if (_bgCacheFresh(bgCache.tagstats) && tsEl) {
+      annotatorData.tagstats = bgCache.tagstats;
+      renderAnnotatorTagStats(tsEl, bgCache.tagstats);
+      _bgFetchTagstats().then(function(fresh) {
+        if (fresh && tsEl) renderAnnotatorTagStats(tsEl, fresh);
+      }).catch(function(){});
+    } else if (!annotatorData.tagstats) {
+      loadAnnotatorTagStats();
+    }
   }
 
   function getAnnotatorDates() {

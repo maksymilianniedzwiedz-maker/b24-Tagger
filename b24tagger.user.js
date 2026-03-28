@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.9.10
+// @version      0.9.11
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.9.10';
+  const VERSION = '0.9.11';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1367,12 +1367,13 @@
         --b24t-primary-glow: rgba(37,99,235,0.20);
         --b24t-primary-bg:  rgba(37,99,235,0.07);
 
-        --b24t-accent-grad: linear-gradient(135deg, #2563eb 0%, #1d4ed8 50%, #1e40af 100%);
-        --b24t-panel-grad:  linear-gradient(180deg, #ffffff 0%, #f6f8ff 60%, #eef1ff 100%);
+        /* Gradient: Brand24 niebieski → Brand24 zielony */
+        --b24t-accent-grad: linear-gradient(135deg, #1d6fe8 0%, #0ea875 50%, #16a34a 100%);
+        --b24t-panel-grad:  linear-gradient(180deg, #f0f7ff 0%, #f0fdf6 60%, #ecfdf5 100%);
         --b24t-section-grad-a: #ffffff;
-        --b24t-section-grad-b: #f6f7fb;
-        --b24t-section-grad-c: #eef0f8;
-        --b24t-section-grad-d: #f0f2ff;
+        --b24t-section-grad-b: #f6faf8;
+        --b24t-section-grad-c: #eef7f2;
+        --b24t-section-grad-d: #f0f9ff;
 
         --b24t-ok:          #166534;
         --b24t-ok-bg:       #dcfce7;
@@ -1387,9 +1388,9 @@
         --b24t-info-bg:     #dbeafe;
         --b24t-info-text:   #1e3a8a;
 
-        --b24t-shadow:      0 4px 16px rgba(37,99,235,0.10), 0 1px 4px rgba(0,0,0,0.07);
-        --b24t-shadow-h:    0 8px 28px rgba(37,99,235,0.14), 0 2px 8px rgba(0,0,0,0.09);
-        --b24t-shadow-drag: 0 16px 48px rgba(37,99,235,0.18);
+        --b24t-shadow:      0 4px 16px rgba(22,163,74,0.10), 0 1px 4px rgba(37,99,235,0.08);
+        --b24t-shadow-h:    0 8px 28px rgba(22,163,74,0.14), 0 2px 8px rgba(37,99,235,0.10);
+        --b24t-shadow-drag: 0 16px 48px rgba(14,168,117,0.18);
 
         --b24t-scrollbar:   #c4cae8;
         --b24t-badge-idle-bg:  #e8eaf6; --b24t-badge-idle-fg: #374151;
@@ -2084,25 +2085,29 @@
 
       /* ── HELP MODE ── */
       #b24t-panel.b24t-help-mode {
-        outline: 3px solid rgba(108,108,255,0.5);
-      }
-      .b24t-help-mode #b24t-body {
-        pointer-events: none;
+        outline: 2px solid rgba(108,108,255,0.4);
+        outline-offset: 2px;
       }
       .b24t-help-zone {
         position: fixed;
         cursor: help;
         border-radius: 7px;
         z-index: 2147483520;
-        border: 2px solid rgba(108,108,255,0.0);
-        background: rgba(108,108,255,0.0);
+        border: 2px solid rgba(108,108,255,0.55);
+        background: rgba(108,108,255,0.06);
         transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
         box-sizing: border-box;
+        animation: b24t-help-pulse 2s ease-in-out infinite;
+      }
+      @keyframes b24t-help-pulse {
+        0%, 100% { border-color: rgba(108,108,255,0.45); box-shadow: 0 0 0 0 rgba(108,108,255,0.15); }
+        50%       { border-color: rgba(108,108,255,0.80); box-shadow: 0 0 0 3px rgba(108,108,255,0.08); }
       }
       .b24t-help-zone:hover {
-        background: rgba(108,108,255,0.13) !important;
-        border-color: rgba(108,108,255,0.65) !important;
-        box-shadow: 0 0 0 4px rgba(108,108,255,0.07);
+        background: rgba(108,108,255,0.16) !important;
+        border-color: rgba(108,108,255,0.90) !important;
+        box-shadow: 0 0 0 4px rgba(108,108,255,0.12) !important;
+        animation: none !important;
       }
       .b24t-help-tip {
         position: fixed;
@@ -2126,8 +2131,7 @@
         border-radius: 14px;
         z-index: 2147483510;
         pointer-events: none;
-        background: rgba(0,0,0,0.52);
-        backdrop-filter: blur(1.5px);
+        background: rgba(0,0,0,0.30);
         animation: b24t-fadein 0.25s ease;
       }
       #b24t-help-close {
@@ -3334,7 +3338,7 @@
       zone.style.width  = r.width + 'px';
       zone.style.height = r.height + 'px';
       zone.style.zIndex = '2147483520';
-      zone.title = z.title;
+      // NIE ustawiamy zone.title — przeglądarka renderowałaby natywny tooltip który duplikuje bąbel
 
       zone.addEventListener('mouseenter', function(e) { showHelpTip(e, z); });
       zone.addEventListener('mouseleave', function() { if (!helpStickyTip) hideHelpTip(); });
@@ -4025,70 +4029,90 @@ function showOnboarding(onComplete) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Definicje stref klikania w trybie pomocy
-function getHelpZones() {
-  return [
-    {
-      selector: '#b24t-topbar',
-      title: 'Header — pasek tytułowy',
-      desc: 'Możesz przeciągać panel trzymając za ten obszar. Zawiera: status sesji, przełącznik motywu, przyciski funkcji opcjonalnych, pomocy i zwijania.',
-    },
-    {
-      selector: '#b24t-theme-toggle',
-      title: '☀️🌙 Przełącznik motywu',
-      desc: 'Przełącza między jasnym (Brand24) a ciemnym (fioletowy gradient) motywem. Ustawienie jest zapamiętywane.',
-    },
-    {
-      selector: '#b24t-status-badge',
-      title: 'Status badge',
-      desc: 'Aktualny stan wtyczki: Idle (gotowa), Running (taguje), Paused (wstrzymana), Done (zakończone), Error (błąd).',
-    },
-    {
-      selector: '#b24t-btn-features',
-      title: '⚙ Funkcje opcjonalne',
-      desc: 'Otwiera modal z funkcjami które możesz włączyć — np. Annotators Tab. Każda funkcja ma własny tutorial.',
-    },
-    {
-      selector: '#b24t-btn-collapse',
-      title: '▼ Zwiń / Rozwiń',
-      desc: 'Zwija panel do samego headera — przydatne gdy chcesz mieć panel pod ręką ale nie zajmował miejsca.',
-    },
-    {
-      selector: '#b24t-meta-bar',
-      title: 'Pasek statusu API',
-      desc: 'Zielona kropka = token API aktywny, wtyczka połączona z Brand24. Żółta = oczekuje. Timer pokazuje czas bieżącej sesji tagowania.',
-    },
-    {
-      selector: '#b24t-subbar',
-      title: 'Pasek narzędzi',
-      desc: '"Changelog & Feedback" otwiera dziennik zmian i zakładkę feedbacku. "Sprawdź aktualizacje" ręcznie wyzwala sprawdzenie nowej wersji (autoaktualizacja przez Tampermonkey działa w tle).',
-    },
-    {
-      selector: '#b24t-tabs',
-      title: 'Zakładki trybów pracy',
-      desc: 'Cztery tryby: Plik (główny, praca z CSV/JSON), Quick Tag (bez pliku), Quick Delete (masowe usuwanie), Historia (ostatnie sesje).',
-    },
-    {
-      selector: '#b24t-file-zone',
-      title: 'Strefa wgrywania pliku',
-      desc: 'Kliknij lub przeciągnij plik CSV/JSON/XLSX z ocenami wzmianek. Zalecany format: JSON (XLSX może obcinać 19-cyfrowe ID TikTok/Twitter).',
-    },
-    {
-      selector: '#b24t-actions',
-      title: 'Przyciski akcji',
-      desc: 'Start — uruchamia/wznawia tagowanie. Pause — bezpieczna pauza. Test Run — symulacja bez zapisu (zawsze sprawdź najpierw!). Match Preview — sprawdza % dopasowania URL.',
-    },
-    {
-      selector: '#b24t-project-name',
-      title: 'Wykryty projekt',
-      desc: 'Automatycznie wykryty projekt Brand24. Przejdź do widoku Mentions konkretnego projektu żeby tu pojawił się jego nazwa i ID.',
-    },
-    {
-      selector: '.b24t-section-label',
-      title: 'Nagłówek sekcji',
-      desc: 'Kolorowe nagłówki oznaczają poszczególne sekcje panelu: Projekt, Plik źródłowy, Mapowanie, Opcje, Progress, Statystyki i Log.',
-    },
-  ];
-}
+  function getHelpZones() {
+    return [
+      {
+        selector: '#b24t-topbar',
+        title: 'Header — pasek tytułowy',
+        desc: 'Możesz przeciągać panel trzymając za ten obszar. Zawiera: status sesji, przełącznik motywu, przyciski funkcji opcjonalnych, pomocy i zwijania.',
+      },
+      {
+        selector: '#b24t-theme-toggle',
+        title: '☀️🌙 Przełącznik motywu',
+        desc: 'Przełącza między jasnym (Brand24) a ciemnym (fioletowy gradient) motywem. Ustawienie jest zapamiętywane.',
+      },
+      {
+        selector: '#b24t-status-badge',
+        title: 'Status badge',
+        desc: 'Aktualny stan wtyczki: Idle (gotowa), Running (taguje), Paused (wstrzymana), Done (zakończone), Error (błąd).',
+      },
+      {
+        selector: '#b24t-btn-features',
+        title: '⚙ Funkcje opcjonalne',
+        desc: 'Otwiera modal z funkcjami które możesz włączyć — np. Annotators Tab. Każda funkcja ma własny tutorial.',
+      },
+      {
+        selector: '#b24t-btn-help',
+        title: '? Tryb pomocy',
+        desc: 'Ten tryb! Klikaj na elementy panelu żeby poznać ich funkcję.',
+      },
+      {
+        selector: '#b24t-btn-collapse',
+        title: '▼ Zwiń / Rozwiń',
+        desc: 'Zwija panel do samego headera — przydatne gdy chcesz mieć panel pod ręką ale nie zajmował miejsca.',
+      },
+      {
+        selector: '#b24t-meta-bar',
+        title: 'Pasek statusu API',
+        desc: 'Zielona kropka = token API aktywny, wtyczka połączona z Brand24. Żółta = oczekuje. Timer pokazuje czas bieżącej sesji tagowania.',
+      },
+      {
+        selector: '#b24t-subbar',
+        title: 'Pasek narzędzi',
+        desc: '"Changelog & Feedback" otwiera dziennik zmian i zakładkę feedbacku. "Sprawdź aktualizacje" ręcznie wyzwala sprawdzenie nowej wersji.',
+      },
+      {
+        selector: '#b24t-tabs',
+        title: 'Zakładki trybów pracy',
+        desc: 'Cztery tryby: Plik (główny, praca z CSV/JSON), Quick Tag (bez pliku), Quick Delete (masowe usuwanie), Historia (ostatnie sesje).',
+      },
+      {
+        selector: '#b24t-file-zone',
+        title: 'Strefa wgrywania pliku',
+        desc: 'Kliknij lub przeciągnij plik CSV/JSON/XLSX z ocenami wzmianek. Zalecany format: JSON (XLSX może obcinać 19-cyfrowe ID TikTok/Twitter).',
+      },
+      {
+        selector: '#b24t-project-name',
+        title: 'Wykryty projekt',
+        desc: 'Automatycznie wykryty projekt Brand24. Przejdź do widoku Mentions konkretnego projektu żeby tu pojawił się jego nazwa i ID.',
+      },
+      {
+        selector: '#b24t-actions',
+        title: 'Przyciski akcji',
+        desc: 'Start — uruchamia/wznawia tagowanie. Pause — bezpieczna pauza. Test Run — symulacja bez zapisu (zawsze sprawdź najpierw!). Match Preview — sprawdza % dopasowania URL.',
+      },
+      {
+        selector: '.b24t-stats-grid',
+        title: 'Kafelki statystyk',
+        desc: 'Otagowano — liczba wzmianek którym nadano tag. Pominięto — wzmianki bez dopasowania URL lub bez oceny. Brak matcha — URL z pliku nieznaleziony w Brand24.',
+      },
+      {
+        selector: '#b24t-progress-bar',
+        title: 'Pasek postępu',
+        desc: 'Wizualizacja postępu bieżącej sesji tagowania. Wypełnia się proporcjonalnie do otagowanych vs całkowitych wzmianek.',
+      },
+      {
+        selector: '#b24t-log',
+        title: 'Log zdarzeń',
+        desc: 'Chronologiczny dziennik operacji: sukcesy (zielone), ostrzeżenia (żółte), błędy (czerwone). Kliknij "Wyczyść" żeby wyczyścić.',
+      },
+      {
+        selector: '.b24t-section-label',
+        title: 'Nagłówek sekcji',
+        desc: 'Kolorowe nagłówki oznaczają poszczególne sekcje panelu: Projekt, Plik źródłowy, Mapowanie, Opcje, Progress, Statystyki i Log.',
+      },
+    ];
+  }
 
   // ───────────────────────────────────────────
   // F1 - MATCH PREVIEW
@@ -4495,6 +4519,19 @@ function getHelpZones() {
   // ───────────────────────────────────────────
 
   const CHANGELOG = [
+    {
+      version: '0.9.11',
+      date: '2026-03-28',
+      label: 'Design',
+      labelColor: '#34d399',
+      changes: [
+        { type: 'ui',  text: 'Light mode: gradient niebieski→zielony (kolory Brand24) w headerze i tle panelu' },
+        { type: 'ui',  text: 'Tryb pomocy (?): podświetlone strefy z pulsującą obramówką, delikatne przyciemnienie zamiast blur' },
+        { type: 'fix', text: 'Tryb pomocy: usunięty duplikujący natywny tooltip przeglądarki przy strefach' },
+        { type: 'fix', text: 'Tryb pomocy: getHelpZones() przeniesiona do IIFE — fix scope (analogiczny bug jak toggleHelpMode)' },
+        { type: 'new', text: 'Tryb pomocy: dodane strefy dla kafelków statystyk, paska postępu i logu zdarzeń' },
+      ],
+    },
     {
       version: '0.9.10',
       date: '2026-03-28',
@@ -5635,6 +5672,20 @@ function getHelpZones() {
   // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.9.11',
+      date: '2026-03-28',
+      notes: [
+        '[UI]    Light mode --b24t-accent-grad: #2563eb→#1d4ed8→#1e40af → #1d6fe8→#0ea875→#16a34a (Brand24 blue→green). Kolory dopasowane do screenshota z UI Brand24.',
+        '[UI]    Light mode --b24t-panel-grad: biały→niebieskawa → f0f7ff→f0fdf6→ecfdf5 (bardzo subtelny zielonkawy odcień). Cienie zaktualizowane do mieszanki blue+green.',
+        '[UI]    Help mode overlay: usunięty backdrop-filter:blur — zastąpiony rgba(0,0,0,0.30) bez blur. Panel był nieczytelny przez zbyt mocny blur.',
+        '[UI]    Help mode .b24t-help-zone: zmienione z przezroczystych na widoczne od razu (border 2px solid rgba(108,108,255,0.55), bg rgba(6%)). Animacja b24t-help-pulse — pulsujący border co 2s.',
+        '[UI]    Help mode .b24t-help-zone:hover: wyłącza animację pulse, intensywniejsze podświetlenie.',
+        '[FIX]   enterHelpMode(): usunięto zone.title — przeglądarka renderowała natywny tooltip (prostokąt z białą ramką) który nakrywał bąbel z tym samym tekstem.',
+        '[FIX]   getHelpZones() przeniesione DO wnętrza IIFE (ten sam scope bug co toggleHelpMode w v0.9.9).',
+        '[NEW]   getHelpZones(): dodano strefy .b24t-stats-grid, #b24t-progress-bar, #b24t-log, #b24t-btn-help. Łącznie 16 stref (było 12).',
+      ]
+    },
     {
       version: '0.9.10',
       date: '2026-03-28',

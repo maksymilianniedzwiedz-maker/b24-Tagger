@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.9.12
+// @version      0.9.13
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.9.12';
+  const VERSION = '0.9.13';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5861,6 +5861,23 @@ function showOnboarding(onComplete) {
 
   const DEV_CHANGELOG = [
     {
+      version: '0.9.13',
+      date: '2026-03-28',
+      notes: [
+        '[PERF] Background prefetch cache (bgCache): nowa warstwa cache niezależna od DOM. bgCache.tagstats = {results, dates, ts}, bgCache.allProjects[tagId] = {results, ts}. TTL: 5 minut (BG_CACHE_TTL = 5*60*1000). _bgCacheFresh(entry) sprawdza czy ts < TTL.',
+        '[PERF] _bgFetchTagstats(): cicha wersja loadAnnotatorTagStats — wypełnia bgCache.tagstats bez dotykania DOM. Identyczna logika fetch (2× getMentions per projekt). Efekt uboczny: jeśli annotatorData.tagstats=null → wypełnia też go.',
+        '[PERF] _bgFetchAllProjects(tagId): cicha wersja fetch dla cross-delete panel — wypełnia bgCache.allProjects[tagId]. Deleguje do _renderAllProjectsList po zakończeniu.',
+        '[ARCH] startBgPrefetch(): master scheduler zastępujący loadAnnotatorDataBackground. Odpala się raz gdy annotator_tools włączony. Czeka na token (max 15s), fetches tagstats + aktualny tagId, potem setInterval co BG_CACHE_TTL.',
+        '[ARCH] loadAnnotatorDataBackground(): uproszczona — deleguje do startBgPrefetch() zamiast samodzielnie czekać na token. Tylko loadAnnotatorProject() zostaje sekwencyjny (lekki).',
+        '[UX]  loadAnnotatorTagStats(): jeśli bgCache.tagstats gorący → renderAnnotatorTagStats() od razu (0ms spinner), potem cichy refetch w tle który nadpisuje DOM po zakończeniu. Spinner tylko gdy cache zimny.',
+        '[ARCH] _renderAllProjectsList(results, tagName): wyodrębniony render cross-delete panelu. Używany przez refreshAllProjectsPanel z danych cache lub świeżych — eliminuje duplikację kodu.',
+        '[UX]  refreshAllProjectsPanel(): jeśli bgCache.allProjects[tagId] gorący → _renderAllProjectsList() od razu, potem cichy refetch. Spinner tylko gdy cache zimny (pierwsze otwarcie lub po TTL).',
+        '[UX]  wireDeleteEvents b24t-del-tag change: prefetch _bgFetchAllProjects(tagId) w tle przy zmianie tagu — niezależnie czy scope=allprojects. Gdy użytkownik wybierze "Wszystkie projekty" dane są już gotowe.',
+        '[DATA] Cache invalidacja po operacjach: delete-all w buildAllProjectsPanel → bgCache.allProjects={}, bgCache.tagstats=null, annotatorData.tagstats=null przed refreshAllProjectsPanel(). Przycisk ↺ tagstats → bgCache.tagstats=null (force re-fetch).',
+        '[ARCH] applyFeatures(): setTimeout(loadAnnotatorDataBackground, 1500) zastąpiony startBgPrefetch() — brak sztucznego opóźnienia, scheduler sam zarządza czekaniem na token.',
+      ],
+    },
+    {
       version: '0.9.12',
       date: '2026-03-28',
       notes: [
@@ -6582,10 +6599,8 @@ function showOnboarding(onComplete) {
     const panel = document.getElementById('b24t-annotator-panel');
     if (features.annotator_tools) {
       if (tab) tab.style.display = 'flex';
-      // Zacznij ładować dane w tle
-      setTimeout(function() {
-        if (!annotatorDataLoaded) loadAnnotatorDataBackground();
-      }, 1500);
+      // Prefetch danych w tle — startBgPrefetch sam zarządza tokenem i cyklem
+      startBgPrefetch();
     } else {
       if (tab) tab.style.display = 'none';
       if (panel) panel.style.display = 'none';
@@ -6996,6 +7011,110 @@ function showOnboarding(onComplete) {
   var annotatorDataLoaded = false;
   var annotatorData = { project: null, tagstats: null };
 
+  // ── Background prefetch cache ──────────────────────────────────────────────
+  // Przechowuje dane niezależnie od DOM — render jest natychmiastowy gdy cache gorący.
+  // bgCache.tagstats    = { results, dates, ts }         (Annotators Tab → zakładka Tagi)
+  // bgCache.project     = { total,... , ts }             (Annotators Tab → zakładka Projekt)
+  // bgCache.allProjects = { [tagId]: { results, ts } }   (cross-delete panel)
+  var bgCache = { tagstats: null, project: null, allProjects: {} };
+  var bgPrefetchStarted = false;
+  var BG_CACHE_TTL = 5 * 60 * 1000; // 5 minut — po tym czasie re-fetch w tle
+
+  function _bgCacheFresh(entry) {
+    return entry && entry.ts && (Date.now() - entry.ts < BG_CACHE_TTL);
+  }
+
+  // Cicha wersja loadAnnotatorTagStats — tylko wypełnia bgCache, nie dotyka DOM
+  async function _bgFetchTagstats() {
+    if (!state.tokenHeaders) return;
+    var projects = getKnownProjects();
+    if (!projects.length) return;
+    var dates = getAnnotatorDates();
+    var results = [];
+    for (var i = 0; i < projects.length; i++) {
+      var p = projects[i];
+      try {
+        var reqPage = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.reqVerId],   1);
+        var delPage = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.toDeleteId], 1);
+        var reqVer   = reqPage.count  || 0;
+        var toDelete = delPage.count  || 0;
+        if (reqVer > 0 || toDelete > 0) {
+          results.push({ name: p.name, id: p.id, reqVer: reqVer, toDelete: toDelete });
+        }
+      } catch(e) {}
+    }
+    bgCache.tagstats = { results: results, dates: dates, ts: Date.now() };
+    // Jeśli annotatorData.tagstats jest null (panel nie był otwarty) — wypełnij też go
+    if (!annotatorData.tagstats) annotatorData.tagstats = bgCache.tagstats;
+    return bgCache.tagstats;
+  }
+
+  // Cicha wersja fetch danych dla cross-delete — per tagId
+  async function _bgFetchAllProjects(tagId) {
+    if (!state.tokenHeaders || !tagId) return;
+    var projects = getKnownProjects();
+    if (!projects.length) return;
+    var now = new Date();
+    var defaultDateTo   = now.toISOString().substring(0, 10);
+    var defaultDateFrom = new Date(new Date().setFullYear(now.getFullYear() - 1)).toISOString().substring(0, 10);
+    var results = [];
+    for (var i = 0; i < projects.length; i++) {
+      var p = projects[i];
+      try {
+        var page  = await getMentions(p.id, defaultDateFrom, defaultDateTo, [tagId], 1);
+        var count = page.count || 0;
+        if (count > 0) {
+          var newest = page.results?.[0]?.createdDate?.substring(0, 10) || defaultDateTo;
+          var oldest = page.results?.[page.results.length - 1]?.createdDate?.substring(0, 10) || defaultDateFrom;
+          p._tagCount = count;
+          p._dateFrom = count > 60 ? defaultDateFrom : oldest;
+          p._dateTo   = newest;
+          results.push({ p: p, count: count });
+        }
+      } catch(e) {
+        results.push({ p: p, count: -1, error: e.message });
+      }
+    }
+    bgCache.allProjects[tagId] = { results: results, ts: Date.now() };
+    return bgCache.allProjects[tagId];
+  }
+
+  // Master scheduler — odpala się raz gdy annotator_tools włączony i token gotowy
+  async function startBgPrefetch() {
+    if (bgPrefetchStarted) return;
+    bgPrefetchStarted = true;
+
+    // Poczekaj na token (max 15s)
+    if (!state.tokenHeaders) {
+      await new Promise(function(resolve) {
+        var check = setInterval(function() { if (state.tokenHeaders) { clearInterval(check); resolve(); } }, 500);
+        setTimeout(function() { clearInterval(check); resolve(); }, 15000);
+      });
+    }
+    if (!state.tokenHeaders) return;
+
+    // Pierwsze ładowanie w tle
+    try { await _bgFetchTagstats(); } catch(e) {}
+
+    // Prefetch cross-delete dla aktualnie wybranego tagu (jeśli jest)
+    try {
+      var tagId = parseInt(document.getElementById('b24t-del-tag')?.value);
+      if (tagId) await _bgFetchAllProjects(tagId);
+    } catch(e) {}
+
+    // Cykliczne odświeżanie co BG_CACHE_TTL
+    setInterval(async function() {
+      if (!state.tokenHeaders) return;
+      try { await _bgFetchTagstats(); } catch(e) {}
+      // Re-fetch dla aktualnie wybranego tagu jeśli cross-delete otwarty
+      try {
+        var tagId = parseInt(document.getElementById('b24t-del-tag')?.value);
+        if (tagId) await _bgFetchAllProjects(tagId);
+      } catch(e) {}
+    }, BG_CACHE_TTL);
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
   function buildAnnotatorPanel() {
     if (document.getElementById('b24t-annotator-panel')) return;
 
@@ -7106,7 +7225,7 @@ function showOnboarding(onComplete) {
       annotatorData.project = null; loadAnnotatorProject();
     });
     document.getElementById('b24t-ann-tagstats-refresh').addEventListener('click', function() {
-      annotatorData.tagstats = null; loadAnnotatorTagStats();
+      annotatorData.tagstats = null; bgCache.tagstats = null; loadAnnotatorTagStats();
     });
 
     // Drag
@@ -7233,16 +7352,27 @@ function showOnboarding(onComplete) {
     if (!state.tokenHeaders) { el.innerHTML = '<div style="color:#f87171;font-size:11px;">⚠ Token nie gotowy</div>'; return; }
     var projects = getKnownProjects();
     if (!projects.length) { el.innerHTML = '<div style="font-size:11px;color:var(--b24t-text-faint);">Brak projektów. Odwiedź każdy projekt raz.</div>'; return; }
+
+    // ── Jeśli cache gorący — renderuj od razu bez spinnera ──
+    if (_bgCacheFresh(bgCache.tagstats)) {
+      annotatorData.tagstats = bgCache.tagstats;
+      renderAnnotatorTagStats(el, bgCache.tagstats);
+      // Cichy background refresh — nie resetuj DOM
+      _bgFetchTagstats().then(function(fresh) {
+        if (fresh) renderAnnotatorTagStats(el, fresh);
+      }).catch(function(){});
+      return;
+    }
+
+    // ── Cache zimny — pokaż spinner, pobierz, renderuj ──
     var dates = getAnnotatorDates();
 
-    // Spinner — ładowanie w tle, bez skeleton per projekt
     el.innerHTML =
       '<div style="padding:20px 0;text-align:center;">' +
         '<div style="font-size:22px;animation:b24t-spin 1s linear infinite;display:inline-block;">↻</div>' +
         '<div id="b24t-ann-ts-counter" style="font-size:10px;color:var(--b24t-text-faint);margin-top:6px;">0 / ' + projects.length + '</div>' +
       '</div>';
 
-    // Dodaj animację spin jeśli nie istnieje
     if (!document.getElementById('b24t-spin-style')) {
       var s = document.createElement('style');
       s.id = 'b24t-spin-style';
@@ -7253,7 +7383,6 @@ function showOnboarding(onComplete) {
     var results = [];
     for (var i = 0; i < projects.length; i++) {
       var p = projects[i];
-      // Aktualizuj licznik w spinnerze
       var counter = document.getElementById('b24t-ann-ts-counter');
       if (counter) counter.textContent = (i + 1) + ' / ' + projects.length;
       try {
@@ -7264,39 +7393,12 @@ function showOnboarding(onComplete) {
         if (reqVer > 0 || toDelete > 0) {
           results.push({ name: p.name, id: p.id, reqVer: reqVer, toDelete: toDelete });
         }
-      } catch(e) {
-        // Pomiń projekty z błędem — nie blokuj pozostałych
-      }
+      } catch(e) {}
     }
 
-    annotatorData.tagstats = { results: results, dates: dates };
-
-    // Render finalny — tylko projekty z danymi
-    if (!results.length) {
-      el.innerHTML = '<div style="text-align:center;color:var(--b24t-ok);font-size:13px;padding:12px 0;font-weight:600;">✓ Wszystkie projekty czyste!</div>';
-      return;
-    }
-
-    results.sort(function(a, b) { return (b.reqVer + b.toDelete) - (a.reqVer + a.toDelete); });
-
-    var rows = results.map(function(p) {
-      return '<tr>' +
-        '<td style="padding:6px 10px;font-size:12px;color:var(--b24t-text);border-bottom:1px solid var(--b24t-border-sub);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + p.name + '">' + p.name + '</td>' +
-        '<td style="padding:6px 8px;font-size:13px;font-weight:700;color:' + (p.reqVer  > 0 ? 'var(--b24t-warn)' : 'var(--b24t-text-faint)') + ';text-align:center;border-bottom:1px solid var(--b24t-border-sub);">' + (p.reqVer  || '—') + '</td>' +
-        '<td style="padding:6px 8px;font-size:13px;font-weight:700;color:' + (p.toDelete > 0 ? 'var(--b24t-err)'  : 'var(--b24t-text-faint)') + ';text-align:center;border-bottom:1px solid var(--b24t-border-sub);">' + (p.toDelete || '—') + '</td>' +
-      '</tr>';
-    }).join('');
-
-    el.innerHTML =
-      '<div style="font-size:11px;color:var(--b24t-text-faint);padding:6px 0 8px;">' + dates.dateFrom + ' – ' + dates.dateTo + '</div>' +
-      '<table style="width:100%;border-collapse:collapse;">' +
-        '<thead><tr>' +
-          '<th style="padding:5px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--b24t-text-faint);text-align:left;border-bottom:1px solid var(--b24t-border);">Projekt</th>' +
-          '<th style="padding:5px 8px;font-size:10px;font-weight:700;color:var(--b24t-warn);text-align:center;border-bottom:1px solid var(--b24t-border);">REQ</th>' +
-          '<th style="padding:5px 8px;font-size:10px;font-weight:700;color:var(--b24t-err);text-align:center;border-bottom:1px solid var(--b24t-border);">DEL</th>' +
-        '</tr></thead>' +
-        '<tbody>' + rows + '</tbody>' +
-      '</table>';
+    bgCache.tagstats = { results: results, dates: dates, ts: Date.now() };
+    annotatorData.tagstats = bgCache.tagstats;
+    renderAnnotatorTagStats(el, bgCache.tagstats);
   }
 
   function renderAnnotatorTagStats(el, d) {
@@ -7328,6 +7430,9 @@ function showOnboarding(onComplete) {
   async function loadAnnotatorDataBackground() {
     if (annotatorDataLoaded) return;
     annotatorDataLoaded = true;
+    // Prefetch w tle — startBgPrefetch sam czeka na token i odpala cykliczne odświeżanie
+    startBgPrefetch();
+    // Załaduj dane projektu (zakładka Projekt) — wciąż sekwencyjnie bo jest lekkie
     if (!state.tokenHeaders) {
       await new Promise(function(resolve) {
         var check = setInterval(function() { if (state.tokenHeaders) { clearInterval(check); resolve(); } }, 500);
@@ -7335,7 +7440,6 @@ function showOnboarding(onComplete) {
       });
     }
     try { await loadAnnotatorProject(); } catch(e) {}
-    try { await loadAnnotatorTagStats(); } catch(e) {}
   }
 
   // ───────────────────────────────────────────
@@ -7691,21 +7795,65 @@ To jest NIEODWRACALNE.`)) return;
       }
       if (btn) { btn.disabled = false; btn.textContent = '🗑 Usuń z wszystkich projektów'; }
       addLog('✅ Usuwanie ze wszystkich projektów zakończone.', 'success');
+      // Invaliduj cache — dane się zmieniły
+      bgCache.allProjects = {};
+      bgCache.tagstats = null;
+      annotatorData.tagstats = null;
       refreshAllProjectsPanel();
     });
   }
 
+  // Render pomocniczy — używany przez refreshAllProjectsPanel z danych cache lub świeżych
+  function _renderAllProjectsList(results, tagName) {
+    const list    = document.getElementById('b24t-ap-list');
+    const totalEl = document.getElementById('b24t-ap-total');
+    const delBtn  = document.getElementById('b24t-ap-delete-all');
+    if (!list) return;
+
+    const withData   = results.filter(function(r) { return r.count > 0; });
+    const withErrors = results.filter(function(r) { return r.count < 0; });
+    const totalCount = results.reduce(function(s, r) { return s + Math.max(0, r.count); }, 0);
+
+    if (totalEl) {
+      totalEl.innerHTML = totalCount > 0
+        ? '<span style="color:var(--b24t-err);font-weight:700;">Łącznie: ' + totalCount + ' wzmianek</span>'
+        : '<span>Brak wzmianek z tagiem \u201e' + tagName + '"</span>';
+    }
+    if (delBtn) delBtn.style.display = totalCount > 0 ? 'block' : 'none';
+
+    if (!withData.length && !withErrors.length) {
+      list.innerHTML = '<div style="padding:16px;text-align:center;font-size:12px;color:var(--b24t-text-faint);">Brak wzmianek z tym tagiem w żadnym projekcie</div>';
+    } else {
+      list.innerHTML = [...withData, ...withErrors].map(function(r) {
+        var p = r.p, count = r.count, error = r.error;
+        var errored = count < 0;
+        return '<div style="padding:10px 14px;border-bottom:1px solid var(--b24t-border-sub);">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:2px;">' +
+            '<span style="font-size:12px;font-weight:600;color:var(--b24t-text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + p.name + '">' + p.name + '</span>' +
+            (errored
+              ? '<span style="font-size:10px;color:var(--b24t-err);flex-shrink:0;">błąd</span>'
+              : '<span style="font-size:13px;font-weight:700;flex-shrink:0;color:var(--b24t-err);">' + count + '</span>'
+            ) +
+          '</div>' +
+          (errored
+            ? '<div style="font-size:10px;color:var(--b24t-err);">' + (error || 'błąd zapytania') + '</div>'
+            : '<div style="font-size:10px;color:var(--b24t-text-faint);">zakres: ' + (p._dateFrom || '?') + ' \u2192 ' + (p._dateTo || '?') + '</div>'
+          ) +
+        '</div>';
+      }).join('');
+    }
+  }
+
   async function refreshAllProjectsPanel() {
     buildAllProjectsPanel();
-    // Po budowie — upewnij się że panel jest widoczny i poprawnie spozycjonowany
     const el = document.getElementById('b24t-del-allprojects-panel');
     if (el) { el.style.display = 'flex'; _positionXProjectPanel(el); }
 
-    const tagId = parseInt(document.getElementById('b24t-del-tag')?.value);
-    const list     = document.getElementById('b24t-ap-list');
-    const tagNameEl= document.getElementById('b24t-ap-tag-name');
-    const totalEl  = document.getElementById('b24t-ap-total');
-    const delBtn   = document.getElementById('b24t-ap-delete-all');
+    const tagId     = parseInt(document.getElementById('b24t-del-tag')?.value);
+    const list      = document.getElementById('b24t-ap-list');
+    const tagNameEl = document.getElementById('b24t-ap-tag-name');
+    const totalEl   = document.getElementById('b24t-ap-total');
+    const delBtn    = document.getElementById('b24t-ap-delete-all');
 
     if (!tagId) {
       if (list) list.innerHTML = '<div style="padding:16px;text-align:center;font-size:12px;color:var(--b24t-text-faint);">Wybierz tag, aby zobaczyć dane</div>';
@@ -7714,7 +7862,7 @@ To jest NIEODWRACALNE.`)) return;
     }
 
     const tagName = Object.entries(state.tags).find(([,id]) => id === tagId)?.[0] || String(tagId);
-    if (tagNameEl) tagNameEl.textContent = `Tag: ${tagName}`;
+    if (tagNameEl) tagNameEl.textContent = 'Tag: ' + tagName;
 
     const projects = getKnownProjects();
     if (!projects.length) {
@@ -7726,7 +7874,18 @@ To jest NIEODWRACALNE.`)) return;
       return;
     }
 
-    // Spinner — ładuj w tle, bez skeleton per projekt
+    // ── Jeśli cache gorący — renderuj od razu ──
+    var cached = bgCache.allProjects[tagId];
+    if (_bgCacheFresh(cached)) {
+      _renderAllProjectsList(cached.results, tagName);
+      // Cichy background refresh bez resetowania DOM
+      _bgFetchAllProjects(tagId).then(function(fresh) {
+        if (fresh) _renderAllProjectsList(fresh.results, tagName);
+      }).catch(function(){});
+      return;
+    }
+
+    // ── Cache zimny — spinner + fetch ──
     if (list) list.innerHTML =
       '<div style="padding:20px 0;text-align:center;">' +
         '<div style="font-size:22px;animation:b24t-spin 1s linear infinite;display:inline-block;">↻</div>' +
@@ -7735,69 +7894,8 @@ To jest NIEODWRACALNE.`)) return;
     if (totalEl) totalEl.innerHTML = '';
     if (delBtn) delBtn.style.display = 'none';
 
-    // Zakres dat: domyślnie ostatnie 12 miesięcy (API wymaga zakresu)
-    const now = new Date();
-    const defaultDateTo   = now.toISOString().substring(0, 10);
-    const defaultDateFrom = new Date(new Date().setFullYear(now.getFullYear() - 1)).toISOString().substring(0, 10);
-
-    const results = [];
-
-    // Pobierz sekwencyjnie per projekt
-    for (let i = 0; i < projects.length; i++) {
-      const p = projects[i];
-      const spinnerCounter = list ? list.querySelector('#b24t-ap-spinner-counter') : null;
-      if (spinnerCounter) spinnerCounter.textContent = (i + 1) + ' / ' + projects.length;
-      try {
-        const page = await getMentions(p.id, defaultDateFrom, defaultDateTo, [tagId], 1);
-        const count = page.count || 0;
-        if (count > 0) {
-          const newest = page.results?.[0]?.createdDate?.substring(0, 10) || defaultDateTo;
-          const oldest = page.results?.[page.results.length - 1]?.createdDate?.substring(0, 10) || defaultDateFrom;
-          p._tagCount = count;
-          p._dateFrom = count > 60 ? defaultDateFrom : oldest;
-          p._dateTo   = newest;
-          results.push({ p, count, hasData: true });
-        }
-      } catch (e) {
-        results.push({ p, count: -1, error: e.message });
-      }
-    }
-
-    // Render finalny
-    const totalCount = results.reduce((s, r) => s + Math.max(0, r.count), 0);
-    if (totalEl) {
-      totalEl.innerHTML = totalCount > 0
-        ? `<span style="color:var(--b24t-err);font-weight:700;">Łącznie: ${totalCount} wzmianek</span>`
-        : `<span>Brak wzmianek z tagiem „${tagName}"</span>`;
-    }
-    if (delBtn) delBtn.style.display = totalCount > 0 ? 'block' : 'none';
-
-    // Pokaż tylko projekty z wzmiankami (count > 0), ukryj puste
-    const withData    = results.filter(({ count }) => count > 0);
-    const withErrors  = results.filter(({ count }) => count < 0);
-
-    if (list) {
-      if (!withData.length && !withErrors.length) {
-        list.innerHTML = '<div style="padding:16px;text-align:center;font-size:12px;color:var(--b24t-text-faint);">Brak wzmianek z tym tagiem w żadnym projekcie</div>';
-      } else {
-        list.innerHTML = [...withData, ...withErrors].map(({ p, count, hasData, error }) => {
-          const errored = count < 0;
-          return '<div style="padding:10px 14px;border-bottom:1px solid var(--b24t-border-sub);">' +
-            '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:2px;">' +
-              '<span style="font-size:12px;font-weight:600;color:var(--b24t-text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + p.name + '">' + p.name + '</span>' +
-              (errored
-                ? '<span style="font-size:10px;color:var(--b24t-err);flex-shrink:0;">błąd</span>'
-                : '<span style="font-size:13px;font-weight:700;flex-shrink:0;color:var(--b24t-err);">' + count + '</span>'
-              ) +
-            '</div>' +
-            (errored
-              ? '<div style="font-size:10px;color:var(--b24t-err);">' + (error || 'błąd zapytania') + '</div>'
-              : '<div style="font-size:10px;color:var(--b24t-text-faint);">zakres: ' + (p._dateFrom || '?') + ' → ' + (p._dateTo || '?') + '</div>'
-            ) +
-          '</div>';
-        }).join('');
-      }
-    }
+    var freshData = await _bgFetchAllProjects(tagId);
+    if (freshData) _renderAllProjectsList(freshData.results, tagName);
   }
 
   function buildDeleteTab() {
@@ -7994,9 +8092,15 @@ To jest NIEODWRACALNE.`)) return;
     });
 
     // Gdy tag się zmienia i allprojects jest aktywny — odśwież boczny panel
+    // Dodatkowo: prefetch danych w tle dla nowego tagu (niezależnie od aktywnego scope)
     document.getElementById('b24t-del-tag')?.addEventListener('change', () => {
       const isAllProjects = document.querySelector('input[name="b24t-del-scope"][value="allprojects"]')?.checked;
       if (isAllProjects) refreshAllProjectsPanel();
+      // Prefetch w tle dla nowego tagu — dane będą gotowe gdy użytkownik wybierze "Wszystkie projekty"
+      const newTagId = parseInt(document.getElementById('b24t-del-tag')?.value);
+      if (newTagId && !_bgCacheFresh(bgCache.allProjects[newTagId])) {
+        _bgFetchAllProjects(newTagId).catch(function(){});
+      }
     });
 
     // Run delete

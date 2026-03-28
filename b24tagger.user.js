@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.17.5
+// @version      0.17.6
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.17.5';
+  const VERSION = '0.17.6';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5232,10 +5232,10 @@ function showOnboarding(onComplete) {
     if (!state.projectId) { cb('error'); return; }
     // Use sq (search query) filter with URL — Brand24 searches across url/title/content
     // Use wide date range to maximize coverage
-    var today = _localDateStr();
+    var today = _localDateStr(new Date());
     var yearAgo = (function() {
       var d = new Date(); d.setFullYear(d.getFullYear() - 2);
-      return d.toISOString().slice(0, 10);
+      return _localDateStr(d);
     })();
     var variables = {
       projectId: state.projectId,

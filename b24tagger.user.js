@@ -1981,10 +1981,12 @@
       }
 
       /* Collapsed */
+      #b24t-panel.collapsed { overflow: hidden; }
       #b24t-panel.collapsed #b24t-tabs { display: none; }
       #b24t-panel.collapsed #b24t-body,
       #b24t-panel.collapsed #b24t-actions,
-      #b24t-panel.collapsed #b24t-meta-bar { display: none; }
+      #b24t-panel.collapsed #b24t-meta-bar { display: none !important; }
+      #b24t-panel.collapsed { height: auto !important; max-height: none !important; min-height: 0 !important; }
 
       /* ── MODALS ── */
       .b24t-modal-overlay {
@@ -2288,7 +2290,6 @@
         <button class="b24t-tab" data-tab="quicktag">⚡ Quick Tag</button>
         <button class="b24t-tab" data-tab="delete">🗑 Quick Delete</button>
         <button class="b24t-tab" data-tab="history">📋 Historia</button>
-        <button class="b24t-tab" data-tab="news">📰 News</button>
         <!-- Annotator Tools uses floating panel, no tab here -->
       </div>
 
@@ -2698,13 +2699,22 @@
   function setupCollapse(panel) {
     const btn = panel.querySelector('#b24t-btn-collapse');
     const collapsed = lsGet(LS.UI_COLLAPSED, false);
-    if (collapsed) panel.classList.add('collapsed');
+    if (collapsed) {
+      panel.classList.add('collapsed');
+      panel.style.height = '';
+      panel.style.maxHeight = '';
+    }
     btn.textContent = collapsed ? '▲' : '▼';
 
     btn.addEventListener('click', () => {
       const isCollapsed = panel.classList.toggle('collapsed');
       btn.textContent = isCollapsed ? '▲' : '▼';
       lsSet(LS.UI_COLLAPSED, isCollapsed);
+      if (isCollapsed) {
+        // Clear any inline height/maxHeight so CSS height:auto takes over
+        panel.style.height = '';
+        panel.style.maxHeight = '';
+      }
     });
   }
 
@@ -4997,621 +5007,767 @@ function showOnboarding(onComplete) {
     return chips.some(function(chip) { return lurl.indexOf(chip.toLowerCase()) !== -1; });
   }
 
-  // ── BUILD HTML ──
-  function buildNewsTab() {
-    var div = document.createElement('div');
-    div.id = 'b24t-news-tab';
-    div.style.display = 'none';
-    div.innerHTML = [
-      '<div style="display:flex;gap:8px;height:100%;min-height:0;">',
+  // ───────────────────────────────────────────
+  // NEWS MODULE — v0.15.1
+  // Floating 3-panel system attached to Annotators Tab
+  // ───────────────────────────────────────────
 
-        // LEFT PANEL
-        '<div id="b24t-news-left" style="flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;">',
+  var newsState = {
+    urls: [],
+    activeIdx: -1,
+    sessionUrls: {},
+    detectedCountry: null,
+    panelsOpen: false,
+    wired: false,
+  };
 
-          // Import area
-          '<div>',
-            '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">',
-              '<span style="font-size:11px;font-weight:600;opacity:0.7;">IMPORT URLI</span>',
-              '<div style="display:flex;gap:4px;">',
-                '<button id="b24t-news-import-btn" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-accent);color:#fff;cursor:pointer;">Wklej</button>',
-                '<button id="b24t-news-clear-btn" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid var(--b24t-border);background:transparent;color:var(--b24t-text-muted);cursor:pointer;">Wyczyść</button>',
-              '</div>',
-            '</div>',
-            '<textarea id="b24t-news-paste-area" rows="3" placeholder="Wklej URLe (jeden na linię)..." style="width:100%;box-sizing:border-box;font-size:10px;padding:6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);resize:vertical;font-family:monospace;"></textarea>',
-          '</div>',
+  var NEWS_DEFAULT_KEYWORDS = [
+    'hm-', '-hm-', '-hm', '/hm/', '/hm',
+    'h-m', 'h&m', 'h%26m', 'hennes', 'mauritz',
+  ];
+  var NEWS_KEYWORD_EXCLUSIONS = ['h-mart'];
 
-          // Keywords / chips
-          '<div id="b24t-news-chips-section">',
-            '<div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;">',
-              '<span style="font-size:11px;font-weight:600;opacity:0.7;">SŁOWA KLUCZOWE</span>',
-              '<span id="b24t-news-country-badge" style="font-size:9px;padding:1px 5px;border-radius:10px;background:var(--b24t-accent);color:#fff;display:none;"></span>',
-              '<button id="b24t-news-add-chip-btn" title="Dodaj słowo kluczowe" style="margin-left:auto;font-size:10px;padding:1px 7px;border-radius:6px;border:1px solid var(--b24t-border);background:transparent;color:var(--b24t-text-muted);cursor:pointer;">+ Dodaj</button>',
-            '</div>',
-            '<div id="b24t-news-chips" style="display:flex;flex-wrap:wrap;gap:4px;min-height:24px;"></div>',
-          '</div>',
+  var NEWS_TLD_MAP = {
+    pl:'PL', tr:'TR', gr:'GR', hr:'HR', ro:'RO', bg:'BG',
+    hu:'HU', cz:'CZ', sk:'SK', lt:'LT', lv:'LV', ee:'EE',
+    rs:'RS', ge:'GE', ua:'UA', ba:'BA', mk:'MK', al:'AL',
+    xk:'XK', kz:'KZ', me:'ME', md:'MD', am:'AM', az:'AZ',
+  };
 
-          // Country mismatch warning
-          '<div id="b24t-news-country-warn" style="display:none;background:#7c3aed22;border:1px solid #7c3aed55;border-radius:6px;padding:5px 8px;font-size:10px;color:#a78bfa;"></div>',
+  function _newsCountryFromUrl(url) {
+    try {
+      var h = new URL(url).hostname.toLowerCase();
+      var subMatch = h.match(/^([a-z]{2})\./);
+      if (subMatch && NEWS_TLD_MAP[subMatch[1]]) return NEWS_TLD_MAP[subMatch[1]];
+      var tld = h.split('.').pop();
+      return NEWS_TLD_MAP[tld] || null;
+    } catch(e) { return null; }
+  }
 
-          // Progress bar
-          '<div id="b24t-news-progress-wrap" style="display:none;">',
-            '<div style="display:flex;justify-content:space-between;font-size:10px;opacity:0.6;margin-bottom:2px;">',
-              '<span>Postęp</span>',
-              '<span id="b24t-news-progress-label">0 / 0</span>',
-            '</div>',
-            '<div style="height:4px;border-radius:2px;background:var(--b24t-border);">',
-              '<div id="b24t-news-progress-bar" style="height:4px;border-radius:2px;background:var(--b24t-accent);width:0%;transition:width 0.3s;"></div>',
-            '</div>',
-          '</div>',
+  function _newsDetectCountryFromUrls(urls) {
+    var counts = {};
+    urls.forEach(function(u) {
+      var c = _newsCountryFromUrl(u.url);
+      if (c) counts[c] = (counts[c] || 0) + 1;
+    });
+    var total = urls.length;
+    var best = null, bestN = 0;
+    Object.keys(counts).forEach(function(c) { if (counts[c] > bestN) { bestN = counts[c]; best = c; } });
+    return (best && bestN / total >= 0.3) ? best : null;
+  }
 
-          // URL list
-          '<div id="b24t-news-url-list" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:3px;min-height:0;">',
-            '<div id="b24t-news-empty" style="font-size:11px;opacity:0.4;text-align:center;padding:16px 0;">Brak URLi — wklej adresy powyżej</div>',
-          '</div>',
+  function _newsProjectCountry() {
+    var name = (state.projectName || '').toUpperCase();
+    var m = name.match(/_([A-Z]{2})$/);
+    return m ? m[1] : null;
+  }
 
-          // Next button
-          '<button id="b24t-news-next-btn" style="display:none;font-size:11px;padding:5px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);cursor:pointer;width:100%;">▼ Otwórz następny</button>',
+  function _newsGetKeywords(cc) {
+    var all = lsGet(LS.NEWS_KEYWORDS, {});
+    return all[cc] || NEWS_DEFAULT_KEYWORDS.slice();
+  }
+  function _newsSaveKeywords(cc, chips) {
+    var all = lsGet(LS.NEWS_KEYWORDS, {});
+    all[cc] = chips;
+    lsSet(LS.NEWS_KEYWORDS, all);
+  }
+  function _newsGetLangMap() { return lsGet(LS.NEWS_LANG_MAP, {}); }
+  function _newsSaveLangMap(map) { lsSet(LS.NEWS_LANG_MAP, map); }
+  function _newsGetSessionUrls() { return lsGet(LS.NEWS_SESSION_URLS, {}); }
+  function _newsMarkSessionUrl(url) {
+    var s = _newsGetSessionUrls(); s[url] = true; lsSet(LS.NEWS_SESSION_URLS, s);
+  }
 
+  function _newsUrlMatchesKeywords(url, chips) {
+    var lurl = url.toLowerCase();
+    if (NEWS_KEYWORD_EXCLUSIONS.some(function(ex) { return lurl.indexOf(ex) !== -1; })) return false;
+    return chips.some(function(chip) { return lurl.indexOf(chip.toLowerCase()) !== -1; });
+  }
+
+  // ── CMS DOMAIN CHECK ──
+  function _newsCmsStatus() {
+    // Returns: { logged: bool, domain: 'com'|'pl'|null }
+    var host = window.location.hostname;
+    var domain = host.indexOf('brand24.com') !== -1 ? 'com' : host.indexOf('brand24.pl') !== -1 ? 'pl' : null;
+    // Check if CMS-only fields exist (author_url input visible to CMS users)
+    var cmsIndicator = document.querySelector('[name="author_url"], .cms-user-only, [data-cms-user]');
+    // Also check for the "dodane" tag in tags list
+    var tagEls = document.querySelectorAll('[data-tag-id], .tag-item');
+    var hasDodane = Array.from(tagEls).some(function(el) {
+      return (el.textContent || el.getAttribute('data-tag-name') || '').toLowerCase().indexOf('dodane') !== -1;
+    });
+    return { domain: domain, hasCmsIndicator: !!cmsIndicator, hasDodane: hasDodane };
+  }
+
+  // Try to detect article publish date from fetched HTML
+  function _newsDetectDateFromHtml(html) {
+    if (!html) return null;
+    var patterns = [
+      // JSON-LD datePublished
+      /"datePublished"\s*:\s*"(\d{4}-\d{2}-\d{2})/,
+      // meta property=article:published_time
+      /published_time[^"]*"\s+content="(\d{4}-\d{2}-\d{2})/,
+      // meta name=date
+      /name="date"[^>]+content="(\d{4}-\d{2}-\d{2})/i,
+      // itemprop=datePublished
+      /datePublished[^"]*"[^>]*content="(\d{4}-\d{2}-\d{2})/i,
+      // <time datetime="YYYY-MM-DD
+      /<time[^>]+datetime="(\d{4}-\d{2}-\d{2})/i,
+      // Common date patterns in content
+      /(\d{4}-\d{2}-\d{2})/,
+    ];
+    for (var i = 0; i < patterns.length; i++) {
+      var m = html.match(patterns[i]);
+      if (m) {
+        var d = m[1];
+        // Validate it looks like a real date
+        if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d > '2000-01-01' && d <= _localDateStr()) return d;
+      }
+    }
+    return null;
+  }
+
+  function _newsDetectLangFromResponse(html, url) {
+    var m = html && html.match(/<html[^>]+lang=["']([a-z]{2})/i);
+    if (m) return m[1].toLowerCase();
+    var m2 = html && html.match(/content-language[^>]+content=["']([a-z]{2})/i);
+    if (m2) return m2[1].toLowerCase();
+    try {
+      var h = new URL(url).hostname.toLowerCase().split('.');
+      if (h.length >= 3 && h[0].length === 2 && /^[a-z]{2}$/.test(h[0])) return h[0];
+    } catch(e) {}
+    return null;
+  }
+
+  // ── THEME HELPER ──
+  function _newsIsDark() {
+    return document.documentElement.getAttribute('data-b24t-theme') === 'dark';
+  }
+
+  // ── BUILD & OPEN NEWS PANELS ──
+  function openNewsPanels() {
+    // If already open — just show
+    if (document.getElementById('b24t-news-p1')) {
+      ['b24t-news-p1','b24t-news-p2','b24t-news-p3'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.style.display = 'flex';
+      });
+      newsState.panelsOpen = true;
+      if (!newsState.wired) { _wireNewsPanels(); newsState.wired = true; }
+      return;
+    }
+    _buildNewsPanels();
+    _wireNewsPanels();
+    newsState.wired = true;
+    newsState.panelsOpen = true;
+  }
+
+  function _newsThemeVars() {
+    var dark = _newsIsDark();
+    return {
+      bg:       dark ? '#1a1a26' : '#ffffff',
+      bgDeep:   dark ? '#13131d' : '#f4f5f9',
+      bgInput:  dark ? '#22223a' : '#f0f1f7',
+      border:   dark ? '#2e2e48' : '#d1d5db',
+      borderSub:dark ? '#252538' : '#e5e7eb',
+      text:     dark ? '#e2e8f0' : '#1e2028',
+      textMuted:dark ? '#8b8fa8' : '#6b7280',
+      textFaint:dark ? '#565a72' : '#9ca3af',
+      accent:   '#6366f1',
+      accentAlpha: dark ? 'rgba(99,102,241,0.18)' : 'rgba(99,102,241,0.10)',
+      accentBorder: dark ? 'rgba(99,102,241,0.4)' : 'rgba(99,102,241,0.3)',
+      shadow:   dark ? '0 8px 32px rgba(0,0,0,0.5)' : '0 8px 32px rgba(0,0,0,0.12)',
+      green:    '#22c55e', greenBg: dark ? 'rgba(34,197,94,0.12)' : 'rgba(34,197,94,0.08)',
+      red:      '#ef4444', redBg:   dark ? 'rgba(239,68,68,0.12)'  : 'rgba(239,68,68,0.08)',
+      yellow:   '#f59e0b', yellowBg:dark ? 'rgba(245,158,11,0.12)' : 'rgba(245,158,11,0.08)',
+      purple:   '#a78bfa', purpleBg:dark ? 'rgba(167,139,250,0.12)': 'rgba(167,139,250,0.08)',
+    };
+  }
+
+  function _newsPanelBase(id, widthPx, topPx, rightPx, zIdx) {
+    var t = _newsThemeVars();
+    var el = document.createElement('div');
+    el.id = id;
+    el.setAttribute('data-news-panel', '1');
+    el.style.cssText = [
+      'position:fixed;',
+      'top:' + topPx + 'px;',
+      'right:' + rightPx + 'px;',
+      'width:' + widthPx + 'px;',
+      'max-height:80vh;',
+      'z-index:' + (zIdx || 2147483630) + ';',
+      'display:flex;',
+      'flex-direction:column;',
+      'border-radius:14px;',
+      'border:1px solid ' + t.border + ';',
+      'background:' + t.bg + ';',
+      'box-shadow:' + t.shadow + ';',
+      'color:' + t.text + ';',
+      'font-family:Inter,Segoe UI,system-ui,sans-serif;',
+      'font-size:13px;',
+      'overflow:hidden;',
+      'animation:b24t-slidein 0.28s cubic-bezier(0.34,1.56,0.64,1) both;',
+    ].join('');
+    return el;
+  }
+
+  function _newsPanelHeader(title, onClose, extraHtml) {
+    var t = _newsThemeVars();
+    var d = document.createElement('div');
+    d.style.cssText = 'display:flex;align-items:center;padding:10px 14px;background:linear-gradient(135deg,#6366f1,#8b5cf6);flex-shrink:0;cursor:move;user-select:none;';
+    d.innerHTML = '<span style="font-size:13px;font-weight:700;color:#fff;flex:1;text-shadow:0 1px 3px rgba(0,0,0,0.2);">' + title + '</span>' +
+      (extraHtml || '') +
+      '<button class="b24t-news-close-all" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:15px;line-height:1;padding:2px 7px;border-radius:5px;flex-shrink:0;">×</button>';
+    if (onClose) {
+      d.querySelector('.b24t-news-close-all').addEventListener('click', onClose);
+    }
+    return d;
+  }
+
+  function closeNewsPanels() {
+    document.querySelectorAll('[data-news-panel]').forEach(function(el) { el.style.display = 'none'; });
+    newsState.panelsOpen = false;
+  }
+
+  function _buildNewsPanels() {
+    var t = _newsThemeVars();
+    var annPanel = document.getElementById('b24t-annotator-panel');
+    var baseRight = annPanel ? (window.innerWidth - annPanel.getBoundingClientRect().left + 10) : 450;
+    var baseTop = 80;
+
+    // ─── PANEL 1: Import + Keywords ───
+    var p1 = _newsPanelBase('b24t-news-p1', 340, baseTop, baseRight + 0, 2147483632);
+
+    var hdr1 = _newsPanelHeader('📥 Import URLi', closeNewsPanels,
+      '<button id="b24t-news-langmap-btn" title="Mapa języków" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;margin-right:6px;">⚙ Języki</button>'
+    );
+    // make header draggable for p1
+    _newsDraggable(hdr1, p1);
+
+    var body1 = document.createElement('div');
+    body1.style.cssText = 'padding:12px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;flex:1;min-height:0;';
+    body1.innerHTML = [
+      // Paste area with instructive label
+      '<div>',
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">',
+          '<label style="font-size:11px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">WKLEJ ADRESY URL</label>',
+          '<span style="font-size:9px;color:' + t.textFaint + ';">jeden na linię</span>',
         '</div>',
-
-        // DIVIDER
-        '<div style="width:1px;background:var(--b24t-border);flex-shrink:0;"></div>',
-
-        // RIGHT PANEL — mention form
-        '<div id="b24t-news-right" style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;">',
-
-          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px;">',
-            '<span style="font-size:11px;font-weight:600;opacity:0.7;">FORMULARZ WZMIANKI</span>',
-            '<button id="b24t-news-lang-map-btn" title="Edytuj mapę języków" style="font-size:10px;padding:2px 7px;border-radius:6px;border:1px solid var(--b24t-border);background:transparent;color:var(--b24t-text-muted);cursor:pointer;">⚙ Języki</button>',
-          '</div>',
-
-          '<div id="b24t-news-form-warn" style="display:none;background:#ef444422;border:1px solid #ef444455;border-radius:6px;padding:5px 8px;font-size:10px;color:#f87171;"></div>',
-          '<div id="b24t-news-lang-warn" style="display:none;background:#f59e0b22;border:1px solid #f59e0b55;border-radius:6px;padding:5px 8px;font-size:10px;color:#fbbf24;line-height:1.4;"></div>',
-
-          // URL field
-          '<div>',
-            '<label style="font-size:10px;opacity:0.6;display:block;margin-bottom:2px;">URL wzmianki</label>',
-            '<div style="display:flex;gap:4px;">',
-              '<input id="b24t-news-f-url" type="text" readonly style="flex:1;font-size:10px;padding:4px 6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);font-family:monospace;opacity:0.7;" placeholder="(wybierz URL z listy)">',
-              '<button id="b24t-news-lang-force-open" style="display:none;font-size:9px;padding:3px 6px;border-radius:6px;border:1px solid #f59e0b55;background:transparent;color:#fbbf24;cursor:pointer;" title="Otwórz mimo ostrzeżenia językowego">Otwórz</button>',
-            '</div>',
-          '</div>',
-
-          // Title
-          '<div>',
-            '<label style="font-size:10px;opacity:0.6;display:block;margin-bottom:2px;">Tytuł (opcjonalny)</label>',
-            '<input id="b24t-news-f-title" type="text" style="width:100%;box-sizing:border-box;font-size:10px;padding:4px 6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);" placeholder="Wklej tytuł artykułu...">',
-          '</div>',
-
-          // Content
-          '<div style="flex:1;display:flex;flex-direction:column;">',
-            '<label style="font-size:10px;opacity:0.6;display:block;margin-bottom:2px;">Treść <span style="color:#ef4444;">*</span></label>',
-            '<textarea id="b24t-news-f-content" rows="4" style="flex:1;width:100%;box-sizing:border-box;font-size:10px;padding:4px 6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);resize:none;" placeholder="Wklej treść artykułu (wymagane)..."></textarea>',
-          '</div>',
-
-          // Category + Country row
-          '<div style="display:flex;gap:6px;">',
-            '<div style="flex:1;">',
-              '<label style="font-size:10px;opacity:0.6;display:block;margin-bottom:2px;">Kategoria</label>',
-              '<input id="b24t-news-f-category" type="text" value="7 (News)" readonly style="width:100%;box-sizing:border-box;font-size:10px;padding:4px 6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);opacity:0.6;">',
-            '</div>',
-            '<div style="flex:1;">',
-              '<label style="font-size:10px;opacity:0.6;display:block;margin-bottom:2px;">Kraj</label>',
-              '<input id="b24t-news-f-country" type="text" readonly style="width:100%;box-sizing:border-box;font-size:10px;padding:4px 6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);opacity:0.6;" placeholder="(z projektu)">',
-            '</div>',
-          '</div>',
-
-          // Date + time row
-          '<div style="display:flex;gap:6px;">',
-            '<div style="flex:2;">',
-              '<label style="font-size:10px;opacity:0.6;display:block;margin-bottom:2px;">Data (YYYY-MM-DD) <span style="color:#ef4444;">*</span></label>',
-              '<input id="b24t-news-f-date" type="text" style="width:100%;box-sizing:border-box;font-size:10px;padding:4px 6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);" placeholder="np. 2026-03-28">',
-            '</div>',
-            '<div style="flex:1;">',
-              '<label style="font-size:10px;opacity:0.6;display:block;margin-bottom:2px;">Godzina</label>',
-              '<input id="b24t-news-f-hour" type="text" value="12" style="width:100%;box-sizing:border-box;font-size:10px;padding:4px 6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);">',
-            '</div>',
-            '<div style="flex:1;">',
-              '<label style="font-size:10px;opacity:0.6;display:block;margin-bottom:2px;">Minuta</label>',
-              '<input id="b24t-news-f-minute" type="text" value="00" style="width:100%;box-sizing:border-box;font-size:10px;padding:4px 6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);">',
-            '</div>',
-          '</div>',
-
-          // Sentiment
-          '<div>',
-            '<label style="font-size:10px;opacity:0.6;display:block;margin-bottom:2px;">Sentyment</label>',
-            '<select id="b24t-news-f-sentiment" style="width:100%;box-sizing:border-box;font-size:10px;padding:4px 6px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-secondary);color:var(--b24t-text);">',
-              '<option value="0">0 — Neutral</option>',
-              '<option value="1">1 — Positive</option>',
-              '<option value="-1">-1 — Negative</option>',
-            '</select>',
-          '</div>',
-
-          // Submit button
-          '<button id="b24t-news-submit-btn" style="padding:7px;border-radius:8px;border:none;background:var(--b24t-accent);color:#fff;font-size:12px;font-weight:600;cursor:pointer;width:100%;">✚ Dodaj wzmiankę do Brand24</button>',
-          '<div id="b24t-news-submit-status" style="font-size:10px;text-align:center;min-height:14px;"></div>',
-
+        '<textarea id="b24t-news-paste-area" rows="5" placeholder="Wklej URLe z arkusza H&M Manually...&#10;&#10;URLe nie zostaną przetworzone dopóki nie klikniesz &quot;Wczytaj URLe&quot; poniżej." style="width:100%;box-sizing:border-box;font-size:10px;padding:7px 9px;border-radius:8px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';resize:vertical;font-family:monospace;min-height:90px;line-height:1.5;"></textarea>',
+        '<button id="b24t-news-import-btn" style="margin-top:6px;width:100%;padding:7px;border-radius:8px;border:none;background:#6366f1;color:#fff;font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em;">▶ Wczytaj URLe</button>',
+        '<div id="b24t-news-import-info" style="display:none;font-size:10px;text-align:center;margin-top:4px;color:' + t.textMuted + ';"></div>',
+      '</div>',
+      // Country detection + mismatch
+      '<div id="b24t-news-country-row" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;">',
+        '<div style="display:flex;align-items:center;gap:6px;">',
+          '<span style="font-size:10px;color:' + t.textMuted + ';">Wykryty kraj URLi:</span>',
+          '<span id="b24t-news-country-badge" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;background:#6366f1;color:#fff;"></span>',
+          '<span id="b24t-news-country-proj" style="font-size:10px;color:' + t.textMuted + ';"></span>',
         '</div>',
+        '<div id="b24t-news-country-warn" style="display:none;margin-top:5px;font-size:10px;color:#f59e0b;line-height:1.4;"></div>',
+      '</div>',
+      // Keywords chips
+      '<div>',
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">',
+          '<label style="font-size:11px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">SŁOWA KLUCZOWE</label>',
+          '<div style="display:flex;gap:4px;">',
+            '<button id="b24t-news-add-chip-btn" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textMuted + ';cursor:pointer;">+ Dodaj</button>',
+            '<button id="b24t-news-reset-chips-btn" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;" title="Przywróć domyślne">↺</button>',
+          '</div>',
+        '</div>',
+        '<div id="b24t-news-chips" style="display:flex;flex-wrap:wrap;gap:4px;min-height:22px;padding:6px 8px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';"></div>',
+        '<div style="margin-top:4px;font-size:9px;color:' + t.textFaint + ';">Chipsy są filtrowane per kraj i zapisują się automatycznie.</div>',
       '</div>',
     ].join('');
-    return div;
+
+    p1.appendChild(hdr1);
+    p1.appendChild(body1);
+    document.body.appendChild(p1);
+
+    // ─── PANEL 2: URL List ───
+    var p2 = _newsPanelBase('b24t-news-p2', 360, baseTop, baseRight + 350, 2147483631);
+
+    var hdr2 = _newsPanelHeader('📋 Lista URLi', closeNewsPanels);
+    _newsDraggable(hdr2, p2);
+
+    var body2 = document.createElement('div');
+    body2.style.cssText = 'display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;';
+    body2.innerHTML = [
+      // Progress bar
+      '<div id="b24t-news-progress-wrap" style="display:none;padding:8px 12px 0;flex-shrink:0;">',
+        '<div style="display:flex;justify-content:space-between;font-size:10px;color:' + t.textMuted + ';margin-bottom:4px;">',
+          '<span>Postęp sesji</span>',
+          '<span id="b24t-news-progress-label">0 / 0</span>',
+        '</div>',
+        '<div style="height:4px;border-radius:2px;background:' + t.bgDeep + ';overflow:hidden;">',
+          '<div id="b24t-news-progress-bar" style="height:4px;background:#6366f1;width:0%;transition:width 0.4s ease;border-radius:2px;"></div>',
+        '</div>',
+      '</div>',
+      // List
+      '<div id="b24t-news-url-list" style="flex:1;overflow-y:auto;padding:8px 6px;display:flex;flex-direction:column;gap:3px;min-height:0;">',
+        '<div id="b24t-news-empty" style="padding:24px 16px;text-align:center;">',
+          '<div style="font-size:28px;margin-bottom:8px;">📋</div>',
+          '<div style="font-size:12px;font-weight:600;color:' + t.text + ';margin-bottom:4px;">Brak URLi</div>',
+          '<div style="font-size:11px;color:' + t.textFaint + ';line-height:1.5;">Wklej adresy w panelu import<br>i kliknij ▶ Wczytaj URLe</div>',
+        '</div>',
+      '</div>',
+      // Next button
+      '<div style="padding:8px 10px;flex-shrink:0;border-top:1px solid ' + t.borderSub + ';">',
+        '<button id="b24t-news-next-btn" style="width:100%;padding:6px;border-radius:8px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-size:11px;cursor:pointer;font-weight:500;">▼ Następny nieobsłużony</button>',
+      '</div>',
+    ].join('');
+
+    p2.appendChild(hdr2);
+    p2.appendChild(body2);
+    document.body.appendChild(p2);
+
+    // ─── PANEL 3: Mention Form ───
+    var p3 = _newsPanelBase('b24t-news-p3', 360, baseTop, baseRight + 720, 2147483630);
+
+    var hdr3 = _newsPanelHeader('✍ Formularz wzmianki', closeNewsPanels);
+    _newsDraggable(hdr3, p3);
+
+    var body3 = document.createElement('div');
+    body3.style.cssText = 'padding:12px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;flex:1;min-height:0;';
+
+    // CMS status banner
+    var cmsStatus = _newsCmsStatus();
+    var cmsBannerHtml = '';
+    if (!cmsStatus.hasDodane) {
+      cmsBannerHtml = '<div id="b24t-news-cms-warn" style="padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.5;">' +
+        '⚠ Nie wykryto tagu <strong>dodane</strong>. Upewnij się, że jesteś zalogowany do CMS Brand24 na właściwej domenie (' + (cmsStatus.domain === 'pl' ? 'brand24.pl' : 'brand24.com') + ').' +
+        '<button id="b24t-news-cms-recheck" style="display:block;margin-top:4px;font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:' + t.yellow + ';cursor:pointer;">↺ Sprawdź ponownie</button>' +
+      '</div>';
+    }
+
+    body3.innerHTML = [
+      cmsBannerHtml,
+      '<div id="b24t-news-form-err" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.redBg + ';border:1px solid rgba(239,68,68,0.35);font-size:10px;color:' + t.red + ';line-height:1.4;"></div>',
+      '<div id="b24t-news-lang-warn" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.4;"></div>',
+
+      // URL
+      _newsFormRow('URL wzmianki', '<input id="b24t-news-f-url" type="text" readonly placeholder="(wybierz URL z listy)" style="' + _newsInputCss(t) + 'font-family:monospace;font-size:10px;opacity:0.75;"><button id="b24t-news-lang-force-open" style="display:none;flex-shrink:0;font-size:9px;padding:3px 6px;border-radius:5px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:' + t.yellow + ';cursor:pointer;margin-left:4px;" title="Otwórz mimo ostrzeżenia">Otwórz</button>', true, 'flex'),
+
+      // Title
+      _newsFormRow('Tytuł artykułu', '<input id="b24t-news-f-title" type="text" placeholder="Wklej tytuł artykułu..." style="' + _newsInputCss(t) + '">', true),
+
+      // Content
+      '<div style="display:flex;flex-direction:column;gap:4px;">' +
+        '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">TREŚĆ <span style="color:#ef4444;">*</span></label>' +
+        '<textarea id="b24t-news-f-content" rows="3" placeholder="Wklej fragment treści artykułu..." style="' + _newsInputCss(t) + 'resize:vertical;min-height:60px;"></textarea>' +
+      '</div>',
+
+      // Date + time
+      '<div style="display:flex;gap:6px;">',
+        '<div style="flex:2;display:flex;flex-direction:column;gap:4px;">',
+          '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">DATA <span style="color:#ef4444;">*</span></label>',
+          '<div style="display:flex;gap:4px;align-items:center;">',
+            '<input id="b24t-news-f-date" type="text" placeholder="YYYY-MM-DD" style="' + _newsInputCss(t) + 'flex:1;">',
+            '<span id="b24t-news-date-detect-icon" style="display:none;font-size:14px;cursor:default;" title="Data wykryta automatycznie">🔍</span>',
+          '</div>',
+        '</div>',
+        '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
+          '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">GODZ.</label>',
+          '<input id="b24t-news-f-hour" type="text" value="12" style="' + _newsInputCss(t) + '">',
+        '</div>',
+        '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
+          '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">MIN.</label>',
+          '<input id="b24t-news-f-minute" type="text" value="00" style="' + _newsInputCss(t) + '">',
+        '</div>',
+      '</div>',
+
+      // Category + Country + Sentiment
+      '<div style="display:flex;gap:6px;">',
+        '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
+          '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">KAT.</label>',
+          '<input type="text" value="7 — News" readonly style="' + _newsInputCss(t) + 'opacity:0.5;">',
+        '</div>',
+        '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
+          '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">KRAJ</label>',
+          '<input id="b24t-news-f-country" type="text" readonly style="' + _newsInputCss(t) + 'opacity:0.6;" placeholder="z proj.">',
+        '</div>',
+        '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
+          '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">SENT.</label>',
+          '<select id="b24t-news-f-sentiment" style="' + _newsInputCss(t) + '">',
+            '<option value="0">0 Neutral</option>',
+            '<option value="1">+1 Poz.</option>',
+            '<option value="-1">-1 Neg.</option>',
+          '</select>',
+        '</div>',
+      '</div>',
+
+      // Tag dodane row
+      '<div id="b24t-news-tag-row" style="padding:7px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;display:flex;align-items:center;gap:8px;">',
+        '<span style="color:' + t.textMuted + ';font-size:10px;">Tag:</span>',
+        '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;">',
+          '<input type="checkbox" id="b24t-news-tag-dodane" checked style="cursor:pointer;accent-color:#6366f1;">',
+          '<span style="font-size:11px;font-weight:600;color:' + t.text + ';">dodane</span>',
+          '<span id="b24t-news-tag-dodane-status" style="font-size:9px;color:' + t.textFaint + ';">(sprawdzanie...)</span>',
+        '</label>',
+      '</div>',
+
+      // Submit
+      '<button id="b24t-news-submit-btn" style="padding:9px;border-radius:9px;border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:12px;font-weight:700;cursor:pointer;width:100%;letter-spacing:0.03em;transition:opacity 0.15s;">✚ Dodaj wzmiankę do Brand24</button>',
+      '<div id="b24t-news-submit-status" style="font-size:10px;text-align:center;min-height:14px;font-weight:500;"></div>',
+
+    ].join('');
+
+    p3.appendChild(hdr3);
+    p3.appendChild(body3);
+    document.body.appendChild(p3);
+
+    // Check tag status
+    _newsCheckTagDodane();
+  }
+
+  function _newsInputCss(t) {
+    return 'width:100%;box-sizing:border-box;font-size:11px;padding:6px 8px;border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-family:Inter,Segoe UI,system-ui,sans-serif;outline:none;transition:border-color 0.15s;';
+  }
+
+  function _newsFormRow(label, inputHtml, required, display) {
+    return '<div style="display:flex;flex-direction:column;gap:4px;">' +
+      '<label style="font-size:10px;font-weight:600;color:var(--b24t-text-muted, #8b8fa8);letter-spacing:0.04em;">' + label.toUpperCase() + (required ? ' <span style="color:#ef4444;">*</span>' : '') + '</label>' +
+      '<div style="display:' + (display || 'block') + ';align-items:center;">' + inputHtml + '</div>' +
+    '</div>';
+  }
+
+  function _newsDraggable(handle, panel) {
+    var dragging = false, ox = 0, oy = 0;
+    handle.addEventListener('mousedown', function(e) {
+      if (e.target.tagName === 'BUTTON') return;
+      dragging = true;
+      var r = panel.getBoundingClientRect();
+      ox = e.clientX - r.left;
+      oy = e.clientY - r.top;
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', function(e) {
+      if (!dragging) return;
+      var newLeft = e.clientX - ox;
+      var newTop  = e.clientY - oy;
+      panel.style.left = newLeft + 'px';
+      panel.style.top  = newTop + 'px';
+      panel.style.right = 'auto';
+    });
+    document.addEventListener('mouseup', function() { dragging = false; });
+  }
+
+  function _newsCheckTagDodane() {
+    var statusEl = document.getElementById('b24t-news-tag-dodane-status');
+    var checkboxEl = document.getElementById('b24t-news-tag-dodane');
+    // Look for "dodane" tag in current project tags
+    var hasDodane = state.tags && Object.keys(state.tags).some(function(k) {
+      return k.toLowerCase().indexOf('dodane') !== -1;
+    });
+    if (hasDodane) {
+      if (statusEl) { statusEl.textContent = '✓ dostępny'; statusEl.style.color = '#22c55e'; }
+    } else {
+      if (statusEl) { statusEl.textContent = '⚠ niedostępny — zaloguj się do CMS'; statusEl.style.color = '#f59e0b'; }
+      if (checkboxEl) { checkboxEl.checked = false; checkboxEl.disabled = true; }
+    }
   }
 
   // ── WIRE LOGIC ──
-  function wireNewsTab() {
-    var projectId = state.projectId;
+  function _wireNewsPanels() {
     var projectCountry = _newsProjectCountry();
-    var sessionUrls = _newsGetSessionUrls();
 
-    // ─── CHIP RENDERING ───
-    function renderChips(countryCode) {
-      var chips = _newsGetKeywords(countryCode || 'DEFAULT');
+    // ─── CLOSE ALL ───
+    document.querySelectorAll('.b24t-news-close-all').forEach(function(btn) {
+      btn.addEventListener('click', closeNewsPanels);
+    });
+
+    // ─── CMS RECHECK ───
+    var cmsRecheck = document.getElementById('b24t-news-cms-recheck');
+    if (cmsRecheck) {
+      cmsRecheck.addEventListener('click', function() {
+        _newsCheckTagDodane();
+        var cmsStatus = _newsCmsStatus();
+        var warn = document.getElementById('b24t-news-cms-warn');
+        if (cmsStatus.hasDodane) {
+          if (warn) warn.style.display = 'none';
+        } else {
+          if (warn) { warn.innerHTML = '⚠ Tag <strong>dodane</strong> nadal niedostępny. Zaloguj się do CMS na <strong>' + (cmsStatus.domain === 'pl' ? 'panel.brand24.pl' : 'app.brand24.com') + '</strong>.<button id="b24t-news-cms-recheck" style="display:block;margin-top:4px;font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:#f59e0b;cursor:pointer;">↺ Sprawdź ponownie</button>'; }
+        }
+      });
+    }
+
+    // ─── LANG MAP BUTTON ───
+    var langMapBtn = document.getElementById('b24t-news-langmap-btn');
+    if (langMapBtn) langMapBtn.addEventListener('click', _newsOpenLangMapEditor);
+
+    // ─── CHIPS ───
+    function renderChips() {
+      var cc = newsState.detectedCountry || 'DEFAULT';
+      var chips = _newsGetKeywords(cc);
       var container = document.getElementById('b24t-news-chips');
       if (!container) return;
       container.innerHTML = '';
       chips.forEach(function(kw, i) {
+        var t = _newsThemeVars();
         var chip = document.createElement('span');
-        chip.style.cssText = 'display:inline-flex;align-items:center;gap:3px;font-size:10px;padding:2px 6px;border-radius:10px;background:var(--b24t-accent-light,rgba(99,102,241,0.15));color:var(--b24t-accent);border:1px solid var(--b24t-accent-alpha,rgba(99,102,241,0.3));cursor:default;';
-        chip.innerHTML = '<span>' + kw.replace(/</g,'&lt;') + '</span><span data-idx="' + i + '" style="cursor:pointer;opacity:0.5;margin-left:2px;" class="b24t-chip-remove">✕</span>';
+        chip.style.cssText = 'display:inline-flex;align-items:center;gap:3px;font-size:10px;padding:3px 8px;border-radius:10px;background:' + t.accentAlpha + ';color:#818cf8;border:1px solid ' + t.accentBorder + ';';
+        chip.innerHTML = '<span>' + kw.replace(/</g,'&lt;') + '</span><span data-idx="' + i + '" class="b24t-chip-rm" style="cursor:pointer;opacity:0.5;margin-left:2px;font-size:9px;">✕</span>';
         container.appendChild(chip);
       });
-      // Remove listeners
-      container.querySelectorAll('.b24t-chip-remove').forEach(function(btn) {
+      container.querySelectorAll('.b24t-chip-rm').forEach(function(btn) {
         btn.addEventListener('click', function() {
-          var idx = parseInt(btn.dataset.idx);
-          var cc = newsState.detectedCountry || 'DEFAULT';
-          var kws = _newsGetKeywords(cc);
-          kws.splice(idx, 1);
-          _newsSaveKeywords(cc, kws);
-          renderChips(cc);
+          var cc2 = newsState.detectedCountry || 'DEFAULT';
+          var kws = _newsGetKeywords(cc2);
+          kws.splice(parseInt(btn.dataset.idx), 1);
+          _newsSaveKeywords(cc2, kws);
+          renderChips();
           renderUrlList();
         });
       });
     }
 
-    // ─── URL LIST RENDERING ───
-    function _statusDot(entry) {
-      var s = entry.status;
-      if (s === 'match')     return '<span style="color:#22c55e;" title="Trafienie keyword">●</span>';
-      if (s === 'opened')    return '<span style="color:#f59e0b;" title="Otwarty, brak decyzji">●</span>';
-      if (s === 'skipped')   return '<span style="color:#6b7280;" title="Pominięty">●</span>';
-      if (s === 'added')     return '<span style="color:#15803d;font-weight:700;" title="Dodany do Brand24">✓</span>';
-      if (s === 'error')     return '<span style="color:#ef4444;" title="Błąd / duplikat">✗</span>';
-      if (s === 'nomatch')   return '<span style="color:#374151;" title="Brak trafienia">○</span>';
-      return '<span>○</span>';
+    var addChipBtn = document.getElementById('b24t-news-add-chip-btn');
+    if (addChipBtn) {
+      addChipBtn.addEventListener('click', function() {
+        var kw = prompt('Nowe słowo kluczowe (fragment URL):');
+        if (!kw || !kw.trim()) return;
+        var cc = newsState.detectedCountry || 'DEFAULT';
+        var chips = _newsGetKeywords(cc);
+        if (!chips.includes(kw.trim())) { chips.push(kw.trim()); _newsSaveKeywords(cc, chips); }
+        renderChips();
+        renderUrlList();
+      });
+    }
+    var resetChipsBtn = document.getElementById('b24t-news-reset-chips-btn');
+    if (resetChipsBtn) {
+      resetChipsBtn.addEventListener('click', function() {
+        var cc = newsState.detectedCountry || 'DEFAULT';
+        _newsSaveKeywords(cc, NEWS_DEFAULT_KEYWORDS.slice());
+        renderChips();
+        renderUrlList();
+      });
+    }
+
+    // ─── URL LIST ───
+    function _statusDot(s) {
+      if (s === 'match')   return { dot: '●', color: '#22c55e', label: 'Trafienie keyword' };
+      if (s === 'opened')  return { dot: '●', color: '#f59e0b', label: 'Otwarty' };
+      if (s === 'skipped') return { dot: '●', color: '#6b7280', label: 'Pominięty' };
+      if (s === 'added')   return { dot: '✓', color: '#15803d', label: 'Dodany do Brand24' };
+      if (s === 'error')   return { dot: '✗', color: '#ef4444', label: 'Błąd / duplikat' };
+      return { dot: '○', color: '#4b5563', label: 'Brak trafienia' };
     }
 
     function renderUrlList() {
       var list = document.getElementById('b24t-news-url-list');
       var empty = document.getElementById('b24t-news-empty');
-      var progress = document.getElementById('b24t-news-progress-wrap');
-      var progressBar = document.getElementById('b24t-news-progress-bar');
-      var progressLabel = document.getElementById('b24t-news-progress-label');
-      var nextBtn = document.getElementById('b24t-news-next-btn');
+      var progressWrap = document.getElementById('b24t-news-progress-wrap');
+      var progressBar  = document.getElementById('b24t-news-progress-bar');
+      var progressLbl  = document.getElementById('b24t-news-progress-label');
       if (!list) return;
-
-      // Remove old rows
       list.querySelectorAll('.b24t-news-url-row').forEach(function(r) { r.remove(); });
 
       if (newsState.urls.length === 0) {
         if (empty) empty.style.display = '';
-        if (progress) progress.style.display = 'none';
-        if (nextBtn) nextBtn.style.display = 'none';
+        if (progressWrap) progressWrap.style.display = 'none';
         return;
       }
       if (empty) empty.style.display = 'none';
-      if (progress) progress.style.display = '';
+      if (progressWrap) progressWrap.style.display = '';
 
-      // Count handled
-      var handled = newsState.urls.filter(function(u) {
-        return u.status === 'added' || u.status === 'error' || u.status === 'skipped';
-      }).length;
-      var total = newsState.urls.length;
-      if (progressLabel) progressLabel.textContent = handled + ' / ' + total;
-      if (progressBar) progressBar.style.width = (total > 0 ? Math.round(handled / total * 100) : 0) + '%';
-      if (nextBtn) nextBtn.style.display = '';
+      var handled = newsState.urls.filter(function(u) { return u.status === 'added' || u.status === 'error' || u.status === 'skipped'; }).length;
+      if (progressLbl) progressLbl.textContent = handled + ' / ' + newsState.urls.length;
+      if (progressBar) progressBar.style.width = (newsState.urls.length > 0 ? Math.round(handled / newsState.urls.length * 100) : 0) + '%';
 
       var cc = newsState.detectedCountry || 'DEFAULT';
       var chips = _newsGetKeywords(cc);
+      var t = _newsThemeVars();
 
       newsState.urls.forEach(function(entry, idx) {
+        if (entry.status === 'pending') {
+          entry.status = _newsUrlMatchesKeywords(entry.url, chips) ? 'match' : 'nomatch';
+        }
+        var isActive = idx === newsState.activeIdx;
+        var sd = _statusDot(entry.status);
         var row = document.createElement('div');
         row.className = 'b24t-news-url-row';
-        var isActive = idx === newsState.activeIdx;
-        var isMatch = _newsUrlMatchesKeywords(entry.url, chips);
-        if (entry.status === 'pending') entry.status = isMatch ? 'match' : 'nomatch';
-
-        row.style.cssText = [
-          'display:flex;align-items:center;gap:5px;padding:4px 6px;border-radius:6px;',
-          'border:1px solid ' + (isActive ? 'var(--b24t-accent)' : 'transparent') + ';',
-          'background:' + (isActive ? 'var(--b24t-accent-light,rgba(99,102,241,0.1))' : 'var(--b24t-bg-secondary)') + ';',
-          'cursor:pointer;min-width:0;',
-        ].join('');
         row.dataset.idx = idx;
-
-        var shortUrl = entry.url.replace(/^https?:\/\//, '').substring(0, 45);
-        if (entry.url.replace(/^https?:\/\//, '').length > 45) shortUrl += '…';
-
-        row.innerHTML = [
-          '<span style="flex-shrink:0;width:12px;text-align:center;font-size:11px;">' + _statusDot(entry) + '</span>',
-          '<span style="flex:1;min-width:0;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:monospace;" title="' + entry.url.replace(/"/g,'&quot;') + '">' + shortUrl + '</span>',
-          '<button class="b24t-news-skip-btn" data-idx="' + idx + '" style="flex-shrink:0;font-size:9px;padding:1px 5px;border-radius:4px;border:1px solid var(--b24t-border);background:transparent;color:var(--b24t-text-muted);cursor:pointer;">Pomiń</button>',
-        ].join('');
-
+        row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:8px;cursor:pointer;border:1px solid ' +
+          (isActive ? '#6366f1' : t.borderSub) + ';background:' +
+          (isActive ? t.accentAlpha : t.bgDeep) + ';transition:background 0.1s,border-color 0.1s;';
+        var shortUrl = entry.url.replace(/^https?:\/\//, '');
+        if (shortUrl.length > 42) shortUrl = shortUrl.substring(0, 42) + '…';
+        row.innerHTML =
+          '<span style="flex-shrink:0;width:14px;text-align:center;font-size:12px;font-weight:700;color:' + sd.color + ';" title="' + sd.label + '">' + sd.dot + '</span>' +
+          '<span style="flex:1;min-width:0;font-size:10px;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + t.text + ';" title="' + entry.url.replace(/"/g,'&quot;') + '">' + shortUrl + '</span>' +
+          '<button class="b24t-news-skip-btn" style="flex-shrink:0;font-size:9px;padding:1px 6px;border-radius:5px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;">Pomiń</button>';
         list.appendChild(row);
-
-        // Click to activate
         row.addEventListener('click', function(e) {
           if (e.target.classList.contains('b24t-news-skip-btn')) return;
           activateUrl(idx);
         });
-      });
-
-      // Skip buttons
-      list.querySelectorAll('.b24t-news-skip-btn').forEach(function(btn) {
-        btn.addEventListener('click', function(e) {
+        row.querySelector('.b24t-news-skip-btn').addEventListener('click', function(e) {
           e.stopPropagation();
-          var idx = parseInt(btn.dataset.idx);
           newsState.urls[idx].status = 'skipped';
           renderUrlList();
         });
       });
     }
 
-    // ─── ACTIVATE URL (open + fill form) ───
+    // ─── ACTIVATE URL ───
     function activateUrl(idx) {
       var entry = newsState.urls[idx];
       if (!entry) return;
       newsState.activeIdx = idx;
       entry.status = 'opened';
-      entry.opened = true;
-
-      // Fill form URL
       var fUrl = document.getElementById('b24t-news-f-url');
       if (fUrl) fUrl.value = entry.url;
-
-      // Fill country
       var pc = projectCountry || _newsProjectCountry();
       var fCountry = document.getElementById('b24t-news-f-country');
-      if (fCountry) fCountry.value = pc || '';
-
-      // Clear lang warn
+      if (fCountry && pc) fCountry.value = pc;
       var langWarn = document.getElementById('b24t-news-lang-warn');
-      var forceOpenBtn = document.getElementById('b24t-news-lang-force-open');
-      if (langWarn) { langWarn.style.display = 'none'; langWarn.textContent = ''; }
-      if (forceOpenBtn) forceOpenBtn.style.display = 'none';
-
-      // Clear submit status
+      var forceBtn = document.getElementById('b24t-news-lang-force-open');
+      if (langWarn) { langWarn.style.display = 'none'; langWarn.innerHTML = ''; }
+      if (forceBtn) forceBtn.style.display = 'none';
       var subStatus = document.getElementById('b24t-news-submit-status');
-      if (subStatus) subStatus.textContent = '';
-
+      if (subStatus) { subStatus.textContent = ''; subStatus.style.color = ''; }
       renderUrlList();
-      openUrlWithLangCheck(entry.url, idx);
+      // Fetch page: detect lang + date
+      _newsFetchPageInfo(entry.url);
     }
 
-    // ─── OPEN URL WITH LANG CHECK ───
-    function openUrlWithLangCheck(url, idx, force) {
+    // ─── FETCH PAGE INFO (lang + date) ───
+    function _newsFetchPageInfo(url) {
+      var dateEl = document.getElementById('b24t-news-f-date');
+      var dateIcon = document.getElementById('b24t-news-date-detect-icon');
+      if (dateIcon) { dateIcon.style.display = 'none'; }
+      var pc = _newsProjectCountry();
       var langMap = _newsGetLangMap();
-      var pc = projectCountry || _newsProjectCountry();
       var expectedLangs = pc ? (langMap[pc] || []) : [];
 
-      if (!force && pc && expectedLangs.length > 0) {
-        // Fetch page to detect lang
-        GM_xmlhttpRequest({
-          method: 'GET',
-          url: url,
-          timeout: 8000,
-          onload: function(resp) {
-            var detectedLang = _newsDetectLangFromResponse(resp.responseText, url);
-            var langWarn = document.getElementById('b24t-news-lang-warn');
-            var forceOpenBtn = document.getElementById('b24t-news-lang-force-open');
-            if (detectedLang && !expectedLangs.includes(detectedLang)) {
-              // Show warning
-              if (langWarn) {
-                langWarn.textContent = '⚠ Wykryto język: ' + detectedLang + ' — oczekiwano: ' + expectedLangs.join(', ') + ' (projekt ' + pc + '). Otwierasz mimo to?';
-                langWarn.style.display = '';
-              }
-              if (forceOpenBtn) forceOpenBtn.style.display = '';
-              // Still open in new tab
-              window.open(url, '_blank');
-              // Offer to add language to map
-              _newsOfferAddLang(pc, detectedLang);
-            } else {
-              // Lang ok — open
-              if (langWarn) langWarn.style.display = 'none';
-              if (forceOpenBtn) forceOpenBtn.style.display = 'none';
-              window.open(url, '_blank');
-              // Update map if unknown language found
-              if (detectedLang && !expectedLangs.includes(detectedLang) && expectedLangs.length === 0) {
-                _newsOfferAddLang(pc, detectedLang);
-              }
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: url,
+        timeout: 8000,
+        onload: function(resp) {
+          var html = resp.responseText || '';
+          // Date detection
+          var detectedDate = _newsDetectDateFromHtml(html);
+          if (detectedDate && dateEl) {
+            dateEl.value = detectedDate;
+            if (dateIcon) {
+              dateIcon.style.display = 'inline';
+              dateIcon.title = 'Data wykryta automatycznie ze strony (' + detectedDate + ') — możesz ją edytować';
             }
-          },
-          onerror: function() {
-            // Can't fetch — open without check
-            window.open(url, '_blank');
-          },
-          ontimeout: function() {
-            window.open(url, '_blank');
-          },
-        });
-      } else {
-        window.open(url, '_blank');
-      }
-    }
-
-    // ─── DETECT LANG FROM PAGE RESPONSE ───
-    function _newsDetectLangFromResponse(html, url) {
-      // 1. <html lang="...">
-      var m = html && html.match(/<html[^>]+lang=["']([a-z]{2})/i);
-      if (m) return m[1].toLowerCase();
-      // 2. <meta http-equiv="content-language" content="...">
-      var m2 = html && html.match(/content-language[^>]+content=["']([a-z]{2})/i);
-      if (m2) return m2[1].toLowerCase();
-      // 3. subdomain
-      try {
-        var h = new URL(url).hostname.toLowerCase().split('.');
-        if (h.length >= 3 && h[0].length === 2) return h[0];
-      } catch(e) {}
-      return null;
-    }
-
-    // ─── OFFER ADD LANG TO MAP ───
-    function _newsOfferAddLang(countryCode, lang) {
-      var map = _newsGetLangMap();
-      var existing = map[countryCode] || [];
-      if (existing.includes(lang)) return;
-      // Show inline suggestion in lang warn
-      var langWarn = document.getElementById('b24t-news-lang-warn');
-      if (langWarn) {
-        var addBtn = document.createElement('button');
-        addBtn.textContent = '+ Dodaj ' + lang + ' do mapy dla ' + countryCode;
-        addBtn.style.cssText = 'margin-top:4px;font-size:9px;padding:2px 7px;border-radius:5px;border:1px solid #f59e0b55;background:transparent;color:#fbbf24;cursor:pointer;display:block;';
-        addBtn.addEventListener('click', function() {
-          var m2 = _newsGetLangMap();
-          m2[countryCode] = (m2[countryCode] || []).concat([lang]);
-          _newsSaveLangMap(m2);
-          addBtn.textContent = '✓ Dodano ' + lang + ' do mapy dla ' + countryCode;
-          addBtn.disabled = true;
-        });
-        langWarn.appendChild(addBtn);
-      }
-    }
-
-    // ─── LANG MAP EDITOR MODAL ───
-    function openLangMapEditor() {
-      if (document.getElementById('b24t-news-langmap-modal')) return;
-      var map = _newsGetLangMap();
-      var overlay = document.createElement('div');
-      overlay.id = 'b24t-news-langmap-modal';
-      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:2147483646;display:flex;align-items:center;justify-content:center;';
-
-      function buildModalContent() {
-        var keys = Object.keys(map).sort();
-        var rows = keys.map(function(cc) {
-          var langs = (map[cc] || []).join(', ');
-          return '<tr>' +
-            '<td style="padding:4px 8px;font-weight:600;font-size:11px;color:#e2e8f0;">' + cc + '</td>' +
-            '<td style="padding:4px 8px;">' +
-              '<input data-cc="' + cc + '" class="b24t-lm-input" type="text" value="' + langs + '" ' +
-              'style="background:#1e1e2e;border:1px solid #3a3a4a;border-radius:4px;color:#e2e8f0;font-size:10px;padding:2px 6px;width:120px;">' +
-            '</td>' +
-            '<td style="padding:4px 8px;">' +
-              '<button data-cc="' + cc + '" class="b24t-lm-del" style="font-size:9px;padding:1px 6px;border-radius:4px;border:1px solid #ef444455;background:transparent;color:#f87171;cursor:pointer;">Usuń</button>' +
-            '</td>' +
-          '</tr>';
-        }).join('');
-
-        return '<div style="background:#16161f;border:1px solid #3a3a4a;border-radius:12px;padding:20px;min-width:340px;max-width:420px;max-height:80vh;overflow-y:auto;color:#e2e8f0;">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
-            '<span style="font-size:13px;font-weight:700;">⚙ Mapa języków projektów</span>' +
-            '<button id="b24t-lm-close" style="background:transparent;border:none;color:#9ca3af;cursor:pointer;font-size:16px;">✕</button>' +
-          '</div>' +
-          '<p style="font-size:10px;color:#9ca3af;margin:0 0 10px 0;">Mapa buduje się automatycznie z Twojej pracy. Możesz ręcznie edytować kody języków (np. tr, pl, el) oddzielone przecinkami. Jeśli kraj nie ma wpisów — detekcja języka jest pomijana.</p>' +
-          '<table style="width:100%;border-collapse:collapse;">' +
-            '<thead><tr>' +
-              '<th style="font-size:10px;opacity:0.5;text-align:left;padding:2px 8px;">Kraj</th>' +
-              '<th style="font-size:10px;opacity:0.5;text-align:left;padding:2px 8px;">Języki (kody)</th>' +
-              '<th></th>' +
-            '</tr></thead>' +
-            '<tbody id="b24t-lm-body">' + rows + '</tbody>' +
-          '</table>' +
-          '<div style="display:flex;gap:8px;margin-top:14px;align-items:center;">' +
-            '<input id="b24t-lm-new-cc" type="text" placeholder="Kraj (np. TR)" maxlength="3" style="background:#1e1e2e;border:1px solid #3a3a4a;border-radius:4px;color:#e2e8f0;font-size:10px;padding:4px 6px;width:60px;">' +
-            '<input id="b24t-lm-new-langs" type="text" placeholder="Języki (np. tr)" style="background:#1e1e2e;border:1px solid #3a3a4a;border-radius:4px;color:#e2e8f0;font-size:10px;padding:4px 6px;flex:1;">' +
-            '<button id="b24t-lm-add" style="font-size:10px;padding:4px 8px;border-radius:6px;border:none;background:#6366f1;color:#fff;cursor:pointer;">Dodaj</button>' +
-          '</div>' +
-          '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">' +
-            '<button id="b24t-lm-save" style="font-size:11px;padding:5px 14px;border-radius:7px;border:none;background:#6366f1;color:#fff;cursor:pointer;font-weight:600;">Zapisz</button>' +
-          '</div>' +
-        '</div>';
-      }
-
-      overlay.innerHTML = buildModalContent();
-      document.body.appendChild(overlay);
-
-      function saveAndClose() {
-        // Read all rows
-        overlay.querySelectorAll('.b24t-lm-input').forEach(function(inp) {
-          var cc = inp.dataset.cc;
-          var langs = inp.value.split(',').map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
-          map[cc] = langs;
-        });
-        _newsSaveLangMap(map);
-        overlay.remove();
-      }
-
-      overlay.querySelector('#b24t-lm-close').addEventListener('click', function() { overlay.remove(); });
-      overlay.querySelector('#b24t-lm-save').addEventListener('click', saveAndClose);
-
-      overlay.querySelector('#b24t-lm-add').addEventListener('click', function() {
-        var cc = (overlay.querySelector('#b24t-lm-new-cc').value || '').toUpperCase().trim();
-        var langs = overlay.querySelector('#b24t-lm-new-langs').value.split(',').map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
-        if (!cc || langs.length === 0) return;
-        map[cc] = (map[cc] || []).concat(langs.filter(function(l) { return !(map[cc] || []).includes(l); }));
-        overlay.querySelector('#b24t-lm-new-cc').value = '';
-        overlay.querySelector('#b24t-lm-new-langs').value = '';
-        overlay.innerHTML = buildModalContent();
-        wireModalEvents();
-      });
-
-      function wireModalEvents() {
-        var closeBtn = overlay.querySelector('#b24t-lm-close');
-        var saveBtn = overlay.querySelector('#b24t-lm-save');
-        var addBtn = overlay.querySelector('#b24t-lm-add');
-        if (closeBtn) closeBtn.addEventListener('click', function() { overlay.remove(); });
-        if (saveBtn) saveBtn.addEventListener('click', saveAndClose);
-        if (addBtn) addBtn.addEventListener('click', function() {
-          var cc = (overlay.querySelector('#b24t-lm-new-cc').value || '').toUpperCase().trim();
-          var langs = overlay.querySelector('#b24t-lm-new-langs').value.split(',').map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
-          if (!cc || langs.length === 0) return;
-          map[cc] = (map[cc] || []).concat(langs.filter(function(l) { return !(map[cc] || []).includes(l); }));
-          overlay.querySelector('#b24t-lm-new-cc').value = '';
-          overlay.querySelector('#b24t-lm-new-langs').value = '';
-          overlay.innerHTML = buildModalContent();
-          wireModalEvents();
-        });
-        overlay.querySelectorAll('.b24t-lm-del').forEach(function(btn) {
-          btn.addEventListener('click', function() {
-            delete map[btn.dataset.cc];
-            overlay.innerHTML = buildModalContent();
-            wireModalEvents();
-          });
-        });
-      }
-      wireModalEvents();
-
-      // Click outside to close
-      overlay.addEventListener('click', function(e) {
-        if (e.target === overlay) overlay.remove();
+          }
+          // Language check
+          var detectedLang = _newsDetectLangFromResponse(html, url);
+          var langWarn = document.getElementById('b24t-news-lang-warn');
+          var forceBtn = document.getElementById('b24t-news-lang-force-open');
+          if (pc && expectedLangs.length > 0 && detectedLang && !expectedLangs.includes(detectedLang)) {
+            if (langWarn) {
+              langWarn.innerHTML = '⚠ Wykryty język: <strong>' + detectedLang + '</strong> — oczekiwano: <strong>' + expectedLangs.join(', ') + '</strong> (projekt ' + pc + ')';
+              langWarn.style.display = '';
+              // Offer add to map
+              var addBtn = document.createElement('button');
+              addBtn.textContent = '+ Dodaj ' + detectedLang + ' do mapy dla ' + pc;
+              addBtn.style.cssText = 'display:inline-block;margin-top:5px;font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:#f59e0b;cursor:pointer;';
+              addBtn.addEventListener('click', function() {
+                var m = _newsGetLangMap();
+                m[pc] = (m[pc] || []).concat([detectedLang]);
+                _newsSaveLangMap(m);
+                addBtn.textContent = '✓ Dodano';
+                addBtn.disabled = true;
+              });
+              langWarn.appendChild(addBtn);
+            }
+            if (forceBtn) forceBtn.style.display = '';
+          } else {
+            if (langWarn) langWarn.style.display = 'none';
+            if (forceBtn) forceBtn.style.display = 'none';
+            if (pc && detectedLang && expectedLangs.length === 0) {
+              // Auto-learn: no entries yet → silent add
+              var m = _newsGetLangMap();
+              m[pc] = [detectedLang];
+              _newsSaveLangMap(m);
+            }
+          }
+          // Open in new tab
+          window.open(url, '_blank');
+        },
+        onerror: function() { window.open(url, '_blank'); },
+        ontimeout: function() { window.open(url, '_blank'); },
       });
     }
 
-    // ─── PASTE + IMPORT ───
-    var importBtn = document.getElementById('b24t-news-import-btn');
-    var clearBtn  = document.getElementById('b24t-news-clear-btn');
-    var pasteArea = document.getElementById('b24t-news-paste-area');
-
-    function importUrls() {
-      var raw = pasteArea ? pasteArea.value : '';
-      var lines = raw.split('\n').map(function(l) { return l.trim(); }).filter(function(l) { return l.startsWith('http'); });
-
-      // Dedup
-      var seen = {};
-      lines = lines.filter(function(u) {
-        if (seen[u]) return false;
-        seen[u] = true;
-        return true;
-      });
-
-      newsState.urls = lines.map(function(u) {
-        return { url: u, status: 'pending', opened: false, submitted: false };
-      });
-      newsState.activeIdx = -1;
-
-      // Country detection
-      var detected = _newsDetectCountryFromUrls(newsState.urls);
-      newsState.detectedCountry = detected;
-
-      // Badge
-      var badge = document.getElementById('b24t-news-country-badge');
-      if (badge) {
-        if (detected) { badge.textContent = detected; badge.style.display = ''; }
-        else { badge.style.display = 'none'; }
-      }
-
-      // Country mismatch warning
-      var pc = _newsProjectCountry();
-      var warn = document.getElementById('b24t-news-country-warn');
-      if (warn) {
-        if (detected && pc && detected !== pc) {
-          warn.textContent = '⚠ URLe wskazują na kraj ' + detected + ', ale aktywny projekt to ' + pc + '. Sprawdź, czy wklejono właściwe URLe.';
-          warn.style.display = '';
-        } else {
-          warn.style.display = 'none';
-        }
-      }
-
-      // Load chips for detected country
-      renderChips(detected || 'DEFAULT');
-      renderUrlList();
-
-      // Pre-fill country in form
-      var fCountry = document.getElementById('b24t-news-f-country');
-      if (fCountry) fCountry.value = pc || detected || '';
-
-      if (pasteArea) pasteArea.value = '';
-    }
-
-    if (importBtn) importBtn.addEventListener('click', importUrls);
-    if (clearBtn) clearBtn.addEventListener('click', function() {
-      newsState.urls = [];
-      newsState.activeIdx = -1;
-      var fUrl = document.getElementById('b24t-news-f-url');
-      if (fUrl) fUrl.value = '';
-      renderUrlList();
-    });
-
-    // Also import on Ctrl+Enter in textarea
-    if (pasteArea) {
-      pasteArea.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); importUrls(); }
-      });
-    }
-
-    // ─── ADD CHIP ───
-    var addChipBtn = document.getElementById('b24t-news-add-chip-btn');
-    if (addChipBtn) {
-      addChipBtn.addEventListener('click', function() {
-        var kw = prompt('Nowe słowo kluczowe (fragment URLa):');
-        if (!kw || !kw.trim()) return;
-        var cc = newsState.detectedCountry || 'DEFAULT';
-        var chips = _newsGetKeywords(cc);
-        if (!chips.includes(kw.trim())) {
-          chips.push(kw.trim());
-          _newsSaveKeywords(cc, chips);
-        }
-        renderChips(cc);
-        renderUrlList();
-      });
-    }
-
-    // ─── LANG MAP BUTTON ───
-    var langMapBtn = document.getElementById('b24t-news-lang-map-btn');
-    if (langMapBtn) langMapBtn.addEventListener('click', openLangMapEditor);
-
-    // ─── FORCE OPEN BUTTON ───
+    // Force open button
     var forceOpenBtn = document.getElementById('b24t-news-lang-force-open');
     if (forceOpenBtn) {
       forceOpenBtn.addEventListener('click', function() {
         var fUrl = document.getElementById('b24t-news-f-url');
         if (fUrl && fUrl.value) window.open(fUrl.value, '_blank');
         forceOpenBtn.style.display = 'none';
-        var lw = document.getElementById('b24t-news-lang-warn');
-        if (lw) lw.style.display = 'none';
       });
     }
 
-    // ─── NEXT BUTTON ───
+    // ─── IMPORT ───
+    var importBtn = document.getElementById('b24t-news-import-btn');
+    var pasteArea = document.getElementById('b24t-news-paste-area');
+    var importInfo = document.getElementById('b24t-news-import-info');
+
+    function importUrls() {
+      var raw = pasteArea ? pasteArea.value : '';
+      var lines = raw.split('\n').map(function(l) { return l.trim(); }).filter(function(l) { return /^https?:\/\//.test(l); });
+      var seen = {};
+      var deduped = lines.filter(function(u) { if (seen[u]) return false; seen[u] = true; return true; });
+      var dupeCount = lines.length - deduped.length;
+      newsState.urls = deduped.map(function(u) { return { url: u, status: 'pending', opened: false }; });
+      newsState.activeIdx = -1;
+      var detected = _newsDetectCountryFromUrls(newsState.urls);
+      newsState.detectedCountry = detected;
+
+      // Country badge + warn
+      var badgeEl = document.getElementById('b24t-news-country-badge');
+      var rowEl   = document.getElementById('b24t-news-country-row');
+      var projEl  = document.getElementById('b24t-news-country-proj');
+      var warnEl  = document.getElementById('b24t-news-country-warn');
+      var pc = _newsProjectCountry();
+      if (rowEl) rowEl.style.display = detected ? '' : 'none';
+      if (badgeEl && detected) badgeEl.textContent = detected;
+      if (projEl) projEl.textContent = pc ? '(projekt: ' + pc + ')' : '';
+      if (warnEl) {
+        if (detected && pc && detected !== pc) {
+          warnEl.textContent = '⚠ URLe wskazują kraj ' + detected + ', ale aktywny projekt to ' + pc + '. Sprawdź, czy wklejono właściwe linki.';
+          warnEl.style.display = '';
+        } else { warnEl.style.display = 'none'; }
+      }
+
+      // Import info
+      var msg = '✓ Wczytano ' + deduped.length + ' URL' + (deduped.length !== 1 ? 'i' : '');
+      if (dupeCount > 0) msg += ' (usunięto ' + dupeCount + ' duplikat' + (dupeCount === 1 ? '' : dupeCount < 5 ? 'y' : 'ów') + ')';
+      if (importInfo) { importInfo.textContent = msg; importInfo.style.display = ''; importInfo.style.color = '#22c55e'; }
+
+      if (pc) {
+        var fCountry = document.getElementById('b24t-news-f-country');
+        if (fCountry) fCountry.value = pc;
+      }
+      renderChips();
+      renderUrlList();
+      if (pasteArea) pasteArea.value = '';
+    }
+
+    if (importBtn) importBtn.addEventListener('click', importUrls);
+    if (pasteArea) pasteArea.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); importUrls(); }
+    });
+
+    // ─── NEXT BTN ───
     var nextBtn = document.getElementById('b24t-news-next-btn');
     if (nextBtn) {
       nextBtn.addEventListener('click', function() {
-        // Find next unhandled (match or pending, not skipped/added/error)
         var start = newsState.activeIdx + 1;
         for (var i = start; i < newsState.urls.length; i++) {
           var s = newsState.urls[i].status;
-          if (s === 'match' || s === 'pending' || s === 'nomatch' || s === 'opened') {
-            activateUrl(i);
-            return;
-          }
+          if (s === 'match' || s === 'pending' || s === 'nomatch' || s === 'opened') { activateUrl(i); return; }
         }
-        // Wrap around
         for (var j = 0; j < start; j++) {
           var s2 = newsState.urls[j].status;
-          if (s2 === 'match' || s2 === 'pending' || s2 === 'nomatch' || s2 === 'opened') {
-            activateUrl(j);
-            return;
-          }
+          if (s2 === 'match' || s2 === 'pending' || s2 === 'nomatch' || s2 === 'opened') { activateUrl(j); return; }
         }
       });
     }
@@ -5620,41 +5776,45 @@ function showOnboarding(onComplete) {
     var submitBtn = document.getElementById('b24t-news-submit-btn');
     if (submitBtn) {
       submitBtn.addEventListener('click', function() {
-        var fUrl     = (document.getElementById('b24t-news-f-url')     || {}).value || '';
-        var fTitle   = (document.getElementById('b24t-news-f-title')   || {}).value || '';
-        var fContent = (document.getElementById('b24t-news-f-content') || {}).value || '';
-        var fDate    = (document.getElementById('b24t-news-f-date')    || {}).value || '';
-        var fHour    = (document.getElementById('b24t-news-f-hour')    || {}).value || '12';
-        var fMinute  = (document.getElementById('b24t-news-f-minute')  || {}).value || '00';
+        var fUrl     = (document.getElementById('b24t-news-f-url')      || {}).value || '';
+        var fTitle   = (document.getElementById('b24t-news-f-title')    || {}).value || '';
+        var fContent = (document.getElementById('b24t-news-f-content')  || {}).value || '';
+        var fDate    = (document.getElementById('b24t-news-f-date')     || {}).value || '';
+        var fHour    = (document.getElementById('b24t-news-f-hour')     || {}).value || '12';
+        var fMinute  = (document.getElementById('b24t-news-f-minute')   || {}).value || '00';
         var fSent    = (document.getElementById('b24t-news-f-sentiment')|| {}).value || '0';
-        var fCountry = (document.getElementById('b24t-news-f-country') || {}).value || '';
-        var formWarn = document.getElementById('b24t-news-form-warn');
-        var subStatus = document.getElementById('b24t-news-submit-status');
+        var fCountry = (document.getElementById('b24t-news-f-country')  || {}).value || '';
+        var useDodane= document.getElementById('b24t-news-tag-dodane');
+        var formErr  = document.getElementById('b24t-news-form-err');
+        var subStatus= document.getElementById('b24t-news-submit-status');
 
-        function showErr(msg) {
-          if (formWarn) { formWarn.textContent = msg; formWarn.style.display = ''; }
-          if (subStatus) subStatus.textContent = '';
-        }
-        function clearErr() { if (formWarn) formWarn.style.display = 'none'; }
-
+        function showErr(msg) { if (formErr) { formErr.innerHTML = msg; formErr.style.display = ''; } if (subStatus) subStatus.textContent = ''; }
+        function clearErr()   { if (formErr) formErr.style.display = 'none'; }
         clearErr();
 
-        // Validations
-        if (!fUrl) { showErr('Brak URLa. Wybierz URL z listy po lewej.'); return; }
-        if (!fContent.trim()) { showErr('Treść wzmianki jest wymagana.'); return; }
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(fDate)) { showErr('Nieprawidlowy format daty — wymagany: YYYY-MM-DD'); return; }
-        if (_newsGetSessionUrls()[fUrl]) { showErr('Ten URL byl juz submitowany w tej sesji.'); return; }
+        // All fields required
+        if (!fUrl)            { showErr('⚠ Brak URL. Wybierz adres z listy.'); return; }
+        if (!fTitle.trim())   { showErr('⚠ Tytuł jest wymagany.'); return; }
+        if (!fContent.trim()) { showErr('⚠ Treść jest wymagana.'); return; }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(fDate)) { showErr('⚠ Nieprawidłowy format daty — wymagany: YYYY-MM-DD'); return; }
+        if (_newsGetSessionUrls()[fUrl]) { showErr('⚠ Ten URL był już dodany w tej sesji.'); return; }
         var pc = _newsProjectCountry();
-        if (pc && fCountry && fCountry !== pc) { showErr('Kraj formularza (' + fCountry + ') niezgodny z projektem (' + pc + ').'); return; }
+        if (pc && fCountry && fCountry !== pc) { showErr('⚠ Kraj (' + fCountry + ') niezgodny z projektem (' + pc + ').'); return; }
 
-        // Get CSRF token
         var tknEl = document.querySelector('[name="tknB24"]');
-        if (!tknEl) { showErr('Nie znaleziono tokenu CSRF (tknB24). Upewnij sie, ze jestes na stronie Brand24.'); return; }
+        if (!tknEl) { showErr('⚠ Brak tokenu CSRF (tknB24). Upewnij się, że jesteś na stronie Brand24.'); return; }
         var tkn = tknEl.value;
         var sid = state.projectId || '';
-        if (!sid) { showErr('Brak ID projektu. Przejdz na strone projektu Brand24.'); return; }
+        if (!sid) { showErr('⚠ Brak ID projektu. Przejdź na stronę projektu Brand24.'); return; }
 
-        var body = [
+        // Find "dodane" tag ID
+        var dodaneTagId = null;
+        if (useDodane && useDodane.checked && !useDodane.disabled && state.tags) {
+          var dodaneKey = Object.keys(state.tags).find(function(k) { return k.toLowerCase().indexOf('dodane') !== -1; });
+          if (dodaneKey) dodaneTagId = state.tags[dodaneKey];
+        }
+
+        var bodyParts = [
           'tknB24=' + encodeURIComponent(tkn),
           'f=fser',
           'search_id=' + encodeURIComponent(sid),
@@ -5667,60 +5827,143 @@ function showOnboarding(onComplete) {
           'mention_created_date_day=' + encodeURIComponent(fDate),
           'mention_created_date_hour=' + encodeURIComponent(fHour),
           'mention_created_date_minute=' + encodeURIComponent(fMinute),
-        ].join('&');
+        ];
+        if (dodaneTagId) bodyParts.push('tag[]=' + encodeURIComponent(dodaneTagId));
+        var body = bodyParts.join('&');
 
         submitBtn.disabled = true;
+        submitBtn.style.opacity = '0.6';
         submitBtn.textContent = '⏳ Wysyłam...';
-        if (subStatus) subStatus.textContent = '';
 
         GM_xmlhttpRequest({
           method: 'POST',
           url: 'https://app.brand24.com/searches/add-new-mention/?sid=' + sid,
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'X-Requested-With': 'XMLHttpRequest',
-          },
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
           data: body,
           onload: function(resp) {
             submitBtn.disabled = false;
+            submitBtn.style.opacity = '';
             submitBtn.textContent = '✚ Dodaj wzmiankę do Brand24';
             var isDuplicate = resp.responseText && resp.responseText.indexOf('There is the entry with this address') !== -1;
             var isOk = resp.status >= 200 && resp.status < 400 && !isDuplicate;
             if (isDuplicate) {
               _newsMarkSessionUrl(fUrl);
-              if (subStatus) { subStatus.textContent = '⚠ Duplikat — wzmianka juz istnieje w projekcie.'; subStatus.style.color = '#f59e0b'; }
+              if (subStatus) { subStatus.textContent = '⚠ Duplikat — wzmianka już istnieje.'; subStatus.style.color = '#f59e0b'; }
               if (newsState.activeIdx >= 0) newsState.urls[newsState.activeIdx].status = 'error';
             } else if (isOk) {
               _newsMarkSessionUrl(fUrl);
               if (subStatus) { subStatus.textContent = '✓ Dodano do Brand24!'; subStatus.style.color = '#22c55e'; }
               if (newsState.activeIdx >= 0) newsState.urls[newsState.activeIdx].status = 'added';
-              // Clear content + title for next mention
               var tc = document.getElementById('b24t-news-f-content');
               var tt = document.getElementById('b24t-news-f-title');
+              var td = document.getElementById('b24t-news-f-date');
               if (tc) tc.value = '';
               if (tt) tt.value = '';
+              if (td) td.value = '';
+              var di = document.getElementById('b24t-news-date-detect-icon');
+              if (di) di.style.display = 'none';
             } else {
-              if (subStatus) { subStatus.textContent = '✗ Blad HTTP ' + resp.status; subStatus.style.color = '#ef4444'; }
+              if (subStatus) { subStatus.textContent = '✗ Błąd HTTP ' + resp.status; subStatus.style.color = '#ef4444'; }
               if (newsState.activeIdx >= 0) newsState.urls[newsState.activeIdx].status = 'error';
             }
             renderUrlList();
           },
           onerror: function() {
-            submitBtn.disabled = false;
-            submitBtn.textContent = '✚ Dodaj wzmiankę do Brand24';
-            if (subStatus) { subStatus.textContent = '✗ Blad sieci — sprawdz polaczenie.'; subStatus.style.color = '#ef4444'; }
+            submitBtn.disabled = false; submitBtn.style.opacity = ''; submitBtn.textContent = '✚ Dodaj wzmiankę do Brand24';
+            if (subStatus) { subStatus.textContent = '✗ Błąd sieci.'; subStatus.style.color = '#ef4444'; }
           },
         });
       });
     }
 
-    // ─── INITIAL RENDER ───
-    var pc = _newsProjectCountry();
-    var fCountry = document.getElementById('b24t-news-f-country');
-    if (fCountry && pc) fCountry.value = pc;
-    renderChips('DEFAULT');
-    renderUrlList();
+    // ─── LANG MAP EDITOR ───
+    // Initial render
+    renderChips();
+    var pc2 = _newsProjectCountry();
+    var fCountry2 = document.getElementById('b24t-news-f-country');
+    if (fCountry2 && pc2) fCountry2.value = pc2;
   }
+
+  function _newsOpenLangMapEditor() {
+    if (document.getElementById('b24t-news-lm-overlay')) return;
+    var map = _newsGetLangMap();
+    var overlay = document.createElement('div');
+    overlay.id = 'b24t-news-lm-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:2147483647;display:flex;align-items:center;justify-content:center;';
+
+    function buildContent() {
+      var keys = Object.keys(map).sort();
+      var rows = keys.length ? keys.map(function(cc) {
+        var langs = (map[cc] || []).join(', ');
+        return '<tr>' +
+          '<td style="padding:5px 8px;font-weight:700;font-size:12px;color:#e2e8f0;">' + cc + '</td>' +
+          '<td style="padding:5px 8px;"><input data-cc="' + cc + '" class="b24t-lm-inp" type="text" value="' + langs + '" style="background:#1e1e2e;border:1px solid #3a3a4a;border-radius:5px;color:#e2e8f0;font-size:10px;padding:3px 7px;width:130px;"></td>' +
+          '<td style="padding:5px 8px;"><button data-cc="' + cc + '" class="b24t-lm-del" style="font-size:9px;padding:2px 7px;border-radius:4px;border:1px solid #ef444455;background:transparent;color:#f87171;cursor:pointer;">Usuń</button></td>' +
+        '</tr>';
+      }).join('') : '<tr><td colspan="3" style="padding:16px;text-align:center;font-size:11px;color:#6b7280;">Mapa jest pusta. Zostanie uzupełniona automatycznie z Twojej pracy.</td></tr>';
+
+      return '<div style="background:#16161f;border:1px solid #2e2e48;border-radius:14px;padding:20px;min-width:360px;max-width:440px;max-height:80vh;overflow-y:auto;color:#e2e8f0;font-family:Inter,Segoe UI,sans-serif;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
+          '<span style="font-size:14px;font-weight:700;">⚙ Mapa projekt → języki</span>' +
+          '<button id="b24t-lm-close" style="background:transparent;border:none;color:#9ca3af;cursor:pointer;font-size:18px;">✕</button>' +
+        '</div>' +
+        '<p style="font-size:10px;color:#9ca3af;margin:0 0 12px;line-height:1.6;">Mapa buduje się automatycznie gdy otwierasz strony z nowych krajów. Możesz ją ręcznie edytować. Jeśli kraj nie ma wpisów — sprawdzanie języka jest pomijane.</p>' +
+        '<table style="width:100%;border-collapse:collapse;"><thead><tr>' +
+          '<th style="font-size:9px;text-transform:uppercase;color:#6b7280;text-align:left;padding:2px 8px;">Kraj</th>' +
+          '<th style="font-size:9px;text-transform:uppercase;color:#6b7280;text-align:left;padding:2px 8px;">Języki (kody, przecinkami)</th>' +
+          '<th></th>' +
+        '</tr></thead><tbody id="b24t-lm-tbody">' + rows + '</tbody></table>' +
+        '<div style="display:flex;gap:6px;margin-top:14px;align-items:center;">' +
+          '<input id="b24t-lm-cc" type="text" placeholder="Kraj (np. TR)" maxlength="3" style="background:#1e1e2e;border:1px solid #3a3a4a;border-radius:5px;color:#e2e8f0;font-size:10px;padding:4px 7px;width:70px;">' +
+          '<input id="b24t-lm-langs" type="text" placeholder="Języki (np. tr, az)" style="background:#1e1e2e;border:1px solid #3a3a4a;border-radius:5px;color:#e2e8f0;font-size:10px;padding:4px 7px;flex:1;">' +
+          '<button id="b24t-lm-add" style="font-size:11px;padding:4px 10px;border-radius:6px;border:none;background:#6366f1;color:#fff;cursor:pointer;">Dodaj</button>' +
+        '</div>' +
+        '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">' +
+          '<button id="b24t-lm-save" style="font-size:12px;padding:6px 16px;border-radius:8px;border:none;background:#6366f1;color:#fff;cursor:pointer;font-weight:600;">Zapisz</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    overlay.innerHTML = buildContent();
+    document.body.appendChild(overlay);
+
+    function wire() {
+      var closeBtn = overlay.querySelector('#b24t-lm-close');
+      var saveBtn  = overlay.querySelector('#b24t-lm-save');
+      var addBtn   = overlay.querySelector('#b24t-lm-add');
+      if (closeBtn) closeBtn.addEventListener('click', function() { overlay.remove(); });
+      if (saveBtn) saveBtn.addEventListener('click', function() {
+        overlay.querySelectorAll('.b24t-lm-inp').forEach(function(inp) {
+          var langs = inp.value.split(',').map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
+          map[inp.dataset.cc] = langs;
+        });
+        _newsSaveLangMap(map);
+        overlay.remove();
+      });
+      if (addBtn) addBtn.addEventListener('click', function() {
+        var cc = (overlay.querySelector('#b24t-lm-cc').value || '').toUpperCase().trim();
+        var langs = overlay.querySelector('#b24t-lm-langs').value.split(',').map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
+        if (!cc || !langs.length) return;
+        map[cc] = (map[cc] || []).concat(langs.filter(function(l) { return !(map[cc] || []).includes(l); }));
+        overlay.querySelector('#b24t-lm-cc').value = '';
+        overlay.querySelector('#b24t-lm-langs').value = '';
+        overlay.innerHTML = buildContent();
+        wire();
+      });
+      overlay.querySelectorAll('.b24t-lm-del').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          delete map[btn.dataset.cc];
+          overlay.innerHTML = buildContent();
+          wire();
+        });
+      });
+    }
+    wire();
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+  }
+
+
+
 
 
   // ───────────────────────────────────────────
@@ -5731,14 +5974,16 @@ function showOnboarding(onComplete) {
     {
       version: '0.15.0',
       date: '2026-03-28',
-      label: 'New',
+      label: 'New + Fix',
       labelColor: '#22c55e',
       changes: [
-        { type: 'new', text: 'Modul News: nowa zakładka do obsługi "zadania newsowego" H&M. Import URLi (bulk, jeden na linię), automatyczna deduplikacja, filtrowanie przez edytowalne chipy słow kluczowych, detekcja kraju URLi i porownanie z projektem' },
-        { type: 'new', text: 'Modul News: otwieranie stron w nowym oknie z detekcja jezyka (<html lang>, subdomena, meta). Jezeli strona ma nieznany jezyk dla danego kraju — Tagger pyta czy dodac go do mapy i proponuje odpowiedni przycisk' },
-        { type: 'new', text: 'Modul News: formularz dodawania wzmianki (URL, tytul, tresc, data, godzina, minuta, sentyment, kategoria=7 News, kraj z projektu). Submit przez GM_xmlhttpRequest z tokenem CSRF tknB24. Detekcja duplikatow po response Brand24' },
-        { type: 'new', text: 'Modul News: dynamiczna mapa projekt→jezyk. Buduje sie automatycznie z pracy annotatora (detekcja jezyka przy otwarciu strony). Edytowalna przez przycisk ⚙ Jezyki — modal z lista krajow + chipami jezykow per kraj. Zapisuje sie w localStorage' },
-        { type: 'new', text: 'Modul News: statusy URLi na liscie (zielony=trafienie, zolty=otwarty, szary=pominiety, ciemnozielony=dodany, czerwony=blad/duplikat), pasek postepu, przycisk "Otworz nastepny", chipy slow kluczowych per kraj zapisywane w localStorage' },
+        { type: 'fix',  text: 'Zwijanie panelu: po kliknięciu ▼ panel teraz rzeczywiście się zwija do samego nagłówka — wcześniej znikały tylko elementy UI a panel zostawał pusty' },
+        { type: 'fix',  text: 'Annotators Tab — zakładka Overall: naprawiono brakujący layout (spinner i dane nie wyświetlały się poprawnie z powodu brakującego flex na wewnętrznym kontenerze)' },
+        { type: 'new',  text: 'Moduł News przeniesiony do Annotators Tab jako przycisk 📰 News w nagłówku. Otwiera 3 osobne, draggable panele z designem light/dark: Import URLi, Lista URLi, Formularz wzmianki' },
+        { type: 'new',  text: 'Panel Import: textarea z czytelnym opisem (URLe czekają na wczytanie), przycisk ▶ Wczytaj URLe, detekcja kraju URLi, edytowalne chipy slow kluczowych per kraj z przyciskiem reset' },
+        { type: 'new',  text: 'Panel Formularz: wszystkie pola wymagane (URL, tytul, tresc, data). Auto-detekcja daty publikacji artykulu z JSON-LD / meta / <time> — ikona 🔍 sygnalizuje automatyczne wypelnienie z opcja edycji' },
+        { type: 'new',  text: 'Panel Formularz: tag "dodane" — checkbox z realnym sprawdzeniem dostepnosci tagu w state.tags projektu. Banner CMS informuje gdy tag niedostepny (niezalogowany do CMS) z przyciskiem Sprawdz ponownie' },
+        { type: 'new',  text: 'Panel Formularz: tag "dodane" dolaczany automatycznie do POST (tag[]=ID) gdy checkbox zaznaczony i tag dostepny w projekcie' },
       ]
     },
     {
@@ -7013,31 +7258,28 @@ function showOnboarding(onComplete) {
       version: '0.15.0',
       date: '2026-03-28',
       notes: [
-        '[NEW]  newsState: obiekt { urls[], activeIdx, sessionUrls{}, detectedCountry } — lokalny stan modulu News per sesje strony',
-        '[NEW]  NEWS_DEFAULT_KEYWORDS: domyslna lista chipow (/hm, h&m, hennes, mauritz itd.); NEWS_KEYWORD_EXCLUSIONS: ["h-mart"] — wykluczenia przed matchingiem',
-        '[NEW]  NEWS_TLD_MAP: mapa TLD domeny → kod kraju (pl,tr,gr,hr,ro,bg,hu,cz,sk,lt,lv,ee,rs,ge,ua,ba,mk,al,xk,kz,me,md,am,az)',
-        '[NEW]  _newsCountryFromUrl(url): wyciaga kod kraju z TLD lub subdomeny (np. tr.fashionnetwork.com → TR)',
-        '[NEW]  _newsDetectCountryFromUrls(urls): dominujacy kraj jezeli >30% URLi wskazuje na jeden kraj',
-        '[NEW]  _newsProjectCountry(): kraj z nazwy projektu — regex /_([A-Z]{2})$/ na state.projectName',
-        '[NEW]  _newsGetKeywords/SaveKeywords: LS.NEWS_KEYWORDS = { countryCode: [kw...] } — chipy per kraj; fallback na NEWS_DEFAULT_KEYWORDS',
-        '[NEW]  _newsGetLangMap/SaveLangMap: LS.NEWS_LANG_MAP = { "TR": ["tr"], ... } — pusta mapa na start; buduje sie z pracy annotatora',
-        '[NEW]  _newsGetSessionUrls/_newsMarkSessionUrl: LS.NEWS_SESSION_URLS = { url: true } — guard przed podwojnym submittem w sesji',
-        '[NEW]  _newsUrlMatchesKeywords(url, chips): sprawdza trafienie keyword (case-insensitive) z wylaczeniem NEWS_KEYWORD_EXCLUSIONS',
-        '[NEW]  buildNewsTab(): zwraca div#b24t-news-tab. Layout: lewy panel (textarea import, chips, country warn, progress bar, URL list, next btn) + prawy panel (formularz wzmianki z polami: url readonly, tytul, tresc, kategoria=7 locked, kraj locked, data, godzina, minuta, sentyment select)',
-        '[NEW]  wireNewsTab(): cala logika modulu News — wywolywana lazy (pierwszy klik w tab lub przy kazdom pokazaniu). Zawiera: renderChips, renderUrlList, activateUrl, openUrlWithLangCheck, _newsDetectLangFromResponse, _newsOfferAddLang, openLangMapEditor, import/clear, addChip, forceOpen, nextBtn, submit GM_xmlhttpRequest',
-        '[NEW]  renderChips(countryCode): renderuje chipy slow kluczowych z LS; chip ma przycisk ✕ usuwajacy go z LS i odswiezajacy liste',
-        '[NEW]  renderUrlList(): renderuje wiersze .b24t-news-url-row z kolorowym status dot + shortUrl + przycisk Pomij; aktualizuje progress bar; klik → activateUrl(idx)',
-        '[NEW]  activateUrl(idx): ustawia activeIdx, zmienia status na "opened", wypelnia form URL + kraj, czysci lang-warn, wywoluje openUrlWithLangCheck',
-        '[NEW]  openUrlWithLangCheck(url, idx, force): jesli kraj ma wpisy w LangMap i lang niezgodny → pokazuje ostrzezenie + oferuje _newsOfferAddLang. Niezaleznie otwiera window.open. GM_xmlhttpRequest GET do strony → parsuje <html lang>',
-        '[NEW]  _newsDetectLangFromResponse(html, url): priorytet: <html lang>, meta content-language, subdomena 2-literowa',
-        '[NEW]  _newsOfferAddLang(countryCode, lang): dodaje przycisk "Dodaj X do mapy dla Y" w lang-warn — annotator decyduje czy uczyc mape',
-        '[NEW]  openLangMapEditor(): modal hardcoded kolory (#16161f, #3a3a4a, #6366f1) — appendowany do document.body (nie CSS vars — zgodnie z HARD RULES). Tabela krajow + input jezykow, przycisk usun kraj, dodaj nowy kraj+jezyki, zapisz',
-        '[NEW]  Submit handler: walidacja (content wymagany, YYYY-MM-DD, sessionUrls guard, country match). CSRF token z document.querySelector("[name=tknB24]"). POST na /searches/add-new-mention/?sid=X przez GM_xmlhttpRequest z Content-Type: application/x-www-form-urlencoded. Detekcja duplikatu po "There is the entry with this address" w response. Status url: added/error',
-        '[NEW]  Tab button: <button class="b24t-tab" data-tab="news">📰 News</button> w #b24t-tabs',
-        '[NEW]  buildNewsTab() inject + wireNewsTab() przy pierwszym kliknieciu w tab (lazy init)',
-        '[NEW]  tabEls.news dodany do tab switching w init(). wireNewsTab() wywolywana przy tab === "news"',
-        '[NEW]  LS keys: NEWS_KEYWORDS (b24tagger_news_keywords), NEWS_SESSION_URLS (b24tagger_news_session_urls), NEWS_LANG_MAP (b24tagger_news_lang_map)',
-        '[ARCH] wireNewsTab() celowo nie ma guard "juz wired" — tab jest lazy i moze byc wielokrotnie wyswietlany; stan jest w newsState (nie w DOM)',
+        '[FIX]  setupCollapse(): panel.style.height + panel.style.maxHeight czyszczone przy zwijaniu — pozwala CSS height:auto!important przejac kontrole. Wczesniej inline style nadpisywaly CSS → panel nie zwijal sie wizualnie',
+        '[FIX]  CSS .collapsed: dodano height:auto!important; max-height:none!important; min-height:0!important — override dla inline height ustawianych przez setupResize()',
+        '[FIX]  #b24t-ann-tab-overall-content: dodano display:flex;flex-direction:column;flex:1;min-height:0 — wewnetrzny kontener wypelnia teraz flex rodzica. Spinner i dane renderuja sie poprawnie',
+        '[FIX]  #b24t-ann-tab-overall: dodano flex-direction:column do inline style',
+        '[ARCH] buildNewsTab() + wireNewsTab() usuniete — zastapione przez 3-panelowy system floating windows w Annotators Tab',
+        '[ARCH] News tab usunieta z #b24t-tabs, tabEls.news usuniete, wireNewsTab() usuniete z tab switching',
+        '[NEW]  newsState: dodano pola panelsOpen i wired dla lazy-init i toggle paneli',
+        '[NEW]  openNewsPanels(): lazy build przy pierwszym wywolaniu, toggle pokazuj/chowaj; _wireNewsPanels() wywolywane raz (guard wired)',
+        '[NEW]  closeNewsPanels(): chowa [data-news-panel], panelsOpen=false',
+        '[NEW]  _buildNewsPanels(): 3 floating divs appendowane do body z data-news-panel=1. Pozycja relatywna do #b24t-annotator-panel. Kolory z _newsThemeVars() (hardcoded, nie CSS vars)',
+        '[NEW]  _newsThemeVars(): kolory dark/light na podstawie data-b24t-theme — wywolywane przy budowaniu paneli',
+        '[NEW]  _newsPanelBase / _newsPanelHeader / _newsDraggable / _newsInputCss / _newsFormRow: utility builders dla paneli News',
+        '[NEW]  Panel 1 Import: textarea "URLe czekaja na wczytanie", przycisk Wczytaj URLe, dedup + info, wykryty kraj + badge + ostrzezenie mismatch z projektem, chipy +Dodaj/↺reset per kraj',
+        '[NEW]  Panel 2 Lista: progress bar, scroll lista z status dots (kolory per status), Pomij per wiersz, Nastepny nieobsluzony',
+        '[NEW]  Panel 3 Formularz: banner CMS (hasDodane check w state.tags + querySelector), err bar, lang-warn, wszystkie pola wymagane (url/tytul/tresc/data), auto-detekcja daty 🔍, godz/min/sentyment/kategoria/kraj, row "dodane" z checkboxem + status dostepnosci',
+        '[NEW]  _newsCmsStatus(): sprawdza hostname (com/pl), querySelector tagEls z tekstem "dodane" → { domain, hasDodane }',
+        '[NEW]  _newsCheckTagDodane(): sprawdza state.tags → klucz zawierajacy "dodane" — disable checkbox jezeli niedostepny',
+        '[NEW]  _newsDetectDateFromHtml(html): 6 patternow detekcji daty (JSON-LD, meta published_time, meta date, itemprop, <time datetime>, fallback regex). Walidacja: > 2000-01-01 i <= _localDateStr()',
+        '[NEW]  _newsFetchPageInfo(url): GM_xmlhttpRequest GET → data + jezyk rownoczesnie. Auto-learn jezyka (cichy zapis gdy brak wpisow). Otwiera window.open(_blank) po fetchu',
+        '[NEW]  Submit: 4 wymagane pola, format YYYY-MM-DD, sessionUrls guard, country match. tag[]=dodaneTagId jezeli checkbox i tag dostepny. Czysci tytul/tresc/date po sukcesie',
+        '[NEW]  Przycisk b24t-ann-news-btn w headerze Annotators Tab: toggle openNewsPanels/closeNewsPanels. b24t-ann-close rowniez wywoluje closeNewsPanels()',
+        '[NEW]  _newsOpenLangMapEditor(): modal z hardcoded ciemnymi kolorami. Tabela krajow, edycja jezykow, Dodaj kraj, Usun kraj, Zapisz. Pusta mapa → komunikat o auto-budowaniu',
       ]
     },
     {
@@ -8492,6 +8734,7 @@ function showOnboarding(onComplete) {
       // Header with gradient
       '<div id="b24t-ann-header" style="display:flex;align-items:center;padding:12px 16px;background:var(--b24t-accent-grad);cursor:move;user-select:none;position:relative;overflow:hidden;">' +
         '<span style="font-size:15px;font-weight:700;flex:1;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.2);">🛠 Annotators Tab</span>' +
+        '<button id="b24t-ann-news-btn" title="Otwórz moduł News" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.3);color:#fff;cursor:pointer;font-size:12px;font-weight:600;padding:3px 10px;border-radius:6px;margin-right:6px;transition:background 0.15s;letter-spacing:0.03em;">📰 News</button>' +
         '<button id="b24t-ann-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:18px;line-height:1;padding:2px 8px;border-radius:5px;transition:background 0.15s;">×</button>' +
       '</div>' +
       // Tabs — liquid glass, identyczny styl jak główny panel
@@ -8516,8 +8759,8 @@ function showOnboarding(onComplete) {
         '<div id="b24t-ann-tab-groups-content"></div>' +
       '</div>' +
       // Overall Stats tab
-      '<div id="b24t-ann-tab-overall" class="b24t-ann-content" style="display:none;background:var(--b24t-bg);flex:1;overflow-y:auto;min-height:0;">' +
-        '<div id="b24t-ann-tab-overall-content"></div>' +
+      '<div id="b24t-ann-tab-overall" class="b24t-ann-content" style="display:none;background:var(--b24t-bg);flex:1;overflow-y:auto;min-height:0;flex-direction:column;">' +
+        '<div id="b24t-ann-tab-overall-content" style="flex:1;min-height:0;display:flex;flex-direction:column;"></div>' +
       '</div>';
 
     // Apply panel border/shadow via attribute (CSS vars pick it up)
@@ -8597,7 +8840,20 @@ function showOnboarding(onComplete) {
       panel.style.display = 'none';
       var t = document.getElementById('b24t-annotator-tab');
       if (t) t.style.display = 'flex';
+      closeNewsPanels();
     });
+
+    // News button
+    var annNewsBtn = document.getElementById('b24t-ann-news-btn');
+    if (annNewsBtn) {
+      annNewsBtn.addEventListener('click', function() {
+        if (newsState.panelsOpen) {
+          closeNewsPanels();
+        } else {
+          openNewsPanels();
+        }
+      });
+    }
 
     // Refresh
     document.getElementById('b24t-ann-project-refresh').addEventListener('click', function() {
@@ -10820,11 +11076,6 @@ Tej operacji nie można cofnąć.`)) {
     const placeholder = panel.querySelector('#b24t-quicktag-tab-placeholder');
     if (placeholder) placeholder.replaceWith(qtTab);
 
-    // Inject News tab
-    const newsTab = buildNewsTab();
-    const newsPlaceholder = panel.querySelector('#b24t-news-tab-placeholder');
-    if (newsPlaceholder) newsPlaceholder.replaceWith(newsTab);
-
     document.body.appendChild(panel);
     setupDragging(panel);
     setupCollapse(panel);
@@ -10840,7 +11091,6 @@ Tej operacji nie można cofnąć.`)) {
       quicktag: document.getElementById('b24t-quicktag-tab'),
       delete:   document.getElementById('b24t-delete-tab'),
       history:  document.getElementById('b24t-history-tab'),
-      news:     document.getElementById('b24t-news-tab'),
       actions:  document.getElementById('b24t-actions'),
     };
     const tabBtns = panel.querySelectorAll('.b24t-tab');
@@ -10853,9 +11103,7 @@ Tej operacji nie można cofnąć.`)) {
         if (tabEls.quicktag) tabEls.quicktag.style.display = tab === 'quicktag' ? 'block' : 'none';
         if (tabEls.delete)   tabEls.delete.style.display   = tab === 'delete'   ? 'block' : 'none';
         if (tabEls.history)  tabEls.history.style.display  = tab === 'history'  ? 'block' : 'none';
-        if (tabEls.news)     tabEls.news.style.display     = tab === 'news'     ? 'block' : 'none';
         if (tabEls.actions)  tabEls.actions.style.display  = tab === 'main'     ? 'flex'  : 'none';
-        if (tab === 'news') wireNewsTab();
       });
     });
 

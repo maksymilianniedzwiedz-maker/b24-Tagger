@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.11.0
+// @version      0.12.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.11.0';
+  const VERSION = '0.12.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4772,6 +4772,17 @@ function showOnboarding(onComplete) {
 
   const CHANGELOG = [
     {
+      version: '0.12.0',
+      date: '2026-03-28',
+      label: 'Fix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Naprawiono duplikujące się wpisy "📅 Zakres" w logu — zakres dat był logowany przy każdym wywołaniu getAnnotatorDates() (8 miejsc); teraz logowany raz w _bgFetchTagstats()' },
+        { type: 'fix', text: 'Naprawiono podwójne pobieranie Overall Stats — zapytania były wysyłane dwa razy przy otwarciu panelu; dodano blokadę równoległych wywołań' },
+        { type: 'perf', text: 'Usunięto nieużywaną funkcję loadAnnotatorDataBackground() — dead code po refaktorze; nie miała żadnego wpływu na działanie wtyczki' },
+      ]
+    },
+    {
       version: '0.11.0',
       date: '2026-03-28',
       label: 'Nowość',
@@ -6004,6 +6015,18 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.12.0',
+      date: '2026-03-28',
+      notes: [
+        '[FIX]  getAnnotatorDates(): usunieto addLog side-effect — funkcja wiecej nie loguje "📅 Zakres"; log przeniesiony do _bgFetchTagstats() jako jedynego kanonicznego miejsca',
+        '[FIX]  loadOverallStats(): dodano _overallStatsInFlight guard — zapobiega rownolegylm wywolaniom gdy openAnnotatorPanel() i tab click odpalalyby fetch jednoczesnie',
+        '[FIX]  loadOverallStats(): zimny fetch owiniety try/finally — _overallStatsInFlight zawsze zwalniany nawet przy bledzie',
+        '[REFACTOR]  Usunieto loadAnnotatorDataBackground() — dead code; nigdy nie wywolywana po tym jak applyFeatures() zaczelo wywolywac startBgPrefetch() bezposrednio',
+        '[REFACTOR]  Usunieto var annotatorDataLoaded — jedyna zmienna stanu loadAnnotatorDataBackground(), zbedna po usunieciu funkcji',
+        '[DEV_CHANGELOG]  '[LOG]  getAnnotatorDates(): log zakresu dat (📅)' — wpis zdezaktualizowany, zachowany dla historii',
+      ]
+    },
     {
       version: '0.11.0',
       date: '2026-03-28',
@@ -7261,7 +7284,6 @@ function showOnboarding(onComplete) {
   // ANNOTATOR TOOLS — FLOATING PANEL
   // ───────────────────────────────────────────
 
-  var annotatorDataLoaded = false;
   var annotatorData = { project: null, tagstats: null };
 
   // ── Background prefetch cache ──────────────────────────────────────────────
@@ -7272,6 +7294,7 @@ function showOnboarding(onComplete) {
   var bgCache = { tagstats: null, project: null, allProjects: {}, overallStats: null };
   var bgPrefetchStarted = false;
   var BG_CACHE_TTL = 5 * 60 * 1000; // 5 minut — po tym czasie re-fetch w tle
+  var _overallStatsInFlight = false; // guard: blokuje rownolegле wywolania loadOverallStats
 
   function _bgCacheFresh(entry) {
     return entry && entry.ts && (Date.now() - entry.ts < BG_CACHE_TTL);
@@ -7283,6 +7306,7 @@ function showOnboarding(onComplete) {
     var projects = getKnownProjects();
     if (!projects.length) return;
     var dates = getAnnotatorDates();
+    addLog('📅 Zakres: ' + dates.label + ' (' + dates.dateFrom + ' → ' + dates.dateTo + ')', 'info');
     addLog('⟳ [BG] prefetch tagstats (' + projects.length + ' projektów)...', 'info');
     var results = [];
     for (var i = 0; i < projects.length; i++) {
@@ -7589,7 +7613,6 @@ function showOnboarding(onComplete) {
       label = now.toLocaleString('pl-PL', { month: 'long', year: 'numeric' });
       daysLeft = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - day;
     }
-    addLog('📅 Zakres: ' + label + ' (' + dateFrom + ' → ' + dateTo + ')', 'info');
     return { dateFrom, dateTo, label, daysLeft, day };
   }
 
@@ -7758,21 +7781,6 @@ function showOnboarding(onComplete) {
         '</tr></thead>' +
         '<tbody>' + rows + '</tbody>' +
       '</table>';
-  }
-
-  async function loadAnnotatorDataBackground() {
-    if (annotatorDataLoaded) return;
-    annotatorDataLoaded = true;
-    // Prefetch w tle — startBgPrefetch sam czeka na token i odpala cykliczne odświeżanie
-    startBgPrefetch();
-    // Załaduj dane projektu (zakładka Projekt) — wciąż sekwencyjnie bo jest lekkie
-    if (!state.tokenHeaders) {
-      await new Promise(function(resolve) {
-        var check = setInterval(function() { if (state.tokenHeaders) { clearInterval(check); resolve(); } }, 500);
-        setTimeout(function(){ clearInterval(check); resolve(); }, 15000);
-      });
-    }
-    try { await loadAnnotatorProject(); } catch(e) {}
   }
 
   // ───────────────────────────────────────────
@@ -8773,6 +8781,7 @@ To jest NIEODWRACALNE.`)) return;
   }
 
   async function loadOverallStats() {
+    if (_overallStatsInFlight) return;
     var el = document.getElementById('b24t-ann-tab-overall-content');
     if (!el) return;
     var cfg = getStatsConfig();
@@ -8791,9 +8800,14 @@ To jest NIEODWRACALNE.`)) return;
       }).catch(function(){});
       return;
     }
+    _overallStatsInFlight = true;
     dataEl.innerHTML = '<div style="padding:20px 0;text-align:center;"><div style="font-size:22px;animation:b24t-spin 1s linear infinite;display:inline-block;">&#8635;</div><div style="font-size:11px;color:var(--b24t-text-faint);margin-top:8px;">Pobieram statystyki...</div></div>';
-    var fresh = await _bgFetchOverallStats(group);
-    if (fresh && dataEl.isConnected) renderOverallStatsData(dataEl, fresh.results, group, fresh);
+    try {
+      var fresh = await _bgFetchOverallStats(group);
+      if (fresh && dataEl.isConnected) renderOverallStatsData(dataEl, fresh.results, group, fresh);
+    } finally {
+      _overallStatsInFlight = false;
+    }
   }
 
   function _statsCard(label, value, color, bgColor) {

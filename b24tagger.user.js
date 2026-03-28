@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.17.1
+// @version      0.17.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.17.1';
+  const VERSION = '0.17.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5967,12 +5967,18 @@ function showOnboarding(onComplete) {
       var subStatus = document.getElementById('b24t-news-submit-status');
       if (subStatus) { subStatus.textContent = ''; subStatus.style.color = ''; }
       renderUrlList();
-      // Reset daty przed fetchem — prefill nastąpi po odpowiedzi
-      var _dateElReset = document.getElementById('b24t-news-f-date');
-      var _dateIconReset = document.getElementById('b24t-news-date-detect-icon');
-      if (_dateElReset) { _dateElReset.value = ''; }
-      if (_dateIconReset) { _dateIconReset.style.display = 'none'; }
-      // Fetch page: detect lang + date
+      // Prefill daty rok+miesiąc natychmiast — GM fetch nadpisze jeśli znajdzie pełną datę
+      var _dateElPre = document.getElementById('b24t-news-f-date');
+      var _dateIconPre = document.getElementById('b24t-news-date-detect-icon');
+      if (_dateElPre) {
+        var _now = new Date();
+        var _yy = _now.getFullYear();
+        var _mm = String(_now.getMonth() + 1).padStart(2, '0');
+        _dateElPre.value = _yy + '-' + _mm + '-';
+        try { _dateElPre.focus(); _dateElPre.setSelectionRange(_dateElPre.value.length, _dateElPre.value.length); } catch(e) {}
+      }
+      if (_dateIconPre) { _dateIconPre.style.display = 'none'; }
+      // Fetch page: detect lang + date (nadpisze prefill jeśli znajdzie pełną datę)
       _newsFetchPageInfo(entry.url);
     }
 
@@ -5999,16 +6005,6 @@ function showOnboarding(onComplete) {
               dateIcon.style.display = 'inline';
               dateIcon.title = 'Data wykryta automatycznie ze strony (' + detectedDate + ') — możesz ją edytować';
             }
-          } else if (dateEl) {
-            // Brak wykrytej daty — prefill rok i miesiąc z bieżącej daty, zostaw miejsce na dzień
-            var _now = new Date();
-            var _yy = _now.getFullYear();
-            var _mm = String(_now.getMonth() + 1).padStart(2, '0');
-            dateEl.value = _yy + '-' + _mm + '-';
-            dateEl.focus();
-            // Przesuń kursor na koniec (po myślniku)
-            try { dateEl.setSelectionRange(dateEl.value.length, dateEl.value.length); } catch(e) {}
-            if (dateIcon) dateIcon.style.display = 'none';
           }
           // Language check
           var detectedLang = _newsDetectLangFromResponse(html, url);
@@ -6364,6 +6360,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.17.2",
+      "date": "2026-03-28",
+      "label": "Fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News: prefill daty natychmiast przy aktywacji URL"},
+        {"type": "fix", "text": "News: wykrywanie daty niezalezne od blokad GM fetch"}
+      ]
+    },
+    {
       "version": "0.17.1",
       "date": "2026-03-28",
       "label": "New",
@@ -6451,15 +6457,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "News: token CSRF pobierany z add-new-mention (pewne zrodlo)"}
-      ]
-    },
-    {
-      "version": "0.16.4",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News: token CSRF przechwytywany przy starcie strony (MutationObserver)"}
       ]
     },
   ];;;;;;;;;;;

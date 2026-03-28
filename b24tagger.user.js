@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.16.3
+// @version      0.16.4
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.16.3';
+  const VERSION = '0.16.4';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -63,6 +63,7 @@
     matchPreview: null,      // match preview result
     soundEnabled: false,     // play sound on done
     tokenHeaders: null,
+    tknB24: null,             // CSRF token for legacy Django endpoints
     projectId: null,
     projectName: null,
     tags: {},                // tagName → tagId
@@ -3365,6 +3366,19 @@
 
     state.projectId = projectId;
 
+    // Capture tknB24 CSRF token — try immediately, then watch DOM for React injection
+    (function captureTkn() {
+      var el = document.querySelector('[name="tknB24"]');
+      if (el && el.value) { state.tknB24 = el.value; return; }
+      // Token not yet in DOM (SPA still rendering) — observe for up to 10s
+      var obs = new MutationObserver(function() {
+        var found = document.querySelector('[name="tknB24"]');
+        if (found && found.value) { state.tknB24 = found.value; obs.disconnect(); }
+      });
+      obs.observe(document.body, { childList: true, subtree: true });
+      setTimeout(function() { obs.disconnect(); }, 10000);
+    })();
+
     // Próbuj wyciągnąć nazwę z tytułu strony — ale sprawdź czy nie jest to generyczny tytuł Brand24
     const rawTitle = document.title.split(' - ')[0].trim();
     const isFallbackTitle = !rawTitle || rawTitle === 'Brand24' || rawTitle === 'Panel Brand24' || rawTitle.length < 3;
@@ -5130,30 +5144,19 @@ function showOnboarding(onComplete) {
 
   // ── CSRF TOKEN RESOLUTION ──
   function _newsGetTknB24(cb) {
-    // 1. DOM input (available on most Brand24 pages)
+    // 1. state.tknB24 — captured at page load by detectProject MutationObserver
+    if (state.tknB24) { cb(state.tknB24, null); return; }
+    // 2. Live DOM input — in case page reloaded after detectProject ran
     var el = document.querySelector('[name="tknB24"]');
-    if (el && el.value) { cb(el.value, null); return; }
-    // 2. Cookie fallback
+    if (el && el.value) { state.tknB24 = el.value; cb(el.value, null); return; }
+    // 3. Cookie fallback
     var ck = document.cookie.split(';').reduce(function(acc, p) {
       var kv = p.trim().split('=');
       return kv[0] === 'tknB24' ? decodeURIComponent(kv[1] || '') : acc;
     }, '');
-    if (ck) { cb(ck, null); return; }
-    // 3. GM fetch Brand24 homepage and parse tknB24 from HTML
-    var base = window.location.hostname.indexOf('brand24.pl') !== -1
-      ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
-    GM_xmlhttpRequest({
-      method: 'GET', url: base + '/',
-      onload: function(resp) {
-        var m = (resp.responseText || '').match(/name=["'"]tknB24["'"][^>]+value=["'"]([^"']+)["'"]/)
-             || (resp.responseText || '').match(/value=["'"]([^"']+)["'"][^>]+name=["'"]tknB24["'"]/) ;
-        if (m && m[1]) { cb(m[1], null); return; }
-        cb(null, '\u26a0 Nie udalo sie pobrac tokenu CSRF. Odswiez strone Brand24 i sprobuj ponownie.');
-      },
-      onerror: function() {
-        cb(null, '\u26a0 Blad sieci przy pobieraniu tokenu CSRF. Upewnij sie, ze jestes zalogowany.');
-      }
-    });
+    if (ck) { state.tknB24 = ck; cb(ck, null); return; }
+    // All methods failed — Brand24 SPA did not expose tknB24 in DOM
+    cb(null, '\u26a0 Brak tokenu CSRF. Przeładuj stronę projektu Brand24 i spróbuj ponownie.');
   }
 
   // ── CMS DOMAIN CHECK ──
@@ -6250,6 +6253,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.16.4",
+      "date": "2026-03-28",
+      "label": "Fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News: token CSRF przechwytywany przy starcie strony (MutationObserver)"}
+      ]
+    },
+    {
       "version": "0.16.3",
       "date": "2026-03-28",
       "label": "New",
@@ -6337,17 +6349,7 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "News: \'Następny\' pomija irrelevantne i złe kraje"}
       ]
     },
-    {
-      "version": "0.15.1",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#f87171",
-      "changes": [
-        {"type": "fix", "text": "News: spójny komunikat o tagu \'dodane\'"},
-        {"type": "fix", "text": "News: nowy layout paneli, Import przyklejony pod Listą"}
-      ]
-    },
-  ];;;
+  ];;;;
 
   function _fetchChangelog(onDone) {
     const CACHE_KEY = 'b24tagger_cl_cache';

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.15.6
+// @version      0.16.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.15.6';
+  const VERSION = '0.16.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3300,6 +3300,7 @@
     }
     // F11: tag counts
     updateTagCountsInMapping();
+    updateAutoDeleteSection();
   }
 
   // ───────────────────────────────────────────
@@ -6121,753 +6122,234 @@ function showOnboarding(onComplete) {
   // CHANGELOG - historia wersji
   // ───────────────────────────────────────────
 
-  const CHANGELOG = [
+  // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
+  const CHANGELOG_FALLBACK =   [
     {
-      version: '0.15.6',
-      date: '2026-03-28',
-      label: 'UI',
-      labelColor: '#8080aa',
-      changes: [
-        { type: 'ui', text: 'Karta Feedback przeprojektowana — dwie osobne karty Bug Report i Suggestion z wbudowanymi polami tekstowymi i przyciskami otwierajacymi formularze Google Forms.' },
+      "version": "0.16.0",
+      "date": "2026-03-28",
+      "label": "Refactor",
+      "labelColor": "#fb923c",
+      "changes": [
+        { "type": "perf", "text": "CHANGELOG i DEV_CHANGELOG wydzielone do osobnych plikow JSON w repo — ladowane dynamicznie przy otwarciu modala z cache sessionStorage. Redukcja rozmiaru skryptu o ~1200 linii." },
+        { "type": "fix",  "text": "Auto-Delete: naprawiono brak zapisu preferencji — checkbox Zawsze wlaczaj teraz faktycznie wywoluje setAutoDeletePref() i aktualizuje state.autoDeleteTagId." },
+        { "type": "fix",  "text": "Auto-Delete: updateAutoDeleteSection() wywolywana przy kazdej zmianie mappingu (wczesniej nigdy nie wywolywana)." },
+        { "type": "fix",  "text": "Usunieta martwa funkcja showFeedbackModal() zastapiona przez openBugReportForm/openFeedbackForm." },
+        { "type": "fix",  "text": "Ciche .catch(function(){}) zastapione addLog warn — bledy prefetchu w tle widoczne w logu." }
       ]
     },
     {
-      version: '0.15.5',
-      date: '2026-03-28',
-      label: 'New',
-      labelColor: '#6c6cff',
-      changes: [
-        { type: 'new', text: 'Feedback (Suggestion) otwiera teraz formularz Google Forms z automatycznie wypelnionymi polami: sugestia, wersja skryptu, projekt Brand24.' },
+      "version": "0.15.6",
+      "date": "2026-03-28",
+      "label": "UI",
+      "labelColor": "#8080aa",
+      "changes": [
+        {
+          "type": "ui",
+          "text": "Karta Feedback przeprojektowana — dwie osobne karty Bug Report i Suggestion z wbudowanymi polami tekstowymi i przyciskami otwierajacymi formularze Google Forms."
+        }
       ]
     },
     {
-      version: '0.15.4',
-      date: '2026-03-28',
-      label: 'New',
-      labelColor: '#6c6cff',
-      changes: [
-        { type: 'new', text: 'Bug Report otwiera teraz formularz Google Forms z automatycznie wypelnionymi danymi technicznymi (wersja, projekt, URL, logi, data). Uzykownik wpisuje tylko opis problemu i klika Submit.' },
+      "version": "0.15.5",
+      "date": "2026-03-28",
+      "label": "New",
+      "labelColor": "#6c6cff",
+      "changes": [
+        {
+          "type": "new",
+          "text": "Feedback (Suggestion) otwiera teraz formularz Google Forms z automatycznie wypelnionymi polami: sugestia, wersja skryptu, projekt Brand24."
+        }
       ]
     },
     {
-      version: '0.15.3',
-      date: '2026-03-28',
-      label: 'Fix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Przywrocono dzialanie feedback i bug report — Slack webhook URL uzupelniony. Kopia skryptu trafia teraz rowniez do prywatnego repo i24dev przy kazdym deployu.' },
+      "version": "0.15.4",
+      "date": "2026-03-28",
+      "label": "New",
+      "labelColor": "#6c6cff",
+      "changes": [
+        {
+          "type": "new",
+          "text": "Bug Report otwiera teraz formularz Google Forms z automatycznie wypelnionymi danymi technicznymi (wersja, projekt, URL, logi, data). Uzykownik wpisuje tylko opis problemu i klika Submit."
+        }
       ]
     },
     {
-      version: '0.15.2',
-      date: '2026-03-28',
-      label: 'Fix + UX',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix',  text: 'Modul News: naprawiono wykrywanie kraju w URLach — linki z /uk/, /en-gb/, /de/ i podobnymi segmentami sciezki lub subdomenami sa teraz oznaczane jako "inny kraj" (pomaranczowy kolor) zamiast blednie jako relevantne' },
-        { type: 'new',  text: 'Modul News: nowa logika listy URLi — przycisk Usun (✕) per URL usuwa link z listy fizycznie zamiast go wyszarzac. Bulk-bar z przyciskami "Usun irrelevantnych" i "Usun obsluzzone" pojawia sie dynamicznie nad przyciskiem Nastepny' },
-        { type: 'new',  text: 'Modul News: legenda kolorow jako maly floating panel obok listy URLi — zielony=relevantny, pomaranczowy=inny kraj, fioletowy=otwarty, ciemnozielony=dodany, czerwony=blad, szary=brak keyword' },
-        { type: 'fix',  text: 'Modul News: przycisk "Nastepny relevantny" pomija URLe bez trafien i z blenym krajem — przechodzi tylko przez faktycznie relevantne URLe' },
+      "version": "0.15.3",
+      "date": "2026-03-28",
+      "label": "Fix",
+      "labelColor": "#f87171",
+      "changes": [
+        {
+          "type": "fix",
+          "text": "Przywrocono dzialanie feedback i bug report — Slack webhook URL uzupelniony. Kopia skryptu trafia teraz rowniez do prywatnego repo i24dev przy kazdym deployu."
+        }
       ]
     },
     {
-      version: '0.15.1',
-      date: '2026-03-28',
-      label: 'Fix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Modul News: naprawiono sprzeczny komunikat o tagu "dodane" — banner CMS i status w wierszu uzywaja teraz tego samego zrodla (state.tags z API), nie roznych metod sprawdzania DOM' },
-        { type: 'fix', text: 'Modul News: nowy layout paneli — Lista URLi na gorze, Import URLi przyklejony bezposrednio pod nia (ta sama szerokosc), Formularz obok. Panel Import automatycznie podaza za panelem Lista przy przeciaganiu' },
+      "version": "0.15.2",
+      "date": "2026-03-28",
+      "label": "Fix + UX",
+      "labelColor": "#f87171",
+      "changes": [
+        {
+          "type": "fix",
+          "text": "Modul News: naprawiono wykrywanie kraju w URLach — linki z /uk/, /en-gb/, /de/ i podobnymi segmentami sciezki lub subdomenami sa teraz oznaczane jako \"inny kraj\" (pomaranczowy kolor) zamiast blednie jako relevantne"
+        },
+        {
+          "type": "new",
+          "text": "Modul News: nowa logika listy URLi — przycisk Usun (✕) per URL usuwa link z listy fizycznie zamiast go wyszarzac. Bulk-bar z przyciskami \"Usun irrelevantnych\" i \"Usun obsluzzone\" pojawia sie dynamicznie nad przyciskiem Nastepny"
+        },
+        {
+          "type": "new",
+          "text": "Modul News: legenda kolorow jako maly floating panel obok listy URLi — zielony=relevantny, pomaranczowy=inny kraj, fioletowy=otwarty, ciemnozielony=dodany, czerwony=blad, szary=brak keyword"
+        },
+        {
+          "type": "fix",
+          "text": "Modul News: przycisk \"Nastepny relevantny\" pomija URLe bez trafien i z blenym krajem — przechodzi tylko przez faktycznie relevantne URLe"
+        }
       ]
     },
     {
-      version: '0.15.0',
-      date: '2026-03-28',
-      label: 'New + Fix',
-      labelColor: '#22c55e',
-      changes: [
-        { type: 'fix',  text: 'Zwijanie panelu: po kliknięciu ▼ panel teraz rzeczywiście się zwija do samego nagłówka — wcześniej znikały tylko elementy UI a panel zostawał pusty' },
-        { type: 'fix',  text: 'Annotators Tab — zakładka Overall: naprawiono brakujący layout (spinner i dane nie wyświetlały się poprawnie z powodu brakującego flex na wewnętrznym kontenerze)' },
-        { type: 'new',  text: 'Moduł News przeniesiony do Annotators Tab jako przycisk 📰 News w nagłówku. Otwiera 3 osobne, draggable panele z designem light/dark: Import URLi, Lista URLi, Formularz wzmianki' },
-        { type: 'new',  text: 'Panel Import: textarea z czytelnym opisem (URLe czekają na wczytanie), przycisk ▶ Wczytaj URLe, detekcja kraju URLi, edytowalne chipy slow kluczowych per kraj z przyciskiem reset' },
-        { type: 'new',  text: 'Panel Formularz: wszystkie pola wymagane (URL, tytul, tresc, data). Auto-detekcja daty publikacji artykulu z JSON-LD / meta / <time> — ikona 🔍 sygnalizuje automatyczne wypelnienie z opcja edycji' },
-        { type: 'new',  text: 'Panel Formularz: tag "dodane" — checkbox z realnym sprawdzeniem dostepnosci tagu w state.tags projektu. Banner CMS informuje gdy tag niedostepny (niezalogowany do CMS) z przyciskiem Sprawdz ponownie' },
-        { type: 'new',  text: 'Panel Formularz: tag "dodane" dolaczany automatycznie do POST (tag[]=ID) gdy checkbox zaznaczony i tag dostepny w projekcie' },
+      "version": "0.15.1",
+      "date": "2026-03-28",
+      "label": "Fix",
+      "labelColor": "#f87171",
+      "changes": [
+        {
+          "type": "fix",
+          "text": "Modul News: naprawiono sprzeczny komunikat o tagu \"dodane\" — banner CMS i status w wierszu uzywaja teraz tego samego zrodla (state.tags z API), nie roznych metod sprawdzania DOM"
+        },
+        {
+          "type": "fix",
+          "text": "Modul News: nowy layout paneli — Lista URLi na gorze, Import URLi przyklejony bezposrednio pod nia (ta sama szerokosc), Formularz obok. Panel Import automatycznie podaza za panelem Lista przy przeciaganiu"
+        }
       ]
     },
     {
-      version: '0.14.0',
-      date: '2026-03-28',
-      label: 'Perf + Fix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'perf', text: 'Usuwanie wzmianek ~5x szybsze — wszystkie tryby delete (po tagu, Quick Delete, Delete View, auto-delete) używają teraz równoległych batchy po 5 zamiast jednego po jednym. 150 wzmianek: ~60s → ~12s' },
-        { type: 'fix',  text: 'Cross-project delete: każdy projekt na liście ma teraz własny przycisk "Usuń" — wcześniej kliknięcie na projekt nic nie robiło (brak przycisku)' },
+      "version": "0.15.0",
+      "date": "2026-03-28",
+      "label": "New + Fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {
+          "type": "fix",
+          "text": "Zwijanie panelu: po kliknięciu ▼ panel teraz rzeczywiście się zwija do samego nagłówka — wcześniej znikały tylko elementy UI a panel zostawał pusty"
+        },
+        {
+          "type": "fix",
+          "text": "Annotators Tab — zakładka Overall: naprawiono brakujący layout (spinner i dane nie wyświetlały się poprawnie z powodu brakującego flex na wewnętrznym kontenerze)"
+        },
+        {
+          "type": "new",
+          "text": "Moduł News przeniesiony do Annotators Tab jako przycisk 📰 News w nagłówku. Otwiera 3 osobne, draggable panele z designem light/dark: Import URLi, Lista URLi, Formularz wzmianki"
+        },
+        {
+          "type": "new",
+          "text": "Panel Import: textarea z czytelnym opisem (URLe czekają na wczytanie), przycisk ▶ Wczytaj URLe, detekcja kraju URLi, edytowalne chipy slow kluczowych per kraj z przyciskiem reset"
+        },
+        {
+          "type": "new",
+          "text": "Panel Formularz: wszystkie pola wymagane (URL, tytul, tresc, data). Auto-detekcja daty publikacji artykulu z JSON-LD / meta / <time> — ikona 🔍 sygnalizuje automatyczne wypelnienie z opcja edycji"
+        },
+        {
+          "type": "new",
+          "text": "Panel Formularz: tag \"dodane\" — checkbox z realnym sprawdzeniem dostepnosci tagu w state.tags projektu. Banner CMS informuje gdy tag niedostepny (niezalogowany do CMS) z przyciskiem Sprawdz ponownie"
+        },
+        {
+          "type": "new",
+          "text": "Panel Formularz: tag \"dodane\" dolaczany automatycznie do POST (tag[]=ID) gdy checkbox zaznaczony i tag dostepny w projekcie"
+        }
       ]
     },
     {
-      version: '0.13.0',
-      date: '2026-03-28',
-      label: 'Fix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Panel główny: stopka (Pauza / Stop / Eksport) zawsze widoczna przy resize — panel używa teraz flex-direction:column, body wypełnia dostępną przestrzeń, stopka ma flex-shrink:0' },
-        { type: 'fix', text: 'Panel Annotatorski: zawartość zakładek scrolluje wewnątrz panelu przy zmianie rozmiaru — dodano flex layout i overflow-y:auto na content divach' },
-        { type: 'fix', text: 'Tagowanie plikiem bez dat: gdy created_date jest puste w całym pliku, matching używa teraz bieżącego miesiąca jako fallback zamiast wysyłać absurdalne daty (9999 / 0000) do API' },
-        { type: 'new', text: 'Walidacja pliku: przy wczytaniu sprawdzane są błędy krytyczne (brak kolumny URL, brak dat) — czerwone ostrzeżenia blokują Start do czasu poprawy lub ręcznego mapowania kolumn' },
-        { type: 'new', text: 'Usuń plik: przycisk "x" przy wczytanym pliku resetuje stan bez przeładowania strony — usuwa plik, mapowanie, partycje i wszystkie sekcje zależne' },
+      "version": "0.14.0",
+      "date": "2026-03-28",
+      "label": "Perf + Fix",
+      "labelColor": "#f87171",
+      "changes": [
+        {
+          "type": "perf",
+          "text": "Usuwanie wzmianek ~5x szybsze — wszystkie tryby delete (po tagu, Quick Delete, Delete View, auto-delete) używają teraz równoległych batchy po 5 zamiast jednego po jednym. 150 wzmianek: ~60s → ~12s"
+        },
+        {
+          "type": "fix",
+          "text": "Cross-project delete: każdy projekt na liście ma teraz własny przycisk \"Usuń\" — wcześniej kliknięcie na projekt nic nie robiło (brak przycisku)"
+        }
       ]
     },
     {
-      version: '0.12.0',
-      date: '2026-03-28',
-      label: 'Fix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Naprawiono duplikujące się wpisy "📅 Zakres" w logu — zakres dat był logowany przy każdym wywołaniu getAnnotatorDates() (8 miejsc); teraz logowany raz w _bgFetchTagstats()' },
-        { type: 'fix', text: 'Naprawiono podwójne pobieranie Overall Stats — zapytania były wysyłane dwa razy przy otwarciu panelu; dodano blokadę równoległych wywołań' },
-        { type: 'perf', text: 'Usunięto nieużywaną funkcję loadAnnotatorDataBackground() — dead code po refaktorze; nie miała żadnego wpływu na działanie wtyczki' },
+      "version": "0.13.0",
+      "date": "2026-03-28",
+      "label": "Fix",
+      "labelColor": "#f87171",
+      "changes": [
+        {
+          "type": "fix",
+          "text": "Panel główny: stopka (Pauza / Stop / Eksport) zawsze widoczna przy resize — panel używa teraz flex-direction:column, body wypełnia dostępną przestrzeń, stopka ma flex-shrink:0"
+        },
+        {
+          "type": "fix",
+          "text": "Panel Annotatorski: zawartość zakładek scrolluje wewnątrz panelu przy zmianie rozmiaru — dodano flex layout i overflow-y:auto na content divach"
+        },
+        {
+          "type": "fix",
+          "text": "Tagowanie plikiem bez dat: gdy created_date jest puste w całym pliku, matching używa teraz bieżącego miesiąca jako fallback zamiast wysyłać absurdalne daty (9999 / 0000) do API"
+        },
+        {
+          "type": "new",
+          "text": "Walidacja pliku: przy wczytaniu sprawdzane są błędy krytyczne (brak kolumny URL, brak dat) — czerwone ostrzeżenia blokują Start do czasu poprawy lub ręcznego mapowania kolumn"
+        },
+        {
+          "type": "new",
+          "text": "Usuń plik: przycisk \"x\" przy wczytanym pliku resetuje stan bez przeładowania strony — usuwa plik, mapowanie, partycje i wszystkie sekcje zależne"
+        }
       ]
     },
     {
-      version: '0.11.0',
-      date: '2026-03-28',
-      label: 'Nowość',
-      labelColor: '#6c6cff',
-      changes: [
-        { type: 'new', text: 'Rozbudowany log — więcej wpisów o procesach:\\n* zakres dat, cache hit/miss, prefetch w tle\\n* per-projekt postęp w Overall Stats i zakładce Tagi\\n* komunikaty o błędach API' },
-        { type: 'new', text: 'Pełnoekranowy widok loga — przycisk ⛶ przy sekcji Log otwiera panel 720×520px z filtrami, kopiowaniem i eksportem CSV' },
-        { type: 'new', text: 'System diagnostyczny — automatyczne wykrywanie anomalii (brak nazw projektów, błędne daty, nieznane projekty w grupach, błędy API) widoczne w logu jako [DIAG]' },
+      "version": "0.12.0",
+      "date": "2026-03-28",
+      "label": "Fix",
+      "labelColor": "#f87171",
+      "changes": [
+        {
+          "type": "fix",
+          "text": "Naprawiono duplikujące się wpisy \"📅 Zakres\" w logu — zakres dat był logowany przy każdym wywołaniu getAnnotatorDates() (8 miejsc); teraz logowany raz w _bgFetchTagstats()"
+        },
+        {
+          "type": "fix",
+          "text": "Naprawiono podwójne pobieranie Overall Stats — zapytania były wysyłane dwa razy przy otwarciu panelu; dodano blokadę równoległych wywołań"
+        },
+        {
+          "type": "perf",
+          "text": "Usunięto nieużywaną funkcję loadAnnotatorDataBackground() — dead code po refaktorze; nie miała żadnego wpływu na działanie wtyczki"
+        }
       ]
-    },
-    {
-      version: '0.10.3',
-      date: '2026-03-28',
-      label: 'Fix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Nazwy projektów — trwały resolver: wtyczka teraz zapamiętuje poprawne nazwy niezależnie od tego kiedy tytuł strony był gotowy; naprawia wyświetlanie ID zamiast nazwy we wszystkich miejscach' },
-      ]
-    },
-    {
-      version: '0.10.2',
-      date: '2026-03-28',
-      label: 'Fix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Daty we wszystkich narzędziach annotatorskich:\n* naprawiono błędny zakres (np. 28 luty – 28 marca zamiast 1 marca – dziś)\n* poprawiono konwersję dat — nie ma już przesunięcia UTC' },
-        { type: 'fix', text: 'Nazwy projektów w zakładce Grupy i panelu "Wszystkie projekty" — naprawiono wyświetlanie ID zamiast nazwy' },
-      ]
-    },
-    {
-      version: '0.10.1',
-      date: '2026-03-28',
-      label: 'Fix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Overall Stats:\n* naprawiono brakujący kafelek "Wszystkie wzmianki"\n* dodano informację o okresie danych (bieżący miesiąc, wyjątek 1-2 dnia)\n* naprawiono wyświetlanie nazw projektów (pokazywało ID zamiast nazwy)' },
-      ]
-    },
-    {
-      version: '0.10.0',
-      date: '2026-03-28',
-      label: 'Nowość',
-      labelColor: '#6c6cff',
-      changes: [
-        { type: 'new', text: 'Annotators Tab — nowe zakładki:\n* Grupy — tworzenie i zarządzanie grupami projektów\n* Overall Stats — sumaryczne statystyki across projektów dla wybranej grupy' },
-        { type: 'new', text: 'Grupy projektów: integracja z panelem "Wszystkie projekty" — można ograniczyć cross-delete do wybranej grupy' },
-        { type: 'new', text: 'Overall Stats: konfigurowalne per-grupa ustawienie tagu "Relevantne", spinner gdy cache zimny, natychmiastowy render z cache' },
-      ]
-    },
-    {
-      version: '0.9.14',
-      date: '2026-03-28',
-      label: 'Fix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Annotators Tab: zakładka Tagi i otwarcie panelu korzystają teraz z cache — dane pojawiają się natychmiast bez ręcznego odświeżania' },
-      ],
-    },
-    {
-      version: '0.9.13',
-      date: '2026-03-28',
-      label: 'Perf',
-      labelColor: '#34d399',
-      changes: [
-        { type: 'new', text: 'Background prefetch: dane dla Annotators Tab i cross-delete ładują się w tle zaraz po włączeniu wtyczki — otwarcie panelu jest natychmiastowe' },
-        { type: 'perf', text: 'Cross-delete: panel "Wszystkie projekty" renderuje się od razu z cache (bez spinnera) jeśli dane mają mniej niż 5 minut' },
-        { type: 'perf', text: 'Automatyczne odświeżanie cache co 5 minut w tle — dane są zawsze aktualne bez ręcznej akcji' },
-      ],
-    },
-    {
-      version: '0.9.12',
-      date: '2026-03-28',
-      label: 'Help mode',
-      labelColor: '#6c6cff',
-      changes: [
-        { type: 'new', text: 'Tryb pomocy: strefy dla zakładek Quick Tag, Quick Delete i Historia — każda zakładka ma własny zestaw opisów' },
-        { type: 'new', text: 'Tryb pomocy: jeśli Annotators Tab jest włączony — auto-otwiera się przy starcie trybu pomocy i pokazuje swoje strefy' },
-        { type: 'ui',  text: 'Trigger Annotators Tab (schowany po prawej): jaśniejszy kolor i tło w light mode — lepiej widoczny' },
-      ],
-    },
-    {
-      version: '0.9.11',
-      date: '2026-03-28',
-      label: 'Design',
-      labelColor: '#34d399',
-      changes: [
-        { type: 'ui',  text: 'Light mode: gradient niebieski→zielony (kolory Brand24) w headerze i tle panelu' },
-        { type: 'ui',  text: 'Tryb pomocy (?): podświetlone strefy z pulsującą obramówką, delikatne przyciemnienie zamiast blur' },
-        { type: 'fix', text: 'Tryb pomocy: usunięty duplikujący natywny tooltip przeglądarki przy strefach' },
-        { type: 'fix', text: 'Tryb pomocy: getHelpZones() przeniesiona do IIFE — fix scope (analogiczny bug jak toggleHelpMode)' },
-        { type: 'new', text: 'Tryb pomocy: dodane strefy dla kafelków statystyk, paska postępu i logu zdarzeń' },
-      ],
-    },
-    {
-      version: '0.9.10',
-      date: '2026-03-28',
-      label: 'Hotfix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Tryb pomocy (?) działa poprawnie — overlay i strefy widoczne nad panelem, tooltopy po kliknięciu elementu' },
-      ],
-    },
-    {
-      version: '0.9.9',
-      date: '2026-03-28',
-      label: 'Hotfix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Przycisk ? (tryb pomocy) w końcu działa — był martwy od zawsze z powodu błędu zakresu JS' },
-      ],
-    },
-    {
-      version: '0.9.8',
-      date: '2026-03-28',
-      label: 'UX',
-      labelColor: '#60a5fa',
-      changes: [
-        { type: 'ui',  text: 'Annotators Tab: zakładki 📊 Projekt / 🏷 Tagi w stylu liquid glass — identyczne z głównymi zakładkami panelu' },
-        { type: 'ux',  text: 'Annotators Tab → Tagi: spinner podczas ładowania zamiast skeleton per projekt — lista pojawia się dopiero po załadowaniu wszystkich danych' },
-        { type: 'ux',  text: 'Cross-project delete panel: spinner podczas ładowania zamiast skeleton per projekt' },
-        { type: 'fix', text: 'Cross-project delete panel: nie rozciąga się do dołu ekranu — teraz dopasowuje się do zawartości (height:auto)' },
-      ],
-    },
-    {
-      version: '0.9.7',
-      date: '2026-03-28',
-      label: 'Hotfix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Stała VERSION w kodzie nie była aktualizowana przy deploy — panel pokazywał 0.9.4 zamiast aktualnej wersji, a checkForUpdate() krzyczał o update na samego siebie' },
-      ],
-    },
-    {
-      version: '0.9.6',
-      date: '2026-03-28',
-      label: 'Polish UI',
-      labelColor: '#a78bfa',
-      changes: [
-        { type: 'ui',  text: 'Changelog & Feedback: ikona ✦ → 🚀 w headerze modalu' },
-        { type: 'fix', text: 'Changelog & Feedback: light mode fix — modal zawsze ciemny (hardkodowane kolory, brak var(--b24t-*))' },
-        { type: 'ui',  text: 'Planowane: legenda priorytetów (kolorowe kółka z opisem) zamiast emoji flag' },
-        { type: 'ui',  text: 'Dev Patch Notes: prefiksy kategorii [PERF/FIX/UX/UI/RENAME/DATA...] z kolorowymi badge\'ami + legenda w stopce' },
-        { type: 'fix', text: 'PLANNED_FEATURES: usunięto Wieloprojektowość i Szybkie filtry; "Bulk rename / merge" → "Bulk rename tagów"' },
-      ],
-    },
-    {
-      version: '0.9.5',
-      date: '2026-03-28',
-      label: 'Wydajność',
-      labelColor: '#34d399',
-      changes: [
-        { type: 'fix', text: 'Annotators Tab → Tagi: ładuje się błyskawicznie (2 requesty per projekt zamiast setek)' },
-        { type: 'ui',  text: 'Tagi: projekty bez wzmianek nie wyświetlają się — lista tylko z tym co istotne' },
-        { type: 'ui',  text: 'Cross-project delete: lista projektów zawiera tylko te z wzmiankami' },
-        { type: 'ui',  text: 'Zmiana nazwy: "Narzędzia Annotatora" → "Annotators Tab" wszędzie w UI' },
-        { type: 'new', text: 'Planowane: Overall Stats w Annotators Tab + grupowanie projektów po kategoriach' },
-      ],
-    },
-    {
-      version: '0.9.4',
-      date: '2026-03-28',
-      label: 'Hotfix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Crash przy starcie: features.includes is not a function — features jest obiektem, nie tablicą' },
-      ],
-    },
-    {
-      version: '0.9.3',
-      date: '2026-03-28',
-      label: 'Nowość',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'new', text: 'Cross-project delete — usuń tag ze wszystkich projektów jednocześnie (wymaga Annotators Tab)' },
-        { type: 'fix', text: 'Panel boczny wysuwa się obok głównego panelu, nie z krawędzi ekranu' },
-        { type: 'fix', text: 'runDeleteByTag: poprawny projectId przy operacjach cross-project' },
-      ],
-    },
-    {
-      version: '0.9.2',
-      date: '2026-03-28',
-      label: 'Poprawki',
-      labelColor: '#facc15',
-      changes: [
-        { type: 'ui',  text: 'Annotators Tab — pełna nazwa triggera, szerszy padding' },
-        { type: 'fix', text: 'DEV patch notes uzupełnione od 0.6.0 — każde wdrożenie ma teraz wpis' },
-        { type: 'fix', text: 'Zasada wersjonowania: 0.x.0 = nowa sesja, 0.x.y = kolejny deploy w tej samej' },
-      ],
-    },
-    {
-      version: '0.9.1',
-      date: '2026-03-28',
-      label: 'Onboarding fix',
-      labelColor: '#6c6cff',
-      changes: [
-        { type: 'fix', text: 'Panel wyśrodkowany na czas onboardingu' },
-        { type: 'new', text: 'Onboarding: szczegółowy krok o Bug Report (co jest wysyłane)' },
-        { type: 'new', text: 'Onboarding: krok Co nowego & Planowane' },
-      ],
-    },
-    {
-      version: '0.9.0',
-      date: '2026-03-27',
-      label: 'Optymalizacja',
-      labelColor: '#facc15',
-      changes: [
-        { type: 'perf', text: 'Usunięto 15 zduplikowanych definicji funkcji (~378 linii)', priority: 'high' },
-        { type: 'fix',  text: 'Usunięto zduplikowane bloki HTML w buildPanel (file-validation, column-override, match-preview)', priority: 'high' },
-        { type: 'fix',  text: 'Usunięto podwójne wywołania saveSessionToHistory() i playDoneSound() w startRun', priority: 'high' },
-        { type: 'fix',  text: 'Usunięto martwą funkcję parseXLSX (zastąpiona przez parseXLSXFile)', priority: 'medium' },
-        { type: 'fix',  text: 'Usunięto zbędny wrapper fetchMentionsPage (bezpośrednie wywołania getMentions)', priority: 'medium' },
-        { type: 'perf', text: 'Pre-kompilacja regexów w normalizeUrl (wywoływana tysiące razy per sesja)', priority: 'medium' },
-        { type: 'perf', text: 'Cache referencji DOM w przełączniku zakładek (querySelector tylko raz)', priority: 'medium' },
-        { type: 'fix',  text: 'Usunięto martwe zmienne: state.auditMode, state.columnOverride, titleEl, prioColor', priority: 'low' },
-        { type: 'ui',   text: 'Skrócono separatory w kodzie (bez wpływu na działanie)', priority: 'low' },
-      ],
-    },
-    {
-      version: '0.8.0',
-      date: '2026-03-27',
-      label: 'UX Update',
-      labelColor: '#2563eb',
-      changes: [
-        { type: 'new', text: 'New onboarding experience' },
-        { type: 'new', text: 'Help mode (? button)' },
-        { type: 'ui',  text: 'Switched font to Inter' },
-        { type: 'ui',  text: 'Light mode color improvements' },
-        { type: 'ui',  text: 'Annotator tab enlarged' },
-        { type: 'fix', text: 'Light mode element blending fixed' },
-      ]
-    },
-    {
-      version: '0.7.0',
-      date: '2026-03-27',
-      label: 'Redesign',
-      labelColor: '#1e7d3a',
-      changes: [
-        { type: 'ui', text: 'Light mode & dark mode visual overhaul' },
-        { type: 'ui', text: 'Annotator panel enlarged (420px, 15px font)' },
-        { type: 'fix', text: 'Subbar color fix for light mode' },
-      ]
-    },
-    {
-      version: '0.6.0',
-      date: '2026-03-27',
-      label: 'Redesign',
-      labelColor: '#5B4FFF',
-      changes: [
-        { type: 'new', text: 'Light mode default with Brand24 palette' },
-        { type: 'new', text: 'Dark mode toggle (☀️/🌙)' },
-        { type: 'new', text: 'CSS custom properties design system' },
-        { type: 'ui',  text: 'Micro-animations throughout' },
-      ]
-    },
-    {
-      version: '0.5.13',
-      date: '2026-03-27',
-      label: 'Nowość',
-      labelColor: '#4ade80',
-      changes: [
-        { type: 'new', text: 'Narzędzia Annotatora: floating panel z kartami 📊 Projekt i 🏷 Tagi' },
-        { type: 'new', text: 'Panel wysuwany strzałką po prawej stronie ekranu, zamykany przez ×, przeciągany' },
-        { type: 'new', text: 'Dane ładują się automatycznie w tle po włączeniu funkcji w ⚙' },
-        { type: 'new', text: 'Dokładne liczenie nieotagowanych — pełne skanowanie stron, nie binary search' },
-        { type: 'change', text: 'Dashboard Annotatora i Statystyki tagów połączone w jedno narzędzie' },
-      ]
-    },
-    {
-      version: '0.5.12',
-      date: '2026-03-27',
-      label: 'Nowość',
-      labelColor: '#4ade80',
-      changes: [
-        { type: 'new', text: 'Statystyki tagów — zakładka 🏷 Tagi: tabela wszystkich projektów z liczbą wzmianek REQUIRES_VERIFICATION i TO_DELETE' },
-        { type: 'new', text: 'Dane ładowane w tle bez przeładowania strony, z podglądem postępu per projekt' },
-        { type: 'new', text: 'Widoczne tylko projekty które mają coś do zrobienia (reqVer > 0 lub toDelete > 0)' },
-      ]
-    },
-    {
-      version: '0.5.11',
-      date: '2026-03-27',
-      label: 'Stabilność',
-      labelColor: '#facc15',
-      changes: [
-        { type: 'fix', text: 'Zwiększono retry dla bulkTagMentions do 5 prób — Brand24 API losowo failuje z Internal server error' },
-        { type: 'fix', text: 'Opóźnienia retry wydłużone: 2s, 4s, 8s, 12s, 20s' },
-      ]
-    },
-    {
-      version: '0.5.10',
-      date: '2026-03-27',
-      label: 'Bugfix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Internal server error przy tagowaniu — MAX_BATCH_SIZE zmniejszony z 1000 do 200' },
-        { type: 'fix', text: 'Obcięte ID TikTok/Twitter w XLSX — raw:false zapobiega utracie cyfr przez Number precision' },
-        { type: 'fix', text: 'Fuzzy matching URL — dopasowuje wzmianki gdy ID w pliku jest obcięte o kilka cyfr' },
-      ]
-    },
-    {
-      version: '0.5.9',
-      date: '2026-03-27',
-      label: 'Bugfix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Naprawiono podwójne wykonanie Match Preview i Audit Mode przy każdym kliknięciu' },
-        { type: 'fix', text: 'Naprawiono podwójne wywołanie wireHistoryTab()' },
-      ]
-    },
-    {
-      version: '0.5.8',
-      date: '2026-03-27',
-      label: 'Bugfix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Naprawiono wykrywanie nazwy projektu — retry co 500ms przez max 10s zamiast jednorazowego retry po 2s' },
-      ]
-    },
-    {
-      version: '0.5.7',
-      date: '2026-03-27',
-      label: 'Bugfix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Naprawiono auto-detekcję kolumny assessment — nie mylona już z kolumną source/platform' },
-      ]
-    },
-    {
-      version: '0.5.6',
-      date: '2026-03-27',
-      label: 'Bugfix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Naprawiono Dashboard Annotatora — pojawiał się między logiem a przyciskami' },
-        { type: 'fix', text: 'Naprawiono wczytywanie XLSX — błąd sandboxu Tampermonkey' },
-      ]
-    },
-    {
-      version: '0.5.5',
-      date: '2026-03-27',
-      label: 'Bugfix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Naprawiono wczytywanie XLSX — błąd z sandboxem Tampermonkey' },
-      ]
-    },
-    {
-      version: '0.5.4',
-      date: '2026-03-27',
-      label: 'Bugfix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Naprawiono wczytywanie plików XLSX — błąd "Cannot read properties of undefined"' },
-      ]
-    },
-    {
-      version: '0.5.3',
-      date: '2026-03-27',
-      label: 'Bezpieczeństwo',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix',  text: 'Naprawiono błędną nazwę projektu w panelu (pokazywało "Brand24" zamiast nazwy projektu)' },
-        { type: 'new',  text: 'Potwierdzenie wymagane przy operacjach na 200+ wzmiankowach' },
-        { type: 'ui',   text: 'Powiększono czcionki w całym panelu' },
-      ]
-    },
-    {
-      version: '0.5.2',
-      date: '2026-03-26',
-      label: 'Dashboard',
-      labelColor: '#6c6cff',
-      changes: [
-        { type: 'fix',  text: 'Dashboard: naprawiono zliczanie nieotagowanych wzmianek' },
-        { type: 'perf', text: 'Dashboard: binary search — ~7 requestów zamiast iteracji przez wszystkie strony' },
-      ]
-    },
-    {
-      version: '0.5.1',
-      date: '2026-03-26',
-      label: 'Dashboard',
-      labelColor: '#6c6cff',
-      changes: [
-        { type: 'new', text: 'Przycisk ⚙ — panel dodatkowych funkcji z checkboxami' },
-        { type: 'new', text: 'Dashboard Annotatora — licznik wzmianek bieżącego miesiąca, postęp, dni do końca' },
-        { type: 'new', text: 'Automatyczna logika dat: dzień 1-2 pokazuje poprzedni miesiąc' },
-      ]
-    },
-    {
-      version: '0.5.0',
-      date: '2026-03-25',
-      label: 'Test',
-      labelColor: '#facc15',
-      changes: [
-        { type: 'ui', text: 'Test powiadomienia o aktualizacji' },
-      ]
-    },
-    {
-      version: '0.4.7',
-      date: '2026-03-25',
-      label: 'Test',
-      labelColor: '#facc15',
-      changes: [
-        { type: 'ui', text: 'Test powiadomienia o aktualizacji' },
-      ]
-    },
-    {
-      version: '0.4.6',
-      date: '2026-03-25',
-      label: 'Bugfix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Naprawiono auto-sprawdzanie aktualizacji — dodano brakujące uprawnienie @connect' },
-      ]
-    },
-    {
-      version: '0.4.5',
-      date: '2026-03-25',
-      label: 'Bugfix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Naprawiono auto-sprawdzanie aktualizacji — checkForUpdate dodane do debug bridge' },
-      ]
-    },
-    {
-      version: '0.4.4',
-      date: '2026-03-25',
-      label: 'Bugfix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Naprawiono sprawdzanie aktualizacji — GM_xmlhttpRequest działa poprawnie' },
-      ]
-    },
-    {
-      version: '0.4.3',
-      date: '2026-03-25',
-      label: 'Poprawki',
-      labelColor: '#4ade80',
-      changes: [
-        { type: 'fix', text: 'Przycisk Zainstaluj otwiera ekran aktualizacji Tampermonkey bezpośrednio' },
-      ]
-    },
-    {
-      version: '0.4.2',
-      date: '2026-03-25',
-      label: 'Poprawki',
-      labelColor: '#4ade80',
-      changes: [
-        { type: 'fix',  text: 'Naprawiono auto-sprawdzanie aktualizacji przy załadowaniu strony' },
-        { type: 'ui',   text: 'Popup aktualizacji w prawym górnym rogu, większy, wchodzi z prawej' },
-        { type: 'ui',   text: 'Zmieniono nazwę przycisku na "Sprawdź aktualizacje"' },
-      ]
-    },
-    {
-      version: '0.4.1',
-      date: '2026-03-25',
-      label: 'Poprawki',
-      labelColor: '#4ade80',
-      changes: [
-        { type: 'fix', text: 'Naprawiono sprawdzanie aktualizacji — używa fetch zamiast GM_xmlhttpRequest' },
-        { type: 'new', text: 'Przycisk "↑ Aktualizacje" w subbarze — ręczne sprawdzenie' },
-        { type: 'ui',  text: 'Baner "Masz najnowszą wersję" przy ręcznym sprawdzeniu' },
-      ]
-    },
-    {
-      version: '0.4.0',
-      date: '2026-03-25',
-      label: 'Test update',
-      labelColor: '#facc15',
-      changes: [
-        { type: 'ui', text: 'Test powiadomienia o aktualizacji' },
-      ]
-    },
-    {
-      version: '0.3.9',
-      date: '2026-03-25',
-      label: 'Auto-update',
-      labelColor: '#6c6cff',
-      changes: [
-        { type: 'new', text: 'Powiadomienie o dostępnej aktualizacji — baner z przyciskiem Zainstaluj' },
-        { type: 'new', text: 'Sprawdzanie wersji w tle raz na godzinę (GitHub raw file)' },
-      ]
-    },
-    {
-      version: '0.3.8',
-      date: '2026-03-25',
-      label: 'GitHub ready',
-      labelColor: '#4ade80',
-      changes: [
-        { type: 'fix', text: 'Webhook URL wyciągnięty do konfiguracji — plik bezpieczny do publikacji na GitHub' },
-        { type: 'new', text: 'Auto-update przez Tampermonkey (@updateURL / @downloadURL)' },
-      ]
-    },
-    {
-      version: '0.3.7',
-      date: '2026-03-25',
-      label: 'Poprawki',
-      labelColor: '#4ade80',
-      changes: [
-        { type: 'fix',  text: 'Rozbudowano crash log o pełne dane diagnostyczne' },
-        { type: 'fix',  text: 'Bug Report na Slack zawiera teraz szczegółowy stan sesji przy crashu' },
-      ]
-    },
-    {
-      version: '0.3.7',
-      date: '2026-03-25',
-      label: 'Diagnostyka',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'new', text: 'Rozbudowany crash log — zapisuje snapshot logu sesji, stan partycji, dane pliku i stack trace w momencie błędu' },
-        { type: 'new', text: 'Przycisk "Wyślij Bug Report" bezpośrednio w bannerze błędu' },
-        { type: 'ui',  text: 'Czytelniejszy widok szczegółów crashu — podzielony na sekcje' },
-      ]
-    },
-    {
-      version: '0.3.6',
-      date: '2026-03-25',
-      label: 'Bug Report',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'new', text: 'Bug Report — wysyła opis błędu razem z pełnymi logami, statusem sesji i danymi diagnostycznymi' },
-        { type: 'new', text: 'Suggestions — osobny tryb dla pomysłów i sugestii funkcji' },
-        { type: 'ui',  text: 'Zakładka Feedback przebudowana — przełącznik Bug Report / Suggestion' },
-        { type: 'perf', text: 'Log sesji przechowuje ostatnie 500 wpisów w pamięci (poprzednio brak limitu)' },
-      ]
-    },
-    {
-      version: '0.3.5',
-      date: '2026-03-25',
-      label: 'UI Redesign',
-      labelColor: '#6c6cff',
-      changes: [
-        { type: 'ui', text: 'Poszerzono panel do 440px' },
-        { type: 'ui', text: 'Przycisk Changelog & Feedback przeniesiony do subbara pod topbarem' },
-        { type: 'ui', text: 'Action bar przebudowany na dwa rzędy (Start/Match/Audit + Pauza/Stop/Eksport)' },
-        { type: 'ui', text: 'Zakładki z ikonami (📄⚡🗑📋) dla lepszej czytelności' },
-        { type: 'ui', text: 'Timer i status tokenu zsynchronizowane z subbar' },
-        { type: 'ui', text: 'Modal Changelog poszerzony do 520px, dwa pola Feedback obok siebie (grid), zakładki z ikonami' },
-      ]
-    },
-    {
-      version: '0.3.4',
-      date: '2026-03-25',
-      label: 'Poprawki',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'ui', text: 'Zmieniono schemat wersjonowania na format beta (0.x.x)' },
-        { type: 'ui', text: 'Zmieniono przycisk ZMIANY na Changelog & Feedback' },
-        { type: 'ui', text: 'Usunięto odwołania do wewnętrznych narzędzi i projektów' },
-      ]
-    },
-    {
-      version: '0.3.3',
-      date: '2026-03-25',
-      label: 'Poprawki',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Naprawiono błąd TOKEN_NOT_READY przy ładowaniu wtyczki' },
-        { type: 'ui',  text: 'Uproszczono opisy w dzienniku zmian' },
-        { type: 'ui',  text: 'Dodano link do pełnych notatek wydania w zakładce Feedback' },
-        { type: 'ui',  text: 'Zaktualizowano onboarding o nowe funkcje' },
-      ]
-    },
-    {
-      version: '0.3.2',
-      date: '2026-03-25',
-      label: 'Bugfix',
-      labelColor: '#f87171',
-      changes: [
-        { type: 'fix', text: 'Naprawiono błąd TOKEN_NOT_READY przy ładowaniu wtyczki' },
-      ]
-    },
-    {
-      version: '0.3.1',
-      date: '2026-03-25',
-      label: 'Poprawki',
-      labelColor: '#4ade80',
-      changes: [
-        { type: 'ui',  text: 'Ulepszono formularz feedbacku' },
-        { type: 'ui',  text: 'Zaktualizowano priorytety w liście planowanych funkcji' },
-      ]
-    },
-    {
-      version: '0.3.0',
-      date: '2026-03-25',
-      label: 'Feedback & Planowane',
-      labelColor: '#facc15',
-      changes: [
-        { type: 'new', text: 'Nowy modal z dziennikiem zmian, planowanymi funkcjami i feedbackiem' },
-        { type: 'new', text: 'Sekcja z planowanymi funkcjami i ich priorytetami' },
-        { type: 'new', text: 'Formularz feedbacku — wiadomości trafiają bezpośrednio do zespołu' },
-        { type: 'ui',  text: 'Przycisk szybkiego dostępu do dziennika zmian w panelu' },
-      ]
-    },
-    {
-      version: '0.2.0',
-      date: '2026-03-25',
-      label: 'Nowe funkcje',
-      labelColor: '#6c6cff',
-      changes: [
-        { type: 'new', text: 'Match Preview — podgląd dopasowania pliku przed startem' },
-        { type: 'new', text: 'Ręczne mapowanie kolumn pliku' },
-        { type: 'new', text: 'Historia sesji — zakładka z poprzednimi sesjami' },
-        { type: 'new', text: 'Walidacja pliku przed tagowaniem' },
-        { type: 'new', text: 'Audit Mode — porównanie pliku z Brand24 bez tagowania' },
-        { type: 'new', text: 'Opcjonalny dźwięk po zakończeniu sesji' },
-        { type: 'new', text: 'Licznik wzmianek przy każdym tagu w mapowaniu' },
-        { type: 'fix', text: 'Naprawiono matchowanie URL wzmianek' },
-        { type: 'fix', text: 'Naprawiono auto-detekcję kolumn w pliku' },
-        { type: 'perf', text: 'Znacznie przyspieszone pobieranie danych (10x równolegle)' },
-        { type: 'ui', text: 'Timery w Quick Tag i Quick Delete' },
-      ]
-    },
-    {
-      version: '0.1.0',
-      date: '2026-03-24',
-      label: 'Wydanie pierwsze',
-      labelColor: '#4ade80',
-      changes: [
-        { type: 'new', text: 'Tagowanie wzmianek na podstawie pliku CSV/JSON/XLSX' },
-        { type: 'new', text: 'Quick Tag — tagowanie aktualnego widoku Brand24 bez pliku' },
-        { type: 'new', text: 'Quick Delete — usuwanie wzmianek po tagu lub aktualnym widoku' },
-        { type: 'new', text: 'Auto-Delete po zakończeniu tagowania' },
-        { type: 'new', text: 'System partycji dla dużych plików (>1000 wzmianek)' },
-        { type: 'new', text: 'Pamięć mapowań per projekt (schematy)' },
-        { type: 'new', text: 'Crash log z czytelnymi komunikatami i opcją wznowienia' },
-        { type: 'new', text: 'Debug bridge window.B24Tagger.debug.*' },
-        { type: 'new', text: 'Obsługa app.brand24.com i panel.brand24.pl' },
-        { type: 'new', text: 'Przeciągalny, zwijany panel z zapamiętywaniem pozycji' },
-      ]
-    },
+    }
   ];
+
+  function _fetchChangelog(onDone) {
+    const CACHE_KEY = 'b24tagger_cl_cache';
+    const cached = (() => { try { return JSON.parse(sessionStorage.getItem(CACHE_KEY)); } catch(e) { return null; } })();
+    if (cached) { onDone(cached); return; }
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: 'https://raw.githubusercontent.com/i24dev/i24_analytics/I24-maks-czyszczenie/Tagger/CHANGELOG.json',
+      headers: { 'Cache-Control': 'no-cache' },
+      onload(r) {
+        try {
+          const data = JSON.parse(r.responseText);
+          sessionStorage.setItem(CACHE_KEY, JSON.stringify(data));
+          onDone(data);
+        } catch(e) { onDone(CHANGELOG_FALLBACK); }
+      },
+      onerror() { onDone(CHANGELOG_FALLBACK); }
+    });
+  }
 
 
   // ───────────────────────────────────────────
   // WHAT'S NEW - modal i przycisk
   // ───────────────────────────────────────────
-
-  function showWhatsNew(forceShow) { showWhatsNewExtended(forceShow); }
 
 
   // ───────────────────────────────────────────
@@ -7027,117 +6509,6 @@ function showOnboarding(onComplete) {
     if (ideas) sendSuggestion(ideas, function() {});
   }
 
-  // Feedback modal
-  function showFeedbackModal() {
-    let selectedRating = 0;
-
-    const modal = document.createElement('div');
-    modal.id = 'b24t-feedback-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;';
-
-    modal.innerHTML =
-      '<div style="background:#0f0f13;border:1px solid #2a2a35;border-radius:14px;width:440px;box-shadow:0 20px 60px rgba(0,0,0,0.8);">' +
-        '<div style="padding:20px 20px 16px;border-bottom:1px solid var(--b24t-border-sub);">' +
-          '<div style="display:flex;align-items:center;gap:10px;">' +
-            '<div style="width:32px;height:32px;background:#facc1522;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;">💬</div>' +
-            '<div>' +
-              '<div style="font-size:14px;font-weight:700;color:#e2e2e8;">Prześlij feedback</div>' +
-              '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:2px;">Trafia bezpośrednio na kanał Slack zespołu</div>' +
-            '</div>' +
-            '<button id="b24t-fb-close" style="margin-left:auto;background:none;border:none;color:#444455;cursor:pointer;font-size:18px;line-height:1;padding:4px;">\u00d7</button>' +
-          '</div>' +
-        '</div>' +
-        '<div style="padding:20px;">' +
-          // Stars
-          '<div style="margin-bottom:16px;">' +
-            '<div style="font-size:11px;color:var(--b24t-text-faint);margin-bottom:8px;">Ogólna ocena wtyczki:</div>' +
-            '<div id="b24t-fb-stars" style="display:flex;gap:6px;">' +
-              [1,2,3,4,5].map(function(i) {
-                return '<span data-val="' + i + '" style="font-size:24px;cursor:pointer;color:#1e1e28;transition:color 0.1s;">★</span>';
-              }).join('') +
-            '</div>' +
-          '</div>' +
-          // Textarea
-          '<div style="margin-bottom:16px;">' +
-            '<div style="font-size:11px;color:var(--b24t-text-faint);margin-bottom:6px;">Komentarz / sugestia / błąd (opcjonalnie):</div>' +
-            '<textarea id="b24t-fb-text" placeholder="Co działa dobrze? Co można poprawić? Jakiś bug?" ' +
-              'style="width:100%;height:90px;background:#141419;border:1px solid #2a2a35;border-radius:6px;color:#c0c0e0;' +
-              'font-family:inherit;font-size:11px;padding:8px 10px;resize:none;box-sizing:border-box;outline:none;line-height:1.5;">' +
-            '</textarea>' +
-          '</div>' +
-          // Status
-          '<div id="b24t-fb-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;margin-bottom:12px;"></div>' +
-          // Buttons
-          '<div style="display:flex;gap:8px;">' +
-            '<button id="b24t-fb-cancel" style="flex:1;background:#1a1a22;color:var(--b24t-text-meta);border:1px solid #2a2a35;border-radius:6px;padding:8px;font-size:12px;cursor:pointer;font-family:inherit;">Anuluj</button>' +
-            '<button id="b24t-fb-send" style="flex:2;background:#6c6cff;color:#fff;border:none;border-radius:6px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Wyślij feedback</button>' +
-          '</div>' +
-          // Ukryty reset onboardingu — dyskretny, na samym dole
-          '<div style="margin-top:20px;padding-top:14px;border-top:1px solid #1a1a28;text-align:center;">' +
-            '<button id="b24t-fb-reset-onboarding" style="background:none;border:none;color:#333348;font-size:10px;cursor:pointer;font-family:inherit;letter-spacing:0.02em;transition:color 0.2s;padding:4px 8px;border-radius:4px;">' +
-              '↺ Powtórz onboarding' +
-            '</button>' +
-          '</div>' +
-        '</div>' +
-      '</div>';
-
-    document.body.appendChild(modal);
-
-    // Stars interaction
-    const starsEl = document.getElementById('b24t-fb-stars');
-    const stars = starsEl.querySelectorAll('span');
-    function updateStars(val) {
-      stars.forEach(function(s, i) {
-        s.style.color = i < val ? '#facc15' : '#1e1e28';
-      });
-    }
-    stars.forEach(function(s) {
-      s.addEventListener('mouseover', function() { updateStars(parseInt(s.dataset.val)); });
-      s.addEventListener('mouseout',  function() { updateStars(selectedRating); });
-      s.addEventListener('click',     function() {
-        selectedRating = parseInt(s.dataset.val);
-        updateStars(selectedRating);
-      });
-    });
-
-    function closeModal() { modal.remove(); }
-
-    document.getElementById('b24t-fb-close').addEventListener('click', closeModal);
-    document.getElementById('b24t-fb-cancel').addEventListener('click', closeModal);
-    modal.addEventListener('click', function(e) { if (e.target === modal) closeModal(); });
-
-    // Reset onboarding — dyskretny przycisk na dole Feedback
-    var resetObBtn = document.getElementById('b24t-fb-reset-onboarding');
-    if (resetObBtn) {
-      resetObBtn.addEventListener('mouseenter', function() { this.style.color = '#6c6cff'; });
-      resetObBtn.addEventListener('mouseleave', function() { this.style.color = '#333348'; });
-      resetObBtn.addEventListener('click', function() {
-        closeModal();
-        lsSet(LS.SETUP_DONE, false);
-        setTimeout(function() {
-          showOnboarding(function() {
-            addLog('✓ Onboarding zakończony ponownie.', 'success');
-          });
-        }, 300);
-      });
-    }
-
-    document.getElementById('b24t-fb-send').addEventListener('click', function() {
-      const text = document.getElementById('b24t-fb-text').value.trim();
-      const statusEl = document.getElementById('b24t-fb-status');
-      if (!selectedRating) {
-        statusEl.textContent = '⚠ Wybierz ocenę (kliknij gwiazdki)';
-        statusEl.style.color = '#facc15';
-        return;
-      }
-      statusEl.textContent = '→ Wysyłam...';
-      statusEl.style.color = '#7878aa';
-      document.getElementById('b24t-fb-send').disabled = true;
-      sendFeedbackToSlack(text, selectedRating, VERSION, state.projectName || '—');
-      setTimeout(function() { closeModal(); }, 1200);
-    });
-  }
-
 
   function showDevNotes() {
     // Kategorie: [PERF] [FIX] [UX] [UI] [RENAME] [DATA] [HOTFIX] [REFACTOR] [ARCH]
@@ -7171,19 +6542,22 @@ function showOnboarding(onComplete) {
       '</div>';
     }
 
-    let html = '<div style="font-size:10px;color:#4a4a66;margin-bottom:16px;font-family:\'Inter\',sans-serif;">Szczegółowe informacje techniczne o zmianach w kodzie. Dostępne od v0.3.4.</div>';
-
-    DEV_CHANGELOG.forEach(function(v, idx) {
-      html +=
-        '<div style="margin-bottom:' + (idx < DEV_CHANGELOG.length - 1 ? '16' : '0') + 'px;">' +
-          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
-            '<span style="font-size:12px;font-weight:700;color:#e2e2e8;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;">v' + v.version + '</span>' +
-            '<span style="font-size:10px;color:#3a3a55;">' + v.date + '</span>' +
+    function _buildDevHtml(entries) {
+      let h = '<div style="font-size:10px;color:#4a4a66;margin-bottom:16px;font-family:\'Inter\',sans-serif;">Szczegółowe informacje techniczne o zmianach w kodzie. Dostępne od v0.3.4.</div>';
+      entries.forEach(function(v, idx) {
+        h +=
+          '<div style="margin-bottom:' + (idx < entries.length - 1 ? '16' : '0') + 'px;">' +
+            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+              '<span style="font-size:12px;font-weight:700;color:#e2e2e8;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;">v' + v.version + '</span>' +
+              '<span style="font-size:10px;color:#3a3a55;">' + v.date + '</span>' +
+            '</div>' +
+            v.notes.map(renderNote).join('') +
           '</div>' +
-          v.notes.map(renderNote).join('') +
-        '</div>' +
-        (idx < DEV_CHANGELOG.length - 1 ? '<div style="height:1px;background:#1a1a22;margin:0 0 16px 0;"></div>' : '');
-    });
+          (idx < entries.length - 1 ? '<div style="height:1px;background:#1a1a22;margin:0 0 16px 0;"></div>' : '');
+      });
+      return h;
+    }
+
 
     const modal = document.createElement('div');
     modal.id = 'b24t-devnotes-modal';
@@ -7198,7 +6572,7 @@ function showOnboarding(onComplete) {
           '</div>' +
           '<button id="b24t-devnotes-close" style="margin-left:auto;background:none;border:none;color:#444455;cursor:pointer;font-size:18px;line-height:1;">\u00d7</button>' +
         '</div>' +
-        '<div style="overflow-y:auto;flex:1;padding:20px;">' + html + '</div>' +
+        '<div style="overflow-y:auto;flex:1;padding:20px;">' + _buildDevHtml(DEV_CHANGELOG_FALLBACK) + '</div>' +
         '<div style="padding:12px 20px;border-top:1px solid #1a1a22;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;">' +
           '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
             Object.entries(catColor).map(function(e) {
@@ -7210,6 +6584,14 @@ function showOnboarding(onComplete) {
       '</div>';
 
     document.body.appendChild(modal);
+
+    // Fetch full dev changelog in background — update body if modal still open
+    _fetchDevChangelog(function(entries) {
+      const bodyEl = modal.querySelector('#b24t-devnotes-modal > div > div[style*="overflow-y"]');
+      if (bodyEl && document.getElementById('b24t-devnotes-modal')) {
+        bodyEl.innerHTML = _buildDevHtml(entries);
+      }
+    });
 
     function close() { modal.remove(); }
     document.getElementById('b24t-devnotes-close').addEventListener('click', close);
@@ -7224,30 +6606,34 @@ function showOnboarding(onComplete) {
 
     const typeIcon = { new: '✦', fix: '⚒', perf: '⚡', ui: '◈' };
     const typeColor = { new: '#6c6cff', fix: '#4ade80', perf: '#facc15', ui: '#b0b0cc' };
-    const prioLabel = { ai: '🟣', high: '🔴', medium: '🟡', low: '🟢' };
 
-    // Build changelog HTML
-    let changelogHtml = '';
-    CHANGELOG.forEach(function(v, idx) {
-      const isLatest = idx === 0;
-      changelogHtml +=
-        '<div style="margin-bottom:' + (idx < CHANGELOG.length - 1 ? '20' : '0') + 'px;">' +
-          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
-            '<span style="font-size:15px;font-weight:700;color:#e2e2e8;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;">v' + v.version + '</span>' +
-            '<span style="font-size:12px;font-weight:600;background:' + v.labelColor + '22;color:' + v.labelColor + ';padding:2px 10px;border-radius:99px;">' + v.label + '</span>' +
-            '<span style="font-size:11px;color:#3a3a55;margin-left:auto;">' + v.date + '</span>' +
+    function _buildChangelogHtml(entries) {
+      let html = '';
+      entries.forEach(function(v, idx) {
+        const isLatest = idx === 0;
+        html +=
+          '<div style="margin-bottom:' + (idx < entries.length - 1 ? '20' : '0') + 'px;">' +
+            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+              '<span style="font-size:15px;font-weight:700;color:#e2e2e8;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;">v' + v.version + '</span>' +
+              '<span style="font-size:12px;font-weight:600;background:' + v.labelColor + '22;color:' + v.labelColor + ';padding:2px 10px;border-radius:99px;">' + v.label + '</span>' +
+              '<span style="font-size:11px;color:#3a3a55;margin-left:auto;">' + v.date + '</span>' +
+            '</div>' +
+            '<div style="' + (isLatest ? '' : 'opacity:0.6;') + '">' +
+            v.changes.map(function(ch) {
+              return '<div style="display:flex;gap:8px;align-items:flex-start;padding:3px 0;">' +
+                '<span style="flex-shrink:0;font-size:15px;color:' + (typeColor[ch.type] || '#9090aa') + ';width:18px;text-align:center;line-height:1;">' + (typeIcon[ch.type] || '•') + '</span>' +
+                '<span style="font-size:13px;color:#a0a0cc;line-height:1.6;">' + ch.text + '</span>' +
+              '</div>';
+            }).join('') +
+            '</div>' +
           '</div>' +
-          '<div style="' + (isLatest ? '' : 'opacity:0.6;') + '">' +
-          v.changes.map(function(ch) {
-            return '<div style="display:flex;gap:8px;align-items:flex-start;padding:3px 0;">' +
-              '<span style="flex-shrink:0;font-size:15px;color:' + (typeColor[ch.type] || '#9090aa') + ';width:18px;text-align:center;line-height:1;">' + (typeIcon[ch.type] || '•') + '</span>' +
-              '<span style="font-size:13px;color:#a0a0cc;line-height:1.6;">' + ch.text + '</span>' +
-            '</div>';
-          }).join('') +
-          '</div>' +
-        '</div>' +
-        (idx < CHANGELOG.length - 1 ? '<div style="height:1px;background:#1e1e28;margin:0 0 20px 0;"></div>' : '');
-    });
+          (idx < entries.length - 1 ? '<div style="height:1px;background:#1e1e28;margin:0 0 20px 0;"></div>' : '');
+      });
+      return html;
+    }
+
+    // Render with fallback, then update when fetch completes
+    let changelogHtml = _buildChangelogHtml(CHANGELOG_FALLBACK);
 
     // Build planned features HTML
     const prioMeta = {
@@ -7401,6 +6787,14 @@ function showOnboarding(onComplete) {
 
     document.body.appendChild(modal);
 
+    // Fetch full changelog in background — update news tab if modal still open
+    _fetchChangelog(function(entries) {
+      const newsEl = document.getElementById('b24t-wnm-news');
+      if (newsEl && document.getElementById('b24t-whats-new-modal')) {
+        newsEl.innerHTML = _buildChangelogHtml(entries);
+      }
+    });
+
     // Tab switching
     modal.querySelectorAll('.b24t-wnm-tab').forEach(function(btn) {
       btn.addEventListener('click', function() {
@@ -7484,816 +6878,192 @@ function showOnboarding(onComplete) {
   // DEV_CHANGELOG - szczegółowe patch notes dla programistów (od v0.3.4)
   // ───────────────────────────────────────────
 
-  const DEV_CHANGELOG = [
+  // ── DEV_CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
+  const DEV_CHANGELOG_FALLBACK =   [
     {
-      version: '0.15.6',
-      date: '2026-03-28',
-      notes: [
-        '[UI]   Feedback tab: dwie osobne karty (bug + suggestion) zamiast przelacznika trybu. Kazda karta ma wlasne textarea i przycisk.',
-        '[ARCH] Usuniety fbMode state i .b24t-fb-mode-btn — zastapione dwoma osobnymi handlerami: b24t-wnm-fb-send-bug i b24t-wnm-fb-send-suggest',
-        '[UI]   Bug Report card: ciemnoczerwone tlo (#141018), border #2a1a1a, przycisk #f87171',
-        '[UI]   Suggestion card: ciemnoniebieskie tlo (#10101a), border #1a1a2a, przycisk #6c6cff',
-        '[UI]   Reset onboarding button zachowany na dole sekcji Feedback',
+      "version": "0.16.0",
+      "date": "2026-03-28",
+      "notes": [
+        "[REFACTOR] CHANGELOG i DEV_CHANGELOG wydzielone do CHANGELOG.json / DEV_CHANGELOG.json w Tagger/ (branch I24-maks-czyszczenie). Skrypt laduje przez GM_xmlhttpRequest z sessionStorage cache (klucze: b24tagger_cl_cache, b24tagger_dcl_cache). Fallback: ostatnie 10 wersji inline.",
+        "[FIX]     buildAutoDeleteSection(): dodano event listenery na #b24t-auto-delete-cb, #b24t-auto-delete-save-cb, #b24t-auto-delete-tag. Wczesniej checkboxy renderowal sie ale nigdy nie wywolywaly setAutoDeletePref() ani nie aktualizowaly state.autoDeleteTagId.",
+        "[FIX]     updateAutoDeleteSection() wywolywana z updateMappingState() — wczesniej jedynie definiowana, nigdy nie wywolywana po zmianie mappingu.",
+        "[DEAD]    showFeedbackModal() usunieta (109 linii). Funkcja istniala od wczesnych wersji, zastapiona przez openBugReportForm/openFeedbackForm w v0.15.x, ale nigdy nie usunieta.",
+        "[DEAD]    showWhatsNew() wrapper usunieta — jednolinijkowy delegat do showWhatsNewExtended(), nigdy bezposrednio wywolywany.",
+        "[FIX]     6x .catch(function(){}) -> .catch(function(e){ addLog(..., warn) }) — bledy prefetchu w tle (tagstats, overallStats, allProjects) sa teraz widoczne w logu zamiast byc cicho polykane.",
+        "[PERF]    Redukcja rozmiaru skryptu: 11483 -> 10271 linii (-1212 linii, -10.6%).",
+        "[ARCH]    _fetchChangelog(onDone) i _fetchDevChangelog(onDone) jako wspolne helpery z sessionStorage cache — showWhatsNewExtended i showDevNotes uzywaja ich zamiast synchronicznych const array."
       ]
     },
     {
-      version: '0.15.5',
-      date: '2026-03-28',
-      notes: [
-        '[NEW]  openFeedbackForm(suggestion): buduje prefill URL dla Google Forms Feedback. Pola: sugestia (entry.1001511860), typ (entry.2053499490), wersja (entry.1295392049), projekt (entry.1925108405)',
-        '[NEW]  FEEDBACK_FORM_BASE + FEEDBACK_FORM_FIELDS: stale z URL i entry ID formularza Feedback',
-        '[ARCH] Handler Suggestion w modalu wywoluje teraz openFeedbackForm() zamiast sendSuggestion()',
+      "version": "0.15.6",
+      "date": "2026-03-28",
+      "notes": [
+        "[UI]   Feedback tab: dwie osobne karty (bug + suggestion) zamiast przelacznika trybu. Kazda karta ma wlasne textarea i przycisk.",
+        "[ARCH] Usuniety fbMode state i .b24t-fb-mode-btn — zastapione dwoma osobnymi handlerami: b24t-wnm-fb-send-bug i b24t-wnm-fb-send-suggest",
+        "[UI]   Bug Report card: ciemnoczerwone tlo (#141018), border #2a1a1a, przycisk #f87171",
+        "[UI]   Suggestion card: ciemnoniebieskie tlo (#10101a), border #1a1a2a, przycisk #6c6cff",
+        "[UI]   Reset onboarding button zachowany na dole sekcji Feedback"
       ]
     },
     {
-      version: '0.15.4',
-      date: '2026-03-28',
-      notes: [
-        '[NEW]  openBugReportForm(description): buduje prefill URL dla Google Forms Bug Report. Pola: opis (entry.378076813), wersja (entry.769760752), projekt (entry.668506048), URL (entry.1459869471), logi -20 linii (entry.1505126804), datetime (entry.1776456134)',
-        '[NEW]  BUG_FORM_BASE + BUG_FORM_FIELDS: stale z URL i entry ID formularza Bug Report',
-        '[ARCH] sendBugReport/sendSuggestion zachowane jako legacy — uzywane przez crash banner. Handler przycisku w modalu teraz wywoluje openBugReportForm() zamiast sendBugReport()',
+      "version": "0.15.5",
+      "date": "2026-03-28",
+      "notes": [
+        "[NEW]  openFeedbackForm(suggestion): buduje prefill URL dla Google Forms Feedback. Pola: sugestia (entry.1001511860), typ (entry.2053499490), wersja (entry.1295392049), projekt (entry.1925108405)",
+        "[NEW]  FEEDBACK_FORM_BASE + FEEDBACK_FORM_FIELDS: stale z URL i entry ID formularza Feedback",
+        "[ARCH] Handler Suggestion w modalu wywoluje teraz openFeedbackForm() zamiast sendSuggestion()"
       ]
     },
     {
-      version: '0.15.3',
-      date: '2026-03-28',
-      notes: [
-        '[ARCH] SLACK_WEBHOOK_URL: przeniesiony z hardkodu do localStorage (klucz: b24tagger_slack_webhook). Publiczne repo nie trzyma juz webhooka — GitHub secret scanning blokowal push. URL ustawiany jednorazowo przez konsole przegladarki.',
-        '[ARCH] Dual-deploy: skrypt trafia teraz rowniez do i24dev/i24_analytics branch I24-maks-czyszczenie pod sciezka Tagger/b24tagger.user.js przy kazdym deployu',
+      "version": "0.15.4",
+      "date": "2026-03-28",
+      "notes": [
+        "[NEW]  openBugReportForm(description): buduje prefill URL dla Google Forms Bug Report. Pola: opis (entry.378076813), wersja (entry.769760752), projekt (entry.668506048), URL (entry.1459869471), logi -20 linii (entry.1505126804), datetime (entry.1776456134)",
+        "[NEW]  BUG_FORM_BASE + BUG_FORM_FIELDS: stale z URL i entry ID formularza Bug Report",
+        "[ARCH] sendBugReport/sendSuggestion zachowane jako legacy — uzywane przez crash banner. Handler przycisku w modalu teraz wywoluje openBugReportForm() zamiast sendBugReport()"
       ]
     },
     {
-      version: '0.15.2',
-      date: '2026-03-28',
-      notes: [
-        '[FIX]  Usunięto zduplikowany blok v0.15.0 (newsState, NEWS_*, LS helpers, stary _newsUrlMatchesKeywords) ktory pozostal po refaktorze — powodowal nadpisanie definicji zmiennych',
-        '[NEW]  NEWS_COUNTRY_PATH_MAP: mapa 60+ wpisow (segmenty sciezki + subdomeny → kod kraju). Obejmuje: uk, en-gb, de, fr, us, au, ca, es, it, nl, + wszystkie kraje z TLD_MAP. Uzywana przez _newsCountriesInUrl()',
-        '[NEW]  _newsCountriesInUrl(url): parsuje URL → zwraca { CC: source } gdzie source = tld|subdomain|path. Sprawdza: TLD domeny, 2-literowa subdomena, segmenty pathname dopasowane do NEWS_COUNTRY_PATH_MAP lub NEWS_TLD_MAP',
-        '[NEW]  _newsUrlRelevant(url, chips, projectCountry): zastepuje _newsUrlMatchesKeywords. Zwraca "match" | "wrongcountry" | "nomatch". Logika: brak keyword → nomatch; brak projectCountry → match; URL bez sygnalow kraju → match; URL zawiera projectCountry → match; URL zawiera tylko obcy kraj → wrongcountry',
-        '[NEW]  Status "wrongcountry": pomaranczowy ● (#f97316) — keyword trafil ale URL wskazuje inny kraj niz projekt. Irerelevantny = nomatch lub wrongcountry',
-        '[NEW]  Status "opened": zmieniono kolor z #f59e0b (zolty) na #a78bfa (fioletowy) — rozroznienie od wrongcountry ktory jest pomaranczowy',
-        '[NEW]  _newsUrlCounts(): zlicza entries per status + total — uzywane przez progress bar i bulk bar',
-        '[NEW]  _newsRemoveByStatus(predicate): filtruje newsState.urls, zachowuje activeIdx (szuka po URL). Wywolywana przez bulk-bar buttons',
-        '[NEW]  _newsUpdateBulkBar(): renderuje przyciski w #b24t-news-bulk-bar. "Usun irrelevantnych" (nomatch+wrongcountry), "Usun obsluz." (added+error), "Wyczysc liste". Pokazuje sie tylko gdy sa URLe do usuniecia',
-        '[FIX]  renderUrlList(): per-URL przycisk ✕ (.b24t-news-del-btn) robi splice na newsState.urls zamiast status="skipped". Koryguje activeIdx po splice. Irrelevantne URLe maja opacity:0.45 i cursor:default',
-        '[FIX]  Progress bar: liczy handled/(total-irrelevantnych) zamiast handled/total — pokazuje rzeczywisty postep przez relevantne URLe. Label: "X / Y relevantnych"',
-        '[NEW]  #b24t-news-bulk-bar: div w stopce P1 (Lista), między listem a przyciskiem Nastepny. Renderowany przez _newsUpdateBulkBar() przy kazdym renderUrlList()',
-        '[NEW]  #b24t-news-legend: maly floating panel z data-news-panel=1. 6 wpisow legendy. Pozycjonowany przez _newsPositionLegend() (right of P1 + 8px gap)',
-        '[NEW]  _newsPositionLegend(): ustawia legend.style.top = p1.top + 2, legend.style.left = p1.right + 8. Wywolywana z _newsStackPanels() i requestAnimationFrame po _buildNewsPanels()',
-        '[FIX]  _newsStackPanels(): wywoluje _newsPositionLegend() po pozycjonowaniu P2 — legenda pozostaje zsynchronizowana przy drag P1',
-        '[FIX]  nextBtn: isWorkable(s) = match|pending|opened — pomija nomatch i wrongcountry. Wczesniej iterowalo przez wszystkie statusy wlacznie z nomatch',
-        '[ARCH] _newsUrlMatchesKeywords usuniety z wireNewsPanels — zastapiony przez _newsUrlRelevant w renderUrlList',
+      "version": "0.15.3",
+      "date": "2026-03-28",
+      "notes": [
+        "[ARCH] SLACK_WEBHOOK_URL: przeniesiony z hardkodu do localStorage (klucz: b24tagger_slack_webhook). Publiczne repo nie trzyma juz webhooka — GitHub secret scanning blokowal push. URL ustawiany jednorazowo przez konsole przegladarki.",
+        "[ARCH] Dual-deploy: skrypt trafia teraz rowniez do i24dev/i24_analytics branch I24-maks-czyszczenie pod sciezka Tagger/b24tagger.user.js przy kazdym deployu"
       ]
     },
     {
-      version: '0.15.1',
-      date: '2026-03-28',
-      notes: [
-        '[FIX]  _newsCmsStatus(): usunięto unreliable DOM-check (querySelectorAll [data-tag-id], .tag-item) — funkcja zwraca teraz tylko { domain }. DOM Brand24 nie zawiera elementow z tekstem "dodane" na stronie projektu',
-        '[FIX]  _newsCheckTagDodane(): jedyne zrodlo prawdy dla dostepnosci tagu "dodane" — sprawdza state.tags (z API). Kontroluje: statusEl text/color, checkboxEl disabled/checked, cmsBanner display. Poprzednio stan bannera i stanu checkboxa byl ustawiany w dwoch roznych miejscach z roznych zrodel → sprzecznosc',
-        '[FIX]  CMS banner w Panel 3: renderowany domyslnie z display:none (nie zaleznie od _newsCmsStatus().hasDodane ktore zawsze zwracalo false) — widocznosc kontrolowana wylacznie przez _newsCheckTagDodane()',
-        '[FIX]  CMS recheck handler: przepisany na event delegation (document.addEventListener click z guard e.target.id === b24t-news-cms-recheck) — nie gubi sie po rebuild innerHTML bannera',
-        '[NEW]  _buildNewsPanels() layout: P1=Lista URLi (gora, lewa kolumna), P2=Import URLi (dol, lewa kolumna, ta sama szerokosc PANEL_W=360), P3=Formularz (prawa kolumna, right = baseRight + PANEL_W + GAP)',
-        '[NEW]  _newsStackPanels(): pozycjonuje P2 bezposrednio pod P1 — p2.style.top = p1.getBoundingClientRect().bottom + 8. Wywolywana po requestAnimationFrame w _buildNewsPanels() i openNewsPanels()',
-        '[FIX]  _newsDraggable(): dodano isP1 flag (panel.id === b24t-news-p1). Podczas mousemove i mouseup gdy isP1 → requestAnimationFrame(_newsStackPanels) — P2 podaza za P1 przy przeciaganiu',
-        '[FIX]  _newsDraggable(): usunięto zbedna zamykajaca klamre pozostala po poprzednim str_replace — powodowala SyntaxError przy node --check',
+      "version": "0.15.2",
+      "date": "2026-03-28",
+      "notes": [
+        "[FIX]  Usunięto zduplikowany blok v0.15.0 (newsState, NEWS_*, LS helpers, stary _newsUrlMatchesKeywords) ktory pozostal po refaktorze — powodowal nadpisanie definicji zmiennych",
+        "[NEW]  NEWS_COUNTRY_PATH_MAP: mapa 60+ wpisow (segmenty sciezki + subdomeny → kod kraju). Obejmuje: uk, en-gb, de, fr, us, au, ca, es, it, nl, + wszystkie kraje z TLD_MAP. Uzywana przez _newsCountriesInUrl()",
+        "[NEW]  _newsCountriesInUrl(url): parsuje URL → zwraca { CC: source } gdzie source = tld|subdomain|path. Sprawdza: TLD domeny, 2-literowa subdomena, segmenty pathname dopasowane do NEWS_COUNTRY_PATH_MAP lub NEWS_TLD_MAP",
+        "[NEW]  _newsUrlRelevant(url, chips, projectCountry): zastepuje _newsUrlMatchesKeywords. Zwraca \"match\" | \"wrongcountry\" | \"nomatch\". Logika: brak keyword → nomatch; brak projectCountry → match; URL bez sygnalow kraju → match; URL zawiera projectCountry → match; URL zawiera tylko obcy kraj → wrongcountry",
+        "[NEW]  Status \"wrongcountry\": pomaranczowy ● (#f97316) — keyword trafil ale URL wskazuje inny kraj niz projekt. Irerelevantny = nomatch lub wrongcountry",
+        "[NEW]  Status \"opened\": zmieniono kolor z #f59e0b (zolty) na #a78bfa (fioletowy) — rozroznienie od wrongcountry ktory jest pomaranczowy",
+        "[NEW]  _newsUrlCounts(): zlicza entries per status + total — uzywane przez progress bar i bulk bar",
+        "[NEW]  _newsRemoveByStatus(predicate): filtruje newsState.urls, zachowuje activeIdx (szuka po URL). Wywolywana przez bulk-bar buttons",
+        "[NEW]  _newsUpdateBulkBar(): renderuje przyciski w #b24t-news-bulk-bar. \"Usun irrelevantnych\" (nomatch+wrongcountry), \"Usun obsluz.\" (added+error), \"Wyczysc liste\". Pokazuje sie tylko gdy sa URLe do usuniecia",
+        "[FIX]  renderUrlList(): per-URL przycisk ✕ (.b24t-news-del-btn) robi splice na newsState.urls zamiast status=\"skipped\". Koryguje activeIdx po splice. Irrelevantne URLe maja opacity:0.45 i cursor:default",
+        "[FIX]  Progress bar: liczy handled/(total-irrelevantnych) zamiast handled/total — pokazuje rzeczywisty postep przez relevantne URLe. Label: \"X / Y relevantnych\"",
+        "[NEW]  #b24t-news-bulk-bar: div w stopce P1 (Lista), między listem a przyciskiem Nastepny. Renderowany przez _newsUpdateBulkBar() przy kazdym renderUrlList()",
+        "[NEW]  #b24t-news-legend: maly floating panel z data-news-panel=1. 6 wpisow legendy. Pozycjonowany przez _newsPositionLegend() (right of P1 + 8px gap)",
+        "[NEW]  _newsPositionLegend(): ustawia legend.style.top = p1.top + 2, legend.style.left = p1.right + 8. Wywolywana z _newsStackPanels() i requestAnimationFrame po _buildNewsPanels()",
+        "[FIX]  _newsStackPanels(): wywoluje _newsPositionLegend() po pozycjonowaniu P2 — legenda pozostaje zsynchronizowana przy drag P1",
+        "[FIX]  nextBtn: isWorkable(s) = match|pending|opened — pomija nomatch i wrongcountry. Wczesniej iterowalo przez wszystkie statusy wlacznie z nomatch",
+        "[ARCH] _newsUrlMatchesKeywords usuniety z wireNewsPanels — zastapiony przez _newsUrlRelevant w renderUrlList"
       ]
     },
     {
-      version: '0.15.0',
-      date: '2026-03-28',
-      notes: [
-        '[FIX]  setupCollapse(): panel.style.height + panel.style.maxHeight czyszczone przy zwijaniu — pozwala CSS height:auto!important przejac kontrole. Wczesniej inline style nadpisywaly CSS → panel nie zwijal sie wizualnie',
-        '[FIX]  CSS .collapsed: dodano height:auto!important; max-height:none!important; min-height:0!important — override dla inline height ustawianych przez setupResize()',
-        '[FIX]  #b24t-ann-tab-overall-content: dodano display:flex;flex-direction:column;flex:1;min-height:0 — wewnetrzny kontener wypelnia teraz flex rodzica. Spinner i dane renderuja sie poprawnie',
-        '[FIX]  #b24t-ann-tab-overall: dodano flex-direction:column do inline style',
-        '[ARCH] buildNewsTab() + wireNewsTab() usuniete — zastapione przez 3-panelowy system floating windows w Annotators Tab',
-        '[ARCH] News tab usunieta z #b24t-tabs, tabEls.news usuniete, wireNewsTab() usuniete z tab switching',
-        '[NEW]  newsState: dodano pola panelsOpen i wired dla lazy-init i toggle paneli',
-        '[NEW]  openNewsPanels(): lazy build przy pierwszym wywolaniu, toggle pokazuj/chowaj; _wireNewsPanels() wywolywane raz (guard wired)',
-        '[NEW]  closeNewsPanels(): chowa [data-news-panel], panelsOpen=false',
-        '[NEW]  _buildNewsPanels(): 3 floating divs appendowane do body z data-news-panel=1. Pozycja relatywna do #b24t-annotator-panel. Kolory z _newsThemeVars() (hardcoded, nie CSS vars)',
-        '[NEW]  _newsThemeVars(): kolory dark/light na podstawie data-b24t-theme — wywolywane przy budowaniu paneli',
-        '[NEW]  _newsPanelBase / _newsPanelHeader / _newsDraggable / _newsInputCss / _newsFormRow: utility builders dla paneli News',
-        '[NEW]  Panel 1 Import: textarea "URLe czekaja na wczytanie", przycisk Wczytaj URLe, dedup + info, wykryty kraj + badge + ostrzezenie mismatch z projektem, chipy +Dodaj/↺reset per kraj',
-        '[NEW]  Panel 2 Lista: progress bar, scroll lista z status dots (kolory per status), Pomij per wiersz, Nastepny nieobsluzony',
-        '[NEW]  Panel 3 Formularz: banner CMS (hasDodane check w state.tags + querySelector), err bar, lang-warn, wszystkie pola wymagane (url/tytul/tresc/data), auto-detekcja daty 🔍, godz/min/sentyment/kategoria/kraj, row "dodane" z checkboxem + status dostepnosci',
-        '[NEW]  _newsCmsStatus(): sprawdza hostname (com/pl), querySelector tagEls z tekstem "dodane" → { domain, hasDodane }',
-        '[NEW]  _newsCheckTagDodane(): sprawdza state.tags → klucz zawierajacy "dodane" — disable checkbox jezeli niedostepny',
-        '[NEW]  _newsDetectDateFromHtml(html): 6 patternow detekcji daty (JSON-LD, meta published_time, meta date, itemprop, <time datetime>, fallback regex). Walidacja: > 2000-01-01 i <= _localDateStr()',
-        '[NEW]  _newsFetchPageInfo(url): GM_xmlhttpRequest GET → data + jezyk rownoczesnie. Auto-learn jezyka (cichy zapis gdy brak wpisow). Otwiera window.open(_blank) po fetchu',
-        '[NEW]  Submit: 4 wymagane pola, format YYYY-MM-DD, sessionUrls guard, country match. tag[]=dodaneTagId jezeli checkbox i tag dostepny. Czysci tytul/tresc/date po sukcesie',
-        '[NEW]  Przycisk b24t-ann-news-btn w headerze Annotators Tab: toggle openNewsPanels/closeNewsPanels. b24t-ann-close rowniez wywoluje closeNewsPanels()',
-        '[NEW]  _newsOpenLangMapEditor(): modal z hardcoded ciemnymi kolorami. Tabela krajow, edycja jezykow, Dodaj kraj, Usun kraj, Zapisz. Pusta mapa → komunikat o auto-budowaniu',
+      "version": "0.15.1",
+      "date": "2026-03-28",
+      "notes": [
+        "[FIX]  _newsCmsStatus(): usunięto unreliable DOM-check (querySelectorAll [data-tag-id], .tag-item) — funkcja zwraca teraz tylko { domain }. DOM Brand24 nie zawiera elementow z tekstem \"dodane\" na stronie projektu",
+        "[FIX]  _newsCheckTagDodane(): jedyne zrodlo prawdy dla dostepnosci tagu \"dodane\" — sprawdza state.tags (z API). Kontroluje: statusEl text/color, checkboxEl disabled/checked, cmsBanner display. Poprzednio stan bannera i stanu checkboxa byl ustawiany w dwoch roznych miejscach z roznych zrodel → sprzecznosc",
+        "[FIX]  CMS banner w Panel 3: renderowany domyslnie z display:none (nie zaleznie od _newsCmsStatus().hasDodane ktore zawsze zwracalo false) — widocznosc kontrolowana wylacznie przez _newsCheckTagDodane()",
+        "[FIX]  CMS recheck handler: przepisany na event delegation (document.addEventListener click z guard e.target.id === b24t-news-cms-recheck) — nie gubi sie po rebuild innerHTML bannera",
+        "[NEW]  _buildNewsPanels() layout: P1=Lista URLi (gora, lewa kolumna), P2=Import URLi (dol, lewa kolumna, ta sama szerokosc PANEL_W=360), P3=Formularz (prawa kolumna, right = baseRight + PANEL_W + GAP)",
+        "[NEW]  _newsStackPanels(): pozycjonuje P2 bezposrednio pod P1 — p2.style.top = p1.getBoundingClientRect().bottom + 8. Wywolywana po requestAnimationFrame w _buildNewsPanels() i openNewsPanels()",
+        "[FIX]  _newsDraggable(): dodano isP1 flag (panel.id === b24t-news-p1). Podczas mousemove i mouseup gdy isP1 → requestAnimationFrame(_newsStackPanels) — P2 podaza za P1 przy przeciaganiu",
+        "[FIX]  _newsDraggable(): usunięto zbedna zamykajaca klamre pozostala po poprzednim str_replace — powodowala SyntaxError przy node --check"
       ]
     },
     {
-      version: '0.14.0',
-      date: '2026-03-28',
-      notes: [
-        '[PERF] runDeleteByTag(): sekwencyjne deleteMention() + sleep(100) zastapione Promise.all na chunkach po 5 — eliminuje ~100ms idle time per wzmianka. Przy 150 wzmiankach: 150×(100ms+300ms) = 60s → 30×(300ms/5) = ~12s (~5x speedup)',
-        '[PERF] deleteMentionsByTag(): ta sama optymalizacja — batch 5 rownolegych gqlRetry("deleteMention"). Usunieto sleep(100) miedzy itemami',
-        '[PERF] wireDeleteEvents Quick Delete inline loop: for..of z await + sleep(80) → Promise.all batch 5 (BATCH_QD)',
-        '[PERF] wireDeleteEvents Delete View inline loop: identyczna optymalizacja (BATCH_DV)',
-        '[FIX]  _renderAllProjectsList(): dodano przycisk .b24t-ap-del-single per projekt (data-pid, data-pname, data-datefrom, data-dateto, data-count). Wczesniej lista renderowala tylko nazwe + liczbe — klikniecie nic nie robilo',
-        '[NEW]  .b24t-ap-del-single click handler: confirmDeleteWarning() + confirm() z liczba, wywoluje runDeleteByTag(tagId, tagName, dateFrom, dateTo, progressCb, pid), inline status row, po sukcesie przycisniety zielony checkmark; invaliduje bgCache.allProjects + bgCache.tagstats',
-        '[ARCH] BATCH=5 ustalony empirycznie — Brand24 API nie ma rate limit dla delete przy 5 rownolegych; przy wiekszej liczbie nalezy obserwowac 429/500',
+      "version": "0.15.0",
+      "date": "2026-03-28",
+      "notes": [
+        "[FIX]  setupCollapse(): panel.style.height + panel.style.maxHeight czyszczone przy zwijaniu — pozwala CSS height:auto!important przejac kontrole. Wczesniej inline style nadpisywaly CSS → panel nie zwijal sie wizualnie",
+        "[FIX]  CSS .collapsed: dodano height:auto!important; max-height:none!important; min-height:0!important — override dla inline height ustawianych przez setupResize()",
+        "[FIX]  #b24t-ann-tab-overall-content: dodano display:flex;flex-direction:column;flex:1;min-height:0 — wewnetrzny kontener wypelnia teraz flex rodzica. Spinner i dane renderuja sie poprawnie",
+        "[FIX]  #b24t-ann-tab-overall: dodano flex-direction:column do inline style",
+        "[ARCH] buildNewsTab() + wireNewsTab() usuniete — zastapione przez 3-panelowy system floating windows w Annotators Tab",
+        "[ARCH] News tab usunieta z #b24t-tabs, tabEls.news usuniete, wireNewsTab() usuniete z tab switching",
+        "[NEW]  newsState: dodano pola panelsOpen i wired dla lazy-init i toggle paneli",
+        "[NEW]  openNewsPanels(): lazy build przy pierwszym wywolaniu, toggle pokazuj/chowaj; _wireNewsPanels() wywolywane raz (guard wired)",
+        "[NEW]  closeNewsPanels(): chowa [data-news-panel], panelsOpen=false",
+        "[NEW]  _buildNewsPanels(): 3 floating divs appendowane do body z data-news-panel=1. Pozycja relatywna do #b24t-annotator-panel. Kolory z _newsThemeVars() (hardcoded, nie CSS vars)",
+        "[NEW]  _newsThemeVars(): kolory dark/light na podstawie data-b24t-theme — wywolywane przy budowaniu paneli",
+        "[NEW]  _newsPanelBase / _newsPanelHeader / _newsDraggable / _newsInputCss / _newsFormRow: utility builders dla paneli News",
+        "[NEW]  Panel 1 Import: textarea \"URLe czekaja na wczytanie\", przycisk Wczytaj URLe, dedup + info, wykryty kraj + badge + ostrzezenie mismatch z projektem, chipy +Dodaj/↺reset per kraj",
+        "[NEW]  Panel 2 Lista: progress bar, scroll lista z status dots (kolory per status), Pomij per wiersz, Nastepny nieobsluzony",
+        "[NEW]  Panel 3 Formularz: banner CMS (hasDodane check w state.tags + querySelector), err bar, lang-warn, wszystkie pola wymagane (url/tytul/tresc/data), auto-detekcja daty 🔍, godz/min/sentyment/kategoria/kraj, row \"dodane\" z checkboxem + status dostepnosci",
+        "[NEW]  _newsCmsStatus(): sprawdza hostname (com/pl), querySelector tagEls z tekstem \"dodane\" → { domain, hasDodane }",
+        "[NEW]  _newsCheckTagDodane(): sprawdza state.tags → klucz zawierajacy \"dodane\" — disable checkbox jezeli niedostepny",
+        "[NEW]  _newsDetectDateFromHtml(html): 6 patternow detekcji daty (JSON-LD, meta published_time, meta date, itemprop, <time datetime>, fallback regex). Walidacja: > 2000-01-01 i <= _localDateStr()",
+        "[NEW]  _newsFetchPageInfo(url): GM_xmlhttpRequest GET → data + jezyk rownoczesnie. Auto-learn jezyka (cichy zapis gdy brak wpisow). Otwiera window.open(_blank) po fetchu",
+        "[NEW]  Submit: 4 wymagane pola, format YYYY-MM-DD, sessionUrls guard, country match. tag[]=dodaneTagId jezeli checkbox i tag dostepny. Czysci tytul/tresc/date po sukcesie",
+        "[NEW]  Przycisk b24t-ann-news-btn w headerze Annotators Tab: toggle openNewsPanels/closeNewsPanels. b24t-ann-close rowniez wywoluje closeNewsPanels()",
+        "[NEW]  _newsOpenLangMapEditor(): modal z hardcoded ciemnymi kolorami. Tabela krajow, edycja jezykow, Dodaj kraj, Usun kraj, Zapisz. Pusta mapa → komunikat o auto-budowaniu"
       ]
     },
     {
-      version: '0.13.0',
-      date: '2026-03-28',
-      notes: [
-        '[FIX]  #b24t-panel CSS: dodano display:flex; flex-direction:column — panel jest teraz flex kontenerem; rozwiazuje problem z obcinanym #b24t-actions przy resize',
-        '[FIX]  #b24t-body CSS: dodano flex:1; min-height:0 — body wypelnia dostepna przestrzen miedzy tabs a stopka; max-height:72vh pozostaje jako natural limit',
-        '[FIX]  #b24t-actions CSS: dodano flex-shrink:0 — stopka nigdy nie jest sciskana przez panel przy zmniejszaniu',
-        '[FIX]  setupResize() useMaxHeight branch: zamiast recznie obliczac fixedPx=198 i ustawiac body.style.maxHeight, teraz ustawiamy panel.style.height — flex layout rozklada reszte automatycznie. Usunieto blad gdzie fixedPx=198 bylo zbyt male (realne ~230px)',
-        '[FIX]  setupResize() restore: zapisany height jest teraz ustawiany przez panel.style.height + panel.style.maxHeight (wczesniej tylko maxHeight)',
-        '[FIX]  #b24t-annotator-panel: panel dostaje flex-direction:column w cssText; wszystkie .b24t-ann-content dostaja flex:1;overflow-y:auto;min-height:0',
-        '[FIX]  openAnnotatorPanel(): ustawia display:flex zamiast display:block — panel musi byc flex dla poprawnego flex-direction:column layoutu',
-        '[FIX]  annotator tab switching: content.style.display="flex" zamiast "block"',
-        '[FIX]  buildUrlMap(): dodano isInvalidDate() guard — wykrywa puste daty (null, "9999", "0000", nieprawidlowy format); fallback na getAnnotatorDates() biezacy miesiac; loguje warn z zakresem fallback',
-        '[NEW]  validateFile(): 3 nowe bledy krytyczne (type:"error"): brak kolumny URL, brak kolumny assessment, kolumna dat wykryta ale wszystkie wartosci puste',
-        '[NEW]  renderFileValidation(): obsluguje type:"error" (czerwony, ikona x); ustawia el.dataset.hasErrors; wywoluje _updateStartBtnBlock()',
-        '[NEW]  _updateStartBtnBlock(): blokuje/odblokowuje #b24t-btn-start, #b24t-btn-preview, #b24t-btn-audit na podstawie el.dataset.hasErrors; opacity:0.45 + cursor:not-allowed',
-        '[NEW]  handleFileUpload(): wywoluje validateFile() + renderFileValidation() po zaladowaniu; loguje blad krytyczny jesli hasErrors',
-        '[NEW]  initRun(): guard sprawdza valEl.dataset.hasErrors przed startem sesji — ostatnia linia obrony',
-        '[NEW]  clearFile(): resetuje state.file, mapping, partitions, urlMap, matchPreview; chowa sekcje (mapping, settings, partition, validation, match-preview, column-override); resetuje file zone UI; wywoluje _updateStartBtnBlock()',
-        '[NEW]  HTML: przycisk #b24t-btn-clear-file (x) obok file zone, display:none domyslnie; pokazywany po zaladowaniu pliku; chowany po clearFile()',
-        '[WIRE]  wireEvents(): podpieto click na #b24t-btn-clear-file -> clearFile() z e.stopPropagation()',
+      "version": "0.14.0",
+      "date": "2026-03-28",
+      "notes": [
+        "[PERF] runDeleteByTag(): sekwencyjne deleteMention() + sleep(100) zastapione Promise.all na chunkach po 5 — eliminuje ~100ms idle time per wzmianka. Przy 150 wzmiankach: 150×(100ms+300ms) = 60s → 30×(300ms/5) = ~12s (~5x speedup)",
+        "[PERF] deleteMentionsByTag(): ta sama optymalizacja — batch 5 rownolegych gqlRetry(\"deleteMention\"). Usunieto sleep(100) miedzy itemami",
+        "[PERF] wireDeleteEvents Quick Delete inline loop: for..of z await + sleep(80) → Promise.all batch 5 (BATCH_QD)",
+        "[PERF] wireDeleteEvents Delete View inline loop: identyczna optymalizacja (BATCH_DV)",
+        "[FIX]  _renderAllProjectsList(): dodano przycisk .b24t-ap-del-single per projekt (data-pid, data-pname, data-datefrom, data-dateto, data-count). Wczesniej lista renderowala tylko nazwe + liczbe — klikniecie nic nie robilo",
+        "[NEW]  .b24t-ap-del-single click handler: confirmDeleteWarning() + confirm() z liczba, wywoluje runDeleteByTag(tagId, tagName, dateFrom, dateTo, progressCb, pid), inline status row, po sukcesie przycisniety zielony checkmark; invaliduje bgCache.allProjects + bgCache.tagstats",
+        "[ARCH] BATCH=5 ustalony empirycznie — Brand24 API nie ma rate limit dla delete przy 5 rownolegych; przy wiekszej liczbie nalezy obserwowac 429/500"
       ]
     },
     {
-      version: '0.12.0',
-      date: '2026-03-28',
-      notes: [
-        '[FIX]  getAnnotatorDates(): usunieto addLog side-effect — funkcja wiecej nie loguje "📅 Zakres"; log przeniesiony do _bgFetchTagstats() jako jedynego kanonicznego miejsca',
-        '[FIX]  loadOverallStats(): dodano _overallStatsInFlight guard — zapobiega rownolegylm wywolaniom gdy openAnnotatorPanel() i tab click odpalalyby fetch jednoczesnie',
-        '[FIX]  loadOverallStats(): zimny fetch owiniety try/finally — _overallStatsInFlight zawsze zwalniany nawet przy bledzie',
-        '[REFACTOR]  Usunieto loadAnnotatorDataBackground() — dead code; nigdy nie wywolywana po tym jak applyFeatures() zaczelo wywolywac startBgPrefetch() bezposrednio',
-        '[REFACTOR]  Usunieto var annotatorDataLoaded — jedyna zmienna stanu loadAnnotatorDataBackground(), zbedna po usunieciu funkcji',
-        '[NOTE]  [LOG] getAnnotatorDates(): log zakresu dat — wpis zdezaktualizowany po FIX, zachowany dla historii',
+      "version": "0.13.0",
+      "date": "2026-03-28",
+      "notes": [
+        "[FIX]  #b24t-panel CSS: dodano display:flex; flex-direction:column — panel jest teraz flex kontenerem; rozwiazuje problem z obcinanym #b24t-actions przy resize",
+        "[FIX]  #b24t-body CSS: dodano flex:1; min-height:0 — body wypelnia dostepna przestrzen miedzy tabs a stopka; max-height:72vh pozostaje jako natural limit",
+        "[FIX]  #b24t-actions CSS: dodano flex-shrink:0 — stopka nigdy nie jest sciskana przez panel przy zmniejszaniu",
+        "[FIX]  setupResize() useMaxHeight branch: zamiast recznie obliczac fixedPx=198 i ustawiac body.style.maxHeight, teraz ustawiamy panel.style.height — flex layout rozklada reszte automatycznie. Usunieto blad gdzie fixedPx=198 bylo zbyt male (realne ~230px)",
+        "[FIX]  setupResize() restore: zapisany height jest teraz ustawiany przez panel.style.height + panel.style.maxHeight (wczesniej tylko maxHeight)",
+        "[FIX]  #b24t-annotator-panel: panel dostaje flex-direction:column w cssText; wszystkie .b24t-ann-content dostaja flex:1;overflow-y:auto;min-height:0",
+        "[FIX]  openAnnotatorPanel(): ustawia display:flex zamiast display:block — panel musi byc flex dla poprawnego flex-direction:column layoutu",
+        "[FIX]  annotator tab switching: content.style.display=\"flex\" zamiast \"block\"",
+        "[FIX]  buildUrlMap(): dodano isInvalidDate() guard — wykrywa puste daty (null, \"9999\", \"0000\", nieprawidlowy format); fallback na getAnnotatorDates() biezacy miesiac; loguje warn z zakresem fallback",
+        "[NEW]  validateFile(): 3 nowe bledy krytyczne (type:\"error\"): brak kolumny URL, brak kolumny assessment, kolumna dat wykryta ale wszystkie wartosci puste",
+        "[NEW]  renderFileValidation(): obsluguje type:\"error\" (czerwony, ikona x); ustawia el.dataset.hasErrors; wywoluje _updateStartBtnBlock()",
+        "[NEW]  _updateStartBtnBlock(): blokuje/odblokowuje #b24t-btn-start, #b24t-btn-preview, #b24t-btn-audit na podstawie el.dataset.hasErrors; opacity:0.45 + cursor:not-allowed",
+        "[NEW]  handleFileUpload(): wywoluje validateFile() + renderFileValidation() po zaladowaniu; loguje blad krytyczny jesli hasErrors",
+        "[NEW]  initRun(): guard sprawdza valEl.dataset.hasErrors przed startem sesji — ostatnia linia obrony",
+        "[NEW]  clearFile(): resetuje state.file, mapping, partitions, urlMap, matchPreview; chowa sekcje (mapping, settings, partition, validation, match-preview, column-override); resetuje file zone UI; wywoluje _updateStartBtnBlock()",
+        "[NEW]  HTML: przycisk #b24t-btn-clear-file (x) obok file zone, display:none domyslnie; pokazywany po zaladowaniu pliku; chowany po clearFile()",
+        "[WIRE]  wireEvents(): podpieto click na #b24t-btn-clear-file -> clearFile() z e.stopPropagation()"
       ]
     },
     {
-      version: '0.11.0',
-      date: '2026-03-28',
-      notes: [
-        '[NEW]  addLog(): obsługa typu "diag" — prefiks [DIAG] renderowany w #f87171, reszta kolorem error; typ dodany do CSS (.b24t-log-diag)',
-        '[NEW]  addLog(): wywołuje _syncLogPanel(entry) przy każdym wpisie — live-update pełnoekranowego panelu loga gdy jest otwarty',
-        '[NEW]  buildLogPanel() / openLogPanel() — floating panel #b24t-log-panel (720×520px, fixed centered, resizable); wypełniony z state.logs',
-        '[NEW]  buildLogPanel(): filtry per-typ (info/success/warn/error/diag), przycisk "Kopiuj do schowka", przycisk "Eksportuj CSV" (→ exportReport())',
-        '[NEW]  buildLogPanel(): drag przez header, zamykanie przez × lub Escape',
-        '[NEW]  _syncLogPanel(entry): appends entry do #b24t-logp-body + scroll + _applyLogPanelFilter()',
-        '[NEW]  _appendLogPanelEntry() / _applyLogPanelFilter() / _logpFilterChk() — helpery panelu loga',
-        '[NEW]  Przycisk ⛶ (#b24t-log-expand) w sekcji Log → openLogPanel(); CSS .b24t-log-expand',
-        '[NEW]  DIAG_CHECKS: tablica 6 checków diagnostycznych: project_names, dates_range, token, known_projects, group_projects, cache_group_mismatch',
-        '[NEW]  runDiagChecks(checkIds?) — iteruje DIAG_CHECKS, wywołuje check(), łapie błędy; checkIds=null → wszystkie',
-        '[NEW]  startBgPrefetch(): runDiagChecks() po pierwszym prefetch (setTimeout 500ms); log [DIAG] gdy token niedostępny po 15s',
-        '[LOG]  loadAnnotatorProject(): logi start/sukces (ALL/REQ/DEL/pct)/błąd',
-        '[LOG]  loadAnnotatorTagStats(): log cache hit z wiekiem, log start z liczbą projektów, log sukcesu',
-        '[LOG]  _bgFetchTagstats(): log start prefetch',
-        '[LOG]  _bgFetchAllProjects(): log start prefetch + sukces z liczbą projektów; [DIAG] przy błędzie getMentions',
-        '[LOG]  _fetchOverallStats(): log start + per-projekt ALL/REQ/DEL; [DIAG] przy nieznanym projekcie lub błędzie API',
-        '[LOG]  loadOverallStats(): log cache hit z wiekiem',
-        '[LOG]  getAnnotatorDates(): log zakresu dat (📅)',
-        '[LOG]  groupSel change (cross-delete): log wybranego zakresu',
-        '[LOG]  overall-group-sel change: log wybranej grupy',
-        '[ARCH] DIAG_CHECKS rozszerzalne — dodanie nowego checku = push do tablicy, brak zmian w reszcie kodu',
+      "version": "0.12.0",
+      "date": "2026-03-28",
+      "notes": [
+        "[FIX]  getAnnotatorDates(): usunieto addLog side-effect — funkcja wiecej nie loguje \"📅 Zakres\"; log przeniesiony do _bgFetchTagstats() jako jedynego kanonicznego miejsca",
+        "[FIX]  loadOverallStats(): dodano _overallStatsInFlight guard — zapobiega rownolegylm wywolaniom gdy openAnnotatorPanel() i tab click odpalalyby fetch jednoczesnie",
+        "[FIX]  loadOverallStats(): zimny fetch owiniety try/finally — _overallStatsInFlight zawsze zwalniany nawet przy bledzie",
+        "[REFACTOR]  Usunieto loadAnnotatorDataBackground() — dead code; nigdy nie wywolywana po tym jak applyFeatures() zaczelo wywolywac startBgPrefetch() bezposrednio",
+        "[REFACTOR]  Usunieto var annotatorDataLoaded — jedyna zmienna stanu loadAnnotatorDataBackground(), zbedna po usunieciu funkcji",
+        "[NOTE]  [LOG] getAnnotatorDates(): log zakresu dat — wpis zdezaktualizowany po FIX, zachowany dla historii"
       ]
-    },
-    {
-      version: '0.10.3',
-      date: '2026-03-28',
-      notes: [
-        '[NEW]  LS.PROJECT_NAMES = b24tagger_project_names — trwały słownik {projectId: name} niezależny od LS.PROJECTS',
-        '[NEW]  _pnGet(projectId) — odczyt nazwy z PROJECT_NAMES',
-        '[NEW]  _pnSet(projectId, name) — zapis nazwy do PROJECT_NAMES; ignoruje fallbacki (Brand24, Project N, Projekt N, <3 znaki)',
-        '[NEW]  _pnResolve(projectId) — priorytet: PROJECT_NAMES > state.projectName (gdy bieżący) > LS.PROJECTS.name > Projekt N',
-        '[FIX]  detectProject(): updateName() wywołuje _pnSet(projectId, t) po poprawnej detekcji tytułu (retry też)',
-        '[FIX]  detectProject(): _pnSet(projectId, state.projectName) po getTags() — drugi punkt zapisu',
-        '[ARCH] init(): bootstrap — skanuje LS.PROJECTS i wywołuje _pnSet dla każdego projektu z dobrą nazwą',
-        '[REFACTOR] getKnownProjects(): name = _pnResolve(parseInt(id)) — cały ręczny fallback usunięty',
-        '[REFACTOR] getKnownProjectsList(): name = _pnResolve(pid)',
-        '[REFACTOR] _fetchOverallStats(): name = _pnResolve(pid)',
-        '[DESIGN] _pnSet jest idempotentna — wielokrotne wywołania z tą samą nazwą nie powodują zbędnych zapisów (early return gdy wartość niezmieniona)',
-      ]
-    },
-    {
-      version: '0.10.2',
-      date: '2026-03-28',
-      notes: [
-        '[FIX]  _localDateStr(d): nowy helper — formatuje lokalną datę jako YYYY-MM-DD bez UTC shift (d.getFullYear/Month/Date zamiast toISOString)',
-        '[FIX]  getAnnotatorDates(): używa _localDateStr() zamiast toISOString().split(T)[0] — eliminuje błąd -1 dnia w strefach UTC+',
-        '[FIX]  _bgFetchAllProjects(): dateFrom/dateTo przez getAnnotatorDates() zamiast hardcoded rok-temu; p._dateFrom/p._dateTo = realny zakres zapytania',
-        '[FIX]  loadAnnotatorTagStats(): inline date logic zastąpiona wywołaniem getAnnotatorDates()',
-        '[FIX]  getKnownProjects(): poprawiona ekstrakcja name — fallback do state.projectName gdy id pasuje, potem Projekt N',
-        '[FIX]  getKnownProjectsList(): analogiczny fix ekstrakcji name',
-      ]
-    },
-    {
-      version: '0.10.1',
-      date: '2026-03-28',
-      notes: [
-        '[FIX]  _fetchOverallStats: usunięto _getDefaultDateFrom/To() — używa getAnnotatorDates() (current month, wyjątek 1-2 dnia miesiąca)',
-        '[FIX]  _fetchOverallStats: dodano query getMentions(pid, dateFrom, dateTo, [], 1) jako counts[0] → total all mentions',
-        '[FIX]  _bgFetchOverallStats: cache teraz przechowuje dateFrom, dateTo, label obok results',
-        '[FIX]  renderOverallStatsData: sygnatura zmieniona na (el, results, group, cached); 4. argument cached zawiera dateFrom/dateTo/label',
-        '[FIX]  renderOverallStatsData: kafelek "Wszystkie" (totalAll) zawsze pierwsza karta; grid 3 lub 4 kolumny',
-        '[FIX]  renderOverallStatsData: periodHtml — wiersz z ikoną 📅 i zakresem dat nad kartami',
-        '[FIX]  renderOverallStatsData: tabela dodaje kolumnę ALL przed REL',
-        '[FIX]  getKnownProjectsList: dodano filter(p.id > 0) i poprawioną ekstrakcję name z obiektu LS.PROJECTS',
-        '[FIX]  Wszystkie wywołania renderOverallStatsData zaktualizowane o 4. argument (cached lub fresh)',
-      ]
-    },
-    {
-      version: '0.10.0',
-      date: '2026-03-28',
-      notes: [
-        '[NEW]  LS.GROUPS = b24tagger_groups: [{id, name, projectIds, relevantTagId}] — grupy projektów per user',
-        '[NEW]  LS.STATS_CFG = b24tagger_stats_config: {selectedGroupId} — zapamiętana wybrana grupa w Overall Stats',
-        '[NEW]  bgCache.overallStats = {groupId, results, ts} — cache danych Overall Stats (TTL 5min, analogiczny do bgCache.tagstats)',
-        '[NEW]  getGroups() / saveGroups() / generateGroupId() — CRUD helpers dla grup',
-        '[NEW]  getKnownProjectsList() — lista {id,name} ze wszystkich LS.PROJECTS (bez filtrowania reqVer/toDel)',
-        '[NEW]  renderGroupsTab() / wireGroupsTab() — render zakładki Grupy; lista grup z kartami, przycisk + Nowa',
-        '[NEW]  showGroupEditor(existingGroup, knownProjects) — modal edytora grupy; checkboxy projektów z live styling',
-        '[NEW]  renderOverallStatsTab() — render zakładki Overall Stats; selektor grupy + selektor wariant bez grupy',
-        '[NEW]  loadOverallStats() — cache-first load: render z bgCache jeśli gorący + cichy refetch; spinner gdy zimny',
-        '[NEW]  _bgFetchOverallStats(group) — cichy fetch overall stats, wypełnia bgCache.overallStats',
-        '[NEW]  _fetchOverallStats(group) — 3x getMentions per projekt (relevant/reqVer/toDel), Promise.all, iteracja serial po projektach',
-        '[NEW]  renderOverallStatsData(el, results, group) — karty sumaryczne (1-3 kolumny) + tabela per-projekt',
-        '[NEW]  _statsCard(label, value, color, bgColor) — helper karty sumarycznej',
-        '[NEW]  showOverallStatsSettings(group) — modal ustawień Overall Stats; selektor tagu relevantne per-grupa',
-        '[NEW]  setGroupRelevantTagId(groupId, tagId) — zapisuje relevantTagId w grupie w LS.GROUPS',
-        '[NEW]  Annotators Tab HTML: dodano zakładki "Grupy" (data-ann-tab=groups) i "Overall" (data-ann-tab=overall)',
-        '[NEW]  openAnnotatorPanel(): wywołuje renderGroupsTab() + renderOverallStatsTab() przy każdym otwarciu',
-        '[NEW]  Tab click handler: obsługa tabName===groups → renderGroupsTab(); tabName===overall → renderOverallStatsTab()',
-        '[NEW]  buildAllProjectsPanel(): group filter dropdown #b24t-ap-group-sel — widoczny tylko gdy grupy istnieją',
-        '[ARCH] getKnownProjects(): dodano filtrowanie do wybranej grupy gdy #b24t-ap-group-sel ma wartość',
-        '[DATA] _fetchOverallStats: reqVerId/toDelId odczytywane z LS.PROJECTS[pid].tagIds, fallback do stałych 1154586/1154757',
-        '[SCOPE] Wszystkie nowe funkcje wewnątrz IIFE (2 spacje wcięcia) — bez scope bug',
-      ]
-    },
-    {
-      version: '0.9.14',
-      date: '2026-03-28',
-      notes: [
-        '[FIX]  openAnnotatorPanel(): nie korzystał z bgCache.tagstats — sprawdzał tylko annotatorData.tagstats (null po zamknięciu panelu) i odpalał pełne ładowanie ze spinnerem. Teraz: jeśli bgCache gorący → renderAnnotatorTagStats() od razu + cichy refetch w tle.',
-        '[FIX]  Tab click (data-ann-tab="tagstats"): identyczny bug — sprawdzał annotatorData.tagstats zamiast bgCache. Naprawione analogicznie: _bgCacheFresh(bgCache.tagstats) → render natychmiastowy, fallback do loadAnnotatorTagStats() tylko gdy cache zimny.',
-        '[ROOT CAUSE] bgCache.tagstats był wypełniany przez startBgPrefetch() poprawnie, ale openAnnotatorPanel() i tab click omijały go — renderały puste dane i wymagały ręcznego ↺. Teraz wszystkie ścieżki wejścia do zakładki Tagi sprawdzają bgCache jako pierwsze.',
-      ],
-    },
-    {
-      version: '0.9.13',
-      date: '2026-03-28',
-      notes: [
-        '[PERF] Background prefetch cache (bgCache): nowa warstwa cache niezależna od DOM. bgCache.tagstats = {results, dates, ts}, bgCache.allProjects[tagId] = {results, ts}. TTL: 5 minut (BG_CACHE_TTL = 5*60*1000). _bgCacheFresh(entry) sprawdza czy ts < TTL.',
-        '[PERF] _bgFetchTagstats(): cicha wersja loadAnnotatorTagStats — wypełnia bgCache.tagstats bez dotykania DOM. Identyczna logika fetch (2× getMentions per projekt). Efekt uboczny: jeśli annotatorData.tagstats=null → wypełnia też go.',
-        '[PERF] _bgFetchAllProjects(tagId): cicha wersja fetch dla cross-delete panel — wypełnia bgCache.allProjects[tagId]. Deleguje do _renderAllProjectsList po zakończeniu.',
-        '[ARCH] startBgPrefetch(): master scheduler zastępujący loadAnnotatorDataBackground. Odpala się raz gdy annotator_tools włączony. Czeka na token (max 15s), fetches tagstats + aktualny tagId, potem setInterval co BG_CACHE_TTL.',
-        '[ARCH] loadAnnotatorDataBackground(): uproszczona — deleguje do startBgPrefetch() zamiast samodzielnie czekać na token. Tylko loadAnnotatorProject() zostaje sekwencyjny (lekki).',
-        '[UX]  loadAnnotatorTagStats(): jeśli bgCache.tagstats gorący → renderAnnotatorTagStats() od razu (0ms spinner), potem cichy refetch w tle który nadpisuje DOM po zakończeniu. Spinner tylko gdy cache zimny.',
-        '[ARCH] _renderAllProjectsList(results, tagName): wyodrębniony render cross-delete panelu. Używany przez refreshAllProjectsPanel z danych cache lub świeżych — eliminuje duplikację kodu.',
-        '[UX]  refreshAllProjectsPanel(): jeśli bgCache.allProjects[tagId] gorący → _renderAllProjectsList() od razu, potem cichy refetch. Spinner tylko gdy cache zimny (pierwsze otwarcie lub po TTL).',
-        '[UX]  wireDeleteEvents b24t-del-tag change: prefetch _bgFetchAllProjects(tagId) w tle przy zmianie tagu — niezależnie czy scope=allprojects. Gdy użytkownik wybierze "Wszystkie projekty" dane są już gotowe.',
-        '[DATA] Cache invalidacja po operacjach: delete-all w buildAllProjectsPanel → bgCache.allProjects={}, bgCache.tagstats=null, annotatorData.tagstats=null przed refreshAllProjectsPanel(). Przycisk ↺ tagstats → bgCache.tagstats=null (force re-fetch).',
-        '[ARCH] applyFeatures(): setTimeout(loadAnnotatorDataBackground, 1500) zastąpiony startBgPrefetch() — brak sztucznego opóźnienia, scheduler sam zarządza czekaniem na token.',
-      ],
-    },
-    {
-      version: '0.9.12',
-      date: '2026-03-28',
-      notes: [
-        '[UI]    styleTab() w buildAnnotatorPanel(): light mode background #ffffff→#f0f7ff, border #c8cde0→#93c5fd, color #2563eb→#1d6fe8 (spójne z nowym gradientem). Trigger bardziej widoczny gdy panel schowany.',
-        '[ARCH]  getHelpZones() przepisana na getHelpZones(activeTab, includeAnnotators). Podział: common (zawsze), byTab[main/quicktag/delete/history] (per zakładka), annotators (jeśli otwarty). Łącznie ~35 stref.',
-        '[UX]    enterHelpMode(): wykrywa aktywną zakładkę przez .b24t-tab.b24t-tab-active[data-tab]. Jeśli features.annotator_tools && annPanel.display=none → openAnnotatorPanel(), zapisuje helpAnnotatorOpened=1 w dataset.',
-        '[UX]    enterHelpMode(): obniża z-index obu paneli (main=500, ann=501). Tworzy dwa overlaye: #b24t-help-panel-overlay i #b24t-help-ann-overlay. Strefy dla Annotators Tab dostają z-index 2147483520 identycznie jak reszta.',
-        '[UX]    exitHelpMode(): przywraca z-index obu paneli z dataset.prevZIndex. Jeśli helpAnnotatorOpened=1 → ukrywa annPanel + pokazuje trigger. Usuwa oba overlaye.',
-      ]
-    },
-    {
-      version: '0.9.11',
-      date: '2026-03-28',
-      notes: [
-        '[UI]    Light mode --b24t-accent-grad: #2563eb→#1d4ed8→#1e40af → #1d6fe8→#0ea875→#16a34a (Brand24 blue→green). Kolory dopasowane do screenshota z UI Brand24.',
-        '[UI]    Light mode --b24t-panel-grad: biały→niebieskawa → f0f7ff→f0fdf6→ecfdf5 (bardzo subtelny zielonkawy odcień). Cienie zaktualizowane do mieszanki blue+green.',
-        '[UI]    Help mode overlay: usunięty backdrop-filter:blur — zastąpiony rgba(0,0,0,0.30) bez blur. Panel był nieczytelny przez zbyt mocny blur.',
-        '[UI]    Help mode .b24t-help-zone: zmienione z przezroczystych na widoczne od razu (border 2px solid rgba(108,108,255,0.55), bg rgba(6%)). Animacja b24t-help-pulse — pulsujący border co 2s.',
-        '[UI]    Help mode .b24t-help-zone:hover: wyłącza animację pulse, intensywniejsze podświetlenie.',
-        '[FIX]   enterHelpMode(): usunięto zone.title — przeglądarka renderowała natywny tooltip (prostokąt z białą ramką) który nakrywał bąbel z tym samym tekstem.',
-        '[FIX]   getHelpZones() przeniesione DO wnętrza IIFE (ten sam scope bug co toggleHelpMode w v0.9.9).',
-        '[NEW]   getHelpZones(): dodano strefy .b24t-stats-grid, #b24t-progress-bar, #b24t-log, #b24t-btn-help. Łącznie 16 stref (było 12).',
-      ]
-    },
-    {
-      version: '0.9.10',
-      date: '2026-03-28',
-      notes: [
-        '[HOTFIX] #b24t-panel ma z-index:2147483647 (CSS max). Overlay (2147483490), strefy (2147483495) i close (2147483498) — wszystkie niżej → renderowały się POD panelem.',
-        '[FIX]    enterHelpMode(): panel.style.zIndex obniżony do 2147483500 na czas help mode (zapisany w panel.dataset.prevZIndex). Hierarchia: panel=2147483500 < overlay=2147483510 < strefy=2147483520 < close=2147483530 < tooltip=2147483540.',
-        '[FIX]    exitHelpMode(): panel.style.zIndex przywracany z dataset.prevZIndex (lub 2147483647 domyślnie).',
-        '[FIX]    CSS z-indexy w injectStyles() zaktualizowane do nowej hierarchii (były: overlay=490, strefy=495, close=498, tip=647).',
-      ]
-    },
-    {
-      version: '0.9.9',
-      date: '2026-03-28',
-      notes: [
-        '[HOTFIX] toggleHelpMode(), enterHelpMode(), exitHelpMode(), showHelpTip(), hideHelpTip() oraz zmienne helpModeActive/helpZoneElements/helpTipElement/helpStickyTip były zadeklarowane POZA IIFE (bez wcięcia, na poziomie modułu). Tampermonkey z grantem GM_xmlhttpRequest opakowuje kod w sandbox — let/function poza IIFE nie są widoczne wewnątrz niej jako globalne. Efekt: addEventListener(\'click\', toggleHelpMode) rejestrował undefined → cichy błąd → przycisk ? nigdy nie reagował.',
-        '[HOTFIX] Naprawka: przeniesiono cały blok (zmienne + 5 funkcji) DO wnętrza IIFE z prawidłowym wcięciem 2 spacji. Zakres rozwiązany.',
-        '[HOTFIX] CSS help mode (.b24t-help-zone, #b24t-help-panel-overlay, .b24t-help-tip, #b24t-help-close) był wyłącznie w injectOnboardingStyles() — wywoływanej tylko przez showOnboarding(). Jeśli użytkownik nie przeszedł onboardingu w sesji, tryb pomocy działał bez styli. Przeniesiono CSS do injectStyles() — zawsze dostępne od init().',
-      ]
-    },
-    {
-      version: '0.9.8',
-      date: '2026-03-28',
-      notes: [
-        '[UI]    buildAnnotatorPanel(): zakładki .b24t-ann-tab zmienione z inline-styled border-bottom na klasy .b24t-tab + .b24t-tab-active — CSS liquid glass z głównego panelu działa automatycznie.',
-        '[UI]    buildAnnotatorPanel(): container zakładek zmieniony z border-bottom:2px na gap:5px + padding jak #b24t-tabs w głównym panelu.',
-        '[UX]    buildAnnotatorPanel() tab switching: stary kod manipulował borderBottomColor/color/fontWeight inline. Nowy: classList.remove/add("b24t-tab-active") — spójne z głównym panelem.',
-        '[UX]    loadAnnotatorTagStats(): skeleton per projekt zastąpiony spinnerem (b24t-spin animation) + licznik "X / N". Projekty z count=0 nie trafiają do results w ogóle. Render finalny po zakończeniu wszystkich requestów.',
-        '[UX]    refreshAllProjectsPanel(): skeleton per projekt zastąpiony spinnerem + licznik. Tylko projekty z count > 0 trafiają do results — eliminuje iterację po wynikach z filtrowaniem.',
-        '[FIX]   _positionXProjectPanel(): usunięto hardkodowane height:(window.innerHeight - r.top - 8)px które rozciągało panel do dołu ekranu. Teraz height:auto, maxHeight:(window.innerHeight - r.top - 16)px.',
-      ]
-    },
-    {
-      version: '0.9.7',
-      date: '2026-03-28',
-      notes: [
-        '[HOTFIX] const VERSION zsynchronizowana z @version nagłówka: była \'0.9.4\', powinna być \'0.9.6\' (a teraz \'0.9.7\'). Root cause: przy deplojach 0.9.5 i 0.9.6 aktualizowany był tylko @version w userscript header, ale nie stała VERSION w ciele IIFE. Panel używa VERSION do wyświetlania numeru wersji, checkForUpdate() do compareVersions() — stąd fałszywy alert o dostępnej aktualizacji.',
-        '[PROCESS] Zasada: każdy bump @version = zmiana const VERSION na tę samą wartość. Obie muszą być zawsze zsynchronizowane.',
-      ]
-    },
-    {
-      version: '0.9.6',
-      date: '2026-03-28',
-      notes: [
-        '[UI]     showWhatsNewExtended(): header icon ✦ → 🚀 (div z emoji, nie SVG).',
-        '[FIX]    showWhatsNewExtended(): wszystkie var(--b24t-*) zastąpione hardkodowanymi hex — modal renderuje się w body bez dostępu do CSS vars głównego panelu, co powodowało transparent/inherit w light mode.',
-        '[UI]     showWhatsNewExtended(): prioLabel (emoji flagi) → prioMeta ({ color, label }). Planowane: kolorowe kółka (8px circle) zamiast emoji. Legenda priorytetów jako pasek nad listą (background:#0d0d16).',
-        '[UI]     showDevNotes(): przepisany render — funkcja renderNote() parsuje prefix [KAT] i renderuje kolorowy badge monospace. Kategorie: PERF/FIX/HOTFIX/UX/UI/RENAME/DATA/REFACTOR/ARCH z osobnymi kolorami.',
-        '[UI]     showDevNotes(): legenda kategorii w stopce modalu (Object.entries(catColor) → badge\'y). Modal poszerzony do 560px.',
-        '[DATA]   DEV_CHANGELOG v0.9.5 notes przepisane na format [KAT] prefix — czytelne dla programistów.',
-        '[DATA]   PLANNED_FEATURES: usunięto "Wieloprojektowość" (low), "Szybkie filtry w Quick Tag" (high). Zmieniono "Bulk rename / merge tagów" → "Bulk rename tagów". Pozostało 5 wpisów.',
-      ]
-    },
-    {
-      version: '0.9.5',
-      date: '2026-03-28',
-      notes: [
-        '[PERF] loadAnnotatorTagStats(): fetchProjectTagCounts() zastąpiony 2× getMentions(tagId, page=1) per projekt — pobierał wcześniej count z nagłówka zamiast iterować strony. Wzorzec identyczny jak refreshAllProjectsPanel().',
-        '[PERF] loadAnnotatorTagStats(): redukcja requestów z ~100+ per projekt do 2 per projekt (1× reqVerId, 1× toDeleteId). Przy 8 projektach: ~800 requestów → 16.',
-        '[UX]  loadAnnotatorTagStats(): skeleton loader per projekt (div[data-pid]). Każdy wiersz przechodzi live: "ładuję…" → "↻" → wartości REQ/DEL. Projekty z REQ=0 i DEL=0 chowane natychmiast (display:none).',
-        '[UX]  loadAnnotatorTagStats(): licznik postępu "X / N" w #b24t-ann-skel-summary aktualizowany po każdej iteracji. Render finalny nadpisuje skeleton — tylko projekty z count > 0, posortowane malejąco.',
-        '[UX]  refreshAllProjectsPanel(): render finalny filtruje wyłącznie count > 0 (withData) + błędy (withErrors). Wiersze "brak wzmianek z tym tagiem" całkowicie usunięte z DOM.',
-        '[RENAME] "Narzędzia Annotatora" → "Annotators Tab": OPTIONAL_FEATURES[annotator_tools].label, header panelu (#b24t-ann-header span), komentarz w applyFeatures(), opis w onboardingu (krok z ? button).',
-        '[DATA] PLANNED_FEATURES: +2 wpisy: "Annotators Tab — Overall Stats" (medium, next:true), "Grupowanie projektów" (medium, next:false).',
-        '[DATA] PLANNED_FEATURES: usunięto "Wieloprojektowość", "Szybkie filtry w Quick Tag". "Bulk rename / merge tagów" → "Bulk rename tagów". Legenda priorytetów dodana do UI sekcji Planowane.',
-      ]
-    },
-    {
-      version: '0.9.4',
-      date: '2026-03-28',
-      notes: [
-        'HOTFIX: applyFeatures() — features.includes("annotator_tools") crashował bo features = {} (obiekt), nie [] (tablica)',
-        'Poprawka: features.includes(...) → features.annotator_tools (spójne z resztą kodu który używa features.xxx)',
-        'Crash w applyFeatures() blokował całe init() po budowie panelu — stąd ? button, Zapisz i Annotators Tab nie działały',
-        'loadFeatures() zwraca {} z JSON.parse(lsGet(LS.FEATURES, "{}")), nie tablicę — features.annotator_tools = true/false',
-      ]
-    },
-    {
-      version: '0.9.3',
-      date: '2026-03-28',
-      notes: [
-        'buildAllProjectsPanel(): przepisany — panel pozycjonowany obok #b24t-panel (getBoundingClientRect()), nie przy krawędzi ekranu',
-        '_positionXProjectPanel(el): nowy helper — oblicza left/right na podstawie pozycji głównego panelu, wyrównuje góra/dół',
-        'MutationObserver na style głównego panelu → repositionuje boczny panel przy drag',
-        'window resize → _positionXProjectPanel rebind',
-        'refreshAllProjectsPanel(): skeleton loader per projekt, count z getMentions[tagId], zakres dat z createdDate wyników',
-        'runDeleteByTag(): nowy parametr projectId (6. argument) — bez tego cross-project używało state.projectId (bug)',
-        'buildAllProjectsPanel delete-all: potwierdza z łączną liczbą wzmianek, przekazuje p.id do runDeleteByTag',
-        'wireDeleteEvents: scope allprojects → blokuje główny przycisk Usuń, tag change → refresh panelu gdy allprojects aktywny',
-        'HTML radio "Wszystkie projekty": dodano opis pod spodem (wymaga REQUIRES_VERIFICATION + TO_DELETE)',
-        'getKnownProjects(): filtruje projekty które mają reqVerId i toDeleteId — to jest warunek wyświetlenia opcji',
-        'applyFeatures(): pokazuje radio allprojects tylko gdy annotator_tools włączone',
-      ]
-    },
-    {
-      version: '0.9.2',
-      date: '2026-03-28',
-      notes: [
-        'Nowa zasada wersjonowania: nowa rozmowa = nowy minor (0.x.0), kolejne deploye w tej samej rozmowie = patch (0.x.y)',
-        'DEV_CHANGELOG: dodano brakujące wpisy od 0.6.0 do 0.9.2 + logika auto-wypełniania (zasada: każde wdrożenie = wpis)',
-        'Annotators Tab: zmiana nazwy triggera z "Narzędzia" / "Annotators" na pełne "Annotators Tab" + poszerzony padding',
-        'CHANGELOG: skrócono opisy starszych wersji (0.6.0, 0.7.0, 0.8.0) — pełne opisy zostają w DEV_CHANGELOG',
-      ]
-    },
-    {
-      version: '0.9.1',
-      date: '2026-03-28',
-      notes: [
-        'Onboarding: panel blokowany w centrum ekranu (nie prawy-dolny róg) podczas całego toru',
-        'Onboarding: krok 14 rozbity na dwa — "Co nowego & Planowane" + "Bug Report — co jest wysyłane?"',
-        'Onboarding: szczegółowy opis danych wysyłanych z Bug Reportem (wersja, projekt, 30 log lines, crash log, brak treści wzmianek)',
-        'Onboarding: krok resize przenumerowany na 16, krok drag na 17, finał na 18',
-        'Changelog 0.8.0, 0.7.0, 0.6.0: skrócono wpisy w CHANGELOG (pełne zostają w DEV_CHANGELOG)',
-        'Tab trigger: "Narzędzia" → "Annotators" (etap przejściowy)',
-      ]
-    },
-    {
-      version: '0.9.0',
-      date: '2026-03-28',
-      notes: [
-        'Optymalizacja kodu: usunięto 15 zduplikowanych definicji funkcji (378 linii)',
-        'Fix: duplicate saveSessionToHistory() + playDoneSound() w startRun — wywoływane 2x z rzędu',
-        'Fix: zduplikowane HTML bloki w buildPanel (file-validation, column-override, match-preview)',
-        'Fix: zduplikowany event listener na #b24t-col-override-toggle',
-        'Fix: usunięto martwy stub parseXLSX (zastąpiony przez parseXLSXFile)',
-        'Fix: usunięto zbędny wrapper fetchMentionsPage (bezpośrednie wywołania getMentions)',
-        'Perf: normalizeUrl — regex kompilowany raz (const _RX_*), wywoływana tysiące razy per sesja',
-        'Perf: tab switching — DOM refs cachowane raz w tabEls{} zamiast getElementById przy każdym kliknięciu',
-        'Fix: usunięto martwe zmienne state.auditMode, state.columnOverride, titleEl, prioColor',
-        'Fix: onboarding z-index — overlay 2147483640, spotlight 2147483644, bubble 2147483647 (nad panelem)',
-        'Fix: positionBubble przepisany — sprawdza spaceAbove/Below/Left/Right, brak edge case z dziubkiem do (0,0)',
-        'Fix: blokada drag + resize podczas onboardingu (data-ob-locked atrybut)',
-        'Onboarding: panel snapuje się do centrum ekranu na czas toru',
-        'Onboarding: dodano kroki resize panelu i drag (przeciąganie)',
-        'Tabs: przeprojektowane na pill/liquid glass style (border-radius:20px, gradient, inset shadow)',
-        'Quick Tag: naprawiono rozmiary czcionek (10px→12-13px) i kolory (--b24t-text-muted zamiast hardkodowanych)',
-      ]
-    },
-    {
-      version: '0.8.0',
-      date: '2026-03-27',
-      notes: [
-        'showOnboarding() — 18-krokowy dynamiczny tour z dymkami, spotlight i strzałką',
-        'injectOnboardingStyles() — pełny zestaw CSS: overlay, spotlight (box-shadow cutout), bubble, dots, nav',
-        'getOnboardingSteps() — tablica 18 kroków z target selector, tail hint i treścią',
-        'positionBubble() — inteligentne pozycjonowanie: sprawdza miejsce góra/dół/lewo/prawo, responsive bw',
-        'positionSpotlight() — animowany highlight elementu z pulse outline',
-        'Onboarding blokuje panel (data-ob-locked) i snapuje do centrum ekranu',
-        'Reset onboardingu: Changelog → Feedback → przycisk "↺ Powtórz onboarding"',
-        'toggleHelpMode() / enterHelpMode() / exitHelpMode() — tryb pomocy (przycisk ?)',
-        'Strefy klikania w help mode na document.body poziomie (nie wewnątrz panelu — overflow:hidden)',
-        '#b24t-help-panel-overlay, .b24t-help-zone, .b24t-help-tip — fixed positioning',
-        'setupResize() — Windows-style resize wszystkich krawędzi i rogów, min/max, localStorage',
-        'Inter font lazy-load z Google Fonts (wagi 300-800) w injectStyles()',
-        'Light mode: primary #2563eb (niebieski Brand24), wysoki kontrast WCAG AA+',
-        'Dark mode: trójkolorowy gradient indygo→fiolet→magneta',
-        'Annotator tab trigger: padding 18px 11px, font-weight:600, font-size:14px',
-      ]
-    },
-    {
-      version: '0.7.1',
-      date: '2026-03-27',
-      notes: [
-        'Wyczyszczono sekcję PLANNED_FEATURES — usunięto zrealizowane funkcje',
-        'Zaktualizowano opis AI API w planowanych',
-      ]
-    },
-    {
-      version: '0.7.0',
-      date: '2026-03-27',
-      notes: [
-        'Pełny redesign UI: light mode Brand24 z gradientowym panelem, dark mode z trójkolorowym gradientem',
-        'Annotator panel powiększony: 300→420px szerokość, 13→15px czcionka',
-        'Nowe zmienne CSS: --b24t-text-label, --b24t-text-meta',
-        'Subbar naprawiony: hardkodowane ciemne kolory → CSS variables',
-        'Kafelki annotatora: liczby 16px/700 → 22px/800, etykiety pogrubione',
-        'Topbar: efekt świetlny (radial gradient), stat-karty z paskiem akcentowym',
-        'Sekcje z 2px obramowaniami i wyraźnym kontrastem',
-      ]
-    },
-    {
-      version: '0.6.0',
-      date: '2026-03-27',
-      notes: [
-        'Light mode jako domyślny: schemat Brand24 (biały + gradient indygo #5B4FFF→#7C3AED)',
-        'Dark mode: przełącznik slider ☀️/🌙 w topbarze, zapamiętywany w localStorage',
-        'CSS Custom Properties — pełny design system przez --b24t-* variables',
-        'Micro-animacje: b24t-slidein, b24t-fadein, b24t-pulse-ring, b24t-shimmer',
-        'Narzędzia Annotatora: czcionki ujednolicone do 13px',
-        'Wszystkie modale zaktualizowane do nowego design systemu',
-        'document.documentElement.setAttribute("data-b24t-theme", theme) — zmiana motywu',
-      ]
-    },
-    {
-      version: '0.5.12',
-      date: '2026-03-27',
-      notes: [
-        'Nowa funkcja opcjonalna: tagstats (id) — zakładka 🏷 Tagi',
-        'getKnownProjects() — odczytuje projekty z LS.PROJECTS, filtruje te z reqVerId i toDeleteId',
-        'fetchProjectTagCounts(projectId, reqVerId, toDeleteId, dateFrom, dateTo) — pobiera wszystkie strony 10x równolegle, zlicza tagi po id',
-        'renderTagStats(el, projectStats, dateFrom, dateTo) — tabela z filtrem (tylko projekty z reqVer>0 || toDelete>0), sortowanie po sumie malejąco',
-        'refreshTagStats() — loader z postępem "i/n — NazwaProjektu", sekwencyjnie per projekt (parallel między stronami, serial między projektami)',
-        'rt filter Brand24 API zwraca Internal server error — obejście przez pobieranie wszystkich stron i zliczanie tagów po id',
-        'UWAGA: wymaga że projekty były wcześniej odwiedzone z taggerem (dane w LS.PROJECTS)',
-      ]
-    },
-    {
-      version: '0.5.10',
-      date: '2026-03-27',
-      notes: [
-        'Bug 1: Brand24 bulkTagMentions zwraca Internal server error przy 840 IDs — limit empiryczny ~200',
-        'Fix 1: MAX_BATCH_SIZE 1000→200, partycje tagowane po max 200 IDs per request',
-        'Bug 2: XLSX sheet_to_json z raw:true konwertuje 19-cyfrowe ID na float (Number.MAX_SAFE_INTEGER = 2^53-1 ≈ 9×10^15), obcinając ostatnie cyfry',
-        'Fix 2: raw:false wymusza stringi dla wszystkich komórek, daty normalizowane osobno',
-        'Bug 3: urlMap[normalizedUrl] nie znajdowało obciętych URL',
-        'Fix 3: urlsMatch() — jeśli shorter jest prefiksem longer i len>=15 → match; wired jako fallback po exact lookup',
-      ]
-    },
-    {
-      version: '0.5.9',
-      date: '2026-03-27',
-      notes: [
-        'Bug: w wireEvents() btn-preview i btn-audit miały addEventListener wywoływane dwa razy — drugi blok był pozostałością po refactorze',
-        'Bug: wireHistoryTab() wywoływane dwa razy w init sequence (linie 6088-6089)',
-        'Fix: usunięto drugi blok listenerów dla preview/audit/col-override-toggle w wireEvents()',
-        'Fix: usunięto drugi wireHistoryTab() z init sequence',
-      ]
-    },
-    {
-      version: '0.5.8',
-      date: '2026-03-27',
-      notes: [
-        'Bug: setTimeout 2s nie wystarczał dla KOTON_TR — Brand24 ustawia tytuł wolniej',
-        'Fix: setInterval co 500ms, max 20 prób (10s łącznie), clearInterval gdy nazwa znaleziona lub limit wyczerpany',
-      ]
-    },
-    {
-      version: '0.5.7',
-      date: '2026-03-27',
-      notes: [
-        'Root cause: heurystyka isLikelyLabel (vals.size <= 15) pasowała do kolumny source (twitter/tiktok/instagram = ~5-8 wartości)',
-        'Fix krok 1: priorytet dla dokładnych nazw kolumn (assessment, label, ocena, flag, classification)',
-        'Fix krok 2: heurystyka wyklucza SOURCE_NAMES i wymaga looksLikeAssessment (/^[A-Z_]{3,}$/ — uppercase słowa)',
-        'Zaostrzono próg: vals.size <= 10 i rows.length > vals.size * 5 (było 15 i *3)',
-      ]
-    },
-    {
-      version: '0.5.6',
-      date: '2026-03-27',
-      notes: [
-        'Bug: applyFeatures() ustawiało display:"" (pusty) zamiast "block" — dashboard był widoczny zawsze po włączeniu features.dashboard',
-        'Fix: applyFeatures() zarządza tylko przyciskiem zakładki (b24t-tab-dashboard), nie contentem',
-        'Fix: tab switcher sprawdza features.dashboard przed pokazaniem dashEl',
-        'Dashboard content (b24t-dashboard-tab) domyślnie display:none w HTML — pokazywany tylko przez tab switcher gdy tab=dashboard',
-      ]
-    },
-    {
-      version: '0.5.5',
-      date: '2026-03-27',
-      notes: [
-        'Root cause: Tampermonkey sandbox ma własny obiekt window odizolowany od strony; window.XLSX w scope TM ≠ unsafeWindow.XLSX gdzie SheetJS faktycznie jest załadowany',
-        'readWithSheetJS(): używa _XLSX = unsafeWindow.XLSX || window.XLSX zamiast window.XLSX bezpośrednio',
-        'parseXLSXFile(): sprawdza _win.XLSX (unsafeWindow) zamiast window.XLSX',
-        'Dodano guard: if (!_XLSX || typeof _XLSX.read !== "function") reject() z czytelnym komunikatem',
-      ]
-    },
-    {
-      version: '0.5.4',
-      date: '2026-03-27',
-      notes: [
-        'Root cause: CSP Brand24 blokował dynamiczne ładowanie SheetJS przez script tag z cdn.jsdelivr.net',
-        'Fix: GM_xmlhttpRequest pobiera SheetJS poza CSP, następnie eval przez new Function w unsafeWindow scope',
-        'Dodano @connect cdn.jsdelivr.net do nagłówka',
-        'Fallback na script tag zachowany dla środowisk bez GM_xmlhttpRequest',
-      ]
-    },
-    {
-      version: '0.5.3',
-      date: '2026-03-27',
-      notes: [
-        'Bug fix: detectProject() — document.title był "Brand24" gdy strona ładowała się asynchronicznie; dodano retry po 2s i walidację tytułu (isFallbackTitle)',
-        'Potwierdzenie: window.confirm() przy state.file.rows.length >= 200 i testRunMode=false — blokuje start sesji',
-        'Czcionki: base panel 13px (bez zmian), tab 12→13px, log 11→12px, section-label 11→12px, map-label 12→13px, progress-label 10→12px, i inne +1-2px',
-      ]
-    },
-    {
-      version: '0.5.2',
-      date: '2026-03-26',
-      notes: [
-        'Root cause: va:0/va:1 nie filtruje po tagach — va:0=wszystkie+usunięte, va:1=standardowy widok',
-        'Odkrycie: wzmianki posortowane nieotagowane→otagowane, co umożliwia binary search',
-        'fetchDashboardStats(): krok 1 = count query, krok 2 = binary search hasTaggedOnPage()',
-        'Binary search: lo/hi na totalPages, porównanie przez hasTaggedOnPage(mid)',
-        'Granica lo-1 pełnych stron × PER_PAGE(60) + countUntaggedOnPage(lo) = untaggedCount',
-        'Edge case: strona 1 ma otagowane (wszystkie tagowane) — countUntaggedOnPage(1)',
-        '~7 requestów zamiast iterowania wszystkich 79 stron (4711 wzmianek)',
-      ]
-    },
-    {
-      version: '0.5.1',
-      date: '2026-03-26',
-      notes: [
-        'Nowa stała LS.FEATURES = b24tagger_features — JSON obiekt z flagami włączonych funkcji',
-        'OPTIONAL_FEATURES[] — tablica definicji opcjonalnych funkcji (id, label, desc)',
-        'loadFeatures() / saveFeatures() / applyFeatures() — odczyt, zapis, zastosowanie flag',
-        'showFeaturesModal() — modal z checkboxami, zapis przez przycisk Zapisz',
-        'fetchDashboardStats() — dwa query: va:0 (nieotagowane) i va:1 (wszystkie), logika dat 1-2 dnia miesiąca',
-        'renderDashboard(el, stats) — 3 kafelki (wszystkie/otagowane/pozostałe) + progress bar + % ukończenia',
-        'refreshDashboard() — loader + fetchDashboardStats + renderDashboard',
-        'Tab "📊 Dash" — domyślnie display:none, odkrywany przez applyFeatures gdy feature.dashboard=true',
-        'applyFeatures() wywołane w init() przed showWhatsNewExtended',
-      ]
-    },
-    {
-      version: '0.4.6',
-      date: '2026-03-25',
-      notes: [
-        'Root cause fix: brakował @connect raw.githubusercontent.com w nagłówku — Tampermonkey blokował GM_xmlhttpRequest do tej domeny',
-        'Dodano // @connect raw.githubusercontent.com obok hooks.slack.com',
-      ]
-    },
-    {
-      version: '0.4.5',
-      date: '2026-03-25',
-      notes: [
-        'checkForUpdate dodane do window.B24Tagger.debug.checkForUpdate() — teraz dostępne przez bridge',
-        'Dodano log diagnostyczny w checkForUpdate: pokazuje czy GM_xmlhttpRequest jest dostępne',
-        'setTimeout w głównym scope zwiększony do 6000ms żeby init() zdążył się wykonać',
-      ]
-    },
-    {
-      version: '0.4.4',
-      date: '2026-03-25',
-      notes: [
-        'Root cause fix: checkForUpdate przeniesione z init() do głównego scope IIFE',
-        'GM_xmlhttpRequest jest dostępne tylko w głównym scope skryptu Tampermonkey, nie w init() wywoływanym przez unsafeWindow',
-        'setTimeout(checkForUpdate, 5000) teraz w głównym scope — GM_xmlhttpRequest dostępne',
-        'Przycisk manualny już działał bo wireEvents jest wywoływane przez buildPanel() w głównym scope',
-      ]
-    },
-    {
-      version: '0.4.3',
-      date: '2026-03-25',
-      notes: [
-        'Przycisk Zainstaluj: zmiana z blob URL na RAW_URL — Tampermonkey rozpoznaje .user.js i pokazuje ekran Update jednym kliknięciem',
-      ]
-    },
-    {
-      version: '0.4.2',
-      date: '2026-03-25',
-      notes: [
-        'Root cause auto-check: fetch() blokowany przez CSP Brand24 dla raw.githubusercontent.com',
-        'Fix: checkForUpdate używa GM_xmlhttpRequest (omija CSP) z fallbackiem na fetch',
-        'showUpdateBanner: position zmieniony z bottom/center na top:60px/right:16px',
-        'Animacja: slide-in/slide-out z prawej (translateX) zamiast slide-up od dołu',
-        'Baner aktualizacji: 300px szerokości, nagłówek z wersją, przycisk Zainstaluj full-width',
-        'Baner "najnowsza wersja": auto-dismiss po 3s ze slide-out',
-        'Baner aktualizacji: auto-dismiss po 20s',
-      ]
-    },
-    {
-      version: '0.4.1',
-      date: '2026-03-25',
-      notes: [
-        'checkForUpdate(): GM_xmlhttpRequest → fetch() — raw.githubusercontent.com ma otwarty CORS (Access-Control-Allow-Origin: *)',
-        'checkForUpdate(manual=true): przy braku aktualizacji pokazuje zielony baner "Masz najnowszą wersję" przez 3s',
-        'Nowy przycisk #b24t-btn-check-update w subbarze, podczas sprawdzania zmienia label na "↻ Sprawdzam..."',
-        'showUpdateBanner(null): obsługa przypadku brak aktualizacji przy manual check',
-      ]
-    },
-    {
-      version: '0.3.9',
-      date: '2026-03-25',
-      notes: [
-        'Nowa stała RAW_URL — wskazuje na raw plik wtyczki na GitHubie',
-        'checkForUpdate(): GM_xmlhttpRequest do GitHub raw URL, parsuje @version z nagłówka, throttle 1h przez localStorage b24tagger_update_check',
-        'compareVersions(a, b): porównanie semantycznych wersji jako tablice liczb',
-        'showUpdateBanner(newVersion): fixed baner na dole ekranu, animacja slide-up, auto-ukrycie po 15s',
-        'Przycisk Zainstaluj otwiera blob URL na GitHubie — Tampermonkey wykrywa .user.js i oferuje instalację',
-        'checkForUpdate wywołane setTimeout 5000ms po init (po showWhatsNewExtended)',
-      ]
-    },
-    {
-      version: '0.3.8',
-      date: '2026-03-25',
-      notes: [
-        'SLACK_WEBHOOK_URL wyciągnięty z hardkodu — placeholder "TWOJ_SLACK_WEBHOOK_URL"',
-        'sendToSlack() — early return z komunikatem gdy URL nie skonfigurowany',
-        'Dodano @updateURL i @downloadURL wskazujące na raw GitHub URL',
-        'Plik gotowy do publikacji w publicznym repo bez secret scanning error',
-      ]
-    },
-    {
-      version: '0.3.7',
-      date: '2026-03-25',
-      notes: [
-        'buildBugReportData(): crashLog section rozbudowany — używa pełnego obiektu z saveCrashLog zamiast tylko message+stack(500)',
-        'Nowe pola w crashLog sekcji Bug Report: errorType, lastAction, session (status/partycja/zakres dat), stats, file, urlMapSize, lastMatchLog, recoverable, userMessage',
-        'sendBugReport(): crash section w Slack Blocks podzielona na: fields (typ błędu, czas, ostatnia akcja, recoverable), stan sesji, last match log, stack trace',
-        'saveCrashLog() — bez zmian (była już rozbudowana w poprzedniej iteracji)',
-      ]
-    },
-    {
-      version: '0.3.7',
-      date: '2026-03-25',
-      notes: [
-        'saveCrashLog() rozbudowany o: version, timestamp ISO + localTime, url, session{status,projectId/Name,testRunMode,mapMode,hasToken,currentPartitionIdx,totalPartitions,currentPartitionRange}, stats{tagged,skipped,noMatch,conflicts,deleted}, file{name,rows,colMap}, urlMapSize, lastMatchLogEntry, logSnapshot (ostatnie 50 wpisów), browser',
-        'showCrashBanner() przebudowany: msg pokazuje errorType + czas + userMessage, detail formatuje czytelny tekst z sekcjami (CRASH REPORT / SESJA / STATYSTYKI / PLIK / STACK TRACE / LOGI)',
-        'showCrashBanner() dodaje dynamicznie przycisk "🐛 Wyślij Bug Report" który wywołuje sendBugReport() z auto-opisem',
-        'buildBugReportData() zaktualizowany — crashLog section używa nowych pól zamiast starych (message/time/stack)',
-        'userMessages w saveCrashLog: dodano NETWORK_ERROR, poprawiono fallback z includes(network|fetch)',
-      ]
-    },
-    {
-      version: '0.3.6',
-      date: '2026-03-25',
-      notes: [
-        'Nowa funkcja buildBugReportData() — zbiera: version, timestamp, url, projectId/Name, sessionStatus, hasToken, testRunMode, mapMode, stats, fileName, fileRows, urlMapSize, partitions, sessionStart, recentLogs (ostatnie 30), crashLog, browser, screen',
-        'Nowa funkcja sendToSlack(payload, onSuccess, onError) — shared helper dla GM_xmlhttpRequest + fetch fallback',
-        'Nowa funkcja sendBugReport(description, onDone) — Slack Blocks API z 3 sekcjami fields + opis + logi + crash log',
-        'Nowa funkcja sendSuggestion(text, onDone) — prosty payload bez danych technicznych',
-        'sendFeedbackToSlack() zachowana jako legacy wrapper delegujący do sendBugReport/sendSuggestion',
-        'addLog() rozszerzony o parametr extra i limit 500 wpisów w state.logs',
-        'Feedback tab: przełącznik Bug Report / Suggestion (fbMode state), dynamiczny kolor send button',
-        'Bug panel: info box z listą dołączanych danych, textarea z placeholderem diagnostycznym',
-        'Suggest panel: ukryty domyślnie, odsłaniany przez mode switcher',
-        'Tab switching w modal: aktualizacja font-size przy toggle zakładki',
-      ]
-    },
-    {
-      version: '0.3.5',
-      date: '2026-03-25',
-      notes: [
-        'Panel width: 380px → 440px',
-        'Nowy element #b24t-subbar między topbarem a zakładkami: zawiera przycisk Changelog & Feedback, token status i timer',
-        'Przycisk #b24t-btn-changelog przeniesiony z topbara do subbara',
-        'Token label (#b24t-token-label) ukryty w topbarze (display:none), status tylko przez subbara #b24t-token-status-sub',
-        'updateTokenUI() + startSessionTimer() — dodano sync do elementów w subbar',
-        'Action bar: flex-direction:column z dwoma rzędami div, zamiast jednej płaskiej listy przycisków',
-        'Rząd 1: Start (flex:2), Match (flex:1), Audit (flex:1)',
-        'Rząd 2: Pauza (flex:1), Stop (flex:1), Eksport (flex:0 0 36px)',
-        'Zakładki: dodano ikony emoji przed nazwami, font-size 11px → 10px',
-        'Modal changelog: width 440px → 520px, max-height 84vh → 86vh',
-        'Feedback tab: layout zmieniony z flex-column na CSS grid (2 kolumny) dla pól bugs/ideas',
-        'Zakładki modalu z ikonami: 📰 Co nowego, 🗓 Planowane, 💬 Feedback',
-        'Dev notes modal: width 480px → 520px',
-        'Legenda w footerze zmniejszona (9px), devnotes btn przemianowany na "Dev patch notes"',
-      ]
-    },
-    {
-      version: '0.3.4',
-      date: '2026-03-25',
-      notes: [
-        'Retroaktywna zmiana schematu wersjonowania: 1.x.x → 0.x.x (beta prefix)',
-        'Zmiana @name na "B24 Tagger BETA" we wszystkich miejscach w UI i metadanych',
-        'Przycisk "ZMIANY" → "Changelog & Feedback" w topbarze panelu',
-        'Usunięcie wszystkich odwołań do wewnętrznych projektów (GOLEM, Insights24) z kodu i UI',
-        '@namespace zmieniony na https://brand24.com',
-        '@author zmieniony na "B24 Tagger"',
-      ]
-    },
-    {
-      version: '0.3.3',
-      date: '2026-03-25',
-      notes: [
-        'CHANGELOG: uproszczenie wszystkich opisów do wersji ogólnikowych dla użytkownika końcowego',
-        'Dodanie DEV patch notes jako osobnego systemu dla programistów',
-        'Przycisk "Pełne patch notes" przeniesiony do zakładki "Co nowego"',
-        'Onboarding rozszerzony z 5 do 6 kroków — dodano kroki o narzędziach (Match Preview, Audit, Quick Tag/Delete) oraz historii i feedbacku',
-        'Zaktualizowano format pliku w onboardingu — auto-detekcja kolumn, opcjonalne pola',
-      ]
-    },
-    {
-      version: '0.3.2',
-      date: '2026-03-25',
-      notes: [
-        'KRYTYCZNY FIX: zmiana @run-at z document-idle na document-start — wtyczka nie startowała po zmianie @grant',
-        'Dodano @grant unsafeWindow — interceptor fetch patchuje teraz unsafeWindow.fetch zamiast window.fetch sandboxu Tampermonkey',
-        'window.B24Tagger przypisywane również do _win.B24Tagger (unsafeWindow) dla dostępu ze strony',
-        'Root cause TOKEN_NOT_READY: Tampermonkey z @grant GM_xmlhttpRequest izoluje window fetch od strony',
-      ]
-    },
-    {
-      version: '0.3.1',
-      date: '2026-03-25',
-      notes: [
-        'Formularz feedbacku: zastąpiono jedno pole tekstowe dwoma osobnymi (bugs + ideas)',
-        'Usunięto system oceny gwiazdkowej z formularza feedbacku',
-        'sendFeedbackToSlack: zmiana sygnatury z (text, rating) na (bugs, ideas) — payload Slack podzielony na dwie sekcje',
-        'Walidacja formularza: wymagane przynajmniej jedno z dwóch pól (poprzednio: wymagana ocena)',
-        'Aktualizacja priorytetów PLANNED_FEATURES: podgląd on-hover + szybkie filtry → high, wieloprojektowość → low',
-      ]
-    },
-    {
-      version: '0.3.0',
-      date: '2026-03-25',
-      notes: [
-        'Nowa funkcja: showWhatsNewExtended() z 3 zakładkami (Co nowego / Planowane / Feedback)',
-        'Stara showWhatsNew() zastąpiona delegatem do showWhatsNewExtended()',
-        'Dodano stałą SLACK_WEBHOOK_URL i PLANNED_FEATURES[]',
-        'sendFeedbackToSlack(): wysyłka przez GM_xmlhttpRequest (bypass CSP) z fallbackiem na fetch',
-        'Slack payload: Blocks API z sekcjami ocena/wersja/projekt/czas/wiadomość',
-        'Dodano @grant GM_xmlhttpRequest i @connect hooks.slack.com do nagłówka',
-        'Przycisk "Changelog & Feedback" (wcześniej "ZMIANY") w topbarze — kolor #6c6cff',
-        'CSS: #b24t-btn-changelog z hover state i wyróżnionym kolorem',
-        'showWhatsNew wywołane setTimeout 2000ms po init (jednorazowo per wersja)',
-        'Klucz localStorage b24tagger_seen_version do śledzenia widzianej wersji',
-      ]
-    },
+    }
   ];
+
+  function _fetchDevChangelog(onDone) {
+    const CACHE_KEY = 'b24tagger_dcl_cache';
+    const cached = (() => { try { return JSON.parse(sessionStorage.getItem(CACHE_KEY)); } catch(e) { return null; } })();
+    if (cached) { onDone(cached); return; }
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: 'https://raw.githubusercontent.com/i24dev/i24_analytics/I24-maks-czyszczenie/Tagger/DEV_CHANGELOG.json',
+      headers: { 'Cache-Control': 'no-cache' },
+      onload(r) {
+        try {
+          const data = JSON.parse(r.responseText);
+          sessionStorage.setItem(CACHE_KEY, JSON.stringify(data));
+          onDone(data);
+        } catch(e) { onDone(DEV_CHANGELOG_FALLBACK); }
+      },
+      onerror() { onDone(DEV_CHANGELOG_FALLBACK); }
+    });
+  }
 
 
   // ───────────────────────────────────────────
@@ -9118,7 +7888,7 @@ function showOnboarding(onComplete) {
             // Cichy background refresh
             _bgFetchTagstats().then(function(fresh) {
               if (fresh && tsEl) renderAnnotatorTagStats(tsEl, fresh);
-            }).catch(function(){});
+            }).catch(function(e){ addLog('[BG] tagstats refresh error: ' + e.message, 'warn'); });
           } else if (!annotatorData.tagstats) {
             loadAnnotatorTagStats();
           }
@@ -9203,7 +7973,7 @@ function showOnboarding(onComplete) {
       renderAnnotatorTagStats(tsEl, bgCache.tagstats);
       _bgFetchTagstats().then(function(fresh) {
         if (fresh && tsEl) renderAnnotatorTagStats(tsEl, fresh);
-      }).catch(function(){});
+      }).catch(function(e){ addLog('[BG] tagstats refresh error: ' + e.message, 'warn'); });
     } else if (!annotatorData.tagstats) {
       loadAnnotatorTagStats();
     }
@@ -9335,7 +8105,7 @@ function showOnboarding(onComplete) {
       // Cichy background refresh — nie resetuj DOM
       _bgFetchTagstats().then(function(fresh) {
         if (fresh) renderAnnotatorTagStats(el, fresh);
-      }).catch(function(){});
+      }).catch(function(e){ addLog('[BG] tagstats refresh error: ' + e.message, 'warn'); });
       return;
     }
 
@@ -10480,7 +9250,7 @@ To jest NIEODWRACALNE.`)) return;
       renderOverallStatsData(dataEl, bgCache.overallStats.results, group, bgCache.overallStats);
       _bgFetchOverallStats(group).then(function(fresh) {
         if (fresh && dataEl.isConnected) renderOverallStatsData(dataEl, fresh.results, group, fresh);
-      }).catch(function(){});
+      }).catch(function(e){ addLog('[BG] overallStats refresh error: ' + e.message, 'warn'); });
       return;
     }
     _overallStatsInFlight = true;
@@ -10636,7 +9406,7 @@ To jest NIEODWRACALNE.`)) return;
       // Cichy background refresh bez resetowania DOM
       _bgFetchAllProjects(tagId).then(function(fresh) {
         if (fresh) _renderAllProjectsList(fresh.results, tagName);
-      }).catch(function(){});
+      }).catch(function(e){ addLog('[BG] allProjects refresh error: ' + e.message, 'warn'); });
       return;
     }
 
@@ -10797,6 +9567,38 @@ To jest NIEODWRACALNE.`)) return;
         </div>
       </div>
     `;
+
+    // Wire event handlers
+    const cb = div.querySelector('#b24t-auto-delete-cb');
+    const saveCb = div.querySelector('#b24t-auto-delete-save-cb');
+    const saveRow = div.querySelector('#b24t-auto-delete-save-row');
+    const tagSel = div.querySelector('#b24t-auto-delete-tag');
+
+    if (cb) {
+      cb.addEventListener('change', () => {
+        state.autoDeleteEnabled = cb.checked;
+        state.autoDeleteTagId = cb.checked ? (parseInt(tagSel?.value) || null) : null;
+        if (saveRow) saveRow.style.display = cb.checked ? 'block' : 'none';
+        if (!cb.checked && saveCb) {
+          saveCb.checked = false;
+          setAutoDeletePref(false);
+        }
+      });
+    }
+
+    if (tagSel) {
+      tagSel.addEventListener('change', () => {
+        state.autoDeleteTagId = parseInt(tagSel.value) || null;
+        if (saveCb?.checked) setAutoDeletePref(true);
+      });
+    }
+
+    if (saveCb) {
+      saveCb.addEventListener('change', () => {
+        setAutoDeletePref(saveCb.checked);
+      });
+    }
+
     return div;
   }
 
@@ -10854,7 +9656,7 @@ To jest NIEODWRACALNE.`)) return;
       // Prefetch w tle dla nowego tagu — dane będą gotowe gdy użytkownik wybierze "Wszystkie projekty"
       const newTagId = parseInt(document.getElementById('b24t-del-tag')?.value);
       if (newTagId && !_bgCacheFresh(bgCache.allProjects[newTagId])) {
-        _bgFetchAllProjects(newTagId).catch(function(){});
+        _bgFetchAllProjects(newTagId).catch(function(e){ addLog('[BG] prefetch allProjects error: ' + e.message, 'warn'); });
       }
     });
 

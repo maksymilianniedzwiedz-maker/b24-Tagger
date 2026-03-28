@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.16.4
+// @version      0.16.5
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.16.4';
+  const VERSION = '0.16.5';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5144,19 +5144,29 @@ function showOnboarding(onComplete) {
 
   // ── CSRF TOKEN RESOLUTION ──
   function _newsGetTknB24(cb) {
-    // 1. state.tknB24 — captured at page load by detectProject MutationObserver
+    // 1. state.tknB24 — captured earlier in this session
     if (state.tknB24) { cb(state.tknB24, null); return; }
-    // 2. Live DOM input — in case page reloaded after detectProject ran
+    // 2. Live DOM (only present on /searches/add-new-mention/ page itself)
     var el = document.querySelector('[name="tknB24"]');
     if (el && el.value) { state.tknB24 = el.value; cb(el.value, null); return; }
-    // 3. Cookie fallback
-    var ck = document.cookie.split(';').reduce(function(acc, p) {
-      var kv = p.trim().split('=');
-      return kv[0] === 'tknB24' ? decodeURIComponent(kv[1] || '') : acc;
-    }, '');
-    if (ck) { state.tknB24 = ck; cb(ck, null); return; }
-    // All methods failed — Brand24 SPA did not expose tknB24 in DOM
-    cb(null, '\u26a0 Brak tokenu CSRF. Przeładuj stronę projektu Brand24 i spróbuj ponownie.');
+    // 3. GM fetch /searches/add-new-mention/?sid=ID — Django page that always has tknB24 hidden input
+    var sid = state.projectId || '';
+    if (!sid) { cb(null, '\u26a0 Brak ID projektu. Przejd\u017a na stron\u0119 projektu Brand24.'); return; }
+    var fetchUrl = 'https://app.brand24.com/searches/add-new-mention/?sid=' + sid;
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: fetchUrl,
+      onload: function(resp) {
+        // Token is a 32-char hex in: <input type="hidden" name="tknB24" id="tknB24" value="XXXXXXXX...">
+        var m = (resp.responseText || '').match(/name="tknB24"[^>]*value="([a-f0-9]{32})"/);
+        if (!m) m = (resp.responseText || '').match(/value="([a-f0-9]{32})"[^>]*name="tknB24"/);
+        if (m && m[1]) { state.tknB24 = m[1]; cb(m[1], null); return; }
+        cb(null, '\u26a0 Nie mo\u017cna pobra\u0107 tokenu CSRF. Spr\u00f3buj od\u015bwie\u017cy\u0107 stron\u0119 Brand24.');
+      },
+      onerror: function() {
+        cb(null, '\u26a0 B\u0142\u0105d sieci przy pobieraniu tokenu CSRF. Upewnij si\u0119, \u017ce jeste\u015b zalogowany.');
+      }
+    });
   }
 
   // ── CMS DOMAIN CHECK ──
@@ -6253,6 +6263,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.16.5",
+      "date": "2026-03-28",
+      "label": "Fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News: token CSRF pobierany z add-new-mention (pewne zrodlo)"}
+      ]
+    },
+    {
       "version": "0.16.4",
       "date": "2026-03-28",
       "label": "Fix",
@@ -6337,19 +6356,7 @@ function showOnboarding(onComplete) {
         {"type": "new", "text": "Deploy trafia też do prywatnego repo i24dev"}
       ]
     },
-    {
-      "version": "0.15.2",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#f87171",
-      "changes": [
-        {"type": "fix", "text": "News: poprawione wykrywanie kraju w URL"},
-        {"type": "new", "text": "News: przycisk ✕ usuwa URL z listy fizycznie"},
-        {"type": "new", "text": "News: legenda kolorów jako floating panel"},
-        {"type": "fix", "text": "News: \'Następny\' pomija irrelevantne i złe kraje"}
-      ]
-    },
-  ];;;;
+  ];;;;;
 
   function _fetchChangelog(onDone) {
     const CACHE_KEY = 'b24tagger_cl_cache';

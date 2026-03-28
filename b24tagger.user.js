@@ -6024,7 +6024,7 @@ function showOnboarding(onComplete) {
         '[FIX]  loadOverallStats(): zimny fetch owiniety try/finally — _overallStatsInFlight zawsze zwalniany nawet przy bledzie',
         '[REFACTOR]  Usunieto loadAnnotatorDataBackground() — dead code; nigdy nie wywolywana po tym jak applyFeatures() zaczelo wywolywac startBgPrefetch() bezposrednio',
         '[REFACTOR]  Usunieto var annotatorDataLoaded — jedyna zmienna stanu loadAnnotatorDataBackground(), zbedna po usunieciu funkcji',
-        '[DEV_CHANGELOG]  '[LOG]  getAnnotatorDates(): log zakresu dat (📅)' — wpis zdezaktualizowany, zachowany dla historii',
+        '[NOTE]  [LOG] getAnnotatorDates(): log zakresu dat — wpis zdezaktualizowany po FIX, zachowany dla historii',
       ]
     },
     {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.17.9
+// @version      0.17.10
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.17.9';
+  const VERSION = '0.17.10';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5225,58 +5225,6 @@ function showOnboarding(onComplete) {
   }
 
   // ── CMS DOMAIN CHECK ──
-  // Check if a URL already exists as a mention in current project via getMentions GQL
-  // Wzorowane na fetchProjectTagCounts — używa origFetch bezpośrednio
-  // cb(result) where result = 'exists' | 'not_found' | 'no_token' | 'error'
-  function _newsCheckUrlExists(url, cb) {
-    if (!state.tokenHeaders) { cb('no_token'); return; }
-    var pid = state.projectId;
-    if (!pid) {
-      var pm = window.location.pathname.match(/\/panel\/results\/(\d+)/);
-      pid = pm ? parseInt(pm[1]) : null;
-    }
-    if (!pid) { cb('error', 0, [], 'brak projectId'); return; }
-
-    var today = _localDateStr(new Date());
-    var yearAgo = (function() {
-      var d = new Date(); d.setFullYear(d.getFullYear() - 2);
-      return _localDateStr(d);
-    })();
-
-    // Filtry identyczne jak w fetchProjectTagCounts — minimalne i bezpieczne
-    // sq = search query po URL
-    var filters = {
-      va: 1, rt: [], se: [], vi: null, gr: [], sq: url, do: '', au: '',
-      lem: false, ctr: [], nctr: false, is: [0, 10], tp: null, anom: '',
-      lang: [], nlang: false, aue: null, htg: null, mt: false, mtri: null, cxs: []
-    };
-    var gqlQuery = 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count results{id url openUrl}}}';
-
-    origFetch('/api/graphql', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: Object.assign({}, state.tokenHeaders, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        operationName: 'getMentions',
-        variables: { projectId: pid, dateRange: { from: yearAgo, to: today }, filters: filters, page: 1, order: 0 },
-        query: gqlQuery
-      })
-    }).then(function(r) { return r.json(); }).then(function(data) {
-      console.log('[B24T] checkUrlExists raw response:', JSON.stringify(data).substring(0, 300));
-      if (data.errors) { cb('error', 0, [], data.errors[0]?.message || 'GQL error'); return; }
-      var res = data?.data?.getMentions;
-      if (!res) { cb('error', 0, [], 'brak getMentions w response'); return; }
-      var norm = url.replace(/\/+$/, '').toLowerCase();
-      var found = (res.results || []).some(function(m) {
-        var mu = (m.url || m.openUrl || '').replace(/\/+$/, '').toLowerCase();
-        return mu === norm || mu.includes(norm) || norm.includes(mu);
-      });
-      console.log('[B24T] checkUrlExists count:', res.count, 'found:', found);
-      cb(found ? 'exists' : (res.count > 0 ? 'sq_results_no_match' : 'not_found'), res.count, (res.results || []).slice(0, 3));
-    }).catch(function(e) {
-      cb('error', 0, [], e.message);
-    });
-  }
 
   function _newsCmsStatus() {
     // Returns domain only — CMS tag availability is checked via state.tags in _newsCheckTagDodane()
@@ -6020,32 +5968,6 @@ function showOnboarding(onComplete) {
       var subStatus = document.getElementById('b24t-news-submit-status');
       if (subStatus) { subStatus.textContent = ''; subStatus.style.color = ''; }
       renderUrlList();
-      // Sprawdz czy URL juz istnieje w projekcie via getMentions GQL
-      (function(checkUrl) {
-        var ss = document.getElementById('b24t-news-submit-status');
-        if (ss) { ss.textContent = '⏳ Sprawdzam czy wzmianka już istnieje...'; ss.style.color = '#a78bfa'; }
-        _newsCheckUrlExists(checkUrl, function(result, count, matches, errMsg) {
-          console.log('[B24T] _newsCheckUrlExists result:', result, 'count:', count, 'err:', errMsg);
-          var ss2 = document.getElementById('b24t-news-submit-status');
-          if (!ss2) return;
-          if (result === 'exists') {
-            ss2.textContent = '⚠ Brand24: wzmianka z tym URL już istnieje w projekcie!';
-            ss2.style.color = '#f59e0b';
-          } else if (result === 'sq_results_no_match') {
-            ss2.textContent = 'ℹ Znaleziono ' + count + ' wzmianek dla domeny, ale ten URL nie pasuje.';
-            ss2.style.color = '#a78bfa';
-          } else if (result === 'not_found') {
-            ss2.textContent = '✓ URL nie znaleziony w projekcie.';
-            ss2.style.color = '#22c55e';
-          } else if (result === 'no_token') {
-            ss2.textContent = '⌛ Brak tokenu GQL — odczekaj chwilę i kliknij URL ponownie.';
-            ss2.style.color = '#94a3b8';
-          } else {
-            ss2.textContent = '⚠ Błąd sprawdzania: ' + (errMsg || result);
-            ss2.style.color = '#ef4444';
-          }
-        });
-      })(entry.url);
       // Prefill daty rok+miesiąc natychmiast — GM fetch nadpisze jeśli znajdzie pełną datę
       var _dateElPre = document.getElementById('b24t-news-f-date');
       var _dateIconPre = document.getElementById('b24t-news-date-detect-icon');

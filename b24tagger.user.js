@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.9.6
+// @version      0.9.7
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.9.4';
+  const VERSION = '0.9.7';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4490,6 +4490,15 @@ function hideHelpTip() {
 
   const CHANGELOG = [
     {
+      version: '0.9.7',
+      date: '2026-03-28',
+      label: 'Hotfix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Stała VERSION w kodzie nie była aktualizowana przy deploy — panel pokazywał 0.9.4 zamiast aktualnej wersji, a checkForUpdate() krzyczał o update na samego siebie' },
+      ],
+    },
+    {
       version: '0.9.6',
       date: '2026-03-28',
       label: 'Polish UI',
@@ -5590,6 +5599,14 @@ function hideHelpTip() {
   // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.9.7',
+      date: '2026-03-28',
+      notes: [
+        '[HOTFIX] const VERSION zsynchronizowana z @version nagłówka: była \'0.9.4\', powinna być \'0.9.6\' (a teraz \'0.9.7\'). Root cause: przy deplojach 0.9.5 i 0.9.6 aktualizowany był tylko @version w userscript header, ale nie stała VERSION w ciele IIFE. Panel używa VERSION do wyświetlania numeru wersji, checkForUpdate() do compareVersions() — stąd fałszywy alert o dostępnej aktualizacji.',
+        '[PROCESS] Zasada: każdy bump @version = zmiana const VERSION na tę samą wartość. Obie muszą być zawsze zsynchronizowane.',
+      ]
+    },
     {
       version: '0.9.6',
       date: '2026-03-28',

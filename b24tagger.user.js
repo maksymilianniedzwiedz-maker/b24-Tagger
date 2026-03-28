@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.15.1
+// @version      0.15.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.15.1';
+  const VERSION = '0.15.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4914,100 +4914,6 @@ function showOnboarding(onComplete) {
 
 
   // ───────────────────────────────────────────
-  // NEWS MODULE — v0.15.0
-  // ───────────────────────────────────────────
-
-  var newsState = {
-    urls: [],          // { url, status, opened, submitted, country }
-    activeIdx: -1,
-    sessionUrls: {},   // url → true (submitted this session)
-    detectedCountry: null,
-  };
-
-  var NEWS_DEFAULT_KEYWORDS = [
-    'hm-', '-hm-', '-hm', '/hm/', '/hm',
-    'h-m', 'h&m', 'h%26m', 'hennes', 'mauritz',
-  ];
-  var NEWS_KEYWORD_EXCLUSIONS = ['h-mart'];
-
-  var NEWS_TLD_MAP = {
-    pl:'PL', tr:'TR', gr:'GR', hr:'HR', ro:'RO', bg:'BG',
-    hu:'HU', cz:'CZ', sk:'SK', lt:'LT', lv:'LV', ee:'EE',
-    rs:'RS', ge:'GE', ua:'UA', ba:'BA', mk:'MK', al:'AL',
-    xk:'XK', kz:'KZ', me:'ME', md:'MD', am:'AM', az:'AZ',
-  };
-
-  // Extract 2-letter country code from URL (TLD + known subdomains)
-  function _newsCountryFromUrl(url) {
-    try {
-      var h = new URL(url).hostname.toLowerCase();
-      // Subdomain pattern: tr.example.com, pl.example.com
-      var subMatch = h.match(/^([a-z]{2})\./);
-      if (subMatch && NEWS_TLD_MAP[subMatch[1]]) return NEWS_TLD_MAP[subMatch[1]];
-      // TLD
-      var parts = h.split('.');
-      var tld = parts[parts.length - 1];
-      return NEWS_TLD_MAP[tld] || null;
-    } catch(e) { return null; }
-  }
-
-  // Detect dominant country from URL list (>30% threshold)
-  function _newsDetectCountryFromUrls(urls) {
-    var counts = {};
-    urls.forEach(function(u) {
-      var c = _newsCountryFromUrl(u.url);
-      if (c) counts[c] = (counts[c] || 0) + 1;
-    });
-    var total = urls.length;
-    var best = null; var bestN = 0;
-    Object.keys(counts).forEach(function(c) {
-      if (counts[c] > bestN) { bestN = counts[c]; best = c; }
-    });
-    if (best && bestN / total >= 0.3) return best;
-    return null;
-  }
-
-  // Get project country from project name (H&M_TR → TR)
-  function _newsProjectCountry() {
-    var name = (state.projectName || '').toUpperCase();
-    var m = name.match(/_([A-Z]{2})$/);
-    return m ? m[1] : null;
-  }
-
-  // LS helpers for news
-  function _newsGetKeywords(countryCode) {
-    var all = lsGet(LS.NEWS_KEYWORDS, {});
-    return all[countryCode] || NEWS_DEFAULT_KEYWORDS.slice();
-  }
-  function _newsSaveKeywords(countryCode, chips) {
-    var all = lsGet(LS.NEWS_KEYWORDS, {});
-    all[countryCode] = chips;
-    lsSet(LS.NEWS_KEYWORDS, all);
-  }
-  function _newsGetLangMap() {
-    return lsGet(LS.NEWS_LANG_MAP, {});
-  }
-  function _newsSaveLangMap(map) {
-    lsSet(LS.NEWS_LANG_MAP, map);
-  }
-  function _newsGetSessionUrls() {
-    return lsGet(LS.NEWS_SESSION_URLS, {});
-  }
-  function _newsMarkSessionUrl(url) {
-    var s = _newsGetSessionUrls();
-    s[url] = true;
-    lsSet(LS.NEWS_SESSION_URLS, s);
-  }
-
-  // URL matches any keyword chip (case-insensitive), not matching exclusions
-  function _newsUrlMatchesKeywords(url, chips) {
-    var lurl = url.toLowerCase();
-    var excluded = NEWS_KEYWORD_EXCLUSIONS.some(function(ex) { return lurl.indexOf(ex) !== -1; });
-    if (excluded) return false;
-    return chips.some(function(chip) { return lurl.indexOf(chip.toLowerCase()) !== -1; });
-  }
-
-  // ───────────────────────────────────────────
   // NEWS MODULE — v0.15.1
   // Floating 3-panel system attached to Annotators Tab
   // ───────────────────────────────────────────
@@ -5078,10 +4984,111 @@ function showOnboarding(onComplete) {
     var s = _newsGetSessionUrls(); s[url] = true; lsSet(LS.NEWS_SESSION_URLS, s);
   }
 
-  function _newsUrlMatchesKeywords(url, chips) {
+  // Country path segments and subdomains to detect in URLs
+  // Maps country indicators (path segments, subdomains) → country code
+  var NEWS_COUNTRY_PATH_MAP = {
+    'uk':'GB', 'en-gb':'GB', 'gb':'GB',
+    'de':'DE', 'en-de':'DE',
+    'fr':'FR', 'en-fr':'FR',
+    'us':'US', 'en-us':'US',
+    'au':'AU', 'en-au':'AU',
+    'ca':'CA', 'en-ca':'CA',
+    'es':'ES', 'en-es':'ES',
+    'it':'IT', 'en-it':'IT',
+    'nl':'NL', 'en-nl':'NL',
+    'be':'BE', 'en-be':'BE',
+    'pt':'PT', 'en-pt':'PT',
+    'se':'SE', 'en-se':'SE',
+    'no':'NO', 'en-no':'NO',
+    'dk':'DK', 'en-dk':'DK',
+    'fi':'FI', 'en-fi':'FI',
+    'at':'AT', 'en-at':'AT',
+    'ch':'CH', 'en-ch':'CH',
+    'ie':'IE', 'en-ie':'IE',
+    'nz':'NZ', 'en-nz':'NZ',
+    'za':'ZA', 'en-za':'ZA',
+    'in':'IN', 'en-in':'IN',
+    'sg':'SG', 'en-sg':'SG',
+    'hk':'HK', 'en-hk':'HK',
+    'jp':'JP', 'en-jp':'JP',
+    'kr':'KR', 'en-kr':'KR',
+    'cn':'CN', 'en-cn':'CN',
+    'mx':'MX', 'en-mx':'MX',
+    'ar':'AR', 'en-ar':'AR',
+    'br':'BR', 'en-br':'BR',
+    'ru':'RU', 'en-ru':'RU',
+    // TLD-map countries also checked via path
+    'pl':'PL', 'tr':'TR', 'gr':'GR', 'hr':'HR', 'ro':'RO', 'bg':'BG',
+    'hu':'HU', 'cz':'CZ', 'sk':'SK', 'lt':'LT', 'lv':'LV', 'ee':'EE',
+    'rs':'RS', 'ge':'GE', 'ua':'UA', 'ba':'BA', 'mk':'MK', 'al':'AL',
+    'kz':'KZ', 'me':'ME', 'md':'MD', 'am':'AM', 'az':'AZ',
+  };
+
+  // Extract country signals from a URL: TLD, subdomain, path segments
+  function _newsCountriesInUrl(url) {
+    var found = {};
+    try {
+      var parsed = new URL(url);
+      var host = parsed.hostname.toLowerCase();
+      var path = parsed.pathname.toLowerCase();
+
+      // 1. TLD
+      var tld = host.split('.').pop();
+      if (NEWS_TLD_MAP[tld]) found[NEWS_TLD_MAP[tld]] = 'tld';
+
+      // 2. Known 2-letter subdomain (e.g. tr.cosmopolitan.com)
+      var hostParts = host.split('.');
+      if (hostParts.length >= 3) {
+        var sub = hostParts[0];
+        if (NEWS_COUNTRY_PATH_MAP[sub]) found[NEWS_COUNTRY_PATH_MAP[sub]] = 'subdomain';
+        if (NEWS_TLD_MAP[sub]) found[NEWS_TLD_MAP[sub]] = 'subdomain';
+      }
+
+      // 3. Path segments: /uk/, /en-gb/, /tr/, etc.
+      var segments = path.split('/').filter(Boolean);
+      segments.forEach(function(seg) {
+        if (NEWS_COUNTRY_PATH_MAP[seg]) found[NEWS_COUNTRY_PATH_MAP[seg]] = 'path';
+        if (NEWS_TLD_MAP[seg]) found[NEWS_TLD_MAP[seg]] = 'path';
+      });
+
+    } catch(e) {}
+    return found; // { 'GB': 'tld', 'TR': 'path' } etc.
+  }
+
+  // Main relevance check — returns 'match', 'wrongcountry', or 'nomatch'
+  // 'match'        = keyword found AND no conflicting foreign country in URL
+  // 'wrongcountry' = keyword found BUT URL signals a different country than project
+  // 'nomatch'      = keyword not found
+  function _newsUrlRelevant(url, chips, projectCountry) {
     var lurl = url.toLowerCase();
-    if (NEWS_KEYWORD_EXCLUSIONS.some(function(ex) { return lurl.indexOf(ex) !== -1; })) return false;
-    return chips.some(function(chip) { return lurl.indexOf(chip.toLowerCase()) !== -1; });
+
+    // Exclusion check
+    if (NEWS_KEYWORD_EXCLUSIONS.some(function(ex) { return lurl.indexOf(ex) !== -1; })) {
+      return 'nomatch';
+    }
+
+    // Keyword check
+    var hasKeyword = chips.some(function(chip) { return lurl.indexOf(chip.toLowerCase()) !== -1; });
+    if (!hasKeyword) return 'nomatch';
+
+    // If no project country configured — keyword match is enough
+    if (!projectCountry) return 'match';
+
+    // Country signal check
+    var countries = _newsCountriesInUrl(url);
+    var countryKeys = Object.keys(countries);
+
+    if (countryKeys.length === 0) return 'match'; // no country signals → assume ok
+
+    // If project country is explicitly present → match
+    if (countries[projectCountry]) return 'match';
+
+    // If only foreign country signals present → wrong country
+    // Exception: .com / international TLD with no path country = neutral
+    var nonNeutral = countryKeys.filter(function(c) { return c !== projectCountry; });
+    if (nonNeutral.length > 0) return 'wrongcountry';
+
+    return 'match';
   }
 
   // ── CMS DOMAIN CHECK ──
@@ -5264,15 +5271,56 @@ function showOnboarding(onComplete) {
           '<div style="font-size:11px;color:' + t.textFaint + ';line-height:1.5;">Wklej adresy w panelu importu<br>i kliknij ▶ Wczytaj URLe</div>',
         '</div>',
       '</div>',
+      // Bulk action bar
+      '<div id="b24t-news-bulk-bar" style="display:flex;flex-wrap:wrap;gap:4px;padding:6px 10px;flex-shrink:0;border-top:1px solid ' + t.borderSub + ';min-height:0;"></div>',
       // Next button
-      '<div style="padding:8px 10px;flex-shrink:0;border-top:1px solid ' + t.borderSub + ';">',
-        '<button id="b24t-news-next-btn" style="width:100%;padding:6px;border-radius:8px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-size:11px;cursor:pointer;font-weight:500;">▼ Następny nieobsłużony</button>',
+      '<div style="padding:4px 10px 8px;flex-shrink:0;">',
+        '<button id="b24t-news-next-btn" style="width:100%;padding:6px;border-radius:8px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-size:11px;cursor:pointer;font-weight:500;">▼ Następny relevantny</button>',
       '</div>',
     ].join('');
 
     p1.appendChild(hdr1);
     p1.appendChild(body1);
     document.body.appendChild(p1);
+
+    // ─── LEGEND PANEL (small, attached top-right of P1) ───
+    var legend = document.createElement('div');
+    legend.id = 'b24t-news-legend';
+    legend.setAttribute('data-news-panel', '1');
+    legend.style.cssText = [
+      'position:fixed;',
+      'z-index:2147483633;',
+      'background:' + t.bg + ';',
+      'border:1px solid ' + t.border + ';',
+      'border-radius:10px;',
+      'padding:8px 12px;',
+      'font-family:Inter,Segoe UI,system-ui,sans-serif;',
+      'font-size:10px;',
+      'color:' + t.text + ';',
+      'box-shadow:' + t.shadow + ';',
+      'min-width:180px;',
+    ].join('');
+    var legendItems = [
+      { dot: '●', color: '#22c55e', label: 'Relevantny (keyword)' },
+      { dot: '●', color: '#f97316', label: 'Inny kraj w URL' },
+      { dot: '●', color: '#a78bfa', label: 'Otwarty / weryfikowany' },
+      { dot: '✓', color: '#15803d', label: 'Dodany do Brand24' },
+      { dot: '✗', color: '#ef4444', label: 'Błąd / duplikat' },
+      { dot: '○', color: '#4b5563', label: 'Brak keyword' },
+    ];
+    legend.innerHTML = '<div style="font-size:10px;font-weight:700;color:' + t.textMuted + ';letter-spacing:0.04em;margin-bottom:6px;text-transform:uppercase;">Legenda</div>' +
+      legendItems.map(function(item) {
+        return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">' +
+          '<span style="font-size:12px;font-weight:700;color:' + item.color + ';width:12px;text-align:center;">' + item.dot + '</span>' +
+          '<span style="color:' + t.textMuted + ';">' + item.label + '</span>' +
+        '</div>';
+      }).join('');
+    document.body.appendChild(legend);
+
+    // Position legend to the left of P1 after first paint
+    requestAnimationFrame(function() {
+      _newsPositionLegend();
+    });
 
     // ─── PANEL 2: Import URLi (bottom of left column, below p1) ───
     // Position below p1 — use p1's estimated height (42vh + header ~40px + footer ~46px)
@@ -5410,15 +5458,32 @@ function showOnboarding(onComplete) {
   }
 
   // Keep Import panel flush below Lista panel (left column)
+  function _newsPositionLegend() {
+    var p1 = document.getElementById('b24t-news-p1');
+    var lg = document.getElementById('b24t-news-legend');
+    if (!p1 || !lg) return;
+    var r1 = p1.getBoundingClientRect();
+    // Position legend to the right of P1's right edge (which uses css `right:`),
+    // but if panel has been dragged it uses `left:`. Use right edge of p1 + gap.
+    var lgW = lg.offsetWidth || 188;
+    // Place it at top-right corner of p1, shifted right by small gap — but
+    // it should not overlap p3. Keep it tight: left = p1.right - lgW (floats over right edge)
+    // Actually: position it just BELOW the p1 header, to the right of the list panel
+    lg.style.top  = (r1.top + 2) + 'px';
+    lg.style.left = (r1.right + 8) + 'px';
+    lg.style.right = 'auto';
+  }
+
   function _newsStackPanels() {
     var p1 = document.getElementById('b24t-news-p1');
     var p2 = document.getElementById('b24t-news-p2');
     if (!p1 || !p2) return;
     var r1 = p1.getBoundingClientRect();
     var newTop = r1.bottom + 8;
-    p2.style.top = newTop + 'px';
+    p2.style.top   = newTop + 'px';
     p2.style.right = p1.style.right;
-    p2.style.left = p1.style.left || 'auto';
+    p2.style.left  = p1.style.left || 'auto';
+    _newsPositionLegend();
   }
 
 
@@ -5552,12 +5617,67 @@ function showOnboarding(onComplete) {
 
     // ─── URL LIST ───
     function _statusDot(s) {
-      if (s === 'match')   return { dot: '●', color: '#22c55e', label: 'Trafienie keyword' };
-      if (s === 'opened')  return { dot: '●', color: '#f59e0b', label: 'Otwarty' };
-      if (s === 'skipped') return { dot: '●', color: '#6b7280', label: 'Pominięty' };
-      if (s === 'added')   return { dot: '✓', color: '#15803d', label: 'Dodany do Brand24' };
-      if (s === 'error')   return { dot: '✗', color: '#ef4444', label: 'Błąd / duplikat' };
-      return { dot: '○', color: '#4b5563', label: 'Brak trafienia' };
+      if (s === 'match')        return { dot: '●', color: '#22c55e', label: 'Trafienie keyword — relevantny' };
+      if (s === 'wrongcountry') return { dot: '●', color: '#f97316', label: 'Keyword pasuje, ale URL wskazuje inny kraj' };
+      if (s === 'opened')       return { dot: '●', color: '#a78bfa', label: 'Otwarty — w trakcie weryfikacji' };
+      if (s === 'added')        return { dot: '✓', color: '#15803d', label: 'Dodany do Brand24' };
+      if (s === 'error')        return { dot: '✗', color: '#ef4444', label: 'Błąd / duplikat w projekcie' };
+      return { dot: '○', color: '#4b5563', label: 'Brak trafienia keyword' };
+    }
+
+    function _newsUrlCounts() {
+      var c = { match: 0, wrongcountry: 0, nomatch: 0, opened: 0, added: 0, error: 0, total: 0 };
+      newsState.urls.forEach(function(u) { c[u.status] = (c[u.status] || 0) + 1; c.total++; });
+      return c;
+    }
+
+    function _newsRemoveByStatus(predicate) {
+      var activeUrl = newsState.activeIdx >= 0 ? (newsState.urls[newsState.activeIdx] || {}).url : null;
+      newsState.urls = newsState.urls.filter(function(u) { return !predicate(u); });
+      newsState.activeIdx = -1;
+      if (activeUrl) {
+        newsState.urls.forEach(function(u, i) { if (u.url === activeUrl) newsState.activeIdx = i; });
+      }
+      renderUrlList();
+    }
+
+    function _newsUpdateBulkBar() {
+      var bar = document.getElementById('b24t-news-bulk-bar');
+      if (!bar) return;
+      var t = _newsThemeVars();
+      var counts = _newsUrlCounts();
+      var nomatchCount = (counts.nomatch || 0) + (counts.wrongcountry || 0);
+      var handledCount = (counts.added || 0) + (counts.error || 0);
+      bar.innerHTML = '';
+      if (nomatchCount > 0) {
+        var b1 = document.createElement('button');
+        b1.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer;white-space:nowrap;';
+        b1.textContent = '\u2715 Usu\u0144 ' + nomatchCount + ' irrelevantnych';
+        b1.title = 'Usuwa URLe bez trafienja keyword i URLe z blednym krajem';
+        b1.addEventListener('click', function() {
+          _newsRemoveByStatus(function(u) { return u.status === 'nomatch' || u.status === 'wrongcountry'; });
+        });
+        bar.appendChild(b1);
+      }
+      if (handledCount > 0) {
+        var b2 = document.createElement('button');
+        b2.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid ' + t.borderSub + ';background:transparent;color:' + t.textMuted + ';cursor:pointer;white-space:nowrap;';
+        b2.textContent = '\u2715 Usu\u0144 obsluz. (' + handledCount + ')';
+        b2.title = 'Usuwa URLe dodane i bledy';
+        b2.addEventListener('click', function() {
+          _newsRemoveByStatus(function(u) { return u.status === 'added' || u.status === 'error'; });
+        });
+        bar.appendChild(b2);
+      }
+      if (counts.total > 0) {
+        var b3 = document.createElement('button');
+        b3.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid ' + t.borderSub + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;white-space:nowrap;';
+        b3.textContent = '\u2715 Wyczy\u015b\u0107 list\u0119';
+        b3.addEventListener('click', function() {
+          newsState.urls = []; newsState.activeIdx = -1; renderUrlList();
+        });
+        bar.appendChild(b3);
+      }
     }
 
     function renderUrlList() {
@@ -5569,6 +5689,18 @@ function showOnboarding(onComplete) {
       if (!list) return;
       list.querySelectorAll('.b24t-news-url-row').forEach(function(r) { r.remove(); });
 
+      var pc = _newsProjectCountry();
+      var cc = newsState.detectedCountry || 'DEFAULT';
+      var chips = _newsGetKeywords(cc);
+
+      newsState.urls.forEach(function(entry) {
+        if (entry.status === 'pending') {
+          entry.status = _newsUrlRelevant(entry.url, chips, pc);
+        }
+      });
+
+      _newsUpdateBulkBar();
+
       if (newsState.urls.length === 0) {
         if (empty) empty.style.display = '';
         if (progressWrap) progressWrap.style.display = 'none';
@@ -5577,44 +5709,55 @@ function showOnboarding(onComplete) {
       if (empty) empty.style.display = 'none';
       if (progressWrap) progressWrap.style.display = '';
 
-      var handled = newsState.urls.filter(function(u) { return u.status === 'added' || u.status === 'error' || u.status === 'skipped'; }).length;
-      if (progressLbl) progressLbl.textContent = handled + ' / ' + newsState.urls.length;
-      if (progressBar) progressBar.style.width = (newsState.urls.length > 0 ? Math.round(handled / newsState.urls.length * 100) : 0) + '%';
+      var counts = _newsUrlCounts();
+      var handled = (counts.added || 0) + (counts.error || 0);
+      var workable = counts.total - (counts.nomatch || 0) - (counts.wrongcountry || 0);
+      if (progressLbl) progressLbl.textContent = handled + ' / ' + workable + ' relevantnych';
+      if (progressBar) progressBar.style.width = (workable > 0 ? Math.round(handled / workable * 100) : 0) + '%';
 
-      var cc = newsState.detectedCountry || 'DEFAULT';
-      var chips = _newsGetKeywords(cc);
       var t = _newsThemeVars();
 
       newsState.urls.forEach(function(entry, idx) {
-        if (entry.status === 'pending') {
-          entry.status = _newsUrlMatchesKeywords(entry.url, chips) ? 'match' : 'nomatch';
-        }
         var isActive = idx === newsState.activeIdx;
         var sd = _statusDot(entry.status);
+        var isIrrelevant = entry.status === 'nomatch' || entry.status === 'wrongcountry';
         var row = document.createElement('div');
         row.className = 'b24t-news-url-row';
         row.dataset.idx = idx;
-        row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:8px;cursor:pointer;border:1px solid ' +
-          (isActive ? '#6366f1' : t.borderSub) + ';background:' +
-          (isActive ? t.accentAlpha : t.bgDeep) + ';transition:background 0.1s,border-color 0.1s;';
+        row.style.cssText = [
+          'display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:8px;',
+          'cursor:' + (isIrrelevant ? 'default' : 'pointer') + ';',
+          'border:1px solid ' + (isActive ? '#6366f1' : t.borderSub) + ';',
+          'background:' + (isActive ? t.accentAlpha : isIrrelevant ? 'transparent' : t.bgDeep) + ';',
+          'opacity:' + (isIrrelevant ? '0.45' : '1') + ';',
+          'transition:background 0.1s,border-color 0.1s;',
+        ].join('');
         var shortUrl = entry.url.replace(/^https?:\/\//, '');
-        if (shortUrl.length > 42) shortUrl = shortUrl.substring(0, 42) + '…';
+        if (shortUrl.length > 42) shortUrl = shortUrl.substring(0, 42) + '\u2026';
         row.innerHTML =
           '<span style="flex-shrink:0;width:14px;text-align:center;font-size:12px;font-weight:700;color:' + sd.color + ';" title="' + sd.label + '">' + sd.dot + '</span>' +
-          '<span style="flex:1;min-width:0;font-size:10px;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + t.text + ';" title="' + entry.url.replace(/"/g,'&quot;') + '">' + shortUrl + '</span>' +
-          '<button class="b24t-news-skip-btn" style="flex-shrink:0;font-size:9px;padding:1px 6px;border-radius:5px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;">Pomiń</button>';
+          '<span style="flex:1;min-width:0;font-size:10px;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + t.text + ';" title="' + entry.url.replace(/"/g, '&quot;') + '">' + shortUrl + '</span>' +
+          '<button class="b24t-news-del-btn" style="flex-shrink:0;font-size:11px;width:18px;height:18px;line-height:1;border-radius:4px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Usu\u0144 z listy">\u2715</button>';
         list.appendChild(row);
         row.addEventListener('click', function(e) {
-          if (e.target.classList.contains('b24t-news-skip-btn')) return;
+          if (e.target.classList.contains('b24t-news-del-btn')) return;
+          if (isIrrelevant) return;
           activateUrl(idx);
         });
-        row.querySelector('.b24t-news-skip-btn').addEventListener('click', function(e) {
+        row.querySelector('.b24t-news-del-btn').addEventListener('click', function(e) {
           e.stopPropagation();
-          newsState.urls[idx].status = 'skipped';
+          var wasActive = newsState.activeIdx === idx;
+          newsState.urls.splice(idx, 1);
+          if (wasActive) {
+            newsState.activeIdx = -1;
+          } else if (newsState.activeIdx > idx) {
+            newsState.activeIdx--;
+          }
           renderUrlList();
         });
       });
     }
+
 
     // ─── ACTIVATE URL ───
     function activateUrl(idx) {
@@ -5767,14 +5910,15 @@ function showOnboarding(onComplete) {
     var nextBtn = document.getElementById('b24t-news-next-btn');
     if (nextBtn) {
       nextBtn.addEventListener('click', function() {
+        // Only navigate to relevant (match/opened) — skip nomatch and wrongcountry
+        function isWorkable(s) { return s === 'match' || s === 'pending' || s === 'opened'; }
         var start = newsState.activeIdx + 1;
         for (var i = start; i < newsState.urls.length; i++) {
-          var s = newsState.urls[i].status;
-          if (s === 'match' || s === 'pending' || s === 'nomatch' || s === 'opened') { activateUrl(i); return; }
+          if (isWorkable(newsState.urls[i].status)) { activateUrl(i); return; }
         }
+        // Wrap around
         for (var j = 0; j < start; j++) {
-          var s2 = newsState.urls[j].status;
-          if (s2 === 'match' || s2 === 'pending' || s2 === 'nomatch' || s2 === 'opened') { activateUrl(j); return; }
+          if (isWorkable(newsState.urls[j].status)) { activateUrl(j); return; }
         }
       });
     }
@@ -5978,6 +6122,18 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   const CHANGELOG = [
+    {
+      version: '0.15.2',
+      date: '2026-03-28',
+      label: 'Fix + UX',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix',  text: 'Modul News: naprawiono wykrywanie kraju w URLach — linki z /uk/, /en-gb/, /de/ i podobnymi segmentami sciezki lub subdomenami sa teraz oznaczane jako "inny kraj" (pomaranczowy kolor) zamiast blednie jako relevantne' },
+        { type: 'new',  text: 'Modul News: nowa logika listy URLi — przycisk Usun (✕) per URL usuwa link z listy fizycznie zamiast go wyszarzac. Bulk-bar z przyciskami "Usun irrelevantnych" i "Usun obsluzzone" pojawia sie dynamicznie nad przyciskiem Nastepny' },
+        { type: 'new',  text: 'Modul News: legenda kolorow jako maly floating panel obok listy URLi — zielony=relevantny, pomaranczowy=inny kraj, fioletowy=otwarty, ciemnozielony=dodany, czerwony=blad, szary=brak keyword' },
+        { type: 'fix',  text: 'Modul News: przycisk "Nastepny relevantny" pomija URLe bez trafien i z blenym krajem — przechodzi tylko przez faktycznie relevantne URLe' },
+      ]
+    },
     {
       version: '0.15.1',
       date: '2026-03-28',
@@ -7271,6 +7427,29 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.15.2',
+      date: '2026-03-28',
+      notes: [
+        '[FIX]  Usunięto zduplikowany blok v0.15.0 (newsState, NEWS_*, LS helpers, stary _newsUrlMatchesKeywords) ktory pozostal po refaktorze — powodowal nadpisanie definicji zmiennych',
+        '[NEW]  NEWS_COUNTRY_PATH_MAP: mapa 60+ wpisow (segmenty sciezki + subdomeny → kod kraju). Obejmuje: uk, en-gb, de, fr, us, au, ca, es, it, nl, + wszystkie kraje z TLD_MAP. Uzywana przez _newsCountriesInUrl()',
+        '[NEW]  _newsCountriesInUrl(url): parsuje URL → zwraca { CC: source } gdzie source = tld|subdomain|path. Sprawdza: TLD domeny, 2-literowa subdomena, segmenty pathname dopasowane do NEWS_COUNTRY_PATH_MAP lub NEWS_TLD_MAP',
+        '[NEW]  _newsUrlRelevant(url, chips, projectCountry): zastepuje _newsUrlMatchesKeywords. Zwraca "match" | "wrongcountry" | "nomatch". Logika: brak keyword → nomatch; brak projectCountry → match; URL bez sygnalow kraju → match; URL zawiera projectCountry → match; URL zawiera tylko obcy kraj → wrongcountry',
+        '[NEW]  Status "wrongcountry": pomaranczowy ● (#f97316) — keyword trafil ale URL wskazuje inny kraj niz projekt. Irerelevantny = nomatch lub wrongcountry',
+        '[NEW]  Status "opened": zmieniono kolor z #f59e0b (zolty) na #a78bfa (fioletowy) — rozroznienie od wrongcountry ktory jest pomaranczowy',
+        '[NEW]  _newsUrlCounts(): zlicza entries per status + total — uzywane przez progress bar i bulk bar',
+        '[NEW]  _newsRemoveByStatus(predicate): filtruje newsState.urls, zachowuje activeIdx (szuka po URL). Wywolywana przez bulk-bar buttons',
+        '[NEW]  _newsUpdateBulkBar(): renderuje przyciski w #b24t-news-bulk-bar. "Usun irrelevantnych" (nomatch+wrongcountry), "Usun obsluz." (added+error), "Wyczysc liste". Pokazuje sie tylko gdy sa URLe do usuniecia',
+        '[FIX]  renderUrlList(): per-URL przycisk ✕ (.b24t-news-del-btn) robi splice na newsState.urls zamiast status="skipped". Koryguje activeIdx po splice. Irrelevantne URLe maja opacity:0.45 i cursor:default',
+        '[FIX]  Progress bar: liczy handled/(total-irrelevantnych) zamiast handled/total — pokazuje rzeczywisty postep przez relevantne URLe. Label: "X / Y relevantnych"',
+        '[NEW]  #b24t-news-bulk-bar: div w stopce P1 (Lista), między listem a przyciskiem Nastepny. Renderowany przez _newsUpdateBulkBar() przy kazdym renderUrlList()',
+        '[NEW]  #b24t-news-legend: maly floating panel z data-news-panel=1. 6 wpisow legendy. Pozycjonowany przez _newsPositionLegend() (right of P1 + 8px gap)',
+        '[NEW]  _newsPositionLegend(): ustawia legend.style.top = p1.top + 2, legend.style.left = p1.right + 8. Wywolywana z _newsStackPanels() i requestAnimationFrame po _buildNewsPanels()',
+        '[FIX]  _newsStackPanels(): wywoluje _newsPositionLegend() po pozycjonowaniu P2 — legenda pozostaje zsynchronizowana przy drag P1',
+        '[FIX]  nextBtn: isWorkable(s) = match|pending|opened — pomija nomatch i wrongcountry. Wczesniej iterowalo przez wszystkie statusy wlacznie z nomatch',
+        '[ARCH] _newsUrlMatchesKeywords usuniety z wireNewsPanels — zastapiony przez _newsUrlRelevant w renderUrlList',
+      ]
+    },
     {
       version: '0.15.1',
       date: '2026-03-28',

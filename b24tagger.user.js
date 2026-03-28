@@ -5595,6 +5595,7 @@ function showOnboarding(onComplete) {
   const PLANNED_FEATURES = [
     { priority: 'ai',     text: 'Dostęp do AI API — tłumaczenie wzmianek na bieżąco, automatyczna klasyfikacja, tryb tworzenia customowych klasyfikatorów (do automatycznej klasyfikacji) i inne...', next: false },
     { priority: 'high',   text: 'Podgląd wzmianki on-hover — najedź na URL w logu żeby zobaczyć treść i autora', next: false },
+    { priority: 'medium', text: 'Integracja z Newsami — przeglądanie i operacje na wzmiankach z sekcji News bezpośrednio z poziomu wtyczki', next: false },
     { priority: 'medium', text: 'Bulk rename tagów — masowa zmiana nazwy tagu w projekcie', next: false },
     { priority: 'medium', text: 'System diagnostyczny: rozszerzenie DIAG_CHECKS o kolejne patterny — zbieranie przykładów i przypadków brzegowych', next: false },
   ];

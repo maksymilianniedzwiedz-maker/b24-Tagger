@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.18.0
+// @version      0.18.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.18.0';
+  const VERSION = '0.18.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5245,17 +5245,25 @@ function showOnboarding(onComplete) {
       /name="date"[^>]+content="(\d{4}-\d{2}-\d{2})/i,
       // itemprop=datePublished
       /datePublished[^"]*"[^>]*content="(\d{4}-\d{2}-\d{2})/i,
+      // og:article:published_time jako meta
+      /property=["']article:published_time["'][^>]+content=["'](\d{4}-\d{2}-\d{2})/i,
+      /content=["'](\d{4}-\d{2}-\d{2})[^"']*["'][^>]+property=["']article:published_time["']/i,
+      // dateCreated (schema.org)
+      /"dateCreated"\s*:\s*"(\d{4}-\d{2}-\d{2})/,
+      // pubdate attribute on time
+      /<time[^>]+pubdate[^>]*datetime=["'](\d{4}-\d{2}-\d{2})/i,
+      // data-date attributes
+      /data-(?:publish|pub|created|article)-?date=["'](\d{4}-\d{2}-\d{2})/i,
       // <time datetime="YYYY-MM-DD
       /<time[^>]+datetime="(\d{4}-\d{2}-\d{2})/i,
-      // Common date patterns in content
-      /(\d{4}-\d{2}-\d{2})/,
+      // Common date patterns in content — celowo pominięte (zbyt szerokie, łapie daty z footerów itp.)
     ];
     for (var i = 0; i < patterns.length; i++) {
       var m = html.match(patterns[i]);
       if (m) {
         var d = m[1];
         // Validate it looks like a real date
-        if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d > '2000-01-01' && d <= _localDateStr()) return d;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d > '2000-01-01' && d <= _localDateStr(new Date())) return d;
       }
     }
     return null;
@@ -6047,7 +6055,8 @@ function showOnboarding(onComplete) {
         try { _dateElPre.focus(); _dateElPre.setSelectionRange(_dateElPre.value.length, _dateElPre.value.length); } catch(e) {}
       }
       if (_dateIconPre) { _dateIconPre.style.display = 'none'; }
-      // Fetch page: detect lang + date (nadpisze prefill jeśli znajdzie pełną datę)
+      // Otwórz okno natychmiast — fetch page info asynchronicznie (nadpisze prefill daty jeśli znajdzie)
+      _newsOpenUrl(entry.url);
       _newsFetchPageInfo(entry.url);
     }
 
@@ -6103,8 +6112,15 @@ function showOnboarding(onComplete) {
         }
       }
 
-      // Dodaj trailing slash jesli brak — unikamy 301 redirect
-      var fetchUrl = url.replace(/\/?(\?|#|$)/, '/$1');
+      // Trailing slash tylko gdy URL nie ma rozszerzenia w ścieżce i nie ma już slash-a
+      var fetchUrl = (function(u) {
+        try {
+          var p = new URL(u).pathname;
+          // Nie dokładaj slash gdy: już jest, ma rozszerzenie, lub jest query/hash-only
+          if (p.endsWith('/') || /\.[a-z]{2,5}$/i.test(p)) return u;
+          return u.replace(/([^/?#])([?#]|$)/, '$1/$2');
+        } catch(e) { return u; }
+      })(url);
 
       GM_xmlhttpRequest({
         method: 'GET',
@@ -6117,10 +6133,9 @@ function showOnboarding(onComplete) {
           if (html.length > 100) {
             _processHtml(html);
           }
-          _newsOpenUrl(url);
         },
-        onerror: function() { _newsOpenUrl(url); },
-        ontimeout: function() { _newsOpenUrl(url); },
+        onerror: function() {},
+        ontimeout: function() {},
       });
     }
 

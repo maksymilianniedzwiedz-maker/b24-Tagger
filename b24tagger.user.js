@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.16.7
+// @version      0.16.8
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.16.7';
+  const VERSION = '0.16.8';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1572,7 +1572,7 @@
         display: flex;
         flex-direction: column;
         transition: box-shadow 0.25s ease, background 0.3s ease, border-color 0.3s ease, color 0.3s ease;
-        animation: b24t-slidein 0.35s cubic-bezier(0.34,1.56,0.64,1) both;
+        /* animation removed — was causing glitch on Plik tab */
       }
       #b24t-panel:hover { box-shadow: var(--b24t-shadow-h); }
       #b24t-panel.b24t-resizing { opacity: 0.97; box-shadow: var(--b24t-shadow-drag); transition: none !important; }
@@ -2759,7 +2759,10 @@
       hideBtn.addEventListener('click', function() {
         panel.style.display = 'none';
         var mainTab = document.getElementById('b24t-main-tab');
-        if (mainTab) mainTab.style.display = 'flex';
+        if (mainTab) {
+          mainTab.style.display = 'flex';
+          mainTab.style.cssText += ';display:flex!important;';
+        }
         lsSet('b24tagger_panel_hidden', true);
       });
     }
@@ -6310,6 +6313,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.16.8",
+      "date": "2026-03-28",
+      "label": "Fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Side tab B24 Tagger: panel wraca po kliknieciu"},
+        {"type": "fix", "text": "Plik tab: usunieta animacja powodujaca glitch"},
+        {"type": "fix", "text": "News: panele niezalezne od Annotators Tab"}
+      ]
+    },
+    {
       "version": "0.16.7",
       "date": "2026-03-28",
       "label": "Fix",
@@ -6394,16 +6408,7 @@ function showOnboarding(onComplete) {
         {"type": "ui", "text": "Feedback: osobne karty Bug Report i Suggestion"}
       ]
     },
-    {
-      "version": "0.15.5",
-      "date": "2026-03-28",
-      "label": "New",
-      "labelColor": "#6c6cff",
-      "changes": [
-        {"type": "new", "text": "Feedback otwiera formularz Google Forms z prefill"}
-      ]
-    },
-  ];;;;;;;
+  ];;;;;;;;
 
   function _fetchChangelog(onDone) {
     const CACHE_KEY = 'b24tagger_cl_cache';
@@ -9987,7 +9992,9 @@ Tej operacji nie można cofnąć.`)) {
         '<span style="writing-mode:vertical-rl;text-orientation:mixed;letter-spacing:.08em;font-size:12px;font-weight:700;">B24 Tagger</span>' +
         '<span style="font-size:17px;line-height:1;">›</span>';
       mainTab.addEventListener('click', function() {
+        mainTab.style.removeProperty('display');
         mainTab.style.display = 'none';
+        panel.style.removeProperty('display');
         panel.style.display = 'flex';
         var pos = lsGet(LS.UI_POS);
         if (pos && pos.left) { panel.style.left = pos.left; panel.style.top = pos.top; }

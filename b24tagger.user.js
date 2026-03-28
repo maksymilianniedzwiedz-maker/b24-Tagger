@@ -4016,6 +4016,7 @@ function showOnboarding(onComplete) {
       left: panel.style.left, top: panel.style.top,
       right: panel.style.right, bottom: panel.style.bottom,
       width: panel.style.width,
+      zIndex: panel.style.zIndex,
     };
     // Ustaw stałą pozycję: prawy-dolny róg z marginesem
     const vw = window.innerWidth;
@@ -4028,7 +4029,16 @@ function showOnboarding(onComplete) {
     panel.style.top    = Math.max(12, Math.round((vh - ph) / 2)) + 'px';
     panel.style.right  = 'auto';
     panel.style.bottom = 'auto';
+    // Obniż z-index panelu — overlay/spotlight/bubble muszą być nad nim
+    panel.style.zIndex = '100';
     panel.setAttribute('data-ob-locked', '1');
+  }
+
+  // Obniż też Annotators Panel jeśli otwarty
+  const annPanel = document.getElementById('b24t-annotator-panel');
+  if (annPanel && annPanel.style.display !== 'none') {
+    panelPosBackup.annZIndex = annPanel.style.zIndex;
+    annPanel.style.zIndex = '99';
   }
 
   // Tworzę overlay + spotlight + bubble — wszystkie na body, nad panelem
@@ -4223,7 +4233,12 @@ function showOnboarding(onComplete) {
         panel.style.right  = panelPosBackup.right;
         panel.style.bottom = panelPosBackup.bottom;
         panel.style.width  = panelPosBackup.width;
+        panel.style.zIndex = panelPosBackup.zIndex;
         panel.removeAttribute('data-ob-locked');
+      }
+      const annPanel = document.getElementById('b24t-annotator-panel');
+      if (annPanel && panelPosBackup.annZIndex !== undefined) {
+        annPanel.style.zIndex = panelPosBackup.annZIndex;
       }
       lsSet(LS.SETUP_DONE, true);
       if (onComplete) onComplete();

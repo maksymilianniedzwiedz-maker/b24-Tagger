@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.15.4
+// @version      0.15.5
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.15.4';
+  const VERSION = '0.15.5';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6123,6 +6123,15 @@ function showOnboarding(onComplete) {
 
   const CHANGELOG = [
     {
+      version: '0.15.5',
+      date: '2026-03-28',
+      label: 'New',
+      labelColor: '#6c6cff',
+      changes: [
+        { type: 'new', text: 'Feedback (Suggestion) otwiera teraz formularz Google Forms z automatycznie wypelnionymi polami: sugestia, wersja skryptu, projekt Brand24.' },
+      ]
+    },
+    {
       version: '0.15.4',
       date: '2026-03-28',
       label: 'New',
@@ -6866,6 +6875,14 @@ function showOnboarding(onComplete) {
 
   // Google Forms — bug report i feedback
   const BUG_FORM_BASE = 'https://docs.google.com/forms/d/e/1FAIpQLSdfddWBtp-0ZiMP5u51vaQmNvIg423MyjOzQdMZb6BEyCe0GA/viewform';
+  const FEEDBACK_FORM_BASE = 'https://docs.google.com/forms/d/e/1FAIpQLSf4K3JMmR8vhFcs4DL14E91GpEd9YNCNm6uS0afbdm7kSBHpg/viewform';
+  const FEEDBACK_FORM_FIELDS = {
+    suggestion: 'entry.1001511860',
+    type:       'entry.2053499490',
+    version:    'entry.1295392049',
+    project:    'entry.1925108405',
+  };
+
   const BUG_FORM_FIELDS = {
     version:   'entry.769760752',
     project:   'entry.668506048',
@@ -6901,6 +6918,16 @@ function showOnboarding(onComplete) {
       fetch(SLACK_WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         .then(function() { onSuccess(); }).catch(function() { onError('fetch'); });
     }
+  }
+
+  function openFeedbackForm(suggestion) {
+    var project = (state.projectName || '') + (state.projectId ? ' (' + state.projectId + ')' : '');
+    var params = [
+      FEEDBACK_FORM_FIELDS.suggestion + '=' + encodeURIComponent(suggestion || ''),
+      FEEDBACK_FORM_FIELDS.version    + '=' + encodeURIComponent(VERSION),
+      FEEDBACK_FORM_FIELDS.project    + '=' + encodeURIComponent(project),
+    ].join('&');
+    window.open(FEEDBACK_FORM_BASE + '?' + params, '_blank');
   }
 
   function openBugReportForm(description) {
@@ -7425,13 +7452,10 @@ function showOnboarding(onComplete) {
           if (statusEl) { statusEl.textContent = '⚠ Wpisz swój pomysł'; statusEl.style.color = '#facc15'; }
           return;
         }
-        if (statusEl) { statusEl.textContent = '→ Wysyłam...'; statusEl.style.color = '#7878aa'; }
-        if (sendBtn) sendBtn.disabled = true;
-        sendSuggestion(ideas, function() {
-          addLog('✓ Suggestion wysłany — dziękujemy!', 'success');
-          if (statusEl) { statusEl.textContent = '✓ Wysłano! Dziękujemy za pomysł.'; statusEl.style.color = '#4ade80'; }
-          setTimeout(function() { closeWnm(); }, 1500);
-        });
+        openFeedbackForm(ideas);
+        addLog('✓ Formularz Feedback otwarty w nowej karcie', 'success');
+        if (statusEl) { statusEl.textContent = '✓ Otwarty formularz. Opisz pomysł i wyślij!'; statusEl.style.color = '#4ade80'; }
+        setTimeout(function() { closeWnm(); }, 2000);
       }
     });
 
@@ -7469,6 +7493,15 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.15.5',
+      date: '2026-03-28',
+      notes: [
+        '[NEW]  openFeedbackForm(suggestion): buduje prefill URL dla Google Forms Feedback. Pola: sugestia (entry.1001511860), typ (entry.2053499490), wersja (entry.1295392049), projekt (entry.1925108405)',
+        '[NEW]  FEEDBACK_FORM_BASE + FEEDBACK_FORM_FIELDS: stale z URL i entry ID formularza Feedback',
+        '[ARCH] Handler Suggestion w modalu wywoluje teraz openFeedbackForm() zamiast sendSuggestion()',
+      ]
+    },
     {
       version: '0.15.4',
       date: '2026-03-28',

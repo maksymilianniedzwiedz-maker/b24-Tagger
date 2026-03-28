@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.15.5
+// @version      0.15.6
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.15.5';
+  const VERSION = '0.15.6';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6123,6 +6123,15 @@ function showOnboarding(onComplete) {
 
   const CHANGELOG = [
     {
+      version: '0.15.6',
+      date: '2026-03-28',
+      label: 'UI',
+      labelColor: '#8080aa',
+      changes: [
+        { type: 'ui', text: 'Karta Feedback przeprojektowana — dwie osobne karty Bug Report i Suggestion z wbudowanymi polami tekstowymi i przyciskami otwierajacymi formularze Google Forms.' },
+      ]
+    },
+    {
       version: '0.15.5',
       date: '2026-03-28',
       label: 'New',
@@ -7313,48 +7322,55 @@ function showOnboarding(onComplete) {
           // Tab: Planowane
           '<div id="b24t-wnm-planned" style="display:none;padding:20px 24px;">' + plannedHtml + '</div>' +
 
-          // Tab: Feedback - dwa tryby: Bug Report i Suggestions
+          // Tab: Feedback - Bug Report i Suggestion przez Google Forms
           '<div id="b24t-wnm-feedback" style="display:none;padding:20px 24px;">' +
 
-            // Przełącznik trybu
-            '<div style="display:flex;gap:6px;margin-bottom:20px;">' +
-              '<button id="b24t-fb-mode-bug" class="b24t-fb-mode-btn" data-mode="bug" ' +
-                'style="flex:1;padding:9px;border:2px solid #f87171;border-radius:8px;background:#f8717118;' +
-                'color:#f87171;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;">🐛 Bug Report</button>' +
-              '<button id="b24t-fb-mode-suggest" class="b24t-fb-mode-btn" data-mode="suggest" ' +
-                'style="flex:1;padding:9px;border:2px solid #2a2a35;border-radius:8px;background:none;' +
-                'color:#4a4a66;font-family:inherit;font-size:12px;cursor:pointer;">💡 Suggestion</button>' +
-            '</div>' +
-
-            // Bug Report panel
-            '<div id="b24t-fb-bug-panel">' +
-              '<div style="font-size:11px;color:#666699;margin-bottom:12px;padding:8px 10px;background:#141419;border-radius:6px;border-left:3px solid #f87171;line-height:1.6;">' +
-                '📊 Do raportu zostanie automatycznie dołączone: wersja, projekt, status sesji, ostatnie 30 wpisów logu oraz crash log (jeśli istnieje).' +
+            // Bug Report card
+            '<div style="border:1px solid #2a1a1a;border-radius:10px;background:#141018;margin-bottom:12px;overflow:hidden;">' +
+              '<div style="padding:14px 16px;border-bottom:1px solid #2a1a1a;display:flex;align-items:center;gap:10px;">' +
+                '<div style="width:30px;height:30px;background:#f8717118;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">🐛</div>' +
+                '<div>' +
+                  '<div style="font-size:13px;font-weight:700;color:#f87171;">Bug Report</div>' +
+                  '<div style="font-size:10px;color:#664444;margin-top:1px;">Wersja, projekt, URL i logi wypełniają się automatycznie</div>' +
+                '</div>' +
               '</div>' +
-              '<div style="font-size:12px;color:#f87171;margin-bottom:6px;font-weight:600;">Opisz problem:</div>' +
-              '<textarea id="b24t-wnm-fb-bugs" placeholder="Co się stało? Kiedy wystąpił błąd? Jakie kroki doprowadziły do problemu?" ' +
-                'style="width:100%;height:100px;background:#141419;border:1px solid #2a2a35;border-radius:6px;color:#c0c0e0;' +
-                'font-family:inherit;font-size:12px;padding:10px;resize:none;box-sizing:border-box;outline:none;line-height:1.5;">' +
-              '</textarea>' +
-            '</div>' +
-
-            // Suggestion panel (hidden by default)
-            '<div id="b24t-fb-suggest-panel" style="display:none;">' +
-              '<div style="font-size:11px;color:#666699;margin-bottom:12px;padding:8px 10px;background:#141419;border-radius:6px;border-left:3px solid #6c6cff;line-height:1.6;">' +
-                '💡 Masz pomysł na nową funkcję lub ulepszenie? Opisz go tutaj — każdy głos się liczy!' +
+              '<div style="padding:12px 16px;">' +
+                '<div style="font-size:11px;color:#886666;margin-bottom:8px;">Opisz problem:</div>' +
+                '<textarea id="b24t-wnm-fb-bugs" placeholder="Co się stało? Kiedy wystąpił błąd? Jakie kroki doprowadziły do problemu?" ' +
+                  'style="width:100%;height:80px;background:#0f0c10;border:1px solid #2a1a1a;border-radius:6px;color:#c0c0e0;' +
+                  'font-family:inherit;font-size:12px;padding:8px 10px;resize:none;box-sizing:border-box;outline:none;line-height:1.5;">' +
+                '</textarea>' +
+                '<button id="b24t-wnm-fb-send-bug" ' +
+                  'style="width:100%;margin-top:8px;background:#f87171;color:#fff;border:none;border-radius:7px;padding:9px;' +
+                  'font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Otwórz formularz Bug Report →</button>' +
               '</div>' +
-              '<div style="font-size:12px;color:#6c6cff;margin-bottom:6px;font-weight:600;">Twój pomysł:</div>' +
-              '<textarea id="b24t-wnm-fb-ideas" placeholder="Jaka funkcja by Ci się przydała? Jak powinno to działać?" ' +
-                'style="width:100%;height:100px;background:#141419;border:1px solid #2a2a35;border-radius:6px;color:#c0c0e0;' +
-                'font-family:inherit;font-size:12px;padding:10px;resize:none;box-sizing:border-box;outline:none;line-height:1.5;">' +
-              '</textarea>' +
             '</div>' +
 
-            '<div id="b24t-wnm-fb-status" style="font-size:12px;min-height:16px;margin:10px 0;"></div>' +
-            '<button id="b24t-wnm-fb-send" ' +
-              'style="width:100%;background:#f87171;color:#fff;border:none;border-radius:8px;padding:10px;' +
-              'font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;letter-spacing:0.02em;">Wyślij Bug Report →</button>' +
-            '<div style="margin-top:22px;padding-top:14px;border-top:1px solid #1c1c2a;text-align:center;">' +
+            // Suggestion card
+            '<div style="border:1px solid #1a1a2a;border-radius:10px;background:#10101a;overflow:hidden;">' +
+              '<div style="padding:14px 16px;border-bottom:1px solid #1a1a2a;display:flex;align-items:center;gap:10px;">' +
+                '<div style="width:30px;height:30px;background:#6c6cff18;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">💡</div>' +
+                '<div>' +
+                  '<div style="font-size:13px;font-weight:700;color:#6c6cff;">Suggestion</div>' +
+                  '<div style="font-size:10px;color:#333366;margin-top:1px;">Pomysł na nową funkcję lub ulepszenie</div>' +
+                '</div>' +
+              '</div>' +
+              '<div style="padding:12px 16px;">' +
+                '<div style="font-size:11px;color:#446688;margin-bottom:8px;">Twój pomysł:</div>' +
+                '<textarea id="b24t-wnm-fb-ideas" placeholder="Jaka funkcja by Ci się przydała? Jak powinna działać?" ' +
+                  'style="width:100%;height:80px;background:#0c0c14;border:1px solid #1a1a2a;border-radius:6px;color:#c0c0e0;' +
+                  'font-family:inherit;font-size:12px;padding:8px 10px;resize:none;box-sizing:border-box;outline:none;line-height:1.5;">' +
+                '</textarea>' +
+                '<button id="b24t-wnm-fb-send-suggest" ' +
+                  'style="width:100%;margin-top:8px;background:#6c6cff;color:#fff;border:none;border-radius:7px;padding:9px;' +
+                  'font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Otwórz formularz Feedback →</button>' +
+              '</div>' +
+            '</div>' +
+
+            '<div id="b24t-wnm-fb-status" style="font-size:11px;min-height:14px;margin-top:10px;text-align:center;"></div>' +
+
+            // Reset onboarding
+            '<div style="margin-top:16px;padding-top:12px;border-top:1px solid #1a1a22;text-align:center;">' +
               '<button id="b24t-wnm-reset-onboarding" style="background:none;border:none;color:#2a2a42;font-size:10px;cursor:pointer;font-family:inherit;letter-spacing:0.03em;padding:4px 10px;border-radius:4px;transition:color 0.2s;">↺ Powtórz onboarding</button>' +
             '</div>' +
           '</div>' +
@@ -7407,56 +7423,32 @@ function showOnboarding(onComplete) {
       });
     });
 
-    // Feedback mode switcher
-    var fbMode = 'bug';
-    modal.querySelectorAll('.b24t-fb-mode-btn').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        fbMode = btn.dataset.mode;
-        modal.querySelectorAll('.b24t-fb-mode-btn').forEach(function(b) {
-          const isBug = b.dataset.mode === 'bug';
-          const isActive = b.dataset.mode === fbMode;
-          b.style.borderColor = isActive ? (isBug ? '#f87171' : '#6c6cff') : '#2a2a35';
-          b.style.background = isActive ? (isBug ? '#f8717118' : '#6c6cff18') : 'none';
-          b.style.color = isActive ? (isBug ? '#f87171' : '#6c6cff') : '#555588';
-          b.style.fontWeight = isActive ? '600' : 'normal';
-        });
-        const bugPanel = document.getElementById('b24t-fb-bug-panel');
-        const sugPanel = document.getElementById('b24t-fb-suggest-panel');
-        const sendBtn = document.getElementById('b24t-wnm-fb-send');
-        if (bugPanel) bugPanel.style.display = fbMode === 'bug' ? 'block' : 'none';
-        if (sugPanel) sugPanel.style.display = fbMode === 'suggest' ? 'block' : 'none';
-        if (sendBtn) {
-          sendBtn.textContent = fbMode === 'bug' ? 'Wyślij Bug Report →' : 'Wyślij Suggestion →';
-          sendBtn.style.background = fbMode === 'bug' ? '#f87171' : '#6c6cff';
-        }
-      });
+    // Bug Report button
+    document.getElementById('b24t-wnm-fb-send-bug')?.addEventListener('click', function() {
+      const statusEl = document.getElementById('b24t-wnm-fb-status');
+      const bugs = document.getElementById('b24t-wnm-fb-bugs')?.value.trim() || '';
+      if (!bugs) {
+        if (statusEl) { statusEl.textContent = '⚠ Opisz problem przed wysłaniem'; statusEl.style.color = '#facc15'; }
+        return;
+      }
+      openBugReportForm(bugs);
+      addLog('✓ Formularz Bug Report otwarty w nowej karcie', 'success');
+      if (statusEl) { statusEl.textContent = '✓ Formularz otwarty z danymi — opisz błąd i wyślij!'; statusEl.style.color = '#4ade80'; }
+      setTimeout(function() { closeWnm(); }, 2000);
     });
 
-    // Send button
-    document.getElementById('b24t-wnm-fb-send')?.addEventListener('click', function() {
+    // Suggestion button
+    document.getElementById('b24t-wnm-fb-send-suggest')?.addEventListener('click', function() {
       const statusEl = document.getElementById('b24t-wnm-fb-status');
-      const sendBtn = document.getElementById('b24t-wnm-fb-send');
-      if (fbMode === 'bug') {
-        const bugs = document.getElementById('b24t-wnm-fb-bugs')?.value.trim() || '';
-        if (!bugs) {
-          if (statusEl) { statusEl.textContent = '⚠ Opisz problem przed wysłaniem'; statusEl.style.color = '#facc15'; }
-          return;
-        }
-        openBugReportForm(bugs);
-        addLog('✓ Formularz Bug Report otwarty w nowej karcie', 'success');
-        if (statusEl) { statusEl.textContent = '✓ Otwarty formularz z wypełnionymi danymi. Opisz błąd i wyślij!'; statusEl.style.color = '#4ade80'; }
-        setTimeout(function() { closeWnm(); }, 2000);
-      } else {
-        const ideas = document.getElementById('b24t-wnm-fb-ideas')?.value.trim() || '';
-        if (!ideas) {
-          if (statusEl) { statusEl.textContent = '⚠ Wpisz swój pomysł'; statusEl.style.color = '#facc15'; }
-          return;
-        }
-        openFeedbackForm(ideas);
-        addLog('✓ Formularz Feedback otwarty w nowej karcie', 'success');
-        if (statusEl) { statusEl.textContent = '✓ Otwarty formularz. Opisz pomysł i wyślij!'; statusEl.style.color = '#4ade80'; }
-        setTimeout(function() { closeWnm(); }, 2000);
+      const ideas = document.getElementById('b24t-wnm-fb-ideas')?.value.trim() || '';
+      if (!ideas) {
+        if (statusEl) { statusEl.textContent = '⚠ Wpisz swój pomysł'; statusEl.style.color = '#facc15'; }
+        return;
       }
+      openFeedbackForm(ideas);
+      addLog('✓ Formularz Feedback otwarty w nowej karcie', 'success');
+      if (statusEl) { statusEl.textContent = '✓ Formularz otwarty — opisz pomysł i wyślij!'; statusEl.style.color = '#4ade80'; }
+      setTimeout(function() { closeWnm(); }, 2000);
     });
 
     // Dev patch notes button
@@ -7493,6 +7485,17 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.15.6',
+      date: '2026-03-28',
+      notes: [
+        '[UI]   Feedback tab: dwie osobne karty (bug + suggestion) zamiast przelacznika trybu. Kazda karta ma wlasne textarea i przycisk.',
+        '[ARCH] Usuniety fbMode state i .b24t-fb-mode-btn — zastapione dwoma osobnymi handlerami: b24t-wnm-fb-send-bug i b24t-wnm-fb-send-suggest',
+        '[UI]   Bug Report card: ciemnoczerwone tlo (#141018), border #2a1a1a, przycisk #f87171',
+        '[UI]   Suggestion card: ciemnoniebieskie tlo (#10101a), border #1a1a2a, przycisk #6c6cff',
+        '[UI]   Reset onboarding button zachowany na dole sekcji Feedback',
+      ]
+    },
     {
       version: '0.15.5',
       date: '2026-03-28',

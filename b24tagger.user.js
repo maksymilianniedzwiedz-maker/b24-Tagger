@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.10.3
+// @version      0.11.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.10.3';
+  const VERSION = '0.11.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1027,12 +1027,25 @@
 
     const div = document.createElement('div');
     div.className = `b24t-log-entry b24t-log-${type}`;
-    div.innerHTML = `<span class="b24t-log-time">${time}</span><span class="b24t-log-msg">${message}</span><span class="b24t-log-elapsed"></span>`;
+    // typ 'diag' — prefiks [DIAG] w #f87171, reszta normalnym kolorem error
+    if (type === 'diag') {
+      const diagMatch = message.match(/^(\[DIAG\]\s*)(.*)/s);
+      if (diagMatch) {
+        div.innerHTML = `<span class="b24t-log-time">${time}</span><span class="b24t-log-msg"><span class="b24t-log-diag-prefix">${diagMatch[1]}</span>${diagMatch[2]}</span><span class="b24t-log-elapsed"></span>`;
+      } else {
+        div.innerHTML = `<span class="b24t-log-time">${time}</span><span class="b24t-log-msg"><span class="b24t-log-diag-prefix">[DIAG] </span>${message}</span><span class="b24t-log-elapsed"></span>`;
+      }
+    } else {
+      div.innerHTML = `<span class="b24t-log-time">${time}</span><span class="b24t-log-msg">${message}</span><span class="b24t-log-elapsed"></span>`;
+    }
     log.appendChild(div);
     log.scrollTop = log.scrollHeight;
 
     // Keep max 200 entries in DOM
     while (log.children.length > 200) log.removeChild(log.firstChild);
+
+    // Live-update log panel jeśli otwarty
+    _syncLogPanel(entry);
   }
 
   // Build comprehensive bug report data
@@ -1822,8 +1835,12 @@
       .b24t-log-error   .b24t-log-msg { color: var(--b24t-err); font-weight: 500; }
       .b24t-log-warn    .b24t-log-msg { color: var(--b24t-warn); }
       .b24t-log-info    .b24t-log-msg { color: var(--b24t-text-muted); }
+      .b24t-log-diag    .b24t-log-msg { color: var(--b24t-err); }
+      .b24t-log-diag    .b24t-log-diag-prefix { color: #f87171; font-weight: 700; }
       .b24t-log-clear { font-size: 9px; color: var(--b24t-text-faint); background: none; border: none; cursor: pointer; float: right; transition: color 0.15s; }
       .b24t-log-clear:hover { color: var(--b24t-primary); }
+      .b24t-log-expand { font-size: 9px; color: var(--b24t-text-faint); background: none; border: none; cursor: pointer; float: right; margin-right: 4px; transition: color 0.15s; }
+      .b24t-log-expand:hover { color: var(--b24t-primary); }
 
       /* ── ACTION BAR ── */
       #b24t-actions {
@@ -2415,6 +2432,7 @@
           <div class="b24t-section-label">
             Log
             <button class="b24t-log-clear" id="b24t-log-clear">wyczyść</button>
+            <button class="b24t-log-expand" id="b24t-log-expand" title="Pełny widok loga">⛶</button>
           </div>
           <div id="b24t-log"></div>
         </div>
@@ -2763,6 +2781,11 @@
     panel.querySelector('#b24t-log-clear').addEventListener('click', () => {
       document.getElementById('b24t-log').innerHTML = '';
       state.logs = [];
+    });
+
+    // Log expand — pełnoekranowy panel loga
+    panel.querySelector('#b24t-log-expand').addEventListener('click', () => {
+      openLogPanel();
     });
 
     // Help
@@ -4749,6 +4772,17 @@ function showOnboarding(onComplete) {
 
   const CHANGELOG = [
     {
+      version: '0.11.0',
+      date: '2026-03-28',
+      label: 'Nowość',
+      labelColor: '#6c6cff',
+      changes: [
+        { type: 'new', text: 'Rozbudowany log — więcej wpisów o procesach:\\n* zakres dat, cache hit/miss, prefetch w tle\\n* per-projekt postęp w Overall Stats i zakładce Tagi\\n* komunikaty o błędach API' },
+        { type: 'new', text: 'Pełnoekranowy widok loga — przycisk ⛶ przy sekcji Log otwiera panel 720×520px z filtrami, kopiowaniem i eksportem CSV' },
+        { type: 'new', text: 'System diagnostyczny — automatyczne wykrywanie anomalii (brak nazw projektów, błędne daty, nieznane projekty w grupach, błędy API) widoczne w logu jako [DIAG]' },
+      ]
+    },
+    {
       version: '0.10.3',
       date: '2026-03-28',
       label: 'Fix',
@@ -5394,6 +5428,7 @@ function showOnboarding(onComplete) {
     { priority: 'ai',     text: 'Dostęp do AI API — tłumaczenie wzmianek na bieżąco, automatyczna klasyfikacja, tryb tworzenia customowych klasyfikatorów (do automatycznej klasyfikacji) i inne...', next: false },
     { priority: 'high',   text: 'Podgląd wzmianki on-hover — najedź na URL w logu żeby zobaczyć treść i autora', next: false },
     { priority: 'medium', text: 'Bulk rename tagów — masowa zmiana nazwy tagu w projekcie', next: false },
+    { priority: 'medium', text: 'System diagnostyczny: rozszerzenie DIAG_CHECKS o kolejne patterny — zbieranie przykładów i przypadków brzegowych', next: false },
   ];
 
   function sendToSlack(payload, onSuccess, onError) {
@@ -5969,6 +6004,33 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.11.0',
+      date: '2026-03-28',
+      notes: [
+        '[NEW]  addLog(): obsługa typu "diag" — prefiks [DIAG] renderowany w #f87171, reszta kolorem error; typ dodany do CSS (.b24t-log-diag)',
+        '[NEW]  addLog(): wywołuje _syncLogPanel(entry) przy każdym wpisie — live-update pełnoekranowego panelu loga gdy jest otwarty',
+        '[NEW]  buildLogPanel() / openLogPanel() — floating panel #b24t-log-panel (720×520px, fixed centered, resizable); wypełniony z state.logs',
+        '[NEW]  buildLogPanel(): filtry per-typ (info/success/warn/error/diag), przycisk "Kopiuj do schowka", przycisk "Eksportuj CSV" (→ exportReport())',
+        '[NEW]  buildLogPanel(): drag przez header, zamykanie przez × lub Escape',
+        '[NEW]  _syncLogPanel(entry): appends entry do #b24t-logp-body + scroll + _applyLogPanelFilter()',
+        '[NEW]  _appendLogPanelEntry() / _applyLogPanelFilter() / _logpFilterChk() — helpery panelu loga',
+        '[NEW]  Przycisk ⛶ (#b24t-log-expand) w sekcji Log → openLogPanel(); CSS .b24t-log-expand',
+        '[NEW]  DIAG_CHECKS: tablica 6 checków diagnostycznych: project_names, dates_range, token, known_projects, group_projects, cache_group_mismatch',
+        '[NEW]  runDiagChecks(checkIds?) — iteruje DIAG_CHECKS, wywołuje check(), łapie błędy; checkIds=null → wszystkie',
+        '[NEW]  startBgPrefetch(): runDiagChecks() po pierwszym prefetch (setTimeout 500ms); log [DIAG] gdy token niedostępny po 15s',
+        '[LOG]  loadAnnotatorProject(): logi start/sukces (ALL/REQ/DEL/pct)/błąd',
+        '[LOG]  loadAnnotatorTagStats(): log cache hit z wiekiem, log start z liczbą projektów, log sukcesu',
+        '[LOG]  _bgFetchTagstats(): log start prefetch',
+        '[LOG]  _bgFetchAllProjects(): log start prefetch + sukces z liczbą projektów; [DIAG] przy błędzie getMentions',
+        '[LOG]  _fetchOverallStats(): log start + per-projekt ALL/REQ/DEL; [DIAG] przy nieznanym projekcie lub błędzie API',
+        '[LOG]  loadOverallStats(): log cache hit z wiekiem',
+        '[LOG]  getAnnotatorDates(): log zakresu dat (📅)',
+        '[LOG]  groupSel change (cross-delete): log wybranego zakresu',
+        '[LOG]  overall-group-sel change: log wybranej grupy',
+        '[ARCH] DIAG_CHECKS rozszerzalne — dodanie nowego checku = push do tablicy, brak zmian w reszcie kodu',
+      ]
+    },
     {
       version: '0.10.3',
       date: '2026-03-28',
@@ -7221,6 +7283,7 @@ function showOnboarding(onComplete) {
     var projects = getKnownProjects();
     if (!projects.length) return;
     var dates = getAnnotatorDates();
+    addLog('⟳ [BG] prefetch tagstats (' + projects.length + ' projektów)...', 'info');
     var results = [];
     for (var i = 0; i < projects.length; i++) {
       var p = projects[i];
@@ -7249,6 +7312,8 @@ function showOnboarding(onComplete) {
     var dates = getAnnotatorDates();
     var dateFrom = dates.dateFrom;
     var dateTo   = dates.dateTo;
+    var tagName = Object.entries(state.tags || {}).find(function(e){ return e[1] === tagId; })?.[0] || String(tagId);
+    addLog('⟳ [BG] prefetch allProjects[' + tagName + '] (' + projects.length + ' projektów)...', 'info');
     var results = [];
     for (var i = 0; i < projects.length; i++) {
       var p = projects[i];
@@ -7263,9 +7328,14 @@ function showOnboarding(onComplete) {
         }
       } catch(e) {
         results.push({ p: p, count: -1, error: e.message });
+        addLog('✕ [DIAG] getMentions(' + p.id + '/' + tagName + '): ' + e.message, 'diag');
       }
     }
     bgCache.allProjects[tagId] = { results: results, ts: Date.now() };
+    var withData = results.filter(function(r){ return r.count > 0; });
+    if (withData.length) {
+      addLog('✓ [BG] allProjects[' + tagName + ']: ' + withData.length + ' projektów z tagiem', 'success');
+    }
     return bgCache.allProjects[tagId];
   }
 
@@ -7281,7 +7351,10 @@ function showOnboarding(onComplete) {
         setTimeout(function() { clearInterval(check); resolve(); }, 15000);
       });
     }
-    if (!state.tokenHeaders) return;
+    if (!state.tokenHeaders) {
+      addLog('[DIAG] startBgPrefetch: token niedostępny po 15s — prefetch przerwany', 'diag');
+      return;
+    }
 
     // Pierwsze ładowanie w tle
     try { await _bgFetchTagstats(); } catch(e) {}
@@ -7291,6 +7364,9 @@ function showOnboarding(onComplete) {
       var tagId = parseInt(document.getElementById('b24t-del-tag')?.value);
       if (tagId) await _bgFetchAllProjects(tagId);
     } catch(e) {}
+
+    // Diagnoza startowa — po pierwszym prefetch
+    setTimeout(function() { runDiagChecks(); }, 500);
 
     // Cykliczne odświeżanie co BG_CACHE_TTL
     setInterval(async function() {
@@ -7513,6 +7589,7 @@ function showOnboarding(onComplete) {
       label = now.toLocaleString('pl-PL', { month: 'long', year: 'numeric' });
       daysLeft = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - day;
     }
+    addLog('📅 Zakres: ' + label + ' (' + dateFrom + ' → ' + dateTo + ')', 'info');
     return { dateFrom, dateTo, label, daysLeft, day };
   }
 
@@ -7520,8 +7597,10 @@ function showOnboarding(onComplete) {
     var el = document.getElementById('b24t-ann-project-content');
     if (!el) return;
     if (!state.tokenHeaders || !state.projectId) {
+      addLog('⚠ [zakładka Projekt] token lub projekt nie gotowy', 'warn');
       el.innerHTML = '<div style="color:#f87171;font-size:11px;">⚠ Token lub projekt nie gotowy — odśwież stronę</div>'; return;
     }
+    addLog('→ [zakładka Projekt] ' + (state.projectName || 'projekt') + ': pobieranie danych...', 'info');
     el.innerHTML = '<div style="color:var(--b24t-text-faint);font-size:11px;text-align:center;padding:8px 0;">↻ Pobieranie...</div>';
     try {
       var dates = getAnnotatorDates();
@@ -7556,8 +7635,10 @@ function showOnboarding(onComplete) {
       var tagged = total - untagged;
       var pct = total > 0 ? Math.round((tagged/total)*100) : 0;
       annotatorData.project = { total, untagged, tagged, reqVer, toDelete, pct, dates };
+      addLog('✓ [zakładka Projekt] ' + (state.projectName || 'projekt') + ': ALL:' + total + ' REQ:' + reqVer + ' DEL:' + toDelete + ' (' + pct + '% otagowane)', 'success');
       renderAnnotatorProject(el, annotatorData.project);
     } catch(e) {
+      addLog('✕ [zakładka Projekt] błąd: ' + e.message, 'error');
       el.innerHTML = '<div style="color:#f87171;font-size:11px;">⚠ ' + e.message + '</div>';
     }
   }
@@ -7589,12 +7670,21 @@ function showOnboarding(onComplete) {
   async function loadAnnotatorTagStats() {
     var el = document.getElementById('b24t-ann-tagstats-content');
     if (!el) return;
-    if (!state.tokenHeaders) { el.innerHTML = '<div style="color:#f87171;font-size:11px;">⚠ Token nie gotowy</div>'; return; }
+    if (!state.tokenHeaders) {
+      addLog('⚠ [zakładka Tagi] token nie gotowy', 'warn');
+      el.innerHTML = '<div style="color:#f87171;font-size:11px;">⚠ Token nie gotowy</div>'; return;
+    }
     var projects = getKnownProjects();
-    if (!projects.length) { el.innerHTML = '<div style="font-size:11px;color:var(--b24t-text-faint);">Brak projektów. Odwiedź każdy projekt raz.</div>'; return; }
+    if (!projects.length) {
+      addLog('⚠ [zakładka Tagi] 0 projektów — odwiedź projekty z włączoną wtyczką', 'warn');
+      el.innerHTML = '<div style="font-size:11px;color:var(--b24t-text-faint);">Brak projektów. Odwiedź każdy projekt raz.</div>'; return;
+    }
 
     // ── Jeśli cache gorący — renderuj od razu bez spinnera ──
     if (_bgCacheFresh(bgCache.tagstats)) {
+      var age = Math.round((Date.now() - bgCache.tagstats.ts) / 1000);
+      var ageStr = age < 60 ? age + 's' : Math.round(age/60) + 'm ' + (age%60) + 's';
+      addLog('[CACHE] tagstats: gorący (' + ageStr + ' temu), renderuję od razu', 'info');
       annotatorData.tagstats = bgCache.tagstats;
       renderAnnotatorTagStats(el, bgCache.tagstats);
       // Cichy background refresh — nie resetuj DOM
@@ -7603,6 +7693,8 @@ function showOnboarding(onComplete) {
       }).catch(function(){});
       return;
     }
+
+    addLog('→ [zakładka Tagi] pobieranie danych (' + projects.length + ' projektów)...', 'info');
 
     // ── Cache zimny — pokaż spinner, pobierz, renderuj ──
     var dates = getAnnotatorDates();
@@ -7638,6 +7730,7 @@ function showOnboarding(onComplete) {
 
     bgCache.tagstats = { results: results, dates: dates, ts: Date.now() };
     annotatorData.tagstats = bgCache.tagstats;
+    addLog('✓ [zakładka Tagi] załadowano dane (' + projects.length + ' projektów, ' + results.length + ' z tagami)', 'success');
     renderAnnotatorTagStats(el, bgCache.tagstats);
   }
 
@@ -7924,7 +8017,276 @@ function showOnboarding(onComplete) {
   // QUICK DELETE TAB
   // ───────────────────────────────────────────
 
+  // ─── LOG PANEL (pełnoekranowy widok loga) ─────────────────────────
+
+  // Dodaje wpis do panelu loga jeśli jest otwarty (wywoływane z addLog)
+  function _syncLogPanel(entry) {
+    var panel = document.getElementById('b24t-log-panel');
+    if (!panel || panel.style.display === 'none') return;
+    _appendLogPanelEntry(panel, entry);
+    var body = document.getElementById('b24t-logp-body');
+    if (body) body.scrollTop = body.scrollHeight;
+    _applyLogPanelFilter(panel);
+  }
+
+  function _appendLogPanelEntry(panel, entry) {
+    var body = document.getElementById('b24t-logp-body');
+    if (!body) return;
+    var colors = { info: '#9ca3af', success: '#4ade80', warn: '#fbbf24', error: '#f87171', diag: '#f87171' };
+    var msgColor = colors[entry.type] || '#9ca3af';
+    var msgHtml;
+    if (entry.type === 'diag') {
+      var dm = entry.message.match(/^(\[DIAG\]\s*)(.*)/s);
+      if (dm) {
+        msgHtml = '<span style="color:#f87171;font-weight:700;">' + dm[1] + '</span>' + dm[2];
+      } else {
+        msgHtml = '<span style="color:#f87171;font-weight:700;">[DIAG] </span>' + entry.message;
+      }
+    } else {
+      msgHtml = entry.message;
+    }
+    var row = document.createElement('div');
+    row.dataset.logType = entry.type;
+    row.style.cssText = 'display:flex;gap:8px;padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px;line-height:1.5;';
+    row.innerHTML =
+      '<span style="color:#6b7280;flex-shrink:0;font-size:11px;">' + entry.time + '</span>' +
+      '<span style="color:#4b5563;flex-shrink:0;font-size:10px;padding-top:2px;min-width:42px;">[' + entry.type.toUpperCase() + ']</span>' +
+      '<span style="color:' + msgColor + ';flex:1;word-break:break-word;">' + msgHtml + '</span>';
+    body.appendChild(row);
+  }
+
+  function _applyLogPanelFilter(panel) {
+    if (!panel) return;
+    var body = document.getElementById('b24t-logp-body');
+    if (!body) return;
+    var active = {};
+    panel.querySelectorAll('.b24t-logp-filter').forEach(function(cb) {
+      active[cb.dataset.type] = cb.checked;
+    });
+    Array.from(body.children).forEach(function(row) {
+      var t = row.dataset.logType;
+      row.style.display = (active[t] !== false) ? '' : 'none';
+    });
+  }
+
+  function buildLogPanel() {
+    if (document.getElementById('b24t-log-panel')) return;
+    var el = document.createElement('div');
+    el.id = 'b24t-log-panel';
+    el.style.cssText = [
+      'position:fixed', 'top:50%', 'left:50%', 'transform:translate(-50%,-50%)',
+      'width:720px', 'max-width:95vw', 'height:520px', 'max-height:90vh',
+      'background:#1a1a2e', 'border:1px solid #2d2d4e',
+      'border-radius:12px', 'box-shadow:0 16px 48px rgba(0,0,0,0.6)',
+      'z-index:2147483647', 'display:none', 'flex-direction:column',
+      'font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif',
+      'overflow:hidden', 'resize:both',
+    ].join(';');
+
+    el.innerHTML =
+      // Header z gradientem
+      '<div id="b24t-logp-header" style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:linear-gradient(135deg,#1e1e3f,#16213e);flex-shrink:0;cursor:move;user-select:none;border-bottom:1px solid #2d2d4e;">' +
+        '<div style="display:flex;align-items:center;gap:8px;">' +
+          '<span style="font-size:14px;font-weight:700;color:#e2e8f0;">📋 Log sesji</span>' +
+          '<span id="b24t-logp-count" style="font-size:10px;color:#6b7280;background:#0f0f1e;border-radius:99px;padding:1px 7px;"></span>' +
+        '</div>' +
+        '<button id="b24t-logp-close" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);color:#e2e8f0;border-radius:5px;padding:2px 10px;cursor:pointer;font-size:15px;line-height:1;">×</button>' +
+      '</div>' +
+      // Toolbar — filtry + przyciski
+      '<div style="display:flex;align-items:center;gap:8px;padding:8px 16px;background:#13131f;border-bottom:1px solid #252540;flex-shrink:0;flex-wrap:wrap;">' +
+        '<span style="font-size:10px;color:#6b7280;margin-right:2px;">Filtr:</span>' +
+        _logpFilterChk('info',    '#9ca3af', 'info')    +
+        _logpFilterChk('success', '#4ade80', 'success') +
+        _logpFilterChk('warn',    '#fbbf24', 'warn')    +
+        _logpFilterChk('error',   '#f87171', 'error')   +
+        _logpFilterChk('diag',    '#f87171', 'diag')    +
+        '<div style="flex:1;"></div>' +
+        '<button id="b24t-logp-copy" style="background:#252540;border:1px solid #3d3d6b;color:#c4c4e0;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;">📋 Kopiuj</button>' +
+        '<button id="b24t-logp-csv" style="background:#252540;border:1px solid #3d3d6b;color:#c4c4e0;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;">⬇ CSV</button>' +
+      '</div>' +
+      // Treść loga
+      '<div id="b24t-logp-body" style="flex:1;overflow-y:auto;padding:8px 16px;background:#0f0f1e;">' +
+      '</div>';
+
+    document.body.appendChild(el);
+
+    // Wypełnij istniejącymi wpisami
+    (state.logs || []).forEach(function(entry) { _appendLogPanelEntry(el, entry); });
+    var countEl = el.querySelector('#b24t-logp-count');
+    if (countEl) countEl.textContent = (state.logs || []).length + ' wpisów';
+
+    // Event: zamknij
+    el.querySelector('#b24t-logp-close').addEventListener('click', function() {
+      el.style.display = 'none';
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && el.style.display !== 'none') { el.style.display = 'none'; e.stopPropagation(); }
+    });
+
+    // Event: filtry
+    el.querySelectorAll('.b24t-logp-filter').forEach(function(cb) {
+      cb.addEventListener('change', function() { _applyLogPanelFilter(el); });
+    });
+
+    // Event: kopiuj
+    el.querySelector('#b24t-logp-copy').addEventListener('click', function() {
+      var text = (state.logs || []).map(function(l) {
+        return '[' + l.time + '] [' + l.type.toUpperCase() + '] ' + l.message;
+      }).join('\n');
+      navigator.clipboard.writeText(text).then(function() {
+        var btn = el.querySelector('#b24t-logp-copy');
+        if (btn) { btn.textContent = '✓ Skopiowano'; setTimeout(function() { btn.textContent = '📋 Kopiuj'; }, 1500); }
+      }).catch(function() {});
+    });
+
+    // Event: eksport CSV
+    el.querySelector('#b24t-logp-csv').addEventListener('click', function() {
+      exportReport();
+    });
+
+    // Drag
+    var hdr = el.querySelector('#b24t-logp-header');
+    var dragging = false, sx, sy, ex, ey;
+    hdr.addEventListener('mousedown', function(e) {
+      if (e.target.id === 'b24t-logp-close') return;
+      dragging = true;
+      var r = el.getBoundingClientRect();
+      ex = r.left; ey = r.top;
+      sx = e.clientX; sy = e.clientY;
+      el.style.transform = 'none';
+      el.style.left = ex + 'px'; el.style.top = ey + 'px';
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', function(e) {
+      if (!dragging) return;
+      el.style.left = (ex + e.clientX - sx) + 'px';
+      el.style.top  = (ey + e.clientY - sy) + 'px';
+    });
+    document.addEventListener('mouseup', function() { dragging = false; });
+  }
+
+  function _logpFilterChk(type, color, label) {
+    return '<label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:11px;color:' + color + ';">' +
+      '<input type="checkbox" class="b24t-logp-filter" data-type="' + type + '" checked style="accent-color:' + color + ';cursor:pointer;">' +
+      label + '</label>';
+  }
+
+  function openLogPanel() {
+    buildLogPanel();
+    var el = document.getElementById('b24t-log-panel');
+    if (!el) return;
+    // Odśwież zawartość
+    var body = el.querySelector('#b24t-logp-body');
+    if (body) {
+      body.innerHTML = '';
+      (state.logs || []).forEach(function(entry) { _appendLogPanelEntry(el, entry); });
+      body.scrollTop = body.scrollHeight;
+    }
+    var countEl = el.querySelector('#b24t-logp-count');
+    if (countEl) countEl.textContent = (state.logs || []).length + ' wpisów';
+    el.style.display = 'flex';
+    el.style.left = '50%'; el.style.top = '50%';
+    el.style.transform = 'translate(-50%,-50%)';
+    _applyLogPanelFilter(el);
+  }
+
+  // ─── SYSTEM DIAGNOSTYCZNY ─────────────────────────────────────────
+
+  var DIAG_CHECKS = [
+    {
+      id: 'project_names',
+      name: 'Nazwy projektów',
+      check: function() {
+        var projects = lsGet(LS.PROJECTS, {});
+        Object.entries(projects).forEach(function(entry) {
+          var pid = parseInt(entry[0]);
+          var resolved = _pnResolve(pid);
+          if (/^Projekt\s+\d+$/.test(resolved) || /^ID:\d+$/.test(resolved)) {
+            addLog('[DIAG] Projekt ID:' + pid + ' — brak nazwy w PROJECT_NAMES (odwiedź stronę projektu)', 'diag');
+          }
+        });
+      }
+    },
+    {
+      id: 'dates_range',
+      name: 'Zakres dat',
+      check: function() {
+        var dates = getAnnotatorDates();
+        if (!dates) return;
+        var from = new Date(dates.dateFrom), to = new Date(dates.dateTo);
+        if (from > to) {
+          addLog('[DIAG] Daty podejrzane: dateFrom > dateTo (' + dates.dateFrom + ' → ' + dates.dateTo + ')', 'diag');
+        }
+        var threeMonthsAgo = new Date(); threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+        if (from < threeMonthsAgo) {
+          addLog('[DIAG] Daty podejrzane: dateFrom sprzed 3+ miesięcy (' + dates.dateFrom + ')', 'diag');
+        }
+      }
+    },
+    {
+      id: 'token',
+      name: 'Token',
+      check: function() {
+        // Sprawdzamy tylko jeśli jesteśmy na stronie projektu i token powinien być gotowy
+        if (!state.projectId) return;
+        if (!state.tokenHeaders) {
+          addLog('[DIAG] Brak tokenu — operacje API będą przerywane', 'diag');
+        }
+      }
+    },
+    {
+      id: 'known_projects',
+      name: 'Znane projekty',
+      check: function() {
+        var projects = lsGet(LS.PROJECTS, {});
+        if (!Object.keys(projects).length) {
+          addLog('[DIAG] getKnownProjects: 0 projektów — czy odwiedziłeś projekty z włączoną wtyczką?', 'diag');
+        }
+      }
+    },
+    {
+      id: 'group_projects',
+      name: 'Projekty w grupach',
+      check: function() {
+        var groups = getGroups();
+        var projects = lsGet(LS.PROJECTS, {});
+        var knownIds = Object.keys(projects).map(Number);
+        groups.forEach(function(g) {
+          (g.projectIds || []).forEach(function(pid) {
+            if (!knownIds.includes(pid)) {
+              addLog('[DIAG] Grupa "' + g.name + '": projekt ID:' + pid + ' nieznany (brak w LS.PROJECTS)', 'diag');
+            }
+          });
+        });
+      }
+    },
+    {
+      id: 'cache_group_mismatch',
+      name: 'Cache: zgodność grupy',
+      check: function() {
+        if (!bgCache.overallStats) return;
+        var cfg = getStatsConfig();
+        if (cfg.selectedGroupId && bgCache.overallStats.groupId !== cfg.selectedGroupId) {
+          addLog('[DIAG] Cache: overallStats dla innej grupy — wymagane odświeżenie', 'diag');
+        }
+      }
+    },
+  ];
+
+  function runDiagChecks(checkIds) {
+    // checkIds = null → wszystkie; lub tablica ID do uruchomienia
+    var toRun = checkIds
+      ? DIAG_CHECKS.filter(function(c) { return checkIds.includes(c.id); })
+      : DIAG_CHECKS;
+    toRun.forEach(function(c) {
+      try { c.check(); } catch(e) {
+        addLog('[DIAG] Błąd check "' + c.name + '": ' + e.message, 'diag');
+      }
+    });
+  }
+
   // ─── ALL-PROJECTS DELETE SIDE PANEL ───────────────────────────────
+
   // Wysuwa się z prawej krawędzi przy zaznaczeniu "Wszystkie projekty"
   // Oblicz pozycję bocznego panelu na podstawie aktualnej pozycji głównego panelu
   function _positionXProjectPanel(el) {
@@ -8025,6 +8387,8 @@ function showOnboarding(onComplete) {
           groupSel.appendChild(opt);
         });
         groupSel.addEventListener('change', function() {
+          var gName = groupSel.options[groupSel.selectedIndex]?.text || 'wszystkie projekty';
+          addLog('🗂 [Cross-delete] wybrano zakres: ' + gName, 'info');
           // Po zmianie grupy wymuś odświeżenie listy projektów
           bgCache.allProjects = {};
           refreshAllProjectsPanel();
@@ -8304,11 +8668,15 @@ To jest NIEODWRACALNE.`)) return;
     var dates = getAnnotatorDates();
     var dateFrom = dates.dateFrom;
     var dateTo   = dates.dateTo;
+    addLog('→ [Overall] ' + group.name + ': pobieranie ' + group.projectIds.length + ' projektów (' + dateFrom + ' → ' + dateTo + ')...', 'info');
     var results = [];
     for (var i = 0; i < group.projectIds.length; i++) {
       var pid = group.projectIds[i];
       var pData = projects[pid];
-      if (!pData) { results.push({ pid: pid, name: 'ID:' + pid, error: 'projekt nieznany' }); continue; }
+      if (!pData) {
+        addLog('[DIAG] _fetchOverallStats: projekt ID:' + pid + ' nieznany w LS.PROJECTS', 'diag');
+        results.push({ pid: pid, name: 'ID:' + pid, error: 'projekt nieznany' }); continue;
+      }
       var name = _pnResolve(pid);
       var tagIds   = pData.tagIds || {};
       // Szukamy reqVer i toDel w tagIds map
@@ -8337,7 +8705,9 @@ To jest NIEODWRACALNE.`)) return;
           toDelete: counts[3].count,
           dateFrom: dateFrom, dateTo: dateTo,
         });
+        addLog('✓ [Overall] ' + name + ': ALL:' + counts[0].count + ' REQ:' + counts[2].count + ' DEL:' + counts[3].count, 'success');
       } catch(e) {
+        addLog('✕ [DIAG] getMentions(' + pid + '): ' + e.message, 'diag');
         results.push({ pid: pid, name: name, error: e.message });
       }
     }
@@ -8386,6 +8756,8 @@ To jest NIEODWRACALNE.`)) return;
     var selEl = el.querySelector('#b24t-overall-group-sel');
     selEl.addEventListener('change', function() {
       var gid = selEl.value;
+      var gName = selEl.options[selEl.selectedIndex]?.text || '';
+      if (gid) addLog('🗂 [Grupy] wybrano grupę "' + gName.replace(/\s*\(\d+.*$/, '') + '" w Overall Stats', 'info');
       var cfg = getStatsConfig();
       cfg.selectedGroupId = gid || null;
       saveStatsConfig(cfg);
@@ -8410,6 +8782,9 @@ To jest NIEODWRACALNE.`)) return;
     var dataEl = el.querySelector('#b24t-overall-data');
     if (!dataEl) return;
     if (_bgCacheFresh(bgCache.overallStats) && bgCache.overallStats.groupId === group.id) {
+      var age = Math.round((Date.now() - bgCache.overallStats.ts) / 1000);
+      var ageStr = age < 60 ? age + 's' : Math.round(age/60) + 'm ' + (age%60) + 's';
+      addLog('[CACHE] overallStats: gorący (' + ageStr + ' temu), renderuję od razu', 'info');
       renderOverallStatsData(dataEl, bgCache.overallStats.results, group, bgCache.overallStats);
       _bgFetchOverallStats(group).then(function(fresh) {
         if (fresh && dataEl.isConnected) renderOverallStatsData(dataEl, fresh.results, group, fresh);

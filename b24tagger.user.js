@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.15.0
+// @version      0.15.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.15.0';
+  const VERSION = '0.15.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5086,17 +5086,10 @@ function showOnboarding(onComplete) {
 
   // ── CMS DOMAIN CHECK ──
   function _newsCmsStatus() {
-    // Returns: { logged: bool, domain: 'com'|'pl'|null }
+    // Returns domain only — CMS tag availability is checked via state.tags in _newsCheckTagDodane()
     var host = window.location.hostname;
     var domain = host.indexOf('brand24.com') !== -1 ? 'com' : host.indexOf('brand24.pl') !== -1 ? 'pl' : null;
-    // Check if CMS-only fields exist (author_url input visible to CMS users)
-    var cmsIndicator = document.querySelector('[name="author_url"], .cms-user-only, [data-cms-user]');
-    // Also check for the "dodane" tag in tags list
-    var tagEls = document.querySelectorAll('[data-tag-id], .tag-item');
-    var hasDodane = Array.from(tagEls).some(function(el) {
-      return (el.textContent || el.getAttribute('data-tag-name') || '').toLowerCase().indexOf('dodane') !== -1;
-    });
-    return { domain: domain, hasCmsIndicator: !!cmsIndicator, hasDodane: hasDodane };
+    return { domain: domain };
   }
 
   // Try to detect article publish date from fetched HTML
@@ -5154,6 +5147,8 @@ function showOnboarding(onComplete) {
       });
       newsState.panelsOpen = true;
       if (!newsState.wired) { _wireNewsPanels(); newsState.wired = true; }
+      // Re-stack import below list
+      requestAnimationFrame(function() { _newsStackPanels(); });
       return;
     }
     _buildNewsPanels();
@@ -5232,32 +5227,78 @@ function showOnboarding(onComplete) {
   function _buildNewsPanels() {
     var t = _newsThemeVars();
     var annPanel = document.getElementById('b24t-annotator-panel');
-    var baseRight = annPanel ? (window.innerWidth - annPanel.getBoundingClientRect().left + 10) : 450;
-    var baseTop = 80;
+    var annRect = annPanel ? annPanel.getBoundingClientRect() : null;
+    // Right-edge of Annotators Tab panel + gap
+    var baseRight = annRect ? (window.innerWidth - annRect.left + 10) : 450;
+    var PANEL_W = 360;
+    var GAP = 10;
+    var topList   = 80;
+    var topImport = null; // will be set after list renders — use estimate
 
-    // ─── PANEL 1: Import + Keywords ───
-    var p1 = _newsPanelBase('b24t-news-p1', 340, baseTop, baseRight + 0, 2147483632);
+    // ─── PANEL 1: Lista URLi (top of left column) ───
+    var p1 = _newsPanelBase('b24t-news-p1', PANEL_W, topList, baseRight, 2147483632);
 
-    var hdr1 = _newsPanelHeader('📥 Import URLi', closeNewsPanels,
+    var hdr1 = _newsPanelHeader('📋 Lista URLi', closeNewsPanels,
       '<button id="b24t-news-langmap-btn" title="Mapa języków" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;margin-right:6px;">⚙ Języki</button>'
     );
-    // make header draggable for p1
     _newsDraggable(hdr1, p1);
 
     var body1 = document.createElement('div');
-    body1.style.cssText = 'padding:12px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;flex:1;min-height:0;';
+    body1.style.cssText = 'display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;max-height:42vh;';
     body1.innerHTML = [
-      // Paste area with instructive label
+      // Progress bar
+      '<div id="b24t-news-progress-wrap" style="display:none;padding:8px 12px 0;flex-shrink:0;">',
+        '<div style="display:flex;justify-content:space-between;font-size:10px;color:' + t.textMuted + ';margin-bottom:4px;">',
+          '<span>Postęp sesji</span>',
+          '<span id="b24t-news-progress-label">0 / 0</span>',
+        '</div>',
+        '<div style="height:4px;border-radius:2px;background:' + t.bgDeep + ';overflow:hidden;">',
+          '<div id="b24t-news-progress-bar" style="height:4px;background:#6366f1;width:0%;transition:width 0.4s ease;border-radius:2px;"></div>',
+        '</div>',
+      '</div>',
+      // List
+      '<div id="b24t-news-url-list" style="flex:1;overflow-y:auto;padding:8px 6px;display:flex;flex-direction:column;gap:3px;min-height:0;">',
+        '<div id="b24t-news-empty" style="padding:24px 16px;text-align:center;">',
+          '<div style="font-size:28px;margin-bottom:8px;">📋</div>',
+          '<div style="font-size:12px;font-weight:600;color:' + t.text + ';margin-bottom:4px;">Brak URLi</div>',
+          '<div style="font-size:11px;color:' + t.textFaint + ';line-height:1.5;">Wklej adresy w panelu importu<br>i kliknij ▶ Wczytaj URLe</div>',
+        '</div>',
+      '</div>',
+      // Next button
+      '<div style="padding:8px 10px;flex-shrink:0;border-top:1px solid ' + t.borderSub + ';">',
+        '<button id="b24t-news-next-btn" style="width:100%;padding:6px;border-radius:8px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-size:11px;cursor:pointer;font-weight:500;">▼ Następny nieobsłużony</button>',
+      '</div>',
+    ].join('');
+
+    p1.appendChild(hdr1);
+    p1.appendChild(body1);
+    document.body.appendChild(p1);
+
+    // ─── PANEL 2: Import URLi (bottom of left column, below p1) ───
+    // Position below p1 — use p1's estimated height (42vh + header ~40px + footer ~46px)
+    // We'll update position after DOM paint via requestAnimationFrame
+    var p2 = _newsPanelBase('b24t-news-p2', PANEL_W, topList, baseRight, 2147483631);
+    // Remove bottom-attachment of position — will be set dynamically
+    p2.style.removeProperty('top');
+    p2.style.top = topList + 'px'; // temporary, fixed by _newsStackPanels()
+
+    var hdr2 = _newsPanelHeader('📥 Import URLi', closeNewsPanels);
+    _newsDraggable(hdr2, p2);
+
+    var body2 = document.createElement('div');
+    body2.style.cssText = 'padding:12px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;flex:1;min-height:0;';
+    body2.innerHTML = [
+      // Paste area
       '<div>',
         '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">',
           '<label style="font-size:11px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">WKLEJ ADRESY URL</label>',
           '<span style="font-size:9px;color:' + t.textFaint + ';">jeden na linię</span>',
         '</div>',
-        '<textarea id="b24t-news-paste-area" rows="5" placeholder="Wklej URLe z arkusza H&M Manually...&#10;&#10;URLe nie zostaną przetworzone dopóki nie klikniesz &quot;Wczytaj URLe&quot; poniżej." style="width:100%;box-sizing:border-box;font-size:10px;padding:7px 9px;border-radius:8px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';resize:vertical;font-family:monospace;min-height:90px;line-height:1.5;"></textarea>',
+        '<textarea id="b24t-news-paste-area" rows="4" placeholder="Wklej URLe z arkusza H&M Manually...\n\nURLe nie zostaną przetworzone dopóki nie klikniesz &quot;Wczytaj URLe&quot; poniżej." style="width:100%;box-sizing:border-box;font-size:10px;padding:7px 9px;border-radius:8px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';resize:vertical;font-family:monospace;min-height:80px;line-height:1.5;"></textarea>',
         '<button id="b24t-news-import-btn" style="margin-top:6px;width:100%;padding:7px;border-radius:8px;border:none;background:#6366f1;color:#fff;font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em;">▶ Wczytaj URLe</button>',
-        '<div id="b24t-news-import-info" style="display:none;font-size:10px;text-align:center;margin-top:4px;color:' + t.textMuted + ';"></div>',
+        '<div id="b24t-news-import-info" style="display:none;font-size:10px;text-align:center;margin-top:4px;"></div>',
       '</div>',
-      // Country detection + mismatch
+      // Country detection
       '<div id="b24t-news-country-row" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;">',
         '<div style="display:flex;align-items:center;gap:6px;">',
           '<span style="font-size:10px;color:' + t.textMuted + ';">Wykryty kraj URLi:</span>',
@@ -5276,44 +5317,7 @@ function showOnboarding(onComplete) {
           '</div>',
         '</div>',
         '<div id="b24t-news-chips" style="display:flex;flex-wrap:wrap;gap:4px;min-height:22px;padding:6px 8px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';"></div>',
-        '<div style="margin-top:4px;font-size:9px;color:' + t.textFaint + ';">Chipsy są filtrowane per kraj i zapisują się automatycznie.</div>',
-      '</div>',
-    ].join('');
-
-    p1.appendChild(hdr1);
-    p1.appendChild(body1);
-    document.body.appendChild(p1);
-
-    // ─── PANEL 2: URL List ───
-    var p2 = _newsPanelBase('b24t-news-p2', 360, baseTop, baseRight + 350, 2147483631);
-
-    var hdr2 = _newsPanelHeader('📋 Lista URLi', closeNewsPanels);
-    _newsDraggable(hdr2, p2);
-
-    var body2 = document.createElement('div');
-    body2.style.cssText = 'display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;';
-    body2.innerHTML = [
-      // Progress bar
-      '<div id="b24t-news-progress-wrap" style="display:none;padding:8px 12px 0;flex-shrink:0;">',
-        '<div style="display:flex;justify-content:space-between;font-size:10px;color:' + t.textMuted + ';margin-bottom:4px;">',
-          '<span>Postęp sesji</span>',
-          '<span id="b24t-news-progress-label">0 / 0</span>',
-        '</div>',
-        '<div style="height:4px;border-radius:2px;background:' + t.bgDeep + ';overflow:hidden;">',
-          '<div id="b24t-news-progress-bar" style="height:4px;background:#6366f1;width:0%;transition:width 0.4s ease;border-radius:2px;"></div>',
-        '</div>',
-      '</div>',
-      // List
-      '<div id="b24t-news-url-list" style="flex:1;overflow-y:auto;padding:8px 6px;display:flex;flex-direction:column;gap:3px;min-height:0;">',
-        '<div id="b24t-news-empty" style="padding:24px 16px;text-align:center;">',
-          '<div style="font-size:28px;margin-bottom:8px;">📋</div>',
-          '<div style="font-size:12px;font-weight:600;color:' + t.text + ';margin-bottom:4px;">Brak URLi</div>',
-          '<div style="font-size:11px;color:' + t.textFaint + ';line-height:1.5;">Wklej adresy w panelu import<br>i kliknij ▶ Wczytaj URLe</div>',
-        '</div>',
-      '</div>',
-      // Next button
-      '<div style="padding:8px 10px;flex-shrink:0;border-top:1px solid ' + t.borderSub + ';">',
-        '<button id="b24t-news-next-btn" style="width:100%;padding:6px;border-radius:8px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-size:11px;cursor:pointer;font-weight:500;">▼ Następny nieobsłużony</button>',
+        '<div style="margin-top:4px;font-size:9px;color:' + t.textFaint + ';">Chipy filtrowane per kraj i zapisywane automatycznie.</div>',
       '</div>',
     ].join('');
 
@@ -5321,8 +5325,8 @@ function showOnboarding(onComplete) {
     p2.appendChild(body2);
     document.body.appendChild(p2);
 
-    // ─── PANEL 3: Mention Form ───
-    var p3 = _newsPanelBase('b24t-news-p3', 360, baseTop, baseRight + 720, 2147483630);
+    // ─── PANEL 3: Formularz wzmianki (right column) ───
+    var p3 = _newsPanelBase('b24t-news-p3', PANEL_W, topList, baseRight + PANEL_W + GAP, 2147483630);
 
     var hdr3 = _newsPanelHeader('✍ Formularz wzmianki', closeNewsPanels);
     _newsDraggable(hdr3, p3);
@@ -5330,34 +5334,22 @@ function showOnboarding(onComplete) {
     var body3 = document.createElement('div');
     body3.style.cssText = 'padding:12px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;flex:1;min-height:0;';
 
-    // CMS status banner
     var cmsStatus = _newsCmsStatus();
-    var cmsBannerHtml = '';
-    if (!cmsStatus.hasDodane) {
-      cmsBannerHtml = '<div id="b24t-news-cms-warn" style="padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.5;">' +
-        '⚠ Nie wykryto tagu <strong>dodane</strong>. Upewnij się, że jesteś zalogowany do CMS Brand24 na właściwej domenie (' + (cmsStatus.domain === 'pl' ? 'brand24.pl' : 'brand24.com') + ').' +
-        '<button id="b24t-news-cms-recheck" style="display:block;margin-top:4px;font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:' + t.yellow + ';cursor:pointer;">↺ Sprawdź ponownie</button>' +
-      '</div>';
-    }
+    var cmsBannerHtml = '<div id="b24t-news-cms-warn" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.5;">' +
+      '⚠ Tag <strong>dodane</strong> niedostępny — zaloguj się do CMS Brand24 (' + (cmsStatus.domain === 'pl' ? 'panel.brand24.pl' : 'app.brand24.com') + ').' +
+      '<button id="b24t-news-cms-recheck" style="display:inline-block;margin-left:8px;font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:' + t.yellow + ';cursor:pointer;">↺ Sprawdź ponownie</button>' +
+    '</div>';
 
     body3.innerHTML = [
       cmsBannerHtml,
       '<div id="b24t-news-form-err" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.redBg + ';border:1px solid rgba(239,68,68,0.35);font-size:10px;color:' + t.red + ';line-height:1.4;"></div>',
       '<div id="b24t-news-lang-warn" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.4;"></div>',
-
-      // URL
       _newsFormRow('URL wzmianki', '<input id="b24t-news-f-url" type="text" readonly placeholder="(wybierz URL z listy)" style="' + _newsInputCss(t) + 'font-family:monospace;font-size:10px;opacity:0.75;"><button id="b24t-news-lang-force-open" style="display:none;flex-shrink:0;font-size:9px;padding:3px 6px;border-radius:5px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:' + t.yellow + ';cursor:pointer;margin-left:4px;" title="Otwórz mimo ostrzeżenia">Otwórz</button>', true, 'flex'),
-
-      // Title
       _newsFormRow('Tytuł artykułu', '<input id="b24t-news-f-title" type="text" placeholder="Wklej tytuł artykułu..." style="' + _newsInputCss(t) + '">', true),
-
-      // Content
       '<div style="display:flex;flex-direction:column;gap:4px;">' +
         '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">TREŚĆ <span style="color:#ef4444;">*</span></label>' +
         '<textarea id="b24t-news-f-content" rows="3" placeholder="Wklej fragment treści artykułu..." style="' + _newsInputCss(t) + 'resize:vertical;min-height:60px;"></textarea>' +
       '</div>',
-
-      // Date + time
       '<div style="display:flex;gap:6px;">',
         '<div style="flex:2;display:flex;flex-direction:column;gap:4px;">',
           '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">DATA <span style="color:#ef4444;">*</span></label>',
@@ -5375,8 +5367,6 @@ function showOnboarding(onComplete) {
           '<input id="b24t-news-f-minute" type="text" value="00" style="' + _newsInputCss(t) + '">',
         '</div>',
       '</div>',
-
-      // Category + Country + Sentiment
       '<div style="display:flex;gap:6px;">',
         '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
           '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">KAT.</label>',
@@ -5395,8 +5385,6 @@ function showOnboarding(onComplete) {
           '</select>',
         '</div>',
       '</div>',
-
-      // Tag dodane row
       '<div id="b24t-news-tag-row" style="padding:7px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;display:flex;align-items:center;gap:8px;">',
         '<span style="color:' + t.textMuted + ';font-size:10px;">Tag:</span>',
         '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;">',
@@ -5405,20 +5393,34 @@ function showOnboarding(onComplete) {
           '<span id="b24t-news-tag-dodane-status" style="font-size:9px;color:' + t.textFaint + ';">(sprawdzanie...)</span>',
         '</label>',
       '</div>',
-
-      // Submit
       '<button id="b24t-news-submit-btn" style="padding:9px;border-radius:9px;border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:12px;font-weight:700;cursor:pointer;width:100%;letter-spacing:0.03em;transition:opacity 0.15s;">✚ Dodaj wzmiankę do Brand24</button>',
       '<div id="b24t-news-submit-status" style="font-size:10px;text-align:center;min-height:14px;font-weight:500;"></div>',
-
     ].join('');
 
     p3.appendChild(hdr3);
     p3.appendChild(body3);
     document.body.appendChild(p3);
 
-    // Check tag status
+    // Stack p2 (Import) below p1 (Lista) after DOM paint
+    requestAnimationFrame(function() {
+      _newsStackPanels();
+    });
+
     _newsCheckTagDodane();
   }
+
+  // Keep Import panel flush below Lista panel (left column)
+  function _newsStackPanels() {
+    var p1 = document.getElementById('b24t-news-p1');
+    var p2 = document.getElementById('b24t-news-p2');
+    if (!p1 || !p2) return;
+    var r1 = p1.getBoundingClientRect();
+    var newTop = r1.bottom + 8;
+    p2.style.top = newTop + 'px';
+    p2.style.right = p1.style.right;
+    p2.style.left = p1.style.left || 'auto';
+  }
+
 
   function _newsInputCss(t) {
     return 'width:100%;box-sizing:border-box;font-size:11px;padding:6px 8px;border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-family:Inter,Segoe UI,system-ui,sans-serif;outline:none;transition:border-color 0.15s;';
@@ -5433,6 +5435,7 @@ function showOnboarding(onComplete) {
 
   function _newsDraggable(handle, panel) {
     var dragging = false, ox = 0, oy = 0;
+    var isP1 = panel.id === 'b24t-news-p1';
     handle.addEventListener('mousedown', function(e) {
       if (e.target.tagName === 'BUTTON') return;
       dragging = true;
@@ -5445,25 +5448,36 @@ function showOnboarding(onComplete) {
       if (!dragging) return;
       var newLeft = e.clientX - ox;
       var newTop  = e.clientY - oy;
-      panel.style.left = newLeft + 'px';
-      panel.style.top  = newTop + 'px';
+      panel.style.left  = newLeft + 'px';
+      panel.style.top   = newTop + 'px';
       panel.style.right = 'auto';
+      // If dragging P1 (Lista), keep P2 (Import) attached below it
+      if (isP1) {
+        requestAnimationFrame(function() { _newsStackPanels(); });
+      }
     });
-    document.addEventListener('mouseup', function() { dragging = false; });
+    document.addEventListener('mouseup', function() {
+      if (dragging && isP1) _newsStackPanels();
+      dragging = false;
+    });
   }
 
   function _newsCheckTagDodane() {
-    var statusEl = document.getElementById('b24t-news-tag-dodane-status');
+    var statusEl  = document.getElementById('b24t-news-tag-dodane-status');
     var checkboxEl = document.getElementById('b24t-news-tag-dodane');
-    // Look for "dodane" tag in current project tags
+    var cmsBanner = document.getElementById('b24t-news-cms-warn');
+    // Single source of truth: state.tags loaded from project
     var hasDodane = state.tags && Object.keys(state.tags).some(function(k) {
       return k.toLowerCase().indexOf('dodane') !== -1;
     });
     if (hasDodane) {
-      if (statusEl) { statusEl.textContent = '✓ dostępny'; statusEl.style.color = '#22c55e'; }
+      if (statusEl)  { statusEl.textContent = '✓ dostępny'; statusEl.style.color = '#22c55e'; }
+      if (checkboxEl){ checkboxEl.disabled = false; checkboxEl.checked = true; }
+      if (cmsBanner) cmsBanner.style.display = 'none';
     } else {
-      if (statusEl) { statusEl.textContent = '⚠ niedostępny — zaloguj się do CMS'; statusEl.style.color = '#f59e0b'; }
-      if (checkboxEl) { checkboxEl.checked = false; checkboxEl.disabled = true; }
+      if (statusEl)  { statusEl.textContent = '⚠ niedostępny — zaloguj się do CMS'; statusEl.style.color = '#f59e0b'; }
+      if (checkboxEl){ checkboxEl.checked = false; checkboxEl.disabled = true; }
+      if (cmsBanner) cmsBanner.style.display = '';
     }
   }
 
@@ -5477,19 +5491,12 @@ function showOnboarding(onComplete) {
     });
 
     // ─── CMS RECHECK ───
-    var cmsRecheck = document.getElementById('b24t-news-cms-recheck');
-    if (cmsRecheck) {
-      cmsRecheck.addEventListener('click', function() {
+    // Use event delegation — button may be re-rendered
+    document.addEventListener('click', function(e) {
+      if (e.target && e.target.id === 'b24t-news-cms-recheck') {
         _newsCheckTagDodane();
-        var cmsStatus = _newsCmsStatus();
-        var warn = document.getElementById('b24t-news-cms-warn');
-        if (cmsStatus.hasDodane) {
-          if (warn) warn.style.display = 'none';
-        } else {
-          if (warn) { warn.innerHTML = '⚠ Tag <strong>dodane</strong> nadal niedostępny. Zaloguj się do CMS na <strong>' + (cmsStatus.domain === 'pl' ? 'panel.brand24.pl' : 'app.brand24.com') + '</strong>.<button id="b24t-news-cms-recheck" style="display:block;margin-top:4px;font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:#f59e0b;cursor:pointer;">↺ Sprawdź ponownie</button>'; }
-        }
-      });
-    }
+      }
+    });
 
     // ─── LANG MAP BUTTON ───
     var langMapBtn = document.getElementById('b24t-news-langmap-btn');
@@ -5971,6 +5978,16 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   const CHANGELOG = [
+    {
+      version: '0.15.1',
+      date: '2026-03-28',
+      label: 'Fix',
+      labelColor: '#f87171',
+      changes: [
+        { type: 'fix', text: 'Modul News: naprawiono sprzeczny komunikat o tagu "dodane" — banner CMS i status w wierszu uzywaja teraz tego samego zrodla (state.tags z API), nie roznych metod sprawdzania DOM' },
+        { type: 'fix', text: 'Modul News: nowy layout paneli — Lista URLi na gorze, Import URLi przyklejony bezposrednio pod nia (ta sama szerokosc), Formularz obok. Panel Import automatycznie podaza za panelem Lista przy przeciaganiu' },
+      ]
+    },
     {
       version: '0.15.0',
       date: '2026-03-28',
@@ -7254,6 +7271,20 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.15.1',
+      date: '2026-03-28',
+      notes: [
+        '[FIX]  _newsCmsStatus(): usunięto unreliable DOM-check (querySelectorAll [data-tag-id], .tag-item) — funkcja zwraca teraz tylko { domain }. DOM Brand24 nie zawiera elementow z tekstem "dodane" na stronie projektu',
+        '[FIX]  _newsCheckTagDodane(): jedyne zrodlo prawdy dla dostepnosci tagu "dodane" — sprawdza state.tags (z API). Kontroluje: statusEl text/color, checkboxEl disabled/checked, cmsBanner display. Poprzednio stan bannera i stanu checkboxa byl ustawiany w dwoch roznych miejscach z roznych zrodel → sprzecznosc',
+        '[FIX]  CMS banner w Panel 3: renderowany domyslnie z display:none (nie zaleznie od _newsCmsStatus().hasDodane ktore zawsze zwracalo false) — widocznosc kontrolowana wylacznie przez _newsCheckTagDodane()',
+        '[FIX]  CMS recheck handler: przepisany na event delegation (document.addEventListener click z guard e.target.id === b24t-news-cms-recheck) — nie gubi sie po rebuild innerHTML bannera',
+        '[NEW]  _buildNewsPanels() layout: P1=Lista URLi (gora, lewa kolumna), P2=Import URLi (dol, lewa kolumna, ta sama szerokosc PANEL_W=360), P3=Formularz (prawa kolumna, right = baseRight + PANEL_W + GAP)',
+        '[NEW]  _newsStackPanels(): pozycjonuje P2 bezposrednio pod P1 — p2.style.top = p1.getBoundingClientRect().bottom + 8. Wywolywana po requestAnimationFrame w _buildNewsPanels() i openNewsPanels()',
+        '[FIX]  _newsDraggable(): dodano isP1 flag (panel.id === b24t-news-p1). Podczas mousemove i mouseup gdy isP1 → requestAnimationFrame(_newsStackPanels) — P2 podaza za P1 przy przeciaganiu',
+        '[FIX]  _newsDraggable(): usunięto zbedna zamykajaca klamre pozostala po poprzednim str_replace — powodowala SyntaxError przy node --check',
+      ]
+    },
     {
       version: '0.15.0',
       date: '2026-03-28',

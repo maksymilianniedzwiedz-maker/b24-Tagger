@@ -5107,6 +5107,34 @@ function showOnboarding(onComplete) {
     return 'match';
   }
 
+  // ── CSRF TOKEN RESOLUTION ──
+  function _newsGetTknB24(cb) {
+    // 1. DOM input (available on most Brand24 pages)
+    var el = document.querySelector('[name="tknB24"]');
+    if (el && el.value) { cb(el.value, null); return; }
+    // 2. Cookie fallback
+    var ck = document.cookie.split(';').reduce(function(acc, p) {
+      var kv = p.trim().split('=');
+      return kv[0] === 'tknB24' ? decodeURIComponent(kv[1] || '') : acc;
+    }, '');
+    if (ck) { cb(ck, null); return; }
+    // 3. GM fetch Brand24 homepage and parse tknB24 from HTML
+    var base = window.location.hostname.indexOf('brand24.pl') !== -1
+      ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
+    GM_xmlhttpRequest({
+      method: 'GET', url: base + '/',
+      onload: function(resp) {
+        var m = (resp.responseText || '').match(/name=["'"]tknB24["'"][^>]+value=["'"]([^"']+)["'"]/)
+             || (resp.responseText || '').match(/value=["'"]([^"']+)["'"][^>]+name=["'"]tknB24["'"]/) ;
+        if (m && m[1]) { cb(m[1], null); return; }
+        cb(null, '\u26a0 Nie udalo sie pobrac tokenu CSRF. Odswiez strone Brand24 i sprobuj ponownie.');
+      },
+      onerror: function() {
+        cb(null, '\u26a0 Blad sieci przy pobieraniu tokenu CSRF. Upewnij sie, ze jestes zalogowany.');
+      }
+    });
+  }
+
   // ── CMS DOMAIN CHECK ──
   function _newsCmsStatus() {
     // Returns domain only — CMS tag availability is checked via state.tags in _newsCheckTagDodane()
@@ -5968,11 +5996,21 @@ function showOnboarding(onComplete) {
         var pc = _newsProjectCountry();
         if (pc && fCountry && fCountry !== pc) { showErr('⚠ Kraj (' + fCountry + ') niezgodny z projektem (' + pc + ').'); return; }
 
-        var tknEl = document.querySelector('[name="tknB24"]');
-        if (!tknEl) { showErr('⚠ Brak tokenu CSRF (tknB24). Upewnij się, że jesteś na stronie Brand24.'); return; }
-        var tkn = tknEl.value;
         var sid = state.projectId || '';
         if (!sid) { showErr('⚠ Brak ID projektu. Przejdź na stronę projektu Brand24.'); return; }
+
+        submitBtn.disabled = true;
+        submitBtn.style.opacity = '0.6';
+        submitBtn.textContent = '⏳ Pobieram token...';
+
+        _newsGetTknB24(function(tkn, tknErr) {
+          if (!tkn) {
+            submitBtn.disabled = false;
+            submitBtn.style.opacity = '';
+            submitBtn.textContent = '✚ Dodaj wzmiankę do Brand24';
+            showErr(tknErr || '⚠ Brak tokenu CSRF.');
+            return;
+          }
 
         // Find "dodane" tag ID
         var dodaneTagId = null;
@@ -6040,6 +6078,7 @@ function showOnboarding(onComplete) {
             if (subStatus) { subStatus.textContent = '✗ Błąd sieci.'; subStatus.style.color = '#ef4444'; }
           },
         });
+        }); // closes _newsGetTknB24 callback
       });
     }
 
@@ -6140,6 +6179,24 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.16.2",
+      "date": "2026-03-28",
+      "label": "Fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News: token CSRF pobierany z DOM, cookie lub GM fetch"}
+      ]
+    },
+    {
+      "version": "0.16.1",
+      "date": "2026-03-28",
+      "label": "Fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News: wersja poprzednia (0.16.1)"}
+      ]
+    },
+    {
       "version": "0.16.0",
       "date": "2026-03-28",
       "label": "Refactor",
@@ -6222,30 +6279,7 @@ function showOnboarding(onComplete) {
         {"type": "new", "text": "News: tag \'dodane\' z weryfikacją dostępności w projekcie"}
       ]
     },
-    {
-      "version": "0.14.0",
-      "date": "2026-03-28",
-      "label": "Perf",
-      "labelColor": "#facc15",
-      "changes": [
-        {"type": "perf", "text": "Usuwanie ~5x szybsze — równoległe batche po 5"},
-        {"type": "fix", "text": "Cross-delete: każdy projekt ma teraz przycisk Usuń"}
-      ]
-    },
-    {
-      "version": "0.13.0",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#f87171",
-      "changes": [
-        {"type": "fix", "text": "Stopka panelu zawsze widoczna przy resize"},
-        {"type": "fix", "text": "Annotators Tab: zakładki scrollują wewnątrz panelu"},
-        {"type": "fix", "text": "Tagowanie bez dat: fallback na bieżący miesiąc"},
-        {"type": "new", "text": "Walidacja pliku przy wczytaniu"},
-        {"type": "new", "text": "Przycisk ✕ resetuje wczytany plik"}
-      ]
-    }
-  ];
+  ];;
 
   function _fetchChangelog(onDone) {
     const CACHE_KEY = 'b24tagger_cl_cache';

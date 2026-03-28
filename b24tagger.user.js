@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.17.6
+// @version      0.17.7
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.17.6';
+  const VERSION = '0.17.7';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6005,7 +6005,8 @@ function showOnboarding(onComplete) {
       (function(checkUrl) {
         var ss = document.getElementById('b24t-news-submit-status');
         if (ss) { ss.textContent = '⏳ Sprawdzam czy wzmianka już istnieje...'; ss.style.color = '#a78bfa'; }
-        _newsCheckUrlExists(checkUrl, function(result, count, matches) {
+        _newsCheckUrlExists(checkUrl, function(result, count, matches, errMsg) {
+          console.log('[B24T] _newsCheckUrlExists result:', result, 'count:', count, 'err:', errMsg);
           var ss2 = document.getElementById('b24t-news-submit-status');
           if (!ss2) return;
           if (result === 'exists') {
@@ -6018,9 +6019,11 @@ function showOnboarding(onComplete) {
             ss2.textContent = '✓ URL nie znaleziony w projekcie.';
             ss2.style.color = '#22c55e';
           } else if (result === 'no_token') {
-            ss2.textContent = '';
+            ss2.textContent = '⌛ Brak tokenu GQL — odczekaj chwilę i kliknij URL ponownie.';
+            ss2.style.color = '#94a3b8';
           } else {
-            ss2.textContent = '';
+            ss2.textContent = '⚠ Błąd sprawdzania: ' + (errMsg || result);
+            ss2.style.color = '#ef4444';
           }
         });
       })(entry.url);

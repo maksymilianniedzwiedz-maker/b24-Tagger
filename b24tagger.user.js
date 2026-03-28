@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.9.5
+// @version      0.9.6
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -4490,6 +4490,19 @@ function hideHelpTip() {
 
   const CHANGELOG = [
     {
+      version: '0.9.6',
+      date: '2026-03-28',
+      label: 'Polish UI',
+      labelColor: '#a78bfa',
+      changes: [
+        { type: 'ui',  text: 'Changelog & Feedback: ikona ✦ → 🚀 w headerze modalu' },
+        { type: 'fix', text: 'Changelog & Feedback: light mode fix — modal zawsze ciemny (hardkodowane kolory, brak var(--b24t-*))' },
+        { type: 'ui',  text: 'Planowane: legenda priorytetów (kolorowe kółka z opisem) zamiast emoji flag' },
+        { type: 'ui',  text: 'Dev Patch Notes: prefiksy kategorii [PERF/FIX/UX/UI/RENAME/DATA...] z kolorowymi badge\'ami + legenda w stopce' },
+        { type: 'fix', text: 'PLANNED_FEATURES: usunięto Wieloprojektowość i Szybkie filtry; "Bulk rename / merge" → "Bulk rename tagów"' },
+      ],
+    },
+    {
       version: '0.9.5',
       date: '2026-03-28',
       label: 'Wydajność',
@@ -4999,11 +5012,9 @@ function hideHelpTip() {
   const PLANNED_FEATURES = [
     { priority: 'ai',     text: 'Dostęp do AI API — tłumaczenie wzmianek na bieżąco, automatyczna klasyfikacja, tryb tworzenia customowych klasyfikatorów (do automatycznej klasyfikacji) i inne...', next: false },
     { priority: 'high',   text: 'Podgląd wzmianki on-hover — najedź na URL w logu żeby zobaczyć treść i autora', next: false },
-    { priority: 'high',   text: 'Szybkie filtry w Quick Tag — builder filtrów (źródło, sentyment, daty) bez dotykania UI Brand24', next: false },
     { priority: 'medium', text: 'Annotators Tab — zakładka "Overall Stats": sumaryczne statystyki REQ/DEL ze wszystkich projektów (lub wybranej grupy projektów)', next: true },
     { priority: 'medium', text: 'Grupowanie projektów — przypisywanie własnych kategorii do projektów (np. kraj, marka) dla cross-project operacji, sumarycznych statystyk i filtrowania widoków', next: false },
-    { priority: 'medium', text: 'Bulk rename / merge tagów — zmiana nazwy tagu i scalanie tagów w projekcie', next: false },
-    { priority: 'low',    text: 'Wieloprojektowość — jeden plik z wzmiankami z wielu projektów',              next: false },
+    { priority: 'medium', text: 'Bulk rename tagów — masowa zmiana nazwy tagu w projekcie', next: false },
   ];
 
   function sendToSlack(payload, onSuccess, onError) {
@@ -5211,21 +5222,47 @@ function hideHelpTip() {
 
 
   function showDevNotes() {
-    let html = '<div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:16px;">Szczegółowe informacje techniczne o zmianach w kodzie. Dostępne od v0.3.4.</div>';
+    // Kategorie: [PERF] [FIX] [UX] [UI] [RENAME] [DATA] [HOTFIX] [REFACTOR] [ARCH]
+    const catColor = {
+      'PERF':    '#facc15',
+      'FIX':     '#4ade80',
+      'HOTFIX':  '#f87171',
+      'UX':      '#60a5fa',
+      'UI':      '#a78bfa',
+      'RENAME':  '#94a3b8',
+      'DATA':    '#34d399',
+      'REFACTOR':'#fb923c',
+      'ARCH':    '#e879f9',
+    };
+
+    function renderNote(n) {
+      // Wyciągnij prefix [KAT] jeśli istnieje
+      const m = n.match(/^\[([A-Z]+)\]\s*/);
+      if (m) {
+        const cat = m[1];
+        const color = catColor[cat] || '#9090cc';
+        const rest = n.slice(m[0].length);
+        return '<div style="display:flex;gap:8px;align-items:flex-start;padding:3px 0;">' +
+          '<span style="flex-shrink:0;font-size:9px;font-weight:700;font-family:\'JetBrains Mono\',\'Fira Code\',monospace;color:' + color + ';background:' + color + '18;border:1px solid ' + color + '30;padding:1px 5px;border-radius:3px;margin-top:2px;white-space:nowrap;letter-spacing:0.04em;">' + cat + '</span>' +
+          '<span style="font-size:11px;color:#c0c0d8;line-height:1.6;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;">' + rest + '</span>' +
+        '</div>';
+      }
+      return '<div style="display:flex;gap:8px;align-items:flex-start;padding:2px 0;">' +
+        '<span style="flex-shrink:0;color:#3a3a55;font-size:10px;margin-top:3px;">›</span>' +
+        '<span style="font-size:11px;color:#8080aa;line-height:1.6;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;">' + n + '</span>' +
+      '</div>';
+    }
+
+    let html = '<div style="font-size:10px;color:#4a4a66;margin-bottom:16px;font-family:\'Inter\',sans-serif;">Szczegółowe informacje techniczne o zmianach w kodzie. Dostępne od v0.3.4.</div>';
 
     DEV_CHANGELOG.forEach(function(v, idx) {
       html +=
         '<div style="margin-bottom:' + (idx < DEV_CHANGELOG.length - 1 ? '16' : '0') + 'px;">' +
-          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
-            '<span style="font-size:12px;font-weight:700;color:#e2e2e8;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;">v' + v.version + '</span>' +
-            '<span style="font-size:10px;color:var(--b24t-text-faint);">' + v.date + '</span>' +
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+            '<span style="font-size:12px;font-weight:700;color:#e2e2e8;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;">v' + v.version + '</span>' +
+            '<span style="font-size:10px;color:#3a3a55;">' + v.date + '</span>' +
           '</div>' +
-          v.notes.map(function(n) {
-            return '<div style="display:flex;gap:8px;align-items:flex-start;padding:2px 0;">' +
-              '<span style="flex-shrink:0;color:#6c6cff;font-size:10px;">›</span>' +
-              '<span style="font-size:10px;color:var(--b24t-text-faint);line-height:1.5;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;">' + n + '</span>' +
-            '</div>';
-          }).join('') +
+          v.notes.map(renderNote).join('') +
         '</div>' +
         (idx < DEV_CHANGELOG.length - 1 ? '<div style="height:1px;background:#1a1a22;margin:0 0 16px 0;"></div>' : '');
     });
@@ -5234,18 +5271,23 @@ function hideHelpTip() {
     modal.id = 'b24t-devnotes-modal';
     modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483648;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;';
     modal.innerHTML =
-      '<div style="background:#0a0a0d;border:1px solid #2a2a35;border-radius:14px;width:520px;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.9);">' +
-        '<div style="padding:16px 20px;border-bottom:1px solid var(--b24t-border-sub);flex-shrink:0;display:flex;align-items:center;gap:10px;">' +
+      '<div style="background:#0a0a0d;border:1px solid #2a2a35;border-radius:14px;width:560px;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.9);">' +
+        '<div style="padding:16px 20px;border-bottom:1px solid #1e1e28;flex-shrink:0;display:flex;align-items:center;gap:10px;">' +
           '<span style="font-size:16px;">🔧</span>' +
           '<div>' +
-            '<div style="font-size:13px;font-weight:700;color:#e2e2e8;">Patch notes dla programistów</div>' +
-            '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:2px;">Szczegóły techniczne zmian w kodzie · B24 Tagger BETA</div>' +
+            '<div style="font-size:13px;font-weight:700;color:#e2e2e8;">Dev Patch Notes</div>' +
+            '<div style="font-size:10px;color:#3a3a55;margin-top:2px;">Szczegóły techniczne zmian w kodzie · B24 Tagger BETA</div>' +
           '</div>' +
           '<button id="b24t-devnotes-close" style="margin-left:auto;background:none;border:none;color:#444455;cursor:pointer;font-size:18px;line-height:1;">\u00d7</button>' +
         '</div>' +
         '<div style="overflow-y:auto;flex:1;padding:20px;">' + html + '</div>' +
-        '<div style="padding:12px 20px;border-top:1px solid #1a1a22;flex-shrink:0;text-align:right;">' +
-          '<button id="b24t-devnotes-ok" style="background:#2a2a35;color:var(--b24t-text-meta);border:none;border-radius:6px;padding:7px 20px;font-size:12px;cursor:pointer;font-family:inherit;">Zamknij</button>' +
+        '<div style="padding:12px 20px;border-top:1px solid #1a1a22;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;">' +
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+            Object.entries(catColor).map(function(e) {
+              return '<span style="font-size:9px;font-family:\'JetBrains Mono\',\'Fira Code\',monospace;color:' + e[1] + ';background:' + e[1] + '18;border:1px solid ' + e[1] + '30;padding:1px 5px;border-radius:3px;">' + e[0] + '</span>';
+            }).join('') +
+          '</div>' +
+          '<button id="b24t-devnotes-ok" style="background:#2a2a35;color:#8080aa;border:none;border-radius:6px;padding:7px 20px;font-size:12px;cursor:pointer;font-family:inherit;flex-shrink:0;">Zamknij</button>' +
         '</div>' +
       '</div>';
 
@@ -5275,7 +5317,7 @@ function hideHelpTip() {
           '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
             '<span style="font-size:15px;font-weight:700;color:#e2e2e8;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;">v' + v.version + '</span>' +
             '<span style="font-size:12px;font-weight:600;background:' + v.labelColor + '22;color:' + v.labelColor + ';padding:2px 10px;border-radius:99px;">' + v.label + '</span>' +
-            '<span style="font-size:11px;color:var(--b24t-text-faint);margin-left:auto;">' + v.date + '</span>' +
+            '<span style="font-size:11px;color:#3a3a55;margin-left:auto;">' + v.date + '</span>' +
           '</div>' +
           '<div style="' + (isLatest ? '' : 'opacity:0.6;') + '">' +
           v.changes.map(function(ch) {
@@ -5286,16 +5328,32 @@ function hideHelpTip() {
           }).join('') +
           '</div>' +
         '</div>' +
-        (idx < CHANGELOG.length - 1 ? '<div style="height:1px;background:var(--b24t-border);margin:0 0 20px 0;"></div>' : '');
+        (idx < CHANGELOG.length - 1 ? '<div style="height:1px;background:#1e1e28;margin:0 0 20px 0;"></div>' : '');
     });
 
     // Build planned features HTML
+    const prioMeta = {
+      ai:     { color: '#a855f7', label: 'AI',     desc: 'AI / flagowa' },
+      high:   { color: '#f87171', label: 'Wysoki', desc: 'priorytet wysoki' },
+      medium: { color: '#facc15', label: 'Średni', desc: 'priorytet średni' },
+      low:    { color: '#4ade80', label: 'Niski',  desc: 'priorytet niski' },
+    };
     let plannedHtml =
-      '<div style="font-size:12px;color:#666699;margin-bottom:14px;line-height:1.6;">Lista funkcji planowanych w przyszłych wersjach. Masz pomysł? Skorzystaj z zakładki Feedback!</div>';
+      '<div style="font-size:12px;color:#4a4a66;margin-bottom:12px;line-height:1.6;">Lista funkcji planowanych w przyszłych wersjach. Masz pomysł? Skorzystaj z zakładki Feedback!</div>' +
+      // Legenda priorytetów
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;padding:8px 10px;background:#0d0d16;border-radius:7px;border:1px solid #1e1e2e;">' +
+        Object.entries(prioMeta).map(function(e) {
+          return '<span style="display:flex;align-items:center;gap:4px;font-size:11px;color:#8080aa;">' +
+            '<span style="width:8px;height:8px;border-radius:50%;background:' + e[1].color + ';flex-shrink:0;"></span>' +
+            e[1].label +
+          '</span>';
+        }).join('') +
+      '</div>';
     PLANNED_FEATURES.forEach(function(f) {
+      const pm = prioMeta[f.priority] || { color: '#6060aa' };
       plannedHtml +=
-        '<div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--b24t-border-sub);">' +
-          '<span style="flex-shrink:0;font-size:16px;">' + prioLabel[f.priority] + '</span>' +
+        '<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid #1a1a22;">' +
+          '<span style="flex-shrink:0;width:8px;height:8px;border-radius:50%;background:' + pm.color + ';margin-top:5px;"></span>' +
           '<span style="font-size:13px;color:#a0a0cc;line-height:1.6;flex:1;">' + f.text + '</span>' +
           (f.next ? '<span style="flex-shrink:0;font-size:11px;background:#6c6cff22;color:#6c6cff;padding:2px 8px;border-radius:99px;white-space:nowrap;">następna wersja</span>' : '') +
         '</div>';
@@ -5310,13 +5368,13 @@ function hideHelpTip() {
       '<div style="background:#0f0f13;border:1px solid #2a2a35;border-radius:14px;width:520px;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.85);">' +
 
         // ── HEADER ────────────────────────────────────────────────────────
-        '<div style="padding:16px 20px 0;flex-shrink:0;border-bottom:1px solid var(--b24t-border-sub);">' +
+        '<div style="padding:16px 20px 0;flex-shrink:0;border-bottom:1px solid #1e1e28;">' +
           // Title row
           '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">' +
-            '<div style="width:36px;height:36px;background:#6c6cff22;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">✦</div>' +
+            '<div style="width:36px;height:36px;background:#6c6cff22;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">🚀</div>' +
             '<div style="flex:1;">' +
               '<div style="font-size:16px;font-weight:700;color:#e2e2e8;letter-spacing:-0.01em;">B24 Tagger <span style="font-size:11px;color:#6c6cff;letter-spacing:0.08em;font-weight:600;">BETA</span></div>' +
-              '<div style="font-size:12px;color:var(--b24t-text-faint);margin-top:3px;">v' + VERSION + ' · Dziennik zmian</div>' +
+              '<div style="font-size:12px;color:#3a3a55;margin-top:3px;">v' + VERSION + ' · Dziennik zmian</div>' +
             '</div>' +
             '<button id="b24t-wnm-close" style="background:none;border:none;color:#444455;cursor:pointer;font-size:22px;line-height:1;padding:4px;border-radius:6px;transition:color 0.15s;">\u00d7</button>' +
           '</div>' +
@@ -5327,11 +5385,11 @@ function hideHelpTip() {
               'font-size:11px;font-weight:600;padding:8px 4px;cursor:pointer;font-family:inherit;' +
               'display:flex;align-items:center;justify-content:center;gap:5px;">📰 Co nowego</button>' +
             '<button class="b24t-wnm-tab" data-tab="planned" ' +
-              'style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:var(--b24t-text-faint);' +
+              'style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:#4a4a66;' +
               'font-size:11px;padding:8px 4px;cursor:pointer;font-family:inherit;' +
               'display:flex;align-items:center;justify-content:center;gap:5px;">🗓 Planowane</button>' +
             '<button class="b24t-wnm-tab" data-tab="feedback" ' +
-              'style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:var(--b24t-text-faint);' +
+              'style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:#4a4a66;' +
               'font-size:11px;padding:8px 4px;cursor:pointer;font-family:inherit;' +
               'display:flex;align-items:center;justify-content:center;gap:5px;">💬 Feedback</button>' +
           '</div>' +
@@ -5356,7 +5414,7 @@ function hideHelpTip() {
                 'color:#f87171;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;">🐛 Bug Report</button>' +
               '<button id="b24t-fb-mode-suggest" class="b24t-fb-mode-btn" data-mode="suggest" ' +
                 'style="flex:1;padding:9px;border:2px solid #2a2a35;border-radius:8px;background:none;' +
-                'color:var(--b24t-text-faint);font-family:inherit;font-size:12px;cursor:pointer;">💡 Suggestion</button>' +
+                'color:#4a4a66;font-family:inherit;font-size:12px;cursor:pointer;">💡 Suggestion</button>' +
             '</div>' +
 
             // Bug Report panel
@@ -5397,14 +5455,14 @@ function hideHelpTip() {
         '<div style="padding:10px 20px;border-top:1px solid #1a1a22;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:12px;">' +
           // Lewa strona: legenda + devnotes
           '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
-            '<div id="b24t-wnm-legend" style="display:flex;gap:8px;font-size:11px;color:var(--b24t-text-faint);">' +
+            '<div id="b24t-wnm-legend" style="display:flex;gap:8px;font-size:11px;color:#3a3a55;">' +
               '<span title="Nowa funkcja"><span style="color:#6c6cff;">✦</span> nowe</span>' +
               '<span title="Naprawa błędu"><span style="color:#4ade80;">⚒</span> fix</span>' +
               '<span title="Wydajność"><span style="color:#facc15;">⚡</span> perf</span>' +
-              '<span title="Interfejs"><span style="color:var(--b24t-text);">◈</span> UI</span>' +
+              '<span title="Interfejs"><span style="color:#8080aa;">◈</span> UI</span>' +
             '</div>' +
             '<button id="b24t-wnm-devnotes-btn" ' +
-              'style="font-size:11px;color:var(--b24t-text-faint);background:none;border:1px solid #2a2a35;border-radius:4px;' +
+              'style="font-size:11px;color:#3a3a55;background:none;border:1px solid #2a2a35;border-radius:4px;' +
               'padding:4px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;' +
               'transition:color 0.15s,border-color 0.15s;">🔧 Dev patch notes</button>' +
           '</div>' +
@@ -5533,21 +5591,30 @@ function hideHelpTip() {
 
   const DEV_CHANGELOG = [
     {
+      version: '0.9.6',
+      date: '2026-03-28',
+      notes: [
+        '[UI]     showWhatsNewExtended(): header icon ✦ → 🚀 (div z emoji, nie SVG).',
+        '[FIX]    showWhatsNewExtended(): wszystkie var(--b24t-*) zastąpione hardkodowanymi hex — modal renderuje się w body bez dostępu do CSS vars głównego panelu, co powodowało transparent/inherit w light mode.',
+        '[UI]     showWhatsNewExtended(): prioLabel (emoji flagi) → prioMeta ({ color, label }). Planowane: kolorowe kółka (8px circle) zamiast emoji. Legenda priorytetów jako pasek nad listą (background:#0d0d16).',
+        '[UI]     showDevNotes(): przepisany render — funkcja renderNote() parsuje prefix [KAT] i renderuje kolorowy badge monospace. Kategorie: PERF/FIX/HOTFIX/UX/UI/RENAME/DATA/REFACTOR/ARCH z osobnymi kolorami.',
+        '[UI]     showDevNotes(): legenda kategorii w stopce modalu (Object.entries(catColor) → badge\'y). Modal poszerzony do 560px.',
+        '[DATA]   DEV_CHANGELOG v0.9.5 notes przepisane na format [KAT] prefix — czytelne dla programistów.',
+        '[DATA]   PLANNED_FEATURES: usunięto "Wieloprojektowość" (low), "Szybkie filtry w Quick Tag" (high). Zmieniono "Bulk rename / merge tagów" → "Bulk rename tagów". Pozostało 5 wpisów.',
+      ]
+    },
+    {
       version: '0.9.5',
       date: '2026-03-28',
       notes: [
-        'loadAnnotatorTagStats(): zastąpiono fetchProjectTagCounts() (pobierał WSZYSTKIE strony) dwoma getMentions() per projekt (po jednym dla reqVerId i toDeleteId) — analogicznie do refreshAllProjectsPanel()',
-        'loadAnnotatorTagStats(): skeleton loader per projekt z data-pid — każdy wiersz aktualizuje się live podczas ładowania, REQ/DEL widoczne od razu po załadowaniu projektu',
-        'loadAnnotatorTagStats(): projekty z REQ=0 i DEL=0 ukrywane na bieżąco podczas ładowania (display:none), render finalny tylko projekty z danymi',
-        'loadAnnotatorTagStats(): licznik "X / N" w stopce aktualizowany live podczas iteracji',
-        'refreshAllProjectsPanel(): render finalny pokazuje wyłącznie projekty z count > 0 (witData + withErrors), eliminuje listę "brak wzmianek z tym tagiem"',
-        'refreshAllProjectsPanel(): projekty z count=0 w ogóle nie trafiają do finalnego HTML — lista proporcjonalna do rzeczywistych danych',
-        'OPTIONAL_FEATURES[annotator_tools].label: "Narzędzia Annotatora" → "Annotators Tab"',
-        'buildAnnotatorPanel() header span: "Narzędzia Annotatora" → "Annotators Tab"',
-        'applyFeatures() komentarz: "Narzędzia Annotatora" → "Annotators Tab"',
-        'Onboarding krok (? button desc): "Narzędzia Annotatora" → "Annotators Tab"',
-        'PLANNED_FEATURES: dodano "Annotators Tab — Overall Stats" (medium, next:true)',
-        'PLANNED_FEATURES: dodano "Grupowanie projektów" (medium, next:false)',
+        '[PERF] loadAnnotatorTagStats(): fetchProjectTagCounts() zastąpiony 2× getMentions(tagId, page=1) per projekt — pobierał wcześniej count z nagłówka zamiast iterować strony. Wzorzec identyczny jak refreshAllProjectsPanel().',
+        '[PERF] loadAnnotatorTagStats(): redukcja requestów z ~100+ per projekt do 2 per projekt (1× reqVerId, 1× toDeleteId). Przy 8 projektach: ~800 requestów → 16.',
+        '[UX]  loadAnnotatorTagStats(): skeleton loader per projekt (div[data-pid]). Każdy wiersz przechodzi live: "ładuję…" → "↻" → wartości REQ/DEL. Projekty z REQ=0 i DEL=0 chowane natychmiast (display:none).',
+        '[UX]  loadAnnotatorTagStats(): licznik postępu "X / N" w #b24t-ann-skel-summary aktualizowany po każdej iteracji. Render finalny nadpisuje skeleton — tylko projekty z count > 0, posortowane malejąco.',
+        '[UX]  refreshAllProjectsPanel(): render finalny filtruje wyłącznie count > 0 (withData) + błędy (withErrors). Wiersze "brak wzmianek z tym tagiem" całkowicie usunięte z DOM.',
+        '[RENAME] "Narzędzia Annotatora" → "Annotators Tab": OPTIONAL_FEATURES[annotator_tools].label, header panelu (#b24t-ann-header span), komentarz w applyFeatures(), opis w onboardingu (krok z ? button).',
+        '[DATA] PLANNED_FEATURES: +2 wpisy: "Annotators Tab — Overall Stats" (medium, next:true), "Grupowanie projektów" (medium, next:false).',
+        '[DATA] PLANNED_FEATURES: usunięto "Wieloprojektowość", "Szybkie filtry w Quick Tag". "Bulk rename / merge tagów" → "Bulk rename tagów". Legenda priorytetów dodana do UI sekcji Planowane.',
       ]
     },
     {

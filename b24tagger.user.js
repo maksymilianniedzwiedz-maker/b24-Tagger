@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.9.14
+// @version      0.10.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.9.14';
+  const VERSION = '0.10.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -40,6 +40,8 @@
     THEME:            'b24tagger_theme',
     UI_SIZE:          'b24tagger_ui_size',
     UI_ANN_SIZE:      'b24tagger_ann_size',
+    GROUPS:           'b24tagger_groups',
+    STATS_CFG:        'b24tagger_stats_config',
   };
   const MAX_BATCH_SIZE = 500;
   const HEALTH_CHECK_INTERVAL = 30000;
@@ -4697,6 +4699,19 @@ function showOnboarding(onComplete) {
 
   const CHANGELOG = [
     {
+      version: '0.10.0',
+      date: '2026-03-28',
+      label: 'Nowość',
+      labelColor: '#6c6cff',
+      changes: [
+        { type: 'new', text: 'Annotators Tab — nowe zakładki:
+* Grupy — tworzenie i zarządzanie grupami projektów (nazwane zestawy projektów)
+* Overall Stats — sumaryczne statystyki across projektów dla wybranej grupy' },
+        { type: 'new', text: 'Grupy projektów: integracja z panelem "Wszystkie projekty" — można ograniczyć cross-delete do wybranej grupy' },
+        { type: 'new', text: 'Overall Stats: konfigurowalne per-grupa ustawienie tagu "Relevantne", spinner gdy cache zimny, natychmiastowy render z cache' },
+      ]
+    },
+    {
       version: '0.9.14',
       date: '2026-03-28',
       label: 'Fix',
@@ -5302,8 +5317,6 @@ function showOnboarding(onComplete) {
   const PLANNED_FEATURES = [
     { priority: 'ai',     text: 'Dostęp do AI API — tłumaczenie wzmianek na bieżąco, automatyczna klasyfikacja, tryb tworzenia customowych klasyfikatorów (do automatycznej klasyfikacji) i inne...', next: false },
     { priority: 'high',   text: 'Podgląd wzmianki on-hover — najedź na URL w logu żeby zobaczyć treść i autora', next: false },
-    { priority: 'medium', text: 'Annotators Tab — zakładka "Overall Stats": sumaryczne statystyki REQ/DEL ze wszystkich projektów (lub wybranej grupy projektów)', next: true },
-    { priority: 'medium', text: 'Grupowanie projektów — przypisywanie własnych kategorii do projektów (np. kraj, marka) dla cross-project operacji, sumarycznych statystyk i filtrowania widoków', next: false },
     { priority: 'medium', text: 'Bulk rename tagów — masowa zmiana nazwy tagu w projekcie', next: false },
   ];
 
@@ -5880,6 +5893,34 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.10.0',
+      date: '2026-03-28',
+      notes: [
+        '[NEW]  LS.GROUPS = b24tagger_groups: [{id, name, projectIds, relevantTagId}] — grupy projektów per user',
+        '[NEW]  LS.STATS_CFG = b24tagger_stats_config: {selectedGroupId} — zapamiętana wybrana grupa w Overall Stats',
+        '[NEW]  bgCache.overallStats = {groupId, results, ts} — cache danych Overall Stats (TTL 5min, analogiczny do bgCache.tagstats)',
+        '[NEW]  getGroups() / saveGroups() / generateGroupId() — CRUD helpers dla grup',
+        '[NEW]  getKnownProjectsList() — lista {id,name} ze wszystkich LS.PROJECTS (bez filtrowania reqVer/toDel)',
+        '[NEW]  renderGroupsTab() / wireGroupsTab() — render zakładki Grupy; lista grup z kartami, przycisk + Nowa',
+        '[NEW]  showGroupEditor(existingGroup, knownProjects) — modal edytora grupy; checkboxy projektów z live styling',
+        '[NEW]  renderOverallStatsTab() — render zakładki Overall Stats; selektor grupy + selektor wariant bez grupy',
+        '[NEW]  loadOverallStats() — cache-first load: render z bgCache jeśli gorący + cichy refetch; spinner gdy zimny',
+        '[NEW]  _bgFetchOverallStats(group) — cichy fetch overall stats, wypełnia bgCache.overallStats',
+        '[NEW]  _fetchOverallStats(group) — 3x getMentions per projekt (relevant/reqVer/toDel), Promise.all, iteracja serial po projektach',
+        '[NEW]  renderOverallStatsData(el, results, group) — karty sumaryczne (1-3 kolumny) + tabela per-projekt',
+        '[NEW]  _statsCard(label, value, color, bgColor) — helper karty sumarycznej',
+        '[NEW]  showOverallStatsSettings(group) — modal ustawień Overall Stats; selektor tagu relevantne per-grupa',
+        '[NEW]  setGroupRelevantTagId(groupId, tagId) — zapisuje relevantTagId w grupie w LS.GROUPS',
+        '[NEW]  Annotators Tab HTML: dodano zakładki "Grupy" (data-ann-tab=groups) i "Overall" (data-ann-tab=overall)',
+        '[NEW]  openAnnotatorPanel(): wywołuje renderGroupsTab() + renderOverallStatsTab() przy każdym otwarciu',
+        '[NEW]  Tab click handler: obsługa tabName===groups → renderGroupsTab(); tabName===overall → renderOverallStatsTab()',
+        '[NEW]  buildAllProjectsPanel(): group filter dropdown #b24t-ap-group-sel — widoczny tylko gdy grupy istnieją',
+        '[ARCH] getKnownProjects(): dodano filtrowanie do wybranej grupy gdy #b24t-ap-group-sel ma wartość',
+        '[DATA] _fetchOverallStats: reqVerId/toDelId odczytywane z LS.PROJECTS[pid].tagIds, fallback do stałych 1154586/1154757',
+        '[SCOPE] Wszystkie nowe funkcje wewnątrz IIFE (2 spacje wcięcia) — bez scope bug',
+      ]
+    },
     {
       version: '0.9.14',
       date: '2026-03-28',
@@ -6702,7 +6743,7 @@ function showOnboarding(onComplete) {
     // Użyj tagów z aktualnego state.tags jako fallback
     const globalReqVerId   = state.tags && state.tags['REQUIRES_VERIFICATION'];
     const globalToDeleteId = state.tags && state.tags['TO_DELETE'];
-    return Object.entries(projects).map(function([id, p]) {
+    var allProjects = Object.entries(projects).map(function([id, p]) {
       const reqVerId   = (p.tagIds && p.tagIds['REQUIRES_VERIFICATION']) || globalReqVerId;
       const toDeleteId = (p.tagIds && p.tagIds['TO_DELETE'])             || globalToDeleteId;
       return {
@@ -6714,6 +6755,16 @@ function showOnboarding(onComplete) {
     }).filter(function(p) {
       return p.reqVerId && p.toDeleteId;
     });
+    // Filtruj do wybranej grupy jeśli user ją wybrał w panelu cross-delete
+    var groupSel = document.getElementById('b24t-ap-group-sel');
+    if (groupSel && groupSel.value) {
+      var groups = getGroups();
+      var selectedGroup = groups.find(function(g) { return g.id === groupSel.value; });
+      if (selectedGroup) {
+        allProjects = allProjects.filter(function(p) { return selectedGroup.projectIds.includes(p.id); });
+      }
+    }
+    return allProjects;
   }
 
   // Pobiera wszystkie strony wzmianek projektu równolegle (10x) i zlicza po tagach
@@ -7045,7 +7096,7 @@ function showOnboarding(onComplete) {
   // bgCache.tagstats    = { results, dates, ts }         (Annotators Tab → zakładka Tagi)
   // bgCache.project     = { total,... , ts }             (Annotators Tab → zakładka Projekt)
   // bgCache.allProjects = { [tagId]: { results, ts } }   (cross-delete panel)
-  var bgCache = { tagstats: null, project: null, allProjects: {} };
+  var bgCache = { tagstats: null, project: null, allProjects: {}, overallStats: null };
   var bgPrefetchStarted = false;
   var BG_CACHE_TTL = 5 * 60 * 1000; // 5 minut — po tym czasie re-fetch w tle
 
@@ -7176,6 +7227,8 @@ function showOnboarding(onComplete) {
       '<div style="display:flex;align-items:center;gap:5px;padding:6px 10px;background:var(--b24t-bg-deep);border-bottom:1px solid var(--b24t-border-sub);">' +
         '<button class="b24t-tab b24t-ann-tab b24t-tab-active" data-ann-tab="project">📊 Projekt</button>' +
         '<button class="b24t-tab b24t-ann-tab" data-ann-tab="tagstats">🏷 Tagi</button>' +
+        '<button class="b24t-tab b24t-ann-tab" data-ann-tab="groups">🗂 Grupy</button>' +
+        '<button class="b24t-tab b24t-ann-tab" data-ann-tab="overall">📈 Overall</button>' +
       '</div>' +
       // Project tab
       '<div id="b24t-ann-tab-project" class="b24t-ann-content" style="display:block;background:var(--b24t-bg);">' +
@@ -7186,6 +7239,14 @@ function showOnboarding(onComplete) {
       '<div id="b24t-ann-tab-tagstats" class="b24t-ann-content" style="display:none;background:var(--b24t-bg);">' +
         '<div id="b24t-ann-tagstats-content" style="padding:16px;font-size:14px;color:var(--b24t-text-faint);">↻ Ładowanie...</div>' +
         '<div style="padding:0 16px 14px;"><button id="b24t-ann-tagstats-refresh" style="width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:7px;padding:9px;font-size:13px;font-family:inherit;cursor:pointer;transition:background 0.15s,transform 0.1s;">↻ Odśwież</button></div>' +
+      '</div>' +
+      // Groups tab
+      '<div id="b24t-ann-tab-groups" class="b24t-ann-content" style="display:none;background:var(--b24t-bg);overflow-y:auto;">' +
+        '<div id="b24t-ann-tab-groups-content"></div>' +
+      '</div>' +
+      // Overall Stats tab
+      '<div id="b24t-ann-tab-overall" class="b24t-ann-content" style="display:none;background:var(--b24t-bg);">' +
+        '<div id="b24t-ann-tab-overall-content"></div>' +
       '</div>';
 
     // Apply panel border/shadow via attribute (CSS vars pick it up)
@@ -7242,6 +7303,12 @@ function showOnboarding(onComplete) {
           } else if (!annotatorData.tagstats) {
             loadAnnotatorTagStats();
           }
+        }
+        if (tabName === 'groups') {
+          renderGroupsTab();
+        }
+        if (tabName === 'overall') {
+          renderOverallStatsTab();
         }
       });
     });
@@ -7308,6 +7375,9 @@ function showOnboarding(onComplete) {
     } else if (!annotatorData.tagstats) {
       loadAnnotatorTagStats();
     }
+    // Grupy i Overall — inicjalizuj zawsze przy otwarciu (lekka operacja, tylko render z danych)
+    renderGroupsTab();
+    renderOverallStatsTab();
   }
 
   function getAnnotatorDates() {
@@ -7791,6 +7861,15 @@ function showOnboarding(onComplete) {
       '</div>' +
       // Subheader — wybrany tag
       '<div id="b24t-ap-tag-name" style="padding:8px 14px;background:var(--b24t-bg-elevated);border-bottom:1px solid var(--b24t-border);font-size:11px;font-weight:600;color:var(--b24t-text-muted);flex-shrink:0;">Wybierz tag, aby załadować dane</div>' +
+      // Group filter — widoczny tylko gdy istnieją grupy
+      '<div id="b24t-ap-group-filter" style="display:none;padding:6px 10px;background:var(--b24t-bg-deep);border-bottom:1px solid var(--b24t-border-sub);">' +
+        '<div style="display:flex;align-items:center;gap:6px;">' +
+          '<span style="font-size:10px;color:var(--b24t-text-faint);flex-shrink:0;">Zakres:</span>' +
+          '<select id="b24t-ap-group-sel" style="flex:1;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text);border-radius:5px;font-size:11px;padding:4px 6px;font-family:inherit;cursor:pointer;">' +
+            '<option value="">Wszystkie projekty</option>' +
+          '</select>' +
+        '</div>' +
+      '</div>' +
       // Lista projektów
       '<div id="b24t-ap-list" style="flex:1;overflow-y:auto;">' +
         '<div style="padding:16px;text-align:center;font-size:12px;color:var(--b24t-text-faint);">—</div>' +
@@ -7812,6 +7891,27 @@ function showOnboarding(onComplete) {
     if (mainPanel) {
       new MutationObserver(reposition).observe(mainPanel, { attributes: true, attributeFilter: ['style'] });
     }
+
+    // Group filter — wypełnij opcjami i pokaż jeśli grupy istnieją
+    (function() {
+      var groups = getGroups();
+      var filterEl = document.getElementById('b24t-ap-group-filter');
+      var groupSel = document.getElementById('b24t-ap-group-sel');
+      if (filterEl && groupSel && groups.length) {
+        filterEl.style.display = 'block';
+        groups.forEach(function(g) {
+          var opt = document.createElement('option');
+          opt.value = g.id;
+          opt.textContent = g.name + ' (' + g.projectIds.length + ' proj.)';
+          groupSel.appendChild(opt);
+        });
+        groupSel.addEventListener('change', function() {
+          // Po zmianie grupy wymuś odświeżenie listy projektów
+          bgCache.allProjects = {};
+          refreshAllProjectsPanel();
+        });
+      }
+    })();
 
     // Close button
     document.getElementById('b24t-ap-close').addEventListener('click', () => {
@@ -7893,6 +7993,403 @@ To jest NIEODWRACALNE.`)) return;
         '</div>';
       }).join('');
     }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // GROUPS — zarządzanie grupami projektów (v0.10.0)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  function getGroups() {
+    return lsGet(LS.GROUPS, []);
+  }
+
+  function saveGroups(groups) {
+    lsSet(LS.GROUPS, groups);
+  }
+
+  function generateGroupId() {
+    return 'grp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  }
+
+  function getKnownProjectsList() {
+    var projects = lsGet(LS.PROJECTS, {});
+    return Object.entries(projects).map(function(entry) {
+      return { id: parseInt(entry[0]), name: entry[1].name || ('Projekt ' + entry[0]) };
+    }).sort(function(a, b) { return a.name.localeCompare(b.name); });
+  }
+
+  function renderGroupsTab() {
+    var el = document.getElementById('b24t-ann-tab-groups-content');
+    if (!el) return;
+    var groups = getGroups();
+    var knownProjects = getKnownProjectsList();
+    var html = '';
+    if (!groups.length) {
+      html = '<div style="padding:20px 16px;text-align:center;">' +
+        '<div style="font-size:28px;margin-bottom:10px;">📂</div>' +
+        '<div style="font-size:13px;font-weight:600;color:var(--b24t-text);margin-bottom:6px;">Brak grup projektów</div>' +
+        '<div style="font-size:12px;color:var(--b24t-text-faint);line-height:1.6;margin-bottom:14px;">Grupuj projekty aby używać ich<br>w cross-delete i Overall Stats.</div>' +
+        '<button id="b24t-grp-add-first" style="background:var(--b24t-accent-grad);color:#fff;border:none;border-radius:8px;padding:9px 20px;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;">+ Utwórz grupę</button>' +
+      '</div>';
+    } else {
+      html = '<div style="padding:10px 12px 4px;display:flex;align-items:center;justify-content:space-between;">' +
+        '<span style="font-size:11px;color:var(--b24t-text-faint);">' + groups.length + ' ' + (groups.length === 1 ? 'grupa' : 'grup') + '</span>' +
+        '<button id="b24t-grp-add-btn" style="background:var(--b24t-accent-grad);color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;">+ Nowa</button>' +
+      '</div>';
+      groups.forEach(function(g) {
+        var projNames = g.projectIds.map(function(pid) {
+          var p = knownProjects.find(function(kp) { return kp.id === pid; });
+          return p ? p.name : ('ID:' + pid);
+        });
+        html += '<div class="b24t-grp-card" data-gid="' + g.id + '" style="margin:6px 12px;background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:10px;overflow:hidden;">' +
+          '<div style="display:flex;align-items:center;padding:10px 12px;gap:8px;">' +
+            '<div style="flex:1;min-width:0;">' +
+              '<div style="font-size:13px;font-weight:700;color:var(--b24t-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + g.name + '</div>' +
+              '<div style="font-size:11px;color:var(--b24t-text-faint);margin-top:2px;">' + g.projectIds.length + ' projektów</div>' +
+            '</div>' +
+            '<button class="b24t-grp-edit" data-gid="' + g.id + '" style="background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;padding:4px 9px;font-size:11px;font-family:inherit;cursor:pointer;">✏</button>' +
+            '<button class="b24t-grp-delete" data-gid="' + g.id + '" style="background:var(--b24t-err-bg);border:1px solid color-mix(in srgb,var(--b24t-err) 30%,transparent);color:var(--b24t-err);border-radius:6px;padding:4px 9px;font-size:11px;font-family:inherit;cursor:pointer;">✕</button>' +
+          '</div>' +
+          (projNames.length ? '<div style="padding:0 12px 10px;display:flex;flex-wrap:wrap;gap:4px;">' +
+            projNames.map(function(n) { return '<span style="background:var(--b24t-bg-input);border:1px solid var(--b24t-border);border-radius:99px;padding:2px 8px;font-size:10px;color:var(--b24t-text-muted);">' + n + '</span>'; }).join('') +
+          '</div>' : '') +
+        '</div>';
+      });
+    }
+    el.innerHTML = html;
+    wireGroupsTab(el, knownProjects);
+  }
+
+  function wireGroupsTab(el, knownProjects) {
+    var addFirst = el.querySelector('#b24t-grp-add-first');
+    var addBtn   = el.querySelector('#b24t-grp-add-btn');
+    if (addFirst) addFirst.addEventListener('click', function() { showGroupEditor(null, knownProjects); });
+    if (addBtn)   addBtn.addEventListener('click',   function() { showGroupEditor(null, knownProjects); });
+    el.querySelectorAll('.b24t-grp-edit').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var gid = btn.dataset.gid;
+        var groups = getGroups();
+        var group = groups.find(function(g) { return g.id === gid; });
+        if (group) showGroupEditor(group, knownProjects);
+      });
+    });
+    el.querySelectorAll('.b24t-grp-delete').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var gid = btn.dataset.gid;
+        var groups = getGroups();
+        var group = groups.find(function(g) { return g.id === gid; });
+        if (!group) return;
+        if (!confirm('Usunac grupe "' + group.name + '"?')) return;
+        saveGroups(groups.filter(function(g) { return g.id !== gid; }));
+        bgCache.overallStats = null;
+        renderGroupsTab();
+        renderOverallStatsTab();
+      });
+    });
+  }
+
+  function showGroupEditor(existingGroup, knownProjects) {
+    var isNew = !existingGroup;
+    var currentGroup = existingGroup ? JSON.parse(JSON.stringify(existingGroup)) : { id: generateGroupId(), name: '', projectIds: [], relevantTagId: null };
+    var overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483648;display:flex;align-items:center;justify-content:center;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;';
+    var projCheckboxes = knownProjects.length ? knownProjects.map(function(p) {
+      var checked = currentGroup.projectIds.includes(p.id);
+      return '<label style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:7px;cursor:pointer;background:' + (checked ? 'var(--b24t-primary-bg)' : 'var(--b24t-bg-input)') + ';border:1px solid ' + (checked ? 'color-mix(in srgb,var(--b24t-primary) 40%,transparent)' : 'var(--b24t-border)') + ';transition:background 0.15s,border-color 0.15s;">' +
+        '<input type="checkbox" data-pid="' + p.id + '"' + (checked ? ' checked' : '') + ' style="accent-color:var(--b24t-primary);width:14px;height:14px;cursor:pointer;">' +
+        '<span style="font-size:12px;color:var(--b24t-text);">' + p.name + '</span>' +
+      '</label>';
+    }).join('') : '<div style="font-size:12px;color:var(--b24t-text-faint);padding:10px 0;line-height:1.6;">Brak zaladowanych projektow.<br>Wejdz w widok Mentions kazdego projektu.</div>';
+    overlay.innerHTML =
+      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:360px;max-height:85vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.25s cubic-bezier(0.34,1.56,0.64,1);">' +
+        '<div style="padding:14px 16px;background:var(--b24t-accent-grad);border-radius:14px 14px 0 0;display:flex;align-items:center;gap:10px;">' +
+          '<span style="font-size:14px;font-weight:700;color:#fff;flex:1;">' + (isNew ? '+ Nowa grupa' : 'Edytuj grupe') + '</span>' +
+          '<button id="b24t-grped-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;border-radius:5px;padding:2px 8px;font-size:16px;cursor:pointer;">x</button>' +
+        '</div>' +
+        '<div style="overflow-y:auto;flex:1;padding:16px;">' +
+          '<div style="margin-bottom:14px;">' +
+            '<div style="font-size:11px;font-weight:600;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">Nazwa grupy</div>' +
+            '<input id="b24t-grped-name" type="text" value="' + (currentGroup.name || '') + '" placeholder="np. TR Markets" maxlength="40" style="width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text);border-radius:7px;padding:8px 10px;font-size:13px;font-family:inherit;box-sizing:border-box;outline:none;transition:border-color 0.15s;">' +
+          '</div>' +
+          '<div style="margin-bottom:14px;">' +
+            '<div style="font-size:11px;font-weight:600;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;">Projekty w grupie</div>' +
+            '<div id="b24t-grped-projects" style="display:flex;flex-direction:column;gap:5px;">' + projCheckboxes + '</div>' +
+          '</div>' +
+          '<div id="b24t-grped-status" style="font-size:11px;color:var(--b24t-err);min-height:16px;margin-bottom:4px;"></div>' +
+        '</div>' +
+        '<div style="padding:12px 16px;border-top:1px solid var(--b24t-border);display:flex;gap:8px;">' +
+          '<button id="b24t-grped-cancel" style="flex:1;background:var(--b24t-bg-input);color:var(--b24t-text-muted);border:1px solid var(--b24t-border);border-radius:8px;padding:9px;font-size:13px;font-family:inherit;cursor:pointer;">Anuluj</button>' +
+          '<button id="b24t-grped-save" style="flex:2;background:var(--b24t-accent-grad);color:#fff;border:none;border-radius:8px;padding:9px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;">' + (isNew ? 'Utworz grupe' : 'Zapisz zmiany') + '</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    overlay.querySelectorAll('#b24t-grped-projects label').forEach(function(label) {
+      var cb = label.querySelector('input[type=checkbox]');
+      cb.addEventListener('change', function() {
+        label.style.background = cb.checked ? 'var(--b24t-primary-bg)' : 'var(--b24t-bg-input)';
+        label.style.borderColor = cb.checked ? 'color-mix(in srgb,var(--b24t-primary) 40%,transparent)' : 'var(--b24t-border)';
+      });
+    });
+    function close() { overlay.remove(); }
+    overlay.querySelector('#b24t-grped-close').addEventListener('click', close);
+    overlay.querySelector('#b24t-grped-cancel').addEventListener('click', close);
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) close(); });
+    var nameInput = overlay.querySelector('#b24t-grped-name');
+    nameInput.focus();
+    nameInput.addEventListener('focus', function() { nameInput.style.borderColor = 'var(--b24t-primary)'; });
+    nameInput.addEventListener('blur',  function() { nameInput.style.borderColor = 'var(--b24t-border)'; });
+    overlay.querySelector('#b24t-grped-save').addEventListener('click', function() {
+      var name = nameInput.value.trim();
+      var statusEl = overlay.querySelector('#b24t-grped-status');
+      if (!name) { statusEl.textContent = 'Podaj nazwe grupy.'; return; }
+      var selectedPids = [];
+      overlay.querySelectorAll('#b24t-grped-projects input[type=checkbox]:checked').forEach(function(cb) {
+        selectedPids.push(parseInt(cb.dataset.pid));
+      });
+      if (!selectedPids.length) { statusEl.textContent = 'Wybierz co najmniej jeden projekt.'; return; }
+      currentGroup.name = name;
+      currentGroup.projectIds = selectedPids;
+      var groups = getGroups();
+      if (isNew) {
+        groups.push(currentGroup);
+      } else {
+        var idx = groups.findIndex(function(g) { return g.id === currentGroup.id; });
+        if (idx >= 0) groups[idx] = currentGroup; else groups.push(currentGroup);
+      }
+      saveGroups(groups);
+      bgCache.overallStats = null;
+      close();
+      renderGroupsTab();
+      renderOverallStatsTab();
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // OVERALL STATS (v0.10.0)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  function getStatsConfig() { return lsGet(LS.STATS_CFG, {}); }
+  function saveStatsConfig(cfg) { lsSet(LS.STATS_CFG, cfg); }
+
+  function setGroupRelevantTagId(groupId, tagId) {
+    var groups = getGroups();
+    var g = groups.find(function(g) { return g.id === groupId; });
+    if (g) { g.relevantTagId = tagId; saveGroups(groups); }
+  }
+
+  function _getDefaultDateFrom() {
+    var d = new Date(); d.setMonth(d.getMonth() - 1);
+    return d.toISOString().substring(0, 10);
+  }
+  function _getDefaultDateTo() {
+    return new Date().toISOString().substring(0, 10);
+  }
+
+  async function _fetchOverallStats(group) {
+    var projects = lsGet(LS.PROJECTS, {});
+    var results = [];
+    for (var i = 0; i < group.projectIds.length; i++) {
+      var pid = group.projectIds[i];
+      var pData = projects[pid];
+      if (!pData) { results.push({ pid: pid, name: 'ID:' + pid, error: 'projekt nieznany' }); continue; }
+      var dateFrom = pData.dateFrom || _getDefaultDateFrom();
+      var dateTo   = pData.dateTo   || _getDefaultDateTo();
+      var tagIds   = pData.tagIds || {};
+      // Szukamy reqVer i toDel w tagIds map
+      var reqVerId = null, toDelId = null;
+      Object.entries(tagIds).forEach(function(e) {
+        if (e[0] === 'REQUIRES_VERIFICATION') reqVerId = e[1];
+        if (e[0] === 'TO_DELETE') toDelId = e[1];
+      });
+      // Fallback do znanych ID
+      if (!reqVerId) reqVerId = 1154586;
+      if (!toDelId)  toDelId  = 1154757;
+      var relTagId = group.relevantTagId || null;
+      try {
+        var queries = [
+          relTagId ? getMentions(pid, dateFrom, dateTo, [relTagId], 1) : Promise.resolve({ count: null }),
+          getMentions(pid, dateFrom, dateTo, [reqVerId], 1),
+          getMentions(pid, dateFrom, dateTo, [toDelId],  1),
+        ];
+        var counts = await Promise.all(queries);
+        results.push({
+          pid: pid, name: pData.name || ('ID:' + pid),
+          relevant: counts[0].count,
+          reqVer:   counts[1].count,
+          toDelete: counts[2].count,
+          dateFrom: dateFrom, dateTo: dateTo,
+        });
+      } catch(e) {
+        results.push({ pid: pid, name: pData.name || ('ID:' + pid), error: e.message });
+      }
+    }
+    return results;
+  }
+
+  async function _bgFetchOverallStats(group) {
+    if (!state.tokenHeaders) return null;
+    try {
+      var results = await _fetchOverallStats(group);
+      bgCache.overallStats = { groupId: group.id, results: results, ts: Date.now() };
+      return bgCache.overallStats;
+    } catch(e) { return null; }
+  }
+
+  function renderOverallStatsTab() {
+    var el = document.getElementById('b24t-ann-tab-overall-content');
+    if (!el) return;
+    var groups = getGroups();
+    if (!groups.length) {
+      el.innerHTML = '<div style="padding:24px 16px;text-align:center;">' +
+        '<div style="font-size:28px;margin-bottom:10px;">📊</div>' +
+        '<div style="font-size:13px;font-weight:600;color:var(--b24t-text);margin-bottom:8px;">Brak grup projektow</div>' +
+        '<div style="font-size:12px;color:var(--b24t-text-faint);line-height:1.6;">Aby korzystac z Overall Stats,<br>stworz grupe w zakladce <strong style="color:var(--b24t-primary);">Grupy</strong>.</div>' +
+      '</div>';
+      return;
+    }
+    var cfg = getStatsConfig();
+    var selectedGroupId = cfg.selectedGroupId || null;
+    var selectedGroup = groups.find(function(g) { return g.id === selectedGroupId; }) || null;
+    var selectorHtml =
+      '<div style="padding:10px 12px;border-bottom:1px solid var(--b24t-border-sub);display:flex;align-items:center;gap:6px;">' +
+        '<select id="b24t-overall-group-sel" style="flex:1;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text);border-radius:6px;font-size:12px;padding:5px 8px;font-family:inherit;cursor:pointer;">' +
+          '<option value="">— wybierz grupe —</option>' +
+          groups.map(function(g) {
+            return '<option value="' + g.id + '"' + (g.id === selectedGroupId ? ' selected' : '') + '>' + g.name + ' (' + g.projectIds.length + ' proj.)</option>';
+          }).join('') +
+        '</select>' +
+        '<button id="b24t-overall-settings-btn" title="Ustawienia" style="background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;padding:5px 9px;font-size:13px;cursor:pointer;flex-shrink:0;">&#9881;</button>' +
+        '<button id="b24t-overall-refresh-btn" title="Odswiez" style="background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;padding:5px 9px;font-size:13px;cursor:pointer;flex-shrink:0;">&#8635;</button>' +
+      '</div>';
+    var bodyHtml = selectedGroup
+      ? '<div id="b24t-overall-data" style="padding:12px;"></div>'
+      : '<div style="padding:24px 16px;text-align:center;"><div style="font-size:24px;margin-bottom:8px;">&#128070;</div><div style="font-size:12px;color:var(--b24t-text-faint);line-height:1.6;">Wybierz grupe projektow<br>aby zobaczyc statystyki.</div></div>';
+    el.innerHTML = selectorHtml + bodyHtml;
+    var selEl = el.querySelector('#b24t-overall-group-sel');
+    selEl.addEventListener('change', function() {
+      var gid = selEl.value;
+      var cfg = getStatsConfig();
+      cfg.selectedGroupId = gid || null;
+      saveStatsConfig(cfg);
+      bgCache.overallStats = null;
+      renderOverallStatsTab();
+      if (gid) loadOverallStats();
+    });
+    var refreshBtn = el.querySelector('#b24t-overall-refresh-btn');
+    if (refreshBtn) refreshBtn.addEventListener('click', function() { bgCache.overallStats = null; loadOverallStats(); });
+    var settingsBtn = el.querySelector('#b24t-overall-settings-btn');
+    if (settingsBtn) settingsBtn.addEventListener('click', function() { showOverallStatsSettings(selectedGroup); });
+    if (selectedGroup) loadOverallStats();
+  }
+
+  async function loadOverallStats() {
+    var el = document.getElementById('b24t-ann-tab-overall-content');
+    if (!el) return;
+    var cfg = getStatsConfig();
+    var groups = getGroups();
+    var group = groups.find(function(g) { return g.id === cfg.selectedGroupId; });
+    if (!group) return;
+    var dataEl = el.querySelector('#b24t-overall-data');
+    if (!dataEl) return;
+    if (_bgCacheFresh(bgCache.overallStats) && bgCache.overallStats.groupId === group.id) {
+      renderOverallStatsData(dataEl, bgCache.overallStats.results, group);
+      _bgFetchOverallStats(group).then(function(fresh) {
+        if (fresh && dataEl.isConnected) renderOverallStatsData(dataEl, fresh.results, group);
+      }).catch(function(){});
+      return;
+    }
+    dataEl.innerHTML = '<div style="padding:20px 0;text-align:center;"><div style="font-size:22px;animation:b24t-spin 1s linear infinite;display:inline-block;">&#8635;</div><div style="font-size:11px;color:var(--b24t-text-faint);margin-top:8px;">Pobieram statystyki...</div></div>';
+    var fresh = await _bgFetchOverallStats(group);
+    if (fresh && dataEl.isConnected) renderOverallStatsData(dataEl, fresh.results, group);
+  }
+
+  function _statsCard(label, value, color, bgColor) {
+    return '<div style="background:' + bgColor + ';border-radius:8px;padding:10px;text-align:center;">' +
+      '<div style="font-size:11px;color:' + color + ';margin-bottom:4px;font-weight:600;">' + label + '</div>' +
+      '<div style="font-size:22px;font-weight:800;color:' + color + ';">' + (value != null ? value : '—') + '</div>' +
+    '</div>';
+  }
+
+  function renderOverallStatsData(el, results, group) {
+    if (!el) return;
+    var hasRelevant = group.relevantTagId != null;
+    var totalRelevant = 0, totalReqVer = 0, totalToDelete = 0;
+    results.forEach(function(r) {
+      if (!r.error) {
+        if (r.relevant  != null) totalRelevant  += r.relevant;
+        if (r.reqVer    != null) totalReqVer    += r.reqVer;
+        if (r.toDelete  != null) totalToDelete  += r.toDelete;
+      }
+    });
+    var colCount = hasRelevant ? 3 : 2;
+    var cards = '';
+    if (hasRelevant) cards += _statsCard('Relevantne', totalRelevant, '#16a34a', '#dcfce7');
+    cards += _statsCard('Do weryfikacji', totalReqVer, '#d97706', '#fef3c7');
+    cards += _statsCard('Do usuniecia', totalToDelete, '#dc2626', '#fee2e2');
+    var warnHtml = !hasRelevant
+      ? '<div style="margin-bottom:10px;padding:8px 10px;background:var(--b24t-warn-bg);border:1px solid color-mix(in srgb,var(--b24t-warn) 30%,transparent);border-radius:7px;font-size:11px;color:var(--b24t-warn);line-height:1.5;">Ustaw tag Relevantne w ustawieniach aby widziec pelne dane.</div>' : '';
+    var thREL = hasRelevant ? '<th style="padding:6px 8px;font-size:10px;color:#16a34a;text-align:right;font-weight:600;">REL</th>' : '';
+    var tableRows = results.map(function(r) {
+      if (r.error) return '<tr><td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="' + (colCount + 1) + '" style="padding:6px 8px;font-size:10px;color:var(--b24t-err);">blad: ' + r.error + '</td></tr>';
+      var relTd = hasRelevant ? '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#16a34a;text-align:right;">' + (r.relevant != null ? r.relevant : '—') + '</td>' : '';
+      return '<tr style="border-top:1px solid var(--b24t-border-sub);">' +
+        '<td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + r.name + '">' + r.name + '</td>' +
+        relTd +
+        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#d97706;text-align:right;">' + (r.reqVer != null ? r.reqVer : '—') + '</td>' +
+        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#dc2626;text-align:right;">' + (r.toDelete != null ? r.toDelete : '—') + '</td>' +
+      '</tr>';
+    }).join('');
+    el.innerHTML = warnHtml +
+      '<div style="display:grid;grid-template-columns:' + (hasRelevant ? '1fr 1fr 1fr' : '1fr 1fr') + ';gap:8px;margin-bottom:12px;">' + cards + '</div>' +
+      '<div style="border:1px solid var(--b24t-border);border-radius:8px;overflow:hidden;">' +
+        '<table style="width:100%;border-collapse:collapse;">' +
+          '<tr style="background:var(--b24t-bg-deep);"><th style="padding:6px 8px;font-size:10px;color:var(--b24t-text-faint);text-align:left;font-weight:600;">Projekt</th>' + thREL +
+          '<th style="padding:6px 8px;font-size:10px;color:#d97706;text-align:right;font-weight:600;">REQ</th>' +
+          '<th style="padding:6px 8px;font-size:10px;color:#dc2626;text-align:right;font-weight:600;">DEL</th></tr>' +
+          tableRows +
+        '</table>' +
+      '</div>' +
+      '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:8px;text-align:right;">' + group.name + ' · ' + results.length + ' projektow</div>';
+  }
+
+  function showOverallStatsSettings(group) {
+    if (!group) return;
+    var overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483648;display:flex;align-items:center;justify-content:center;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;';
+    var tagOptions = Object.entries(state.tags).map(function(entry) {
+      return '<option value="' + entry[1] + '"' + (entry[1] === group.relevantTagId ? ' selected' : '') + '>' + entry[0] + ' (ID: ' + entry[1] + ')</option>';
+    }).join('');
+    overlay.innerHTML =
+      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:320px;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.25s cubic-bezier(0.34,1.56,0.64,1);">' +
+        '<div style="padding:12px 16px;background:var(--b24t-accent-grad);border-radius:14px 14px 0 0;display:flex;align-items:center;gap:10px;">' +
+          '<span style="font-size:14px;font-weight:700;color:#fff;flex:1;">&#9881; Ustawienia: ' + group.name + '</span>' +
+          '<button id="b24t-os-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;border-radius:5px;padding:2px 8px;font-size:16px;cursor:pointer;">x</button>' +
+        '</div>' +
+        '<div style="padding:16px;">' +
+          '<div style="font-size:12px;color:var(--b24t-text-muted);margin-bottom:6px;">Tag oznaczajacy <strong>Relevantne</strong>:</div>' +
+          '<select id="b24t-os-rel-tag" style="width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text);border-radius:7px;padding:7px 10px;font-size:12px;font-family:inherit;cursor:pointer;">' +
+            '<option value="">— brak —</option>' + tagOptions +
+          '</select>' +
+          '<div style="margin-top:12px;font-size:11px;color:var(--b24t-text-faint);line-height:1.6;padding:8px 10px;background:var(--b24t-bg-elevated);border-radius:7px;">REQUIRES_VERIFICATION i TO_DELETE sa odczytywane automatycznie.</div>' +
+        '</div>' +
+        '<div style="padding:10px 16px;border-top:1px solid var(--b24t-border);display:flex;gap:8px;">' +
+          '<button id="b24t-os-cancel" style="flex:1;background:var(--b24t-bg-input);color:var(--b24t-text-muted);border:1px solid var(--b24t-border);border-radius:8px;padding:9px;font-size:13px;font-family:inherit;cursor:pointer;">Anuluj</button>' +
+          '<button id="b24t-os-save" style="flex:2;background:var(--b24t-accent-grad);color:#fff;border:none;border-radius:8px;padding:9px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;">Zapisz</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    function close() { overlay.remove(); }
+    overlay.querySelector('#b24t-os-close').addEventListener('click', close);
+    overlay.querySelector('#b24t-os-cancel').addEventListener('click', close);
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) close(); });
+    overlay.querySelector('#b24t-os-save').addEventListener('click', function() {
+      var tagId = parseInt(overlay.querySelector('#b24t-os-rel-tag').value) || null;
+      setGroupRelevantTagId(group.id, tagId);
+      bgCache.overallStats = null;
+      close();
+      renderOverallStatsTab();
+      loadOverallStats();
+    });
   }
 
   async function refreshAllProjectsPanel() {

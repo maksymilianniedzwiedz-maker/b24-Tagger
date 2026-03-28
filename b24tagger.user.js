@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.9.11
+// @version      0.9.12
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -23,7 +23,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.9.11';
+  const VERSION = '0.9.12';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3295,14 +3295,37 @@
 
     helpModeActive = true;
 
-    // Obniż z-index panelu żeby overlay i strefy mogły być nad nim
-    // (panel ma z-index: 2147483647 = max CSS, overlay nie może być wyżej bez JS)
+    // Wykryj aktywną zakładkę
+    const activeTabBtn = panel.querySelector('.b24t-tab.b24t-tab-active');
+    const activeTab = activeTabBtn ? (activeTabBtn.dataset.tab || 'main') : 'main';
+
+    // Sprawdź czy Annotators Tab jest włączony i otwórz go
+    const features = loadFeatures ? loadFeatures() : {};
+    const annotatorsEnabled = features.annotator_tools;
+    let annotatorWasHidden = false;
+    if (annotatorsEnabled) {
+      const annPanel = document.getElementById('b24t-annotator-panel');
+      if (annPanel && annPanel.style.display === 'none') {
+        annotatorWasHidden = true;
+        openAnnotatorPanel();
+      }
+    }
+
+    // Obniż z-index głównego panelu
     panel.dataset.prevZIndex = panel.style.zIndex || '';
+    panel.dataset.helpAnnotatorOpened = annotatorWasHidden ? '1' : '0';
     panel.style.zIndex = '2147483500';
+
+    // Obniż też z-index Annotators Panel jeśli otwarty
+    const annPanel = document.getElementById('b24t-annotator-panel');
+    if (annPanel && annPanel.style.display !== 'none') {
+      annPanel.dataset.prevZIndex = annPanel.style.zIndex || '';
+      annPanel.style.zIndex = '2147483501';
+    }
 
     const panelRect = panel.getBoundingClientRect();
 
-    // Overlay DOKŁADNIE na panel
+    // Overlay na główny panel
     const overlay = document.createElement('div');
     overlay.id = 'b24t-help-panel-overlay';
     overlay.style.top    = panelRect.top + 'px';
@@ -3312,7 +3335,27 @@
     overlay.style.zIndex = '2147483510';
     document.body.appendChild(overlay);
 
-    // Przycisk "Wyjdź z trybu pomocy"
+    // Overlay na Annotators Panel jeśli widoczny
+    if (annPanel && annPanel.style.display !== 'none') {
+      const annRect = annPanel.getBoundingClientRect();
+      const annOverlay = document.createElement('div');
+      annOverlay.id = 'b24t-help-ann-overlay';
+      annOverlay.style.cssText = [
+        'position:fixed',
+        'border-radius:14px',
+        'z-index:2147483510',
+        'pointer-events:none',
+        'background:rgba(0,0,0,0.30)',
+        'animation:b24t-fadein 0.25s ease',
+        'top:'    + annRect.top    + 'px',
+        'left:'   + annRect.left   + 'px',
+        'width:'  + annRect.width  + 'px',
+        'height:' + annRect.height + 'px',
+      ].join(';');
+      document.body.appendChild(annOverlay);
+    }
+
+    // Przycisk "Wyjdź"
     const closeBtn = document.createElement('button');
     closeBtn.id = 'b24t-help-close';
     closeBtn.innerHTML = '🔍 Tryb pomocy — kliknij element aby poznać jego funkcję &nbsp; <span style="opacity:0.55;font-size:9px;">[ kliknij tutaj aby wyjść ]</span>';
@@ -3323,8 +3366,10 @@
     document.body.appendChild(closeBtn);
     closeBtn.addEventListener('click', exitHelpMode);
 
-    // Strefy klikania — nad overlayem, pod close
-    const zones = getHelpZones();
+    // Strefy — kontekstowo dla aktywnej zakładki + Annotators jeśli otwarty
+    const includeAnnotators = !!(annPanel && annPanel.style.display !== 'none');
+    const zones = getHelpZones(activeTab, includeAnnotators);
+
     zones.forEach(function(z) {
       const targetEl = document.querySelector(z.selector);
       if (!targetEl) return;
@@ -3338,7 +3383,6 @@
       zone.style.width  = r.width + 'px';
       zone.style.height = r.height + 'px';
       zone.style.zIndex = '2147483520';
-      // NIE ustawiamy zone.title — przeglądarka renderowałaby natywny tooltip który duplikuje bąbel
 
       zone.addEventListener('mouseenter', function(e) { showHelpTip(e, z); });
       zone.addEventListener('mouseleave', function() { if (!helpStickyTip) hideHelpTip(); });
@@ -3358,14 +3402,31 @@
     helpStickyTip = false;
     hideHelpTip();
 
-    // Przywróć z-index panelu
+    // Przywróć z-index głównego panelu
     const panel = document.getElementById('b24t-panel');
     if (panel) panel.style.zIndex = panel.dataset.prevZIndex || '2147483647';
 
-    var overlay = document.getElementById('b24t-help-panel-overlay');
-    var closeBtn = document.getElementById('b24t-help-close');
-    if (overlay) overlay.remove();
-    if (closeBtn) closeBtn.remove();
+    // Przywróć z-index Annotators Panel
+    const annPanel = document.getElementById('b24t-annotator-panel');
+    if (annPanel && annPanel.dataset.prevZIndex !== undefined) {
+      annPanel.style.zIndex = annPanel.dataset.prevZIndex || '2147483641';
+      delete annPanel.dataset.prevZIndex;
+    }
+
+    // Jeśli Annotators Tab był auto-otwarty przez help mode — zamknij go
+    if (panel && panel.dataset.helpAnnotatorOpened === '1') {
+      if (annPanel) annPanel.style.display = 'none';
+      const annTab = document.getElementById('b24t-annotator-tab');
+      if (annTab) annTab.style.display = 'flex';
+      delete panel.dataset.helpAnnotatorOpened;
+    }
+
+    var overlay    = document.getElementById('b24t-help-panel-overlay');
+    var annOverlay = document.getElementById('b24t-help-ann-overlay');
+    var closeBtn   = document.getElementById('b24t-help-close');
+    if (overlay)    overlay.remove();
+    if (annOverlay) annOverlay.remove();
+    if (closeBtn)   closeBtn.remove();
 
     helpZoneElements.forEach(function(z) { z.remove(); });
     helpZoneElements = [];
@@ -4029,8 +4090,10 @@ function showOnboarding(onComplete) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Definicje stref klikania w trybie pomocy
-  function getHelpZones() {
-    return [
+  // Zwraca strefy help dla danej zakładki i opcjonalnie dla Annotators Tab
+  function getHelpZones(activeTab, includeAnnotators) {
+    // Wspólne — zawsze widoczne niezależnie od zakładki
+    const common = [
       {
         selector: '#b24t-topbar',
         title: 'Header — pasek tytułowy',
@@ -4076,42 +4139,156 @@ function showOnboarding(onComplete) {
         title: 'Zakładki trybów pracy',
         desc: 'Cztery tryby: Plik (główny, praca z CSV/JSON), Quick Tag (bez pliku), Quick Delete (masowe usuwanie), Historia (ostatnie sesje).',
       },
-      {
-        selector: '#b24t-file-zone',
-        title: 'Strefa wgrywania pliku',
-        desc: 'Kliknij lub przeciągnij plik CSV/JSON/XLSX z ocenami wzmianek. Zalecany format: JSON (XLSX może obcinać 19-cyfrowe ID TikTok/Twitter).',
-      },
-      {
-        selector: '#b24t-project-name',
-        title: 'Wykryty projekt',
-        desc: 'Automatycznie wykryty projekt Brand24. Przejdź do widoku Mentions konkretnego projektu żeby tu pojawił się jego nazwa i ID.',
-      },
-      {
-        selector: '#b24t-actions',
-        title: 'Przyciski akcji',
-        desc: 'Start — uruchamia/wznawia tagowanie. Pause — bezpieczna pauza. Test Run — symulacja bez zapisu (zawsze sprawdź najpierw!). Match Preview — sprawdza % dopasowania URL.',
-      },
-      {
-        selector: '.b24t-stats-grid',
-        title: 'Kafelki statystyk',
-        desc: 'Otagowano — liczba wzmianek którym nadano tag. Pominięto — wzmianki bez dopasowania URL lub bez oceny. Brak matcha — URL z pliku nieznaleziony w Brand24.',
-      },
-      {
-        selector: '#b24t-progress-bar',
-        title: 'Pasek postępu',
-        desc: 'Wizualizacja postępu bieżącej sesji tagowania. Wypełnia się proporcjonalnie do otagowanych vs całkowitych wzmianek.',
-      },
-      {
-        selector: '#b24t-log',
-        title: 'Log zdarzeń',
-        desc: 'Chronologiczny dziennik operacji: sukcesy (zielone), ostrzeżenia (żółte), błędy (czerwone). Kliknij "Wyczyść" żeby wyczyścić.',
-      },
-      {
-        selector: '.b24t-section-label',
-        title: 'Nagłówek sekcji',
-        desc: 'Kolorowe nagłówki oznaczają poszczególne sekcje panelu: Projekt, Plik źródłowy, Mapowanie, Opcje, Progress, Statystyki i Log.',
-      },
     ];
+
+    // Strefy per zakładka
+    const byTab = {
+      main: [
+        {
+          selector: '#b24t-file-zone',
+          title: 'Strefa wgrywania pliku',
+          desc: 'Kliknij lub przeciągnij plik CSV/JSON/XLSX z ocenami wzmianek. Zalecany format: JSON (XLSX może obcinać 19-cyfrowe ID TikTok/Twitter).',
+        },
+        {
+          selector: '#b24t-project-name',
+          title: 'Wykryty projekt',
+          desc: 'Automatycznie wykryty projekt Brand24. Przejdź do widoku Mentions konkretnego projektu żeby tu pojawił się jego nazwa i ID.',
+        },
+        {
+          selector: '#b24t-actions',
+          title: 'Przyciski akcji',
+          desc: 'Start — uruchamia/wznawia tagowanie. Pause — bezpieczna pauza. Test Run — symulacja bez zapisu (zawsze sprawdź najpierw!). Match Preview — sprawdza % dopasowania URL.',
+        },
+        {
+          selector: '.b24t-stats-grid',
+          title: 'Kafelki statystyk',
+          desc: 'Otagowano — liczba wzmianek którym nadano tag. Pominięto — wzmianki bez dopasowania URL lub bez oceny. Brak matcha — URL z pliku nieznaleziony w Brand24.',
+        },
+        {
+          selector: '#b24t-progress-bar',
+          title: 'Pasek postępu',
+          desc: 'Wizualizacja postępu bieżącej sesji tagowania. Wypełnia się proporcjonalnie do otagowanych vs całkowitych wzmianek.',
+        },
+        {
+          selector: '#b24t-log',
+          title: 'Log zdarzeń',
+          desc: 'Chronologiczny dziennik operacji: sukcesy (zielone), ostrzeżenia (żółte), błędy (czerwone). Kliknij "Wyczyść" żeby wyczyścić.',
+        },
+        {
+          selector: '.b24t-section-label',
+          title: 'Nagłówek sekcji',
+          desc: 'Kolorowe nagłówki oznaczają poszczególne sekcje panelu: Projekt, Plik źródłowy, Mapowanie, Opcje, Progress, Statystyki i Log.',
+        },
+      ],
+      quicktag: [
+        {
+          selector: '#b24t-qt-view-info',
+          title: 'Info o bieżącym widoku',
+          desc: 'Pokazuje aktywny projekt, zakres dat i liczbę wzmianek widocznych w Brand24. Odświeża się automatycznie.',
+        },
+        {
+          selector: '#b24t-qt-tag',
+          title: 'Wybór tagu',
+          desc: 'Tag który zostanie nadany wzmiankom. Lista pochodzi z bieżącego projektu Brand24.',
+        },
+        {
+          selector: 'input[name="b24t-qt-scope"]',
+          title: 'Zakres tagowania',
+          desc: 'Bieżąca strona — tylko 60 wzmianek z aktualnej strony. Wszystkie strony — iteruje przez cały widok (może potrwać dłużej).',
+        },
+        {
+          selector: '#b24t-qt-run',
+          title: '▶ Taguj teraz',
+          desc: 'Uruchamia Quick Tag dla wybranego tagu i zakresu. Nie wymaga pliku CSV — taguje to co widać w Brand24.',
+        },
+        {
+          selector: '#b24t-qt-untag',
+          title: 'Usuń tag z widocznych',
+          desc: 'Odwrotność Quick Tag — usuwa wybrany tag ze wszystkich widocznych wzmianek. Przydatne do korekty błędnych tagowań.',
+        },
+      ],
+      delete: [
+        {
+          selector: '#b24t-del-tag',
+          title: 'Tag do usunięcia',
+          desc: 'Wybierz tag którego wzmianki mają zostać usunięte. Operacja trwała — nie można cofnąć.',
+        },
+        {
+          selector: '#b24t-del-dateinfo',
+          title: 'Zakres dat',
+          desc: 'Pokazuje aktywny zakres dat z URL Brand24. Możesz przełączyć na własny zakres lub operację na wszystkich projektach.',
+        },
+        {
+          selector: 'input[name="b24t-del-scope"]',
+          title: 'Zakres operacji',
+          desc: 'Aktualny widok — daty z URL Brand24. Własny zakres — ręczne daty. 🌐 Wszystkie projekty — usuwa tag ze wszystkich znanych projektów (wymaga Annotators Tab).',
+        },
+        {
+          selector: '#b24t-del-run',
+          title: '🗑 Usuń wzmianki z tagiem',
+          desc: 'Uruchamia masowe usuwanie. Przy pierwszym użyciu pojawi się ostrzeżenie. Operacja nieodwracalna.',
+        },
+        {
+          selector: '#b24t-delview-info',
+          title: 'Usuń wyświetlane wzmianki',
+          desc: 'Usuwa wzmianki aktualnie widoczne w panelu Brand24 — niezależnie od tagu. Działa z aktywnymi filtrami i zakresem dat.',
+        },
+        {
+          selector: '#b24t-delview-run',
+          title: '🗑 Usuń wyświetlane wzmianki',
+          desc: 'Usuwa wszystko co jest widoczne w aktualnym widoku Brand24. Operacja nieodwracalna.',
+        },
+      ],
+      history: [
+        {
+          selector: '#b24t-history-list',
+          title: 'Historia sesji',
+          desc: 'Lista ostatnich sesji tagowania z danego projektu: liczba otagowanych, pominiętych, czas trwania i nazwa pliku.',
+        },
+        {
+          selector: '#b24t-history-clear',
+          title: 'Wyczyść historię',
+          desc: 'Usuwa całą historię sesji z pamięci przeglądarki (localStorage). Nie wpływa na dane w Brand24.',
+        },
+      ],
+    };
+
+    // Strefy Annotators Tab (dodawane jeśli panel jest otwarty)
+    const annotators = includeAnnotators ? [
+      {
+        selector: '#b24t-ann-header',
+        title: '🛠 Annotators Tab — header',
+        desc: 'Nagłówek panelu annotatorów. Możesz go przeciągać trzymając za ten obszar.',
+        panel: 'annotator',
+      },
+      {
+        selector: '.b24t-ann-tab[data-ann-tab="project"]',
+        title: '📊 Zakładka Projekt',
+        desc: 'Statystyki bieżącego projektu: liczba wzmianek, otagowane, nieprzetworzone. Dane z aktualnego projektu Brand24.',
+        panel: 'annotator',
+      },
+      {
+        selector: '.b24t-ann-tab[data-ann-tab="tagstats"]',
+        title: '🏷 Zakładka Tagi',
+        desc: 'Przegląd wszystkich projektów — ile wzmianek ma tagi REQUIRES_VERIFICATION i TO_DELETE. Ładuje się w tle.',
+        panel: 'annotator',
+      },
+      {
+        selector: '#b24t-ann-project-content',
+        title: 'Dashboard projektu',
+        desc: 'Statystyki aktualnego projektu: otagowane vs pozostałe. Odśwież żeby pobrać aktualne dane.',
+        panel: 'annotator',
+      },
+      {
+        selector: '#b24t-ann-tagstats-content',
+        title: 'Tabela tagów wszystkich projektów',
+        desc: 'REQ = liczba wzmianek z tagiem REQUIRES_VERIFICATION, DEL = z tagiem TO_DELETE. Pokazuje tylko projekty gdzie coś jest do przetworzenia.',
+        panel: 'annotator',
+      },
+    ] : [];
+
+    const tabZones = byTab[activeTab] || byTab.main;
+    return [...common, ...tabZones, ...annotators];
   }
 
   // ───────────────────────────────────────────
@@ -4519,6 +4696,17 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   const CHANGELOG = [
+    {
+      version: '0.9.12',
+      date: '2026-03-28',
+      label: 'Help mode',
+      labelColor: '#6c6cff',
+      changes: [
+        { type: 'new', text: 'Tryb pomocy: strefy dla zakładek Quick Tag, Quick Delete i Historia — każda zakładka ma własny zestaw opisów' },
+        { type: 'new', text: 'Tryb pomocy: jeśli Annotators Tab jest włączony — auto-otwiera się przy starcie trybu pomocy i pokazuje swoje strefy' },
+        { type: 'ui',  text: 'Trigger Annotators Tab (schowany po prawej): jaśniejszy kolor i tło w light mode — lepiej widoczny' },
+      ],
+    },
     {
       version: '0.9.11',
       date: '2026-03-28',
@@ -5672,6 +5860,17 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   const DEV_CHANGELOG = [
+    {
+      version: '0.9.12',
+      date: '2026-03-28',
+      notes: [
+        '[UI]    styleTab() w buildAnnotatorPanel(): light mode background #ffffff→#f0f7ff, border #c8cde0→#93c5fd, color #2563eb→#1d6fe8 (spójne z nowym gradientem). Trigger bardziej widoczny gdy panel schowany.',
+        '[ARCH]  getHelpZones() przepisana na getHelpZones(activeTab, includeAnnotators). Podział: common (zawsze), byTab[main/quicktag/delete/history] (per zakładka), annotators (jeśli otwarty). Łącznie ~35 stref.',
+        '[UX]    enterHelpMode(): wykrywa aktywną zakładkę przez .b24t-tab.b24t-tab-active[data-tab]. Jeśli features.annotator_tools && annPanel.display=none → openAnnotatorPanel(), zapisuje helpAnnotatorOpened=1 w dataset.',
+        '[UX]    enterHelpMode(): obniża z-index obu paneli (main=500, ann=501). Tworzy dwa overlaye: #b24t-help-panel-overlay i #b24t-help-ann-overlay. Strefy dla Annotators Tab dostają z-index 2147483520 identycznie jak reszta.',
+        '[UX]    exitHelpMode(): przywraca z-index obu paneli z dataset.prevZIndex. Jeśli helpAnnotatorOpened=1 → ukrywa annPanel + pokazuje trigger. Usuwa oba overlaye.',
+      ]
+    },
     {
       version: '0.9.11',
       date: '2026-03-28',
@@ -6859,10 +7058,10 @@ function showOnboarding(onComplete) {
     // Style tab trigger to match theme
     function styleTab() {
       var isDark = (document.documentElement.getAttribute('data-b24t-theme') === 'dark');
-      tab.style.background = isDark ? '#1a1a28' : '#ffffff';
-      tab.style.border = isDark ? '1px solid #2a2a35' : '1px solid #c8cde0';
-      tab.style.color = isDark ? '#9090cc' : '#2563eb';
-      tab.style.boxShadow = isDark ? '-3px 0 12px rgba(0,0,0,0.5)' : '-3px 0 16px rgba(37,99,235,0.15)';
+      tab.style.background = isDark ? '#1a1a28' : '#f0f7ff';
+      tab.style.border = isDark ? '1px solid #2a2a35' : '1px solid #93c5fd';
+      tab.style.color = isDark ? '#9090cc' : '#1d6fe8';
+      tab.style.boxShadow = isDark ? '-3px 0 12px rgba(0,0,0,0.5)' : '-3px 0 16px rgba(29,111,232,0.18)';
     }
     styleTab();
     // Watch for theme changes

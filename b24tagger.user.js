@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.19.6
+// @version      0.19.7
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.19.6';
+  const VERSION = '0.19.7';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -803,21 +803,39 @@
           const urlVal  = s.url || '';
           const normVal = s.normUrl || normalizeUrl(urlVal);
 
-          // Szukaj w mapie URL-a z tej samej domeny — żeby pokazać jak Brand24 widzi ten sam serwis
-          const normDomain = normVal.split('/')[0];
-          const mapSample  = Object.keys(state.urlMap).find(k => k.startsWith(normDomain));
+          // Wyciągnij unikalny identyfikator z URL (shortcode IG lub ID tweeta)
+          // instagram.com/p/SHORTCODE lub x.com/user/statuses/ID
+          const idMatch = normVal.match(/\/p\/([^/?#]+)$/) ||
+                          normVal.match(/\/statuses\/(\d+)$/) ||
+                          normVal.match(/\/video\/(\d+)$/);
+          const uid = idMatch ? idMatch[1].toLowerCase() : null;
 
-          if (mapSample) {
+          // Szukaj tego identyfikatora w DOWOLNYM kluczu mapy
+          const mapKeys = Object.keys(state.urlMap);
+          const exactKey    = mapKeys.find(k => k === normVal);
+          const partialKey  = uid ? mapKeys.find(k => k.includes(uid)) : null;
+          const domainSample = mapKeys.find(k => k.startsWith(normVal.split('/')[0]));
+
+          if (exactKey) {
+            // To nie powinno się zdarzyć — exact match ale entry był null?
+            addLog(`⚠ [NO_MATCH/BUG] Klucz istnieje w mapie ale entry=null!
+  "${normVal}"`, 'error');
+          } else if (partialKey) {
             addLog(
-              `⚠ [NO_MATCH] Brak w mapie Brand24\n` +
-              `  plik: "${normVal.substring(0, 80)}"\n` +
-              `  mapa: "${mapSample.substring(0, 80)}"  ← przykład z tej samej domeny`,
+              `⚠ [NO_MATCH/UID_FOUND] ID istnieje w mapie pod INNYM kluczem!
+` +
+              `  plik: "${normVal}"
+` +
+              `  mapa: "${partialKey}"  ← ten sam UID, inny format URL`,
               'warn'
             );
           } else {
             addLog(
-              `⚠ [NO_MATCH] Brak w mapie Brand24 (domena nieobecna w projekcie)\n` +
-              `  plik: "${normVal.substring(0, 80)}"`,
+              `⚠ [NO_MATCH/NOT_IN_MAP] Nie ma ani URL ani UID w mapie
+` +
+              `  plik: "${normVal}"
+` +
+              `  mapa-przykład: "${(domainSample || 'brak tej domeny').substring(0, 80)}"`,
               'warn'
             );
           }

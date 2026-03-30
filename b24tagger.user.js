@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.19.11
+// @version      0.19.12
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.19.11';
+  const VERSION = '0.19.12';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -642,48 +642,103 @@
   async function buildUrlMap(dateFrom, dateTo, untaggedOnly) {
     const gr = untaggedOnly ? [state.untaggedId] : [];
     const map = {};
-    const CONCURRENCY = 10; // parallel requests per batch
+    const CONCURRENCY = 10;
+    const diag = {
+      step: 'init',
+      dateFrom, dateTo, untaggedOnly,
+      untaggedId: state.untaggedId,
+      projectId: state.projectId,
+      pageSize: null, totalPages: null, totalCount: null,
+      fetchedPages: 0, mentionsInMap: 0,
+      urlFieldEmpty: 0, urlFieldPresent: 0,
+      dupeKeys: 0,
+      errors: [],
+    };
 
-    // Fallback gdy daty są puste lub nieprawidłowe (plik bez kolumny daty)
+    // ── KROK 1: walidacja dat ───────────────────────────────────────────
+    diag.step = 'date_validation';
     const isInvalidDate = function(d) { return !d || d === '9999' || d === '0000' || !/^\d{4}-\d{2}-\d{2}$/.test(d); };
     if (isInvalidDate(dateFrom) || isInvalidDate(dateTo)) {
       const fallback = getAnnotatorDates();
-      addLog(`⚠ Brak dat w pliku — używam fallback: ${fallback.label} (${fallback.dateFrom} → ${fallback.dateTo})`, 'warn');
+      addLog(`⚠ [DIAG/DATY] Brak dat w pliku — używam fallback: ${fallback.dateFrom} → ${fallback.dateTo}`, 'warn');
       dateFrom = fallback.dateFrom;
       dateTo   = fallback.dateTo;
+      diag.dateFrom = dateFrom; diag.dateTo = dateTo;
+    }
+    if (new Date(dateFrom) > new Date(dateTo)) {
+      addLog(`✕ [DIAG/DATY] dateFrom (${dateFrom}) > dateTo (${dateTo}) — zakres odwrócony! Sprawdź plik.`, 'error');
     }
 
-    // NET_MONITOR: aktywuj przed budowaniem mapy — zbiera shortcody których nie możemy matchować
-    if (state.file && state.file.rows && state.file.colMap && state.file.colMap.url) {
-      const missUrls = state.file.rows
-        .map(r => (r[state.file.colMap.url] || ''))
-        .filter(u => u && !map[normalizeUrl(u)])
-        .slice(0, 10);
-      const shortcodes = missUrls.map(u => {
-        const m = u.match(/\/(?:p|reel|tv|guide)\/([^/?#]+)/) ||
-                  u.match(/\/statuses?\/(\d+)/) ||
-                  u.match(/\/video\/(\d+)/);
-        return m ? m[1] : null;
-      }).filter(Boolean);
-      if (shortcodes.length) {
-        state._netMonitor = { targetShortcodes: shortcodes, found: new Set() };
-        addLog(`[NET_MONITOR] Aktywny — szukam ${shortcodes.length} shortcode'ów w ruchu sieciowym`, 'info');
+    // ── KROK 2: walidacja untaggedId ────────────────────────────────────
+    diag.step = 'untagged_id';
+    if (untaggedOnly) {
+      if (!state.untaggedId || state.untaggedId === 1) {
+        addLog(`⚠ [DIAG/UNTAGGED] untaggedId=${state.untaggedId} — wartość domyślna, możliwe że tag "Untagged" nie został poprawnie wykryty.`, 'warn');
+      } else {
+        addLog(`ℹ [DIAG/UNTAGGED] Filtr Untagged aktywny, gr=[${state.untaggedId}]`, 'info');
       }
     }
 
     updateProgress('map', 0, '?');
-    addLog(`→ Budowanie mapy URL (${untaggedOnly ? 'Untagged' : 'pełny zakres'}) [${CONCURRENCY}x równolegle]`, 'info');
+    addLog(`→ Budowanie mapy URL (${untaggedOnly ? 'Untagged' : 'pełny zakres'}) | projekt=${state.projectId} | ${dateFrom}→${dateTo}`, 'info');
 
-    // Step 1: fetch page 1 to get total count and pageSize
-    const first = await getMentions(state.projectId, dateFrom, dateTo, gr, 1);
+    // ── KROK 3: pierwsza strona — sprawdź count i pageSize ───────────────
+    diag.step = 'page1_fetch';
+    let first;
+    try {
+      first = await getMentions(state.projectId, dateFrom, dateTo, gr, 1);
+    } catch(e) {
+      addLog(`✕ [DIAG/API] getMentions strona 1 FAILED: ${e.message}`, 'error');
+      return map;
+    }
+
+    if (!first || !first.results) {
+      addLog(`✕ [DIAG/API] getMentions strona 1 zwróciła null/undefined — problem z API Brand24`, 'error');
+      return map;
+    }
+
+    diag.totalCount = first.count;
+    diag.pageSize   = first.results.length;
     if (!state.pageSize && first.results.length > 0) state.pageSize = first.results.length;
-    const pageSize = state.pageSize || 60;
+    const pageSize  = state.pageSize || 60;
     const totalPages = Math.ceil(first.count / pageSize);
+    diag.totalPages = totalPages;
 
+    addLog(`ℹ [DIAG/API] Strona 1: count=${first.count}, wyniki=${first.results.length}, pageSize=${pageSize}, totalPages=${totalPages}`, 'info');
+
+    if (first.count === 0) {
+      addLog(`⚠ [DIAG/API] count=0 — Brand24 nie zwraca żadnych wzmianek dla tego zakresu/filtrów.
+  Możliwe przyczyny: zły zakres dat, nieistniejący projekt, filtr Untagged pusty.`, 'warn');
+      return map;
+    }
+
+    // ── KROK 4: analiza pola url vs openUrl na stronie 1 ─────────────────
+    diag.step = 'url_field_analysis';
+    let urlEmpty = 0, urlPresent = 0, openUrlOnly = 0, bothEmpty = 0;
+    first.results.forEach(m => {
+      if (m.url) { urlPresent++; }
+      else if (m.openUrl) { openUrlOnly++; }
+      else { bothEmpty++; }
+    });
+    if (openUrlOnly > 0 || bothEmpty > 0) {
+      addLog(`⚠ [DIAG/URL_FIELD] Strona 1: url=${urlPresent} present, openUrl-only=${openUrlOnly}, oba puste=${bothEmpty}
+  Jeśli openUrl-only > 0, Brand24 zmienił format — używamy openUrl jako fallback.`, 'warn');
+    }
+
+    // ── KROK 5: buduj mapę ze strony 1 ───────────────────────────────────
+    diag.step = 'build_map_p1';
+    const keysBefore = Object.keys(map).length;
     first.results.forEach(m => {
       const matchUrl = m.url || m.openUrl;
-      if (matchUrl) map[normalizeUrl(matchUrl)] = { id: m.id, existingTags: m.tags || [] };
+      if (matchUrl) {
+        const key = normalizeUrl(matchUrl);
+        if (map[key]) diag.dupeKeys++;
+        map[key] = { id: m.id, existingTags: m.tags || [] };
+      } else {
+        diag.urlFieldEmpty++;
+      }
     });
+    diag.fetchedPages = 1;
     updateProgress('map', 1, totalPages);
 
     if (totalPages <= 1) {
@@ -691,42 +746,79 @@
       return map;
     }
 
-    // Step 2: fetch remaining pages in parallel batches
+    // ── KROK 6: pozostałe strony równolegle ──────────────────────────────
+    diag.step = 'build_map_pages';
     const remaining = Array.from({length: totalPages - 1}, (_, i) => i + 2);
     let fetched = 1;
+    let pageErrors = 0;
 
     for (let i = 0; i < remaining.length; i += CONCURRENCY) {
       if (state.status !== 'running') break;
       const batch = remaining.slice(i, i + CONCURRENCY);
-      const results = await Promise.all(
-        batch.map(p => getMentions(state.projectId, dateFrom, dateTo, gr, p))
-      );
-      results.forEach(result => {
+      let results;
+      try {
+        results = await Promise.all(
+          batch.map(p => getMentions(state.projectId, dateFrom, dateTo, gr, p))
+        );
+      } catch(e) {
+        pageErrors++;
+        addLog(`⚠ [DIAG/API] Błąd pobierania stron ${batch[0]}-${batch[batch.length-1]}: ${e.message}`, 'warn');
+        continue;
+      }
+      results.forEach((result, bi) => {
+        if (!result || !result.results) {
+          pageErrors++;
+          addLog(`⚠ [DIAG/API] Strona ${batch[bi]}: null response`, 'warn');
+          return;
+        }
         result.results.forEach(m => {
           const matchUrl = m.url || m.openUrl;
-          if (matchUrl) map[normalizeUrl(matchUrl)] = { id: m.id, existingTags: m.tags || [] };
+          if (matchUrl) {
+            const key = normalizeUrl(matchUrl);
+            if (map[key]) diag.dupeKeys++;
+            map[key] = { id: m.id, existingTags: m.tags || [] };
+          } else {
+            diag.urlFieldEmpty++;
+          }
         });
       });
       fetched += batch.length;
+      diag.fetchedPages = fetched;
       updateProgress('map', fetched, totalPages);
       addLog(`→ Mapa: ${fetched}/${totalPages} stron (${Object.keys(map).length} wzmianek)`, 'info');
       if (i + CONCURRENCY < remaining.length) await sleep(100);
     }
 
-    addLog(`✓ Mapa zbudowana: ${Object.keys(map).length} wzmianek w ${totalPages} stronach`, 'success');
+    diag.mentionsInMap = Object.keys(map).length;
 
-    // NET_MONITOR: podsumowanie po zbudowaniu mapy
-    if (state._netMonitor) {
-      const { targetShortcodes, found } = state._netMonitor;
-      const notFound = targetShortcodes.filter(s => !found.has(s));
-      if (found.size > 0) {
-        addLog(`[NET_MONITOR] Znaleziono ${found.size}/${targetShortcodes.length} shortcode'ów w ruchu sieciowym`, 'info');
-      }
-      if (notFound.length > 0) {
-        addLog(`[NET_MONITOR] NIE znaleziono w żadnym pakiecie: ${notFound.join(', ')}`, 'warn');
-      }
-      state._netMonitor = null;
+    // ── KROK 7: weryfikacja kompletności ─────────────────────────────────
+    diag.step = 'completeness_check';
+    const expectedMin = Math.floor(first.count * 0.95); // tolerancja 5% na duplikaty/race
+    if (diag.mentionsInMap < expectedMin) {
+      addLog(
+        `⚠ [DIAG/COMPLETENESS] Mapa niekompletna!
+` +
+        `  count z API: ${first.count} | w mapie: ${diag.mentionsInMap} | oczekiwano min: ${expectedMin}
+` +
+        `  Możliwe: Brand24 zwraca niestabilny count, duplikaty URL-i (${diag.dupeKeys}), błędy stron (${pageErrors})`,
+        'warn'
+      );
     }
+    if (diag.dupeKeys > 0) {
+      addLog(`ℹ [DIAG/DUPES] ${diag.dupeKeys} duplikatów URL w mapie (nadpisane) — Brand24 może zwracać tę samą wzmiankę na wielu stronach`, 'info');
+    }
+    if (pageErrors > 0) {
+      addLog(`⚠ [DIAG/API] ${pageErrors} stron z błędem — mapa może być niekompletna!`, 'warn');
+    }
+    if (diag.urlFieldEmpty > 0) {
+      addLog(`⚠ [DIAG/URL_FIELD] ${diag.urlFieldEmpty} wzmianek bez url i openUrl — pominięte w mapie. Brand24 może mieć wzmianki bez URL.`, 'warn');
+    }
+
+    addLog(`✓ Mapa zbudowana: ${diag.mentionsInMap} wzmianek w ${totalPages} stronach`, 'success');
+
+    // ── KROK 8: próbkowanie mapy — pokaż sample kluczy ───────────────────
+    const mapSample = Object.keys(map).slice(0, 3);
+    addLog(`ℹ [DIAG/MAP_SAMPLE] Przykłady kluczy w mapie: ${mapSample.map(k => '"'+k+'"').join(' | ')}`, 'info');
 
     return map;
   }
@@ -748,10 +840,34 @@
     const skipped = [];
     const conflicts = [];
 
+    // ── DIAG: analiza pliku przed matchowaniem ─────────────────────────
+    const matchDiag = {
+      total: rows.length, noAssessment: 0, noMapping: 0,
+      noMatch: 0, truncated: 0, alreadyTagged: 0, conflict: 0, willTag: 0,
+      mapSize: Object.keys(state.urlMap).length,
+      // próbki URL-i z pliku vs z mapy (pierwsze 2 każdej domeny)
+      fileSamplesByDomain: {},
+      mapSamplesByDomain: {},
+    };
+    // Zbierz próbki domen z mapy
+    Object.keys(state.urlMap).slice(0, 30).forEach(k => {
+      const dom = k.split('/')[0];
+      if (!matchDiag.mapSamplesByDomain[dom]) matchDiag.mapSamplesByDomain[dom] = [];
+      if (matchDiag.mapSamplesByDomain[dom].length < 2) matchDiag.mapSamplesByDomain[dom].push(k);
+    });
+
     rows.forEach(row => {
       const urlRaw = row[state.file.colMap.url] || '';
       const assessment = (row[state.file.colMap.assessment] || '').trim().toUpperCase();
       const normalizedUrl = normalizeUrl(urlRaw);
+
+      // Zbierz próbki domen z pliku
+      const dom = normalizedUrl.split('/')[0];
+      if (dom && !matchDiag.fileSamplesByDomain[dom]) matchDiag.fileSamplesByDomain[dom] = [];
+      if (dom && matchDiag.fileSamplesByDomain[dom] && matchDiag.fileSamplesByDomain[dom].length < 2) {
+        matchDiag.fileSamplesByDomain[dom].push(normalizedUrl);
+      }
+
       // Szukaj w mapie: dokładne dopasowanie, potem fuzzy (obcięte ID)
       let entry = state.urlMap[normalizedUrl];
       if (!entry) {
@@ -762,23 +878,26 @@
 
       if (!assessment) {
         skipped.push({ row, reason: 'NO_ASSESSMENT' });
+        matchDiag.noAssessment++;
         return;
       }
 
       const mapping = state.mapping[assessment];
       if (!mapping) {
         skipped.push({ row, reason: 'NO_MAPPING', assessment });
+        matchDiag.noMapping++;
         return;
       }
 
       if (!entry) {
-        // Sprawdź czy URL z pliku wygląda na obcięty (diagnoza — nie próbujemy matchować)
         const mapKeys = Object.keys(state.urlMap);
         const truncInfo = detectTruncatedUrl(normalizedUrl, mapKeys);
         if (truncInfo) {
           skipped.push({ row, reason: 'TRUNCATED_URL', url: urlRaw, truncInfo });
+          matchDiag.truncated++;
         } else {
           skipped.push({ row, reason: 'NO_MATCH', url: urlRaw, normUrl: normalizedUrl });
+          matchDiag.noMatch++;
         }
         state.stats.noMatch++;
         return;
@@ -815,6 +934,63 @@
       if (!batches[mapping.tagId]) batches[mapping.tagId] = [];
       batches[mapping.tagId].push(entry.id);
     });
+
+    // ── DIAG: raport matchowania ────────────────────────────────────────
+    matchDiag.willTag    = Object.values(batches).reduce((s, ids) => s + ids.length, 0);
+    matchDiag.alreadyTagged = skipped.filter(s => s.reason === 'ALREADY_TAGGED').length;
+    matchDiag.conflict   = skipped.filter(s => s.reason === 'CONFLICT_IGNORED').length;
+
+    addLog(
+      `ℹ [DIAG/MATCH] Wyniki matchowania ${matchDiag.total} wierszy vs ${matchDiag.mapSize} wzmianek w mapie:
+` +
+      `  ✓ do otagowania: ${matchDiag.willTag}
+` +
+      `  ✗ NO_MATCH: ${matchDiag.noMatch}
+` +
+      `  ✗ TRUNCATED_URL: ${matchDiag.truncated}
+` +
+      `  ↷ już otagowane: ${matchDiag.alreadyTagged}
+` +
+      `  ↷ konflikt (ignorowany): ${matchDiag.conflict}
+` +
+      `  ↷ brak assessment: ${matchDiag.noAssessment}
+` +
+      `  ↷ brak mappingu: ${matchDiag.noMapping}`,
+      'info'
+    );
+
+    // Porównaj domeny pliku vs mapy — wykryj rozbieżności
+    const fileDoms  = Object.keys(matchDiag.fileSamplesByDomain);
+    const mapDoms   = Object.keys(matchDiag.mapSamplesByDomain);
+    const missingInMap  = fileDoms.filter(d => !mapDoms.includes(d));
+    const missingInFile = mapDoms.filter(d => !fileDoms.includes(d));
+
+    if (missingInMap.length > 0) {
+      addLog(
+        `⚠ [DIAG/DOMAINS] Domeny z pliku NIEOBECNE w mapie: ${missingInMap.join(', ')}
+` +
+        `  → Brand24 API nie zwraca wzmianek z tych domen dla tego projektu/zakresu`,
+        'warn'
+      );
+    }
+
+    // Pokaż przykłady URL plik vs mapa dla każdej domeny z missem
+    if (matchDiag.noMatch > 0) {
+      const noMatchSamples = skipped.filter(s => s.reason === 'NO_MATCH').slice(0, 3);
+      noMatchSamples.forEach(s => {
+        const normVal = s.normUrl || normalizeUrl(s.url || '');
+        const dom = normVal.split('/')[0];
+        const mapSample = matchDiag.mapSamplesByDomain[dom];
+        addLog(
+          `⚠ [DIAG/NO_MATCH]
+` +
+          `  plik: "${normVal}"
+` +
+          `  mapa (${dom}): ${mapSample ? '"' + mapSample[0] + '"' : 'BRAK TEJ DOMENY W MAPIE'}`,
+          'warn'
+        );
+      });
+    }
 
     // Handle 'ask' conflicts
     for (const conflict of conflicts) {

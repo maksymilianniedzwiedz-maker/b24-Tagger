@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.19.15
+// @version      0.19.16
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.19.15';
+  const VERSION = '0.19.16';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -471,7 +471,17 @@
       return { success: true, testRun: true };
     }
     // DIAG: pokaż pierwsze 3 ID i typ przed wysłaniem
-    addLog(`[DIAG/BULK] mentionsIds[0..2]: ${JSON.stringify(mentionsIds.slice(0,3))} | types: ${mentionsIds.slice(0,3).map(x=>typeof x).join(',')} | tagId: ${tagId} (${typeof tagId})`, 'info');
+    const _diagTagName = Object.entries(state.tags).find(([,id]) => id === tagId)?.[0] || 'NIE ZNALEZIONO W state.tags';
+    const _diagAllTagIds = Object.values(state.tags).join(',');
+    addLog(
+      `[DIAG/BULK] Wysyłam:\n` +
+      `  mentionsIds[0..2]: ${JSON.stringify(mentionsIds.slice(0,3))}\n` +
+      `  types: ${mentionsIds.slice(0,3).map(x=>typeof x).join(',')}\n` +
+      `  tagId: ${tagId} (${typeof tagId}) → nazwa: "${_diagTagName}"\n` +
+      `  wszystkie tagId w state.tags: [${_diagAllTagIds}]\n` +
+      `  projectId: ${state.projectId}`,
+      'info'
+    );
     const data = await gqlRetry('bulkTagMentions', { mentionsIds, tagId }, `mutation bulkTagMentions(
       $mentionsIds: [IntString!]!, $tagId: Int!
     ) {

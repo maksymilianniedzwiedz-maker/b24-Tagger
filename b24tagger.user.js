@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.19.9
+// @version      0.19.10
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.19.9';
+  const VERSION = '0.19.10';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -633,15 +633,9 @@
     const pageSize = state.pageSize || 60;
     const totalPages = Math.ceil(first.count / pageSize);
 
-    // Diagnostyka: loguj url vs openUrl dla pierwszych wzmianek z Twittera/Instagrama
-    let _diagLogged = 0;
     first.results.forEach(m => {
       const matchUrl = m.url || m.openUrl;
       if (matchUrl) map[normalizeUrl(matchUrl)] = { id: m.id, existingTags: m.tags || [] };
-      if (_diagLogged < 3 && (m.url || m.openUrl || '').match(/twitter|x\.com|instagram/i)) {
-        addLog(`[DIAG] url="${(m.url || '').substring(0, 80)}" | openUrl="${(m.openUrl || '').substring(0, 80)}"`, 'info');
-        _diagLogged++;
-      }
     });
     updateProgress('map', 1, totalPages);
 
@@ -673,41 +667,6 @@
     }
 
     addLog(`✓ Mapa zbudowana: ${Object.keys(map).length} wzmianek w ${totalPages} stronach`, 'success');
-
-    // DIAG: sprawdź przez sq-search 3 URL-e z pliku których nie ma w mapie
-    if (state.file && state.file.rows && state.file.colMap && state.file.colMap.url) {
-      const missedUrls = state.file.rows
-        .map(r => r[state.file.colMap.url] || '')
-        .filter(u => u && !map[normalizeUrl(u)])
-        .slice(0, 3);
-      for (const rawUrl of missedUrls) {
-        try {
-          const shortcode = rawUrl.match(/\/p\/([^/?#]+)/) ||
-                            rawUrl.match(/\/reel\/([^/?#]+)/) ||
-                            rawUrl.match(/\/statuses?\/(\d+)/);
-          const sq = shortcode ? shortcode[1] : rawUrl.split('/').pop().split('?')[0];
-          if (!sq || sq.length < 5) continue;
-          const res = await gqlRetry('getMentions', {
-            projectId: state.projectId,
-            dateRange: { from: dateFrom, to: dateTo },
-            filters: { va: 0, rt: [], se: [], vi: null, gr: [], sq, do: '', au: '', lem: false, ctr: [], nctr: false, is: [0,10], tp: null, lang: [], nlang: false },
-            page: 1, order: 0,
-          }, `query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count results{id url openUrl createdDate}}}`);
-          if (res && res.count > 0) {
-            const hit = res.results[0];
-            addLog(`[DIAG/SQ] "${sq}" → znaleziono ${res.count} wynik(ów)
-  url: "${hit.url}"
-  date: "${hit.createdDate}"
-  id: ${hit.id}`, 'info');
-          } else {
-            addLog(`[DIAG/SQ] "${sq}" → 0 wyników w Brand24 (va:0, pełny zakres)`, 'warn');
-          }
-        } catch(e) {
-          addLog(`[DIAG/SQ] błąd: ${e.message}`, 'error');
-        }
-      }
-    }
-
     return map;
   }
 
@@ -817,79 +776,29 @@
     skipped.forEach(s => {
       if (s.reason === 'TRUNCATED_URL') {
         truncatedCount++;
-        const urlShort   = (s.url || '').substring(0, 70);
-        const candidate  = s.truncInfo.candidate.substring(0, 70);
-        const missing    = s.truncInfo.missingChars;
-        const direction  = s.truncInfo.fileIsShorter ? 'plik krótszy' : 'mapa krótsza';
-        // Logujemy tylko pierwsze 5 żeby nie zaśmiecać logu przy dużym pliku
         if (truncatedCount <= 5) {
           addLog(
-            `⚠ [TRUNCATED_URL] URL obcięty o ${missing} zn. (${direction})\n` +
-            `  plik:  "${urlShort}"\n` +
-            `  mapa:  "${candidate}"\n` +
+            `⚠ [TRUNCATED_URL] URL obcięty o ${s.truncInfo.missingChars} zn. (${s.truncInfo.fileIsShorter ? 'plik krótszy' : 'mapa krótsza'})\n` +
+            `  plik: "${(s.url || '').substring(0, 70)}"\n` +
+            `  mapa: "${s.truncInfo.candidate.substring(0, 70)}"\n` +
             `  → Pomiń i sprawdź plik źródłowy`,
             'warn'
           );
         }
       } else if (s.reason === 'NO_MATCH') {
         noMatchCount++;
-        // Logujemy tylko pierwsze 5
         if (noMatchCount <= 5) {
-          const urlVal  = s.url || '';
+          const urlVal = s.url || '';
           const normVal = s.normUrl || normalizeUrl(urlVal);
-
-          // Wyciągnij unikalny identyfikator z URL (shortcode IG lub ID tweeta)
-          // instagram.com/p/SHORTCODE lub x.com/user/statuses/ID
-          const idMatch = normVal.match(/\/p\/([^/?#]+)$/) ||
-                          normVal.match(/\/statuses\/(\d+)$/) ||
-                          normVal.match(/\/video\/(\d+)$/);
-          const uid = idMatch ? idMatch[1].toLowerCase() : null;
-
-          // Szukaj tego identyfikatora w DOWOLNYM kluczu mapy
-          const mapKeys = Object.keys(state.urlMap);
-          const exactKey    = mapKeys.find(k => k === normVal);
-          const partialKey  = uid ? mapKeys.find(k => k.includes(uid)) : null;
-          const domainSample = mapKeys.find(k => k.startsWith(normVal.split('/')[0]));
-
-          if (exactKey) {
-            // To nie powinno się zdarzyć — exact match ale entry był null?
-            addLog(`⚠ [NO_MATCH/BUG] Klucz istnieje w mapie ale entry=null!
-  "${normVal}"`, 'error');
-          } else if (partialKey) {
-            addLog(
-              `⚠ [NO_MATCH/UID_FOUND] ID istnieje w mapie pod INNYM kluczem!
-` +
-              `  plik: "${normVal}"
-` +
-              `  mapa: "${partialKey}"  ← ten sam UID, inny format URL`,
-              'warn'
-            );
-          } else {
-            addLog(
-              `⚠ [NO_MATCH/NOT_IN_MAP] Nie ma ani URL ani UID w mapie
-` +
-              `  plik: "${normVal}"
-` +
-              `  mapa-przykład: "${(domainSample || 'brak tej domeny').substring(0, 80)}"`,
-              'warn'
-            );
-          }
+          addLog(`⚠ Brak matcha: url="${urlVal.substring(0, 60)}" | norm="${normVal.substring(0, 50)}"`, 'warn');
         }
       }
     });
-    // Zbiorcze podsumowanie jeśli było dużo pominięć
     if (truncatedCount > 5) {
-      addLog(
-        `⚠ [TRUNCATED_URL] Łącznie ${truncatedCount} obciętych URL (pokazano 5 z ${truncatedCount}).\n` +
-        `  Plik źródłowy zawiera URL-e skrócone względem Brand24 — popraw eksport.`,
-        'warn'
-      );
+      addLog(`⚠ [TRUNCATED_URL] Łącznie ${truncatedCount} obciętych URL — sprawdź plik źródłowy.`, 'warn');
     }
     if (truncatedCount > 0 && noMatchCount === 0) {
-      addLog(
-        `ℹ Wszystkie niezmatchowane URL wyglądają na obcięte. Kod działa poprawnie — problem w pliku źródłowym.`,
-        'info'
-      );
+      addLog(`ℹ Wszystkie niezmatchowane URL wyglądają na obcięte. Problem w pliku źródłowym.`, 'info');
     }
     if (noMatchCount > 5) {
       addLog(`⚠ Brak matcha: ${noMatchCount} URL-i (pokazano 5). Sprawdź zakres dat i projekt.`, 'warn');

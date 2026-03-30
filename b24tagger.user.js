@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.19.5
+// @version      0.19.6
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.19.5';
+  const VERSION = '0.19.6';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -633,9 +633,15 @@
     const pageSize = state.pageSize || 60;
     const totalPages = Math.ceil(first.count / pageSize);
 
+    // Diagnostyka: loguj url vs openUrl dla pierwszych wzmianek z Twittera/Instagrama
+    let _diagLogged = 0;
     first.results.forEach(m => {
       const matchUrl = m.url || m.openUrl;
       if (matchUrl) map[normalizeUrl(matchUrl)] = { id: m.id, existingTags: m.tags || [] };
+      if (_diagLogged < 3 && (m.url || m.openUrl || '').match(/twitter|x\.com|instagram/i)) {
+        addLog(`[DIAG] url="${(m.url || '').substring(0, 80)}" | openUrl="${(m.openUrl || '').substring(0, 80)}"`, 'info');
+        _diagLogged++;
+      }
     });
     updateProgress('map', 1, totalPages);
 

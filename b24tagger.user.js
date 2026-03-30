@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.19.7
+// @version      0.19.8
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.19.7';
+  const VERSION = '0.19.8';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -399,7 +399,7 @@
       projectId,
       dateRange: { from: dateFrom, to: dateTo },
       filters: {
-        va: 1, rt: [], se: [], vi: null,
+        va: 0, rt: [], se: [], vi: null,
         gr: gr || [],
         sq: '', do: '', au: '', lem: false,
         ctr: [], nctr: false, is: [0, 10],

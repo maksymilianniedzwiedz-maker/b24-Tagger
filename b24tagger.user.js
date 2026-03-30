@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.19.2
+// @version      0.19.3
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.19.2';
+  const VERSION = '0.19.3';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -268,6 +268,33 @@
     const longer  = urlA.length < urlB.length ? urlB : urlA;
     if (shorter.length >= 15 && longer.startsWith(shorter)) return true;
     return false;
+  }
+
+  // Wykrywa czy URL z pliku jest obciętą wersją URL z mapy Brand24.
+  // Zwraca { candidate, missingChars } lub null.
+  // NIE jest używane do matchowania — tylko do diagnostyki w logu.
+  // Warunki:
+  //   • urlFromFile jest prefiksem candidateFromMap (lub odwrotnie — mapy też mogą mieć krótsze URL)
+  //   • wspólny prefiks ma min MIN_COMMON znaków (unika losowych pokryć krótkich URL)
+  //   • różnica długości max MAX_DIFF znaków (bardzo duże obcięcia = prawdopodobnie inny artykuł)
+  function detectTruncatedUrl(normalizedFileUrl, mapKeys) {
+    if (!normalizedFileUrl || normalizedFileUrl.length < 20) return null;
+    const MIN_COMMON = 20;
+    const MAX_DIFF   = 30;
+    for (let i = 0; i < mapKeys.length; i++) {
+      const k = mapKeys[i];
+      if (!k) continue;
+      const shorter = normalizedFileUrl.length <= k.length ? normalizedFileUrl : k;
+      const longer  = normalizedFileUrl.length <= k.length ? k : normalizedFileUrl;
+      const diff = longer.length - shorter.length;
+      if (diff === 0) continue; // identyczne — to nie truncation, to normalny match miss
+      if (diff > MAX_DIFF) continue;
+      if (shorter.length < MIN_COMMON) continue;
+      if (longer.startsWith(shorter)) {
+        return { candidate: k, missingChars: diff, fileIsShorter: normalizedFileUrl.length < k.length };
+      }
+    }
+    return null;
   }
 
   // ───────────────────────────────────────────
@@ -668,7 +695,14 @@
       }
 
       if (!entry) {
-        skipped.push({ row, reason: 'NO_MATCH', url: urlRaw });
+        // Sprawdź czy URL z pliku wygląda na obcięty (diagnoza — nie próbujemy matchować)
+        const mapKeys = Object.keys(state.urlMap);
+        const truncInfo = detectTruncatedUrl(normalizedUrl, mapKeys);
+        if (truncInfo) {
+          skipped.push({ row, reason: 'TRUNCATED_URL', url: urlRaw, truncInfo });
+        } else {
+          skipped.push({ row, reason: 'NO_MATCH', url: urlRaw });
+        }
         state.stats.noMatch++;
         return;
       }
@@ -721,13 +755,52 @@
     }
 
     // Log skipped
+    let truncatedCount = 0;
+    let noMatchCount   = 0;
     skipped.forEach(s => {
-      if (s.reason === 'NO_MATCH') {
-        const urlVal = s.row[state.file.colMap.url] || '';
+      if (s.reason === 'TRUNCATED_URL') {
+        truncatedCount++;
+        const urlShort   = (s.url || '').substring(0, 70);
+        const candidate  = s.truncInfo.candidate.substring(0, 70);
+        const missing    = s.truncInfo.missingChars;
+        const direction  = s.truncInfo.fileIsShorter ? 'plik krótszy' : 'mapa krótsza';
+        // Logujemy tylko pierwsze 5 żeby nie zaśmiecać logu przy dużym pliku
+        if (truncatedCount <= 5) {
+          addLog(
+            `⚠ [TRUNCATED_URL] URL obcięty o ${missing} zn. (${direction})\n` +
+            `  plik:  "${urlShort}"\n` +
+            `  mapa:  "${candidate}"\n` +
+            `  → Pomiń i sprawdź plik źródłowy`,
+            'warn'
+          );
+        }
+      } else if (s.reason === 'NO_MATCH') {
+        noMatchCount++;
+        const urlVal  = s.row[state.file.colMap.url] || '';
         const normVal = normalizeUrl(urlVal);
-        addLog(`⚠ Brak matcha: url="${urlVal.substring(0, 60)}" | norm="${normVal.substring(0, 50)}"`, 'warn');
+        // Logujemy tylko pierwsze 5
+        if (noMatchCount <= 5) {
+          addLog(`⚠ Brak matcha: url="${urlVal.substring(0, 60)}" | norm="${normVal.substring(0, 50)}"`, 'warn');
+        }
       }
     });
+    // Zbiorcze podsumowanie jeśli było dużo pominięć
+    if (truncatedCount > 5) {
+      addLog(
+        `⚠ [TRUNCATED_URL] Łącznie ${truncatedCount} obciętych URL (pokazano 5 z ${truncatedCount}).\n` +
+        `  Plik źródłowy zawiera URL-e skrócone względem Brand24 — popraw eksport.`,
+        'warn'
+      );
+    }
+    if (truncatedCount > 0 && noMatchCount === 0) {
+      addLog(
+        `ℹ Wszystkie niezmatchowane URL wyglądają na obcięte. Kod działa poprawnie — problem w pliku źródłowym.`,
+        'info'
+      );
+    }
+    if (noMatchCount > 5) {
+      addLog(`⚠ Brak matcha: ${noMatchCount} URL-i (pokazano 5). Sprawdź zakres dat i projekt.`, 'warn');
+    }
 
     // Execute overwrite batches
     for (const [, batch] of Object.entries(overwriteBatches)) {

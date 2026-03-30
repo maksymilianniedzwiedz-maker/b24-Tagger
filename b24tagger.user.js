@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.19.16
+// @version      0.19.17
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.19.16';
+  const VERSION = '0.19.17';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -335,6 +335,21 @@
         if (parsed.variables?.filters && parsed.variables?.dateRange) {
           state.lastMentionsVars = parsed.variables;
         }
+      } catch(e) {}
+    }
+    // UI TAG SNIFF: przechwytuj KAŻDĄ mutację tagowania wysłaną przez Brand24 UI
+    // (żeby zobaczyć jak UI taguje, skoro bulkTagMentions crashuje)
+    if (state._sniffUiTag && url.includes('graphql') && bodyStr.includes('mutation') &&
+        (bodyStr.toLowerCase().includes('tag') || bodyStr.toLowerCase().includes('label'))) {
+      try {
+        const parsed = JSON.parse(bodyStr);
+        addLog(
+          `[SNIFF/UI_TAG] Operacja UI: ${parsed.operationName || '?'}\n` +
+          `  variables: ${JSON.stringify(parsed.variables || {}).substring(0, 300)}\n` +
+          `  query snippet: ${(parsed.query || '').substring(0, 200)}`,
+          'info'
+        );
+        state._sniffUiTag = false; // loguj tylko raz
       } catch(e) {}
     }
     const res = await origFetch.apply(this, args);
@@ -1803,6 +1818,7 @@
     version: VERSION,
     debug: {
       getState: () => JSON.parse(JSON.stringify({ ...state, urlMap: `[${Object.keys(state.urlMap).length} entries]`, logs: `[${state.logs.length} entries]` })),
+      sniffUiTag: () => { state._sniffUiTag = true; addLog('[SNIFF] Aktywny — otaguj teraz wzmiankę ręcznie w UI Brand24', 'info'); },
       getLogs: () => state.logs,
       getCrashLog: () => lsGet(LS.CRASHLOG),
       getUrlMap: () => ({ size: Object.keys(state.urlMap).length, sample: Object.entries(state.urlMap).slice(0, 3) }),

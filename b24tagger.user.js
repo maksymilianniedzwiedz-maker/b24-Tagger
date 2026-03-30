@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.19.3
+// @version      0.19.4
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.19.3';
+  const VERSION = '0.19.4';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -701,7 +701,7 @@
         if (truncInfo) {
           skipped.push({ row, reason: 'TRUNCATED_URL', url: urlRaw, truncInfo });
         } else {
-          skipped.push({ row, reason: 'NO_MATCH', url: urlRaw });
+          skipped.push({ row, reason: 'NO_MATCH', url: urlRaw, normUrl: normalizedUrl });
         }
         state.stats.noMatch++;
         return;
@@ -776,11 +776,29 @@
         }
       } else if (s.reason === 'NO_MATCH') {
         noMatchCount++;
-        const urlVal  = s.row[state.file.colMap.url] || '';
-        const normVal = normalizeUrl(urlVal);
         // Logujemy tylko pierwsze 5
         if (noMatchCount <= 5) {
-          addLog(`⚠ Brak matcha: url="${urlVal.substring(0, 60)}" | norm="${normVal.substring(0, 50)}"`, 'warn');
+          const urlVal  = s.url || '';
+          const normVal = s.normUrl || normalizeUrl(urlVal);
+
+          // Szukaj w mapie URL-a z tej samej domeny — żeby pokazać jak Brand24 widzi ten sam serwis
+          const normDomain = normVal.split('/')[0];
+          const mapSample  = Object.keys(state.urlMap).find(k => k.startsWith(normDomain));
+
+          if (mapSample) {
+            addLog(
+              `⚠ [NO_MATCH] Brak w mapie Brand24\n` +
+              `  plik: "${normVal.substring(0, 80)}"\n` +
+              `  mapa: "${mapSample.substring(0, 80)}"  ← przykład z tej samej domeny`,
+              'warn'
+            );
+          } else {
+            addLog(
+              `⚠ [NO_MATCH] Brak w mapie Brand24 (domena nieobecna w projekcie)\n` +
+              `  plik: "${normVal.substring(0, 80)}"`,
+              'warn'
+            );
+          }
         }
       }
     });

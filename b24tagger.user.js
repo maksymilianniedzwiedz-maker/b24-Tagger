@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.19.10
+// @version      0.19.11
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.19.10';
+  const VERSION = '0.19.11';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -338,6 +338,35 @@
       } catch(e) {}
     }
     const res = await origFetch.apply(this, args);
+
+    // NET_MONITOR: przechwytuj odpowiedzi getMentions i loguj URL-e których nie ma w mapie
+    if (state._netMonitor && url.includes('graphql') && bodyStr.includes('getMentions')) {
+      try {
+        const clone = res.clone();
+        clone.json().then(data => {
+          const results = data?.data?.getMentions?.results || [];
+          const target = state._netMonitor.targetShortcodes;
+          results.forEach(m => {
+            const u = m.url || m.openUrl || '';
+            const hit = target.find(t => u.toLowerCase().includes(t.toLowerCase()));
+            if (hit) {
+              addLog(
+                `[NET_MONITOR] Znaleziono "${hit}" w odpowiedzi Brand24:
+` +
+                `  url: "${m.url || ''}"
+` +
+                `  openUrl: "${(m.openUrl || '').substring(0, 60)}"
+` +
+                `  id: ${m.id} | date: ${m.createdDate}`,
+                'info'
+              );
+              state._netMonitor.found.add(hit);
+            }
+          });
+        }).catch(() => {});
+      } catch(e) {}
+    }
+
     return res;
   };
 
@@ -624,6 +653,24 @@
       dateTo   = fallback.dateTo;
     }
 
+    // NET_MONITOR: aktywuj przed budowaniem mapy — zbiera shortcody których nie możemy matchować
+    if (state.file && state.file.rows && state.file.colMap && state.file.colMap.url) {
+      const missUrls = state.file.rows
+        .map(r => (r[state.file.colMap.url] || ''))
+        .filter(u => u && !map[normalizeUrl(u)])
+        .slice(0, 10);
+      const shortcodes = missUrls.map(u => {
+        const m = u.match(/\/(?:p|reel|tv|guide)\/([^/?#]+)/) ||
+                  u.match(/\/statuses?\/(\d+)/) ||
+                  u.match(/\/video\/(\d+)/);
+        return m ? m[1] : null;
+      }).filter(Boolean);
+      if (shortcodes.length) {
+        state._netMonitor = { targetShortcodes: shortcodes, found: new Set() };
+        addLog(`[NET_MONITOR] Aktywny — szukam ${shortcodes.length} shortcode'ów w ruchu sieciowym`, 'info');
+      }
+    }
+
     updateProgress('map', 0, '?');
     addLog(`→ Budowanie mapy URL (${untaggedOnly ? 'Untagged' : 'pełny zakres'}) [${CONCURRENCY}x równolegle]`, 'info');
 
@@ -667,6 +714,20 @@
     }
 
     addLog(`✓ Mapa zbudowana: ${Object.keys(map).length} wzmianek w ${totalPages} stronach`, 'success');
+
+    // NET_MONITOR: podsumowanie po zbudowaniu mapy
+    if (state._netMonitor) {
+      const { targetShortcodes, found } = state._netMonitor;
+      const notFound = targetShortcodes.filter(s => !found.has(s));
+      if (found.size > 0) {
+        addLog(`[NET_MONITOR] Znaleziono ${found.size}/${targetShortcodes.length} shortcode'ów w ruchu sieciowym`, 'info');
+      }
+      if (notFound.length > 0) {
+        addLog(`[NET_MONITOR] NIE znaleziono w żadnym pakiecie: ${notFound.join(', ')}`, 'warn');
+      }
+      state._netMonitor = null;
+    }
+
     return map;
   }
 

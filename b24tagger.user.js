@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.19.8
+// @version      0.19.9
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.19.8';
+  const VERSION = '0.19.9';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -399,7 +399,7 @@
       projectId,
       dateRange: { from: dateFrom, to: dateTo },
       filters: {
-        va: 0, rt: [], se: [], vi: null,
+        va: 1, rt: [], se: [], vi: null,
         gr: gr || [],
         sq: '', do: '', au: '', lem: false,
         ctr: [], nctr: false, is: [0, 10],
@@ -673,6 +673,41 @@
     }
 
     addLog(`✓ Mapa zbudowana: ${Object.keys(map).length} wzmianek w ${totalPages} stronach`, 'success');
+
+    // DIAG: sprawdź przez sq-search 3 URL-e z pliku których nie ma w mapie
+    if (state.file && state.file.rows && state.file.colMap && state.file.colMap.url) {
+      const missedUrls = state.file.rows
+        .map(r => r[state.file.colMap.url] || '')
+        .filter(u => u && !map[normalizeUrl(u)])
+        .slice(0, 3);
+      for (const rawUrl of missedUrls) {
+        try {
+          const shortcode = rawUrl.match(/\/p\/([^/?#]+)/) ||
+                            rawUrl.match(/\/reel\/([^/?#]+)/) ||
+                            rawUrl.match(/\/statuses?\/(\d+)/);
+          const sq = shortcode ? shortcode[1] : rawUrl.split('/').pop().split('?')[0];
+          if (!sq || sq.length < 5) continue;
+          const res = await gqlRetry('getMentions', {
+            projectId: state.projectId,
+            dateRange: { from: dateFrom, to: dateTo },
+            filters: { va: 0, rt: [], se: [], vi: null, gr: [], sq, do: '', au: '', lem: false, ctr: [], nctr: false, is: [0,10], tp: null, lang: [], nlang: false },
+            page: 1, order: 0,
+          }, `query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count results{id url openUrl createdDate}}}`);
+          if (res && res.count > 0) {
+            const hit = res.results[0];
+            addLog(`[DIAG/SQ] "${sq}" → znaleziono ${res.count} wynik(ów)
+  url: "${hit.url}"
+  date: "${hit.createdDate}"
+  id: ${hit.id}`, 'info');
+          } else {
+            addLog(`[DIAG/SQ] "${sq}" → 0 wyników w Brand24 (va:0, pełny zakres)`, 'warn');
+          }
+        } catch(e) {
+          addLog(`[DIAG/SQ] błąd: ${e.message}`, 'error');
+        }
+      }
+    }
+
     return map;
   }
 

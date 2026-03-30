@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.18.2
+// @version      0.19.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.18.2';
+  const VERSION = '0.19.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2493,6 +2493,18 @@
         <!-- MAPOWANIE -->
         <div class="b24t-section" id="b24t-mapping-section" style="display:none">
           <div class="b24t-section-label">Mapowanie labelek</div>
+          <div id="b24t-assessment-col-bar" style="display:none;margin-bottom:8px;background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:6px 8px;">
+            <div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:4px;">Kolumna z labelkami:</div>
+            <div id="b24t-assessment-col-active" style="display:flex;align-items:center;gap:6px;">
+              <span id="b24t-assessment-col-name" style="font-size:11px;color:var(--b24t-text);background:var(--b24t-bg-input);border:1px solid var(--b24t-border);border-radius:4px;padding:2px 7px;font-family:monospace;"></span>
+              <button id="b24t-assessment-col-clear" title="Zmień kolumnę" style="font-size:10px;background:none;border:none;color:var(--b24t-text-faint);cursor:pointer;padding:0 2px;">✕ zmień</button>
+            </div>
+            <div id="b24t-assessment-col-picker" style="display:none;margin-top:4px;">
+              <select id="b24t-assessment-col-sel" class="b24t-select" style="width:100%;">
+                <option value="">— wybierz kolumnę z labelkami —</option>
+              </select>
+            </div>
+          </div>
           <div id="b24t-mapping-rows"></div>
           <button class="b24t-add-tag-btn" id="b24t-create-tag-btn">+ Utwórz nowy tag w Brand24</button>
         </div>
@@ -3173,6 +3185,7 @@
       }
 
       renderMappingRows(meta.assessments, savedSchema);
+      renderAssessmentColBar(rows, colMap);
       updateStatsUI();
       addLog(`✓ Plik załadowany: ${meta.totalRows} wierszy, ${Object.keys(meta.assessments).length} typów labelek`, 'success');
       addLog(`→ Wykryte kolumny: url="${colMap.url || 'BRAK!'}" | assessment="${colMap.assessment || 'BRAK!'}" | date="${colMap.date || 'BRAK!'}"`, 'info');
@@ -3440,6 +3453,79 @@
     // F11: tag counts
     updateTagCountsInMapping();
     updateAutoDeleteSection();
+  }
+
+  // ───────────────────────────────────────────
+  // ASSESSMENT COLUMN PICKER
+  // ───────────────────────────────────────────
+
+  function renderAssessmentColBar(rows, colMap) {
+    const bar = document.getElementById('b24t-assessment-col-bar');
+    const nameEl = document.getElementById('b24t-assessment-col-name');
+    const clearBtn = document.getElementById('b24t-assessment-col-clear');
+    const picker = document.getElementById('b24t-assessment-col-picker');
+    const sel = document.getElementById('b24t-assessment-col-sel');
+    if (!bar || !nameEl || !clearBtn || !picker || !sel) return;
+
+    const headers = rows.length ? Object.keys(rows[0]) : [];
+
+    function refreshBar() {
+      const col = state.file && state.file.colMap && state.file.colMap.assessment;
+      nameEl.textContent = col || '(brak)';
+      nameEl.style.color = col ? 'var(--b24t-text)' : '#f87171';
+      document.getElementById('b24t-assessment-col-active').style.display = 'flex';
+      picker.style.display = 'none';
+    }
+
+    function populatePicker() {
+      sel.innerHTML = '<option value="">— wybierz kolumnę z labelkami —</option>';
+      headers.forEach(function(h) {
+        const opt = document.createElement('option');
+        opt.value = h;
+        // Show unique values count as hint
+        const uniq = new Set(rows.map(function(r){ return (r[h] || '').toString().trim(); }).filter(Boolean));
+        opt.textContent = h + '  (' + uniq.size + ' unik. wartości: ' + [...uniq].slice(0,4).join(', ') + (uniq.size > 4 ? '…' : '') + ')';
+        if (state.file && state.file.colMap && state.file.colMap.assessment === h) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    }
+
+    clearBtn.onclick = function() {
+      populatePicker();
+      document.getElementById('b24t-assessment-col-active').style.display = 'none';
+      picker.style.display = 'block';
+      sel.focus();
+    };
+
+    sel.onchange = function() {
+      const chosen = sel.value;
+      if (!chosen) return;
+      // Apply new assessment column
+      state.file.colMap.assessment = chosen;
+      state.file.meta = processFileData(rows, state.file.colMap);
+      // Re-render mapping with new labels
+      renderMappingRows(state.file.meta.assessments, null);
+      // Update file meta display
+      const metaEl = document.getElementById('b24t-file-meta');
+      if (metaEl) {
+        const m = state.file.meta;
+        metaEl.textContent = `${m.totalRows} wierszy · ` +
+          Object.keys(m.assessments).map(function(k){ return m.assessments[k] + ' ' + k.toLowerCase(); }).join(' · ') +
+          (m.noAssessment > 0 ? ` · ${m.noAssessment} bez labela ℹ` : '');
+      }
+      // Revalidate
+      const fileWarnings = validateFile(rows, state.file.colMap);
+      renderFileValidation(fileWarnings);
+      // Update column override UI if visible
+      if (document.getElementById('b24t-column-override') && document.getElementById('b24t-column-override').style.display !== 'none') {
+        buildColumnOverrideUI(rows);
+      }
+      addLog(`→ Kolumna labelek zmieniona na: "${chosen}" (${Object.keys(state.file.meta.assessments).length} typów)`, 'info');
+      refreshBar();
+    };
+
+    bar.style.display = 'block';
+    refreshBar();
   }
 
   // ───────────────────────────────────────────

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.19.14
+// @version      0.19.15
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.19.14';
+  const VERSION = '0.19.15';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -470,6 +470,8 @@
       addLog(`[TEST] bulkTag: ${mentionsIds.length} IDs → tagId ${tagId}`, 'info');
       return { success: true, testRun: true };
     }
+    // DIAG: pokaż pierwsze 3 ID i typ przed wysłaniem
+    addLog(`[DIAG/BULK] mentionsIds[0..2]: ${JSON.stringify(mentionsIds.slice(0,3))} | types: ${mentionsIds.slice(0,3).map(x=>typeof x).join(',')} | tagId: ${tagId} (${typeof tagId})`, 'info');
     const data = await gqlRetry('bulkTagMentions', { mentionsIds, tagId }, `mutation bulkTagMentions(
       $mentionsIds: [IntString!]!, $tagId: Int!
     ) {

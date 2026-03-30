@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.19.4
+// @version      0.19.5
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.19.4';
+  const VERSION = '0.19.5';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -245,16 +245,32 @@
   const _RX_TWIT   = /twitter\.com/;
   const _RX_STATUS = /\/status\//;
   const _RX_TRAIL  = /\/$/;
+  // Brand24 zapisuje wszystkie Instagram URL-e jako /p/<shortcode> — reels, guides itp.
+  // np. instagram.com/reel/ABC → instagram.com/p/ABC
+  //     instagram.com/username/reel/ABC → instagram.com/p/ABC  (z nazwą użytkownika)
+  const _RX_IG_REEL_USER = /instagram\.com\/[^/]+\/(reel|tv|guide)\/([^/?#]+)/;
+  const _RX_IG_REEL      = /instagram\.com\/(reel|tv|guide)\/([^/?#]+)/;
+  // Brand24 usuwa też query string z Instagram URL-i (igsh=, img_index= itp.)
+  const _RX_IG_QUERY = /(instagram\.com\/[^?#]+)\?.*/;
 
   function normalizeUrl(url) {
     if (!url) return '';
-    return url
+    let u = url
       .replace(_RX_PROTO,  '')
       .replace(_RX_TWIT,   'x.com')
       .replace(_RX_STATUS, '/statuses/')
       .replace(_RX_TRAIL,  '')
       .toLowerCase()
       .trim();
+    // Instagram: usuń query string (igsh=, img_index= itp.) — przed trim trailing slash
+    u = u.replace(_RX_IG_QUERY, '$1');
+    // Trailing slash może zostać po usunięciu query — usuń ponownie
+    u = u.replace(_RX_TRAIL, '');
+    // Instagram: /username/reel/CODE → /p/CODE
+    u = u.replace(_RX_IG_REEL_USER, (_, __, code) => `instagram.com/p/${code}`);
+    // Instagram: /reel/CODE → /p/CODE  (bez nazwy użytkownika)
+    u = u.replace(_RX_IG_REEL, (_, __, code) => `instagram.com/p/${code}`);
+    return u;
   }
 
   // Porównaj dwa znormalizowane URL z tolerancją na obcięte ID

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.19.13
+// @version      0.19.14
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.19.13';
+  const VERSION = '0.19.14';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -743,7 +743,7 @@
       if (matchUrl) {
         const key = normalizeUrl(matchUrl);
         if (map[key]) diag.dupeKeys++;
-        map[key] = { id: m.id, existingTags: m.tags || [] };
+        map[key] = { id: String(m.id), existingTags: m.tags || [] };
       } else {
         diag.urlFieldEmpty++;
       }
@@ -793,7 +793,7 @@
         if (matchUrl) {
           const key = normalizeUrl(matchUrl);
           if (map[key]) diag.dupeKeys++; // URL dupe — inny ID, ten sam URL
-          map[key] = { id: m.id, existingTags: m.tags || [] };
+          map[key] = { id: String(m.id), existingTags: m.tags || [] };
         } else {
           diag.urlFieldEmpty++;
         }
@@ -1021,7 +1021,7 @@
         batches[conflict.mapping.tagId].push(conflict.entry.id);
       } else if (decision === 'overwrite') {
         const oldTagId = conflict.entry.existingTags[0]?.id;
-        if (oldTagId) await bulkUntagMentions([conflict.entry.id], oldTagId);
+        if (oldTagId) await bulkUntagMentions([String(conflict.entry.id)], oldTagId);
         if (!batches[conflict.mapping.tagId]) batches[conflict.mapping.tagId] = [];
         batches[conflict.mapping.tagId].push(conflict.entry.id);
       }
@@ -1067,7 +1067,7 @@
       for (let i = 0; i < batch.ids.length; i += MAX_BATCH_SIZE) {
         const slice = batch.ids.slice(i, i + MAX_BATCH_SIZE);
         addLog(`→ Odtagowuję ${slice.length} wzmianek (tag ${batch.oldTagId})`, 'info');
-        await bulkUntagMentions(slice, batch.oldTagId);
+        await bulkUntagMentions(slice.map(String), batch.oldTagId);
         if (!batches[batch.newTagId]) batches[batch.newTagId] = [];
         batches[batch.newTagId].push(...slice);
         await sleep(1500);
@@ -1085,7 +1085,7 @@
         const slice = ids.slice(i, i + MAX_BATCH_SIZE);
         updateProgress('tag', batchNum, tagIds.length);
         addLog(`→ bulkTag: ${slice.length} → ${tagName}`, 'info');
-        await bulkTagMentions(slice, parseInt(tagId));
+        await bulkTagMentions(slice.map(String), parseInt(tagId));
         state.stats.tagged += slice.length;
         updateStatsUI();
         await sleep(1500);

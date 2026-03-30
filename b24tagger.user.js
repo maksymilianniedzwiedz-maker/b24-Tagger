@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.19.12
+// @version      0.19.13
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.19.12';
+  const VERSION = '0.19.13';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -383,9 +383,19 @@
       body: JSON.stringify({ operationName, variables, query }),
     });
     if (res.status === 401) throw new Error('GRAPHQL_AUTH_ERROR');
-    if (!res.ok) throw new Error(`GRAPHQL_HTTP_ERROR_${res.status}`);
+    if (!res.ok) {
+      // Loguj raw body żeby zobaczyć co Brand24 faktycznie zwraca przy błędzie
+      let rawBody = '';
+      try { rawBody = await res.text(); } catch(e) {}
+      const bodySnippet = rawBody.substring(0, 200).replace(/\n/g, ' ');
+      addLog(`⚠ [DIAG/HTTP] ${operationName} HTTP ${res.status}: "${bodySnippet}"`, 'warn');
+      throw new Error(`GRAPHQL_HTTP_ERROR_${res.status}`);
+    }
     const data = await res.json();
-    if (data.errors) throw new Error(data.errors[0]?.message || 'GRAPHQL_ERROR');
+    if (data.errors) {
+      addLog(`⚠ [DIAG/GQL] ${operationName} GQL error: ${JSON.stringify(data.errors).substring(0, 200)}`, 'warn');
+      throw new Error(data.errors[0]?.message || 'GRAPHQL_ERROR');
+    }
     return data.data;
   }
 
@@ -746,47 +756,58 @@
       return map;
     }
 
-    // ── KROK 6: pozostałe strony równolegle ──────────────────────────────
+    // ── KROK 6: pozostałe strony SEKWENCYJNIE ───────────────────────────
+    // Parallel powoduje niestabilną paginację Brand24 — te same wzmianki pojawiają się
+    // na wielu stronach gdy sortowanie jest niestabilne przy concurrent requests.
     diag.step = 'build_map_pages';
-    const remaining = Array.from({length: totalPages - 1}, (_, i) => i + 2);
     let fetched = 1;
     let pageErrors = 0;
+    const mentionIdsSeen = new Set();
+    first.results.forEach(m => { if (m.id) mentionIdsSeen.add(String(m.id)); });
 
-    for (let i = 0; i < remaining.length; i += CONCURRENCY) {
+    for (let p = 2; p <= totalPages; p++) {
       if (state.status !== 'running') break;
-      const batch = remaining.slice(i, i + CONCURRENCY);
-      let results;
+      let result;
       try {
-        results = await Promise.all(
-          batch.map(p => getMentions(state.projectId, dateFrom, dateTo, gr, p))
-        );
+        result = await getMentions(state.projectId, dateFrom, dateTo, gr, p);
       } catch(e) {
         pageErrors++;
-        addLog(`⚠ [DIAG/API] Błąd pobierania stron ${batch[0]}-${batch[batch.length-1]}: ${e.message}`, 'warn');
+        addLog(`⚠ [DIAG/API] Błąd strony ${p}: ${e.message}`, 'warn');
         continue;
       }
-      results.forEach((result, bi) => {
-        if (!result || !result.results) {
-          pageErrors++;
-          addLog(`⚠ [DIAG/API] Strona ${batch[bi]}: null response`, 'warn');
-          return;
+      if (!result || !result.results) {
+        pageErrors++;
+        addLog(`⚠ [DIAG/API] Strona ${p}: null response`, 'warn');
+        continue;
+      }
+      let pageDupeIds = 0;
+      result.results.forEach(m => {
+        const matchUrl = m.url || m.openUrl;
+        const idStr = String(m.id);
+        if (mentionIdsSeen.has(idStr)) {
+          pageDupeIds++;
+          diag.dupeKeys++;
+          return; // pomiń duplikat — ta wzmianka już jest w mapie
         }
-        result.results.forEach(m => {
-          const matchUrl = m.url || m.openUrl;
-          if (matchUrl) {
-            const key = normalizeUrl(matchUrl);
-            if (map[key]) diag.dupeKeys++;
-            map[key] = { id: m.id, existingTags: m.tags || [] };
-          } else {
-            diag.urlFieldEmpty++;
-          }
-        });
+        mentionIdsSeen.add(idStr);
+        if (matchUrl) {
+          const key = normalizeUrl(matchUrl);
+          if (map[key]) diag.dupeKeys++; // URL dupe — inny ID, ten sam URL
+          map[key] = { id: m.id, existingTags: m.tags || [] };
+        } else {
+          diag.urlFieldEmpty++;
+        }
       });
-      fetched += batch.length;
+      if (pageDupeIds > 0) {
+        addLog(`⚠ [DIAG/PAGINATION] Strona ${p}: ${pageDupeIds} duplikatów ID — Brand24 niestabilna paginacja`, 'warn');
+      }
+      fetched++;
       diag.fetchedPages = fetched;
       updateProgress('map', fetched, totalPages);
-      addLog(`→ Mapa: ${fetched}/${totalPages} stron (${Object.keys(map).length} wzmianek)`, 'info');
-      if (i + CONCURRENCY < remaining.length) await sleep(100);
+      if (p % 10 === 0 || p === totalPages) {
+        addLog(`→ Mapa: ${fetched}/${totalPages} stron (${Object.keys(map).length} wzmianek)`, 'info');
+      }
+      await sleep(50);
     }
 
     diag.mentionsInMap = Object.keys(map).length;

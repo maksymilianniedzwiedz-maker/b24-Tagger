@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.20.8
+// @version      0.20.9
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.20.8';
+  const VERSION = '0.20.9';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -620,7 +620,8 @@
 
     // Assessment column FIRST - detect before date to avoid false matches
     // Krok 1: szukaj po dokładnej nazwie kolumny (najwyższy priorytet)
-    const ASSESSMENT_NAMES = ['assessment', 'label', 'ocena', 'flag', 'classification', 'klasa', 'class'];
+    const ASSESSMENT_NAMES = ['assessment', 'label', 'ocena', 'flag', 'classification', 'klasa', 'class',
+      'verdict', 'relevance', 'decision', 'annotation', 'etykieta'];
     // Kolumny które NIE są assessment — wyklucz je z heurystyki
     const SOURCE_NAMES = ['source', 'platform', 'channel', 'medium', 'site', 'domain', 'network',
       'source_type', 'mention_source', 'type', 'media_type', 'content_type'];
@@ -641,8 +642,8 @@
         const looksLikeDate = /\d{4}-\d{2}-\d{2}/.test(sampleVal);
         const looksLikeId = /^[a-f0-9]{20,}$/.test(sampleVal) || /^\d{15,}$/.test(sampleVal);
         const looksLikeUrl = /^https?:\/\//.test(sampleVal);
-        // Wartości assessment to typowo słowa uppercase (RELEVANT, IRRELEVANT etc.)
-        const looksLikeAssessment = [...vals].some(v => /^[A-Z_]{3,}$/.test(v));
+        // Wartości assessment: uppercase (RELEVANT) lub lowercase słowa (relevant) — nie cyfry/URL/daty
+        const looksLikeAssessment = [...vals].some(v => /^[A-Z_]{3,}$/.test(v) || /^[a-z_]{3,}$/.test(v));
         return isLikelyLabel && !looksLikeDate && !looksLikeId && !looksLikeUrl && looksLikeAssessment;
       });
     }
@@ -658,7 +659,8 @@
     // Date column - exclude assessment column
     const dateCol = headers.find(h => {
       if (h === assessmentCol) return false;
-      if (['created_date', 'date', 'createddate', 'crawled_date', 'creation_date'].includes(h.toLowerCase())) return true;
+      if (['created_date', 'date', 'createddate', 'crawled_date', 'creation_date',
+           'published_at', 'timestamp', 'datetime', 'published_date'].includes(h.toLowerCase())) return true;
       return rows.slice(0, 5).some(r => /\d{4}-\d{2}-\d{2}/.test(String(r[h] || '')));
     });
     if (dateCol) detected.date = dateCol;
@@ -666,7 +668,7 @@
     // URL column - exclude already detected columns
     const urlCol = headers.find(h => {
       if (h === assessmentCol || h === dateCol) return false;
-      if (['url', 'link', 'source_url'].includes(h.toLowerCase())) return true;
+      if (['url', 'link', 'source_url', 'permalink', 'post_url', 'mention_url', 'href', 'uri'].includes(h.toLowerCase())) return true;
       return rows.slice(0, 5).some(r => /^https?:\/\//.test(r[h] || ''));
     });
     if (urlCol) detected.url = urlCol;

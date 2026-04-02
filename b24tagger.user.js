@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.19.17
+// @version      0.20.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.19.17';
+  const VERSION = '0.20.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -136,6 +136,7 @@
     NEWS_SESSION_URLS:'b24tagger_news_session_urls',
     NEWS_LANG_MAP:    'b24tagger_news_lang_map',
     NEWS_WIN_SIZE:    'b24tagger_news_win_size',
+    WELCOME_SHOWN:    'b24tagger_welcome_shown',
   };
   const MAX_BATCH_SIZE = 50;
   const HEALTH_CHECK_INTERVAL = 30000;
@@ -7140,6 +7141,121 @@ function showOnboarding(onComplete) {
   // WHAT'S NEW - modal i przycisk
   // ───────────────────────────────────────────
 
+  function showWelcomePanel() {
+    if (lsGet(LS.WELCOME_SHOWN, false)) return;
+
+    const prioMeta = {
+      ai:     { color: '#a855f7', label: 'AI' },
+      high:   { color: '#f87171', label: 'Krytyczne' },
+      medium: { color: '#facc15', label: 'Ważne' },
+      low:    { color: '#4ade80', label: 'Nice to have' },
+    };
+
+    let plannedHtml =
+      '<div style="font-size:12px;color:#4a4a66;margin-bottom:12px;line-height:1.6;">Co planujemy zrobić zanim wyjdzie wersja stabilna:</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;padding:8px 10px;background:#0d0d16;border-radius:7px;border:1px solid #1e1e2e;">' +
+        Object.entries(prioMeta).map(function(e) {
+          return '<span style="display:flex;align-items:center;gap:4px;font-size:11px;color:#8080aa;">' +
+            '<span style="width:8px;height:8px;border-radius:50%;background:' + e[1].color + ';flex-shrink:0;"></span>' +
+            e[1].label + '</span>';
+        }).join('') +
+      '</div>';
+    PLANNED_FEATURES.forEach(function(f) {
+      var pm = prioMeta[f.priority] || { color: '#6060aa' };
+      plannedHtml +=
+        '<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid #1a1a22;">' +
+          '<span style="flex-shrink:0;width:8px;height:8px;border-radius:50%;background:' + pm.color + ';margin-top:5px;"></span>' +
+          '<span style="font-size:13px;color:#a0a0cc;line-height:1.6;flex:1;">' + f.text + '</span>' +
+          (f.next ? '<span style="flex-shrink:0;font-size:11px;background:#6c6cff22;color:#6c6cff;padding:2px 8px;border-radius:99px;white-space:nowrap;">w toku</span>' : '') +
+        '</div>';
+    });
+
+    var modal = document.createElement('div');
+    modal.id = 'b24t-welcome-modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;';
+
+    modal.innerHTML =
+      '<div style="background:#0f0f13;border:1px solid #2a2a35;border-radius:14px;width:500px;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.9);">' +
+        // Header
+        '<div style="padding:20px 24px 0;flex-shrink:0;border-bottom:1px solid #1e1e28;">' +
+          '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">' +
+            '<div style="width:38px;height:38px;background:#6c6cff22;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;">🛠️</div>' +
+            '<div style="flex:1;">' +
+              '<div style="font-size:16px;font-weight:700;color:#e2e2e8;letter-spacing:-0.01em;">B24 Tagger <span style="font-size:11px;color:#6c6cff;letter-spacing:0.08em;font-weight:600;">BETA</span></div>' +
+              '<div style="font-size:12px;color:#3a3a55;margin-top:3px;">v' + VERSION + ' · wersja eksperymentalna</div>' +
+            '</div>' +
+          '</div>' +
+          '<div style="display:flex;gap:2px;margin-bottom:0;">' +
+            '<button class="b24t-wp-tab" data-tab="welcome" style="flex:1;background:none;border:none;border-bottom:2px solid #6c6cff;color:#6c6cff;font-size:11px;font-weight:600;padding:8px 4px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:5px;">👋 Witaj</button>' +
+            '<button class="b24t-wp-tab" data-tab="planned" style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:#4a4a66;font-size:11px;padding:8px 4px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:5px;">🗓 Planowane</button>' +
+          '</div>' +
+        '</div>' +
+        // Body
+        '<div style="overflow-y:auto;flex:1;min-height:0;">' +
+          // Tab: Witaj
+          '<div id="b24t-wp-welcome" style="padding:24px;">' +
+            '<p style="font-size:14px;color:#c0c0e0;line-height:1.8;margin:0 0 16px 0;">' +
+              'Pracujemy nad wersją stabilną wtyczki. Zanim się pojawi, czeka nas kilka ważnych rzeczy: ' +
+              'poprawki i optymalizacja różnych funkcji, w tym tagowania za pomocą pliku. ' +
+              'Aktualizacja panelu annotatorskiego, poprawki interfejsu i wiele więcej.' +
+            '</p>' +
+            '<p style="font-size:13px;color:#4a4a66;line-height:1.7;margin:0;">' +
+              'To okienko pojawi się tylko raz. Co konkretnie jest planowane — zawsze znajdziesz w zakładce <strong style="color:#6060aa;">Planowane</strong>.' +
+            '</p>' +
+          '</div>' +
+          // Tab: Planowane
+          '<div id="b24t-wp-planned" style="display:none;padding:20px 24px;">' + plannedHtml + '</div>' +
+        '</div>' +
+        // Footer z checkboxem
+        '<div style="padding:14px 24px;border-top:1px solid #1a1a22;flex-shrink:0;">' +
+          '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:12px;">' +
+            '<input type="checkbox" id="b24t-wp-checkbox" style="width:16px;height:16px;cursor:pointer;accent-color:#6c6cff;">' +
+            '<span style="font-size:13px;color:#6060aa;">Przeczytałem/am</span>' +
+          '</label>' +
+          '<button id="b24t-wp-close" disabled style="width:100%;background:#2a2a3a;color:#4a4a66;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:not-allowed;font-family:inherit;transition:background 0.2s,color 0.2s;">Zamknij</button>' +
+        '</div>' +
+      '</div>';
+
+    document.body.appendChild(modal);
+
+    // Tab switching
+    modal.querySelectorAll('.b24t-wp-tab').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        modal.querySelectorAll('.b24t-wp-tab').forEach(function(b) {
+          b.style.borderBottomColor = 'transparent';
+          b.style.color = '#4a4a66';
+          b.style.fontWeight = 'normal';
+        });
+        btn.style.borderBottomColor = '#6c6cff';
+        btn.style.color = '#6c6cff';
+        btn.style.fontWeight = '600';
+        document.getElementById('b24t-wp-welcome').style.display = btn.dataset.tab === 'welcome' ? 'block' : 'none';
+        document.getElementById('b24t-wp-planned').style.display = btn.dataset.tab === 'planned' ? 'block' : 'none';
+      });
+    });
+
+    // Checkbox enables close button
+    document.getElementById('b24t-wp-checkbox').addEventListener('change', function() {
+      var btn = document.getElementById('b24t-wp-close');
+      if (this.checked) {
+        btn.disabled = false;
+        btn.style.background = '#6c6cff';
+        btn.style.color = '#fff';
+        btn.style.cursor = 'pointer';
+      } else {
+        btn.disabled = true;
+        btn.style.background = '#2a2a3a';
+        btn.style.color = '#4a4a66';
+        btn.style.cursor = 'not-allowed';
+      }
+    });
+
+    document.getElementById('b24t-wp-close').addEventListener('click', function() {
+      if (!document.getElementById('b24t-wp-checkbox').checked) return;
+      lsSet(LS.WELCOME_SHOWN, true);
+      modal.remove();
+    });
+  }
 
   // ───────────────────────────────────────────
   // FEEDBACK & PLANNED FEATURES
@@ -7173,11 +7289,27 @@ function showOnboarding(onComplete) {
 
   // Planned features list
   const PLANNED_FEATURES = [
-    { priority: 'ai',     text: 'Dostęp do AI API — tłumaczenie wzmianek na bieżąco, automatyczna klasyfikacja, tryb tworzenia customowych klasyfikatorów (do automatycznej klasyfikacji) i inne...', next: false },
-    { priority: 'high',   text: 'Podgląd wzmianki on-hover — najedź na URL w logu żeby zobaczyć treść i autora', next: false },
+    // ── Krytyczne (blokują stable) ──
+    { priority: 'high', text: 'Overall stats: kafelek \"pozostało do otagowania\" z paskiem postępu i % ukończenia', next: true },
+    { priority: 'high', text: 'Overall stats: tryb domykania miesiąca — automatyczne oznaczanie projektów jako Completed, przycisk ręcznego zamknięcia miesiąca', next: true },
+    { priority: 'high', text: 'Naprawienie funkcji czyszczenia plikiem', next: true },
+    { priority: 'high', text: 'Równoległe fetche + optymalizacja batchowania — stress testy realnych limitów Brand24 API', next: true },
+    { priority: 'high', text: 'Fallbacki — zabezpieczenia żeby błędy nie blokowały workflow wtyczki', next: false },
+    { priority: 'high', text: 'Dynamiczne rozmiary elementów UI we wszystkich panelach', next: false },
+    { priority: 'high', text: 'Naprawa wyświetlania changeloga (pojawia się losowo)', next: false },
+    // ── Ważne ──
+    { priority: 'medium', text: 'Z-index: aktywny lub przesuwany panel zawsze na wierzchu', next: false },
+    { priority: 'medium', text: 'News: poprawki działania paneli trzymających się razem', next: false },
+    // ── Nice to have ──
+    { priority: 'low', text: 'Ulepszenia UI dla wygody użytkownika — do rewizji', next: false },
+    { priority: 'low', text: 'Kompleksowa rewizja słownictwa w całej wtyczce', next: false },
+    { priority: 'low', text: 'Onboarding: możliwość pominięcia, poprawki tekstów, tutorial dla nowych elementów', next: false },
+    { priority: 'low', text: 'Tryb pomocy: brakujące opisy, rewizja słownictwa, poprawki wyświetlania', next: false },
+    // ── Przyszłość ──
+    { priority: 'ai', text: 'Dostęp do AI API — tłumaczenie wzmianek na bieżąco, automatyczna klasyfikacja, tryb tworzenia customowych klasyfikatorów i inne...', next: false },
+    { priority: 'medium', text: 'Podgląd wzmianki on-hover — najedź na URL w logu żeby zobaczyć treść i autora', next: false },
     { priority: 'medium', text: 'Integracja z Newsami — przeglądanie i operacje na wzmiankach z sekcji News bezpośrednio z poziomu wtyczki', next: false },
     { priority: 'medium', text: 'Bulk rename tagów — masowa zmiana nazwy tagu w projekcie', next: false },
-    { priority: 'medium', text: 'System diagnostyczny: rozszerzenie DIAG_CHECKS o kolejne patterny — zbieranie przykładów i przypadków brzegowych', next: false },
   ];
 
   function sendToSlack(payload, onSuccess, onError) {
@@ -10793,7 +10925,7 @@ Tej operacji nie można cofnąć.`)) {
     applyFeatures();
 
     // Show What's New on version change
-    setTimeout(() => showWhatsNewExtended(false), 2000);
+    setTimeout(() => showWelcomePanel(), 2000);
 
     // (checkForUpdate wywołane w głównym scope IIFE — ma dostęp do GM_xmlhttpRequest)
   }

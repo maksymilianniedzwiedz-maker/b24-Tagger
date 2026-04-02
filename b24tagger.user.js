@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.20.7
+// @version      0.20.8
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.20.7';
+  const VERSION = '0.20.8';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -561,23 +561,51 @@
   // ───────────────────────────────────────────
 
   function parseCSV(text) {
-    const lines = text.trim().replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-    if (!lines.length) return [];
-    // Auto-detect separator: porównaj liczbę ';' i ',' w nagłówku
-    const firstLine = lines[0];
+    const str = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+    if (!str) return [];
+    // Auto-detect separator
+    const firstLine = str.split('\n')[0];
     const sep = (firstLine.split(';').length > firstLine.split(',').length) ? ';' : ',';
-    const valRe = sep === ';'
-      ? /(".*?"|[^;]+|(?<=;)(?=;)|(?<=;)$|^(?=;))/g
-      : /(".*?"|[^,]+|(?<=,)(?=,)|(?<=,)$|^(?=,))/g;
-    const headers = firstLine.split(sep).map(h => h.trim().replace(/^"|"$/g, ''));
-    return lines.slice(1).map(line => {
-      const vals = line.match(valRe) || [];
-      const row = {};
-      headers.forEach((h, i) => {
-        row[h] = (vals[i] || '').trim().replace(/^"|"$/g, '');
-      });
-      return row;
-    });
+
+    // Parser state-machine — obsługuje "" (escaped quote) wewnątrz pól
+    function parseRow(pos) {
+      const row = [];
+      while (pos <= str.length) {
+        if (str[pos] === '"') {
+          pos++;
+          let val = '';
+          while (pos < str.length) {
+            if (str[pos] === '"') {
+              if (str[pos + 1] === '"') { val += '"'; pos += 2; }
+              else { pos++; break; }
+            } else { val += str[pos++]; }
+          }
+          row.push(val);
+        } else {
+          let val = '';
+          while (pos < str.length && str[pos] !== sep && str[pos] !== '\n') val += str[pos++];
+          row.push(val.trim());
+        }
+        if (pos < str.length && str[pos] === sep) pos++;
+        else break;
+      }
+      return { row, pos };
+    }
+
+    let pos = 0, headers = null;
+    const rows = [];
+    while (pos < str.length) {
+      const { row, pos: next } = parseRow(pos);
+      pos = next;
+      if (pos < str.length && str[pos] === '\n') pos++;
+      if (!headers) { headers = row; }
+      else if (row.length > 0 && !(row.length === 1 && row[0] === '')) {
+        const obj = {};
+        headers.forEach((h, i) => { obj[h] = row[i] ?? ''; });
+        rows.push(obj);
+      }
+    }
+    return rows;
   }
 
   function parseJSON(text) {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.20.2
+// @version      0.20.3
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.20.2';
+  const VERSION = '0.20.3';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -137,6 +137,7 @@
     NEWS_LANG_MAP:    'b24tagger_news_lang_map',
     NEWS_WIN_SIZE:    'b24tagger_news_win_size',
     WELCOME_SHOWN:    'b24tagger_welcome_shown',
+    UPDATE_CHANNEL:  'b24tagger_update_channel',
   };
   const MAX_BATCH_SIZE = 50;
   const HEALTH_CHECK_INTERVAL = 30000;
@@ -7126,12 +7127,12 @@ function showOnboarding(onComplete) {
   ];
 
   function _fetchChangelog(onDone) {
-    const CACHE_KEY = 'b24tagger_cl_cache';
+    const CACHE_KEY = 'b24tagger_cl_cache_' + lsGet(LS.UPDATE_CHANNEL, 'stable');
     const cached = (() => { try { return JSON.parse(sessionStorage.getItem(CACHE_KEY)); } catch(e) { return null; } })();
     if (cached) { onDone(cached); return; }
     GM_xmlhttpRequest({
       method: 'GET',
-      url: 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/experimental/CHANGELOG.json',
+      url: getChangelogUrl(),
       headers: { 'Cache-Control': 'no-cache' },
       onload(r) {
         try {
@@ -7275,7 +7276,12 @@ function showOnboarding(onComplete) {
   // Slack Webhook URL — przechowywany w localStorage (klucz: b24tagger_slack_webhook)
   // Ustaw raz w konsoli: localStorage.setItem('b24tagger_slack_webhook', 'https://hooks.slack.com/...')
   const SLACK_WEBHOOK_URL = localStorage.getItem('b24tagger_slack_webhook') || '';
-  const RAW_URL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/b24tagger.user.js';
+  const RAW_URL_STABLE       = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/b24tagger.user.js';
+  const RAW_URL_EXPERIMENTAL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/experimental/b24tagger.user.js';
+  const CHANGELOG_URL_STABLE       = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/CHANGELOG.json';
+  const CHANGELOG_URL_EXPERIMENTAL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/experimental/CHANGELOG.json';
+  function getRawUrl() { return lsGet(LS.UPDATE_CHANNEL, 'stable') === 'experimental' ? RAW_URL_EXPERIMENTAL : RAW_URL_STABLE; }
+  function getChangelogUrl() { return lsGet(LS.UPDATE_CHANNEL, 'stable') === 'experimental' ? CHANGELOG_URL_EXPERIMENTAL : CHANGELOG_URL_STABLE; }
 
   // Google Forms — bug report i feedback
   const BUG_FORM_BASE = 'https://docs.google.com/forms/d/e/1FAIpQLSdfddWBtp-0ZiMP5u51vaQmNvIg423MyjOzQdMZb6BEyCe0GA/viewform';
@@ -7723,7 +7729,8 @@ function showOnboarding(onComplete) {
   }
 
   function checkForUpdate(manual) {
-    if (!RAW_URL) return;
+    const _rawUrl = getRawUrl();
+    if (!_rawUrl) return;
     addLog('→ Sprawdzam aktualizacje... (GM: ' + (typeof GM_xmlhttpRequest !== 'undefined' ? 'tak' : 'nie') + ')', 'info');
 
     function handleResponse(text) {
@@ -7746,7 +7753,7 @@ function showOnboarding(onComplete) {
     if (typeof GM_xmlhttpRequest !== 'undefined') {
       GM_xmlhttpRequest({
         method: 'GET',
-        url: RAW_URL + '?_=' + Date.now(),
+        url: _rawUrl + '?_=' + Date.now(),
         headers: {
           'Cache-Control': 'no-cache, no-store',
           'Pragma': 'no-cache',
@@ -7761,7 +7768,7 @@ function showOnboarding(onComplete) {
       });
     } else {
       // Fallback: fetch (może być blokowany przez CSP)
-      fetch(RAW_URL + '?_=' + Date.now())
+      fetch(_rawUrl + '?_=' + Date.now())
         .then(function(r) { return r.text(); })
         .then(handleResponse)
         .catch(function() {
@@ -7851,7 +7858,7 @@ function showOnboarding(onComplete) {
 
     document.getElementById('b24t-update-install').addEventListener('click', function() {
       // Otwarcie raw .user.js URL — Tampermonkey automatycznie wykrywa i pokazuje ekran aktualizacji
-      window.open(RAW_URL, '_blank');
+      window.open(getRawUrl(), '_blank');
       dismiss();
     });
     document.getElementById('b24t-update-dismiss').addEventListener('click', dismiss);
@@ -7913,6 +7920,25 @@ function showOnboarding(onComplete) {
     modal.id = 'b24t-features-modal';
     modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;backdrop-filter:blur(4px);animation:b24t-fadein 0.2s ease;';
 
+    const _currentChannel = lsGet(LS.UPDATE_CHANNEL, 'stable');
+    const channelHtml =
+      '<div style="display:flex;gap:8px;">' +
+        ['stable', 'experimental'].map(function(ch) {
+          const active = _currentChannel === ch;
+          const label = ch === 'stable' ? '🔒 Stabilny' : '🔬 Eksperymentalny';
+          const desc  = ch === 'stable' ? 'Rekomendowany &mdash; przetestowane wersje' : 'Najnowsze zmiany, może być niestabilny';
+          return '<label data-channel="' + ch + '" style="display:flex;flex:1;gap:8px;align-items:flex-start;padding:8px 10px;border:1px solid ' +
+            (active ? 'var(--b24t-primary)' : 'var(--b24t-border-sub)') +
+            ';border-radius:7px;background:' + (active ? 'var(--b24t-primary)18' : 'transparent') + ';cursor:pointer;">' +
+            '<input type="radio" name="b24t-channel" value="' + ch + '" ' + (active ? 'checked' : '') +
+              ' style="accent-color:var(--b24t-primary);flex-shrink:0;margin-top:2px;">' +
+            '<div>' +
+              '<div style="font-size:12px;font-weight:600;color:var(--b24t-text);">' + label + '</div>' +
+              '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:2px;line-height:1.4;">' + desc + '</div>' +
+            '</div>' +
+          '</label>';
+        }).join('') +
+      '</div>';
     let checkboxesHtml = OPTIONAL_FEATURES.map(function(f) {
       const checked = features[f.id] ? 'checked' : '';
       return '<label style="display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-bottom:1px solid var(--b24t-border-sub);cursor:pointer;">' +
@@ -7936,6 +7962,10 @@ function showOnboarding(onComplete) {
           '<button id="b24t-features-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:18px;line-height:1;padding:2px 8px;border-radius:5px;">✕</button>' +
         '</div>' +
         '<div style="padding:4px 20px 0;">' + checkboxesHtml + '</div>' +
+        '<div style="padding:12px 20px 4px;border-top:1px solid var(--b24t-border-sub);">' +
+          '<div style="font-size:11px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Kanał aktualizacji</div>' +
+          channelHtml +
+        '</div>' +
         '<div style="padding:14px 20px;border-top:1px solid var(--b24t-border-sub);text-align:right;">' +
           '<button id="b24t-features-save" style="background:var(--b24t-accent-grad);color:#fff;border:none;border-radius:8px;padding:9px 24px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px var(--b24t-primary-glow);transition:opacity 0.15s;">Zapisz</button>' +
         '</div>' +
@@ -7954,9 +7984,11 @@ function showOnboarding(onComplete) {
         newFeatures[cb.dataset.feature] = cb.checked;
       });
       saveFeatures(newFeatures);
+      const selectedChannel = (modal.querySelector('input[name="b24t-channel"]:checked') || {}).value || 'stable';
+      lsSet(LS.UPDATE_CHANNEL, selectedChannel);
       applyFeatures();
       close();
-      addLog('✓ Ustawienia funkcji zapisane', 'success');
+      addLog('\u2713 Ustawienia zapisane (kanał: ' + selectedChannel + ')', 'success');
     });
   }
 

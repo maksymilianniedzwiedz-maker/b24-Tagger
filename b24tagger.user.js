@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.20.0
+// @version      0.20.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.20.0';
+  const VERSION = '0.20.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -338,8 +338,8 @@
         }
       } catch(e) {}
     }
-    // UI TAG SNIFF: przechwytuj KAŻDĄ mutację tagowania wysłaną przez Brand24 UI
-    // (żeby zobaczyć jak UI taguje, skoro bulkTagMentions crashuje)
+    // [DEV TOOL] UI TAG SNIFF: przechwytuje mutacje tagowania UI Brand24
+    // Aktywuj z konsoli: b24tagger.sniffUiTag() — loguje jeden request i wyłącza się
     if (state._sniffUiTag && url.includes('graphql') && bodyStr.includes('mutation') &&
         (bodyStr.toLowerCase().includes('tag') || bodyStr.toLowerCase().includes('label'))) {
       try {
@@ -355,7 +355,8 @@
     }
     const res = await origFetch.apply(this, args);
 
-    // NET_MONITOR: przechwytuj odpowiedzi getMentions i loguj URL-e których nie ma w mapie
+    // [DEV TOOL] NET_MONITOR: monitoruje odpowiedzi getMentions
+    // Aktywuj z konsoli: b24tagger.netMonitor(shortcodes)
     if (state._netMonitor && url.includes('graphql') && bodyStr.includes('getMentions')) {
       try {
         const clone = res.clone();
@@ -486,18 +487,7 @@
       addLog(`[TEST] bulkTag: ${mentionsIds.length} IDs → tagId ${tagId}`, 'info');
       return { success: true, testRun: true };
     }
-    // DIAG: pokaż pierwsze 3 ID i typ przed wysłaniem
-    const _diagTagName = Object.entries(state.tags).find(([,id]) => id === tagId)?.[0] || 'NIE ZNALEZIONO W state.tags';
-    const _diagAllTagIds = Object.values(state.tags).join(',');
-    addLog(
-      `[DIAG/BULK] Wysyłam:\n` +
-      `  mentionsIds[0..2]: ${JSON.stringify(mentionsIds.slice(0,3))}\n` +
-      `  types: ${mentionsIds.slice(0,3).map(x=>typeof x).join(',')}\n` +
-      `  tagId: ${tagId} (${typeof tagId}) → nazwa: "${_diagTagName}"\n` +
-      `  wszystkie tagId w state.tags: [${_diagAllTagIds}]\n` +
-      `  projectId: ${state.projectId}`,
-      'info'
-    );
+
     const data = await gqlRetry('bulkTagMentions', { mentionsIds, tagId }, `mutation bulkTagMentions(
       $mentionsIds: [IntString!]!, $tagId: Int!
     ) {
@@ -563,7 +553,7 @@
   // ───────────────────────────────────────────
 
   function parseCSV(text) {
-    const lines = text.trim().split('\n');
+    const lines = text.trim().replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
     if (!lines.length) return [];
     const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
     return lines.slice(1).map(line => {
@@ -680,7 +670,6 @@
   async function buildUrlMap(dateFrom, dateTo, untaggedOnly) {
     const gr = untaggedOnly ? [state.untaggedId] : [];
     const map = {};
-    const CONCURRENCY = 10;
     const diag = {
       step: 'init',
       dateFrom, dateTo, untaggedOnly,
@@ -905,6 +894,7 @@
       if (matchDiag.mapSamplesByDomain[dom].length < 2) matchDiag.mapSamplesByDomain[dom].push(k);
     });
 
+    const _mapKeys = Object.keys(state.urlMap); // cached once — fuzzy match uses this
     rows.forEach(row => {
       const urlRaw = row[state.file.colMap.url] || '';
       const assessment = (row[state.file.colMap.assessment] || '').trim().toUpperCase();
@@ -920,8 +910,7 @@
       // Szukaj w mapie: dokładne dopasowanie, potem fuzzy (obcięte ID)
       let entry = state.urlMap[normalizedUrl];
       if (!entry) {
-        const keys = Object.keys(state.urlMap);
-        const fuzzyKey = keys.find(k => urlsMatch(normalizedUrl, k));
+        const fuzzyKey = _mapKeys.find(k => urlsMatch(normalizedUrl, k));
         if (fuzzyKey) entry = state.urlMap[fuzzyKey];
       }
 
@@ -939,8 +928,7 @@
       }
 
       if (!entry) {
-        const mapKeys = Object.keys(state.urlMap);
-        const truncInfo = detectTruncatedUrl(normalizedUrl, mapKeys);
+        const truncInfo = detectTruncatedUrl(normalizedUrl, _mapKeys);
         if (truncInfo) {
           skipped.push({ row, reason: 'TRUNCATED_URL', url: urlRaw, truncInfo });
           matchDiag.truncated++;
@@ -1184,6 +1172,7 @@
     state.stats = { tagged: 0, skipped: 0, noMatch: 0, conflicts: 0 };
     updateStatusUI();
     startSessionTimer();
+    startHealthCheck();
 
     // Set Brand24 date filter
     const dateFrom = state.file.meta.minDate;
@@ -1193,7 +1182,11 @@
       if (!currentUrl.includes(`d1=${dateFrom}`) || !currentUrl.includes(`d2=${dateTo}`)) {
         addLog(`→ Ustawiam zakres dat: ${dateFrom} → ${dateTo}`, 'info');
         navigateToDateRange(dateFrom, dateTo);
-        await sleep(2000);
+        // Polling zamiast hardkodowanego sleep — czekaj max 4s na zmianę URL
+        for (let _w = 0; _w < 8; _w++) {
+          await sleep(500);
+          if (window.location.href.includes(`d1=${dateFrom}`)) break;
+        }
       }
     }
 
@@ -1261,6 +1254,8 @@
         }
       }
 
+      stopHealthCheck();
+      stopSessionTimer();
       saveSessionToHistory();
       if (state.soundEnabled) playDoneSound();
       showFinalReport();
@@ -1297,7 +1292,11 @@
   function activateUntaggedFilter() {
     const chips = Array.from(document.querySelectorAll('.MuiChip-root.MuiChip-clickable'));
     const untaggedChip = chips.find(c => c.textContent.trim() === 'Untagged' && !c.classList.contains('Mui-active'));
-    if (untaggedChip) untaggedChip.click();
+    if (untaggedChip) {
+      untaggedChip.click();
+    } else {
+      addLog('⚠ Nie znaleziono chipa Untagged — filtr nie aktywowany. Sprawdź czy Brand24 nie zmienił interfejsu.', 'warn');
+    }
   }
 
   // ───────────────────────────────────────────
@@ -1412,6 +1411,8 @@
 
   function handleError(error, context) {
     const crash = saveCrashLog(error, context);
+    stopHealthCheck();
+    stopSessionTimer();
     state.status = 'error';
     updateStatusUI();
     addLog(`✕ Błąd: ${error.message}`, 'error');
@@ -1473,6 +1474,10 @@
         }
       }
     }, 1000);
+  }
+
+  function stopSessionTimer() {
+    if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }
   }
 
   // ───────────────────────────────────────────
@@ -3578,6 +3583,7 @@
     state.currentPartitionIdx = 0;
     state.urlMap = {};
     state.matchPreview = null;
+    state.stats = { tagged: 0, skipped: 0, noMatch: 0, conflicts: 0 };
 
     // Reset file UI
     const fileNameEl = document.getElementById('b24t-file-name');
@@ -7115,7 +7121,7 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "Side tabs: poprawiona logika widocznosci przy starcie"}
       ]
     },
-  ];;;;;;;;;;;
+  ];
 
   function _fetchChangelog(onDone) {
     const CACHE_KEY = 'b24tagger_cl_cache';
@@ -7123,7 +7129,7 @@ function showOnboarding(onComplete) {
     if (cached) { onDone(cached); return; }
     GM_xmlhttpRequest({
       method: 'GET',
-      url: 'https://raw.githubusercontent.com/i24dev/i24_analytics/I24-maks-czyszczenie/Tagger/CHANGELOG.json',
+      url: 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/experimental/CHANGELOG.json',
       headers: { 'Cache-Control': 'no-cache' },
       onload(r) {
         try {
@@ -7519,7 +7525,7 @@ function showOnboarding(onComplete) {
             '<button class="b24t-wnm-tab" data-tab="news" ' +
               'style="flex:1;background:none;border:none;border-bottom:2px solid #6c6cff;color:#6c6cff;' +
               'font-size:11px;font-weight:600;padding:8px 4px;cursor:pointer;font-family:inherit;' +
-              'display:flex;align-items:center;justify-content:center;gap:5px;">📰 Co nowego</button>' +
+              'display:flex;align-items:center;justify-content:center;gap:5px;">📋 Historia zmian</button>' +
             '<button class="b24t-wnm-tab" data-tab="planned" ' +
               'style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:#4a4a66;' +
               'font-size:11px;padding:8px 4px;cursor:pointer;font-family:inherit;' +
@@ -7622,6 +7628,7 @@ function showOnboarding(onComplete) {
     });
 
     // Tab switching
+    const legend = document.getElementById('b24t-wnm-legend');
     modal.querySelectorAll('.b24t-wnm-tab').forEach(function(btn) {
       btn.addEventListener('click', function() {
         modal.querySelectorAll('.b24t-wnm-tab').forEach(function(b) {
@@ -8753,20 +8760,22 @@ function showOnboarding(onComplete) {
     }
 
     var results = [];
-    for (var i = 0; i < projects.length; i++) {
-      var p = projects[i];
-      var counter = document.getElementById('b24t-ann-ts-counter');
-      if (counter) counter.textContent = (i + 1) + ' / ' + projects.length;
-      try {
-        var reqPage  = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.reqVerId],   1);
-        var delPage  = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.toDeleteId], 1);
-        var reqVer   = reqPage.count  || 0;
-        var toDelete = delPage.count  || 0;
+    var done = 0;
+    await Promise.all(projects.map(function(p) {
+      return Promise.all([
+        getMentions(p.id, dates.dateFrom, dates.dateTo, [p.reqVerId],   1).catch(function(){ return { count: 0 }; }),
+        getMentions(p.id, dates.dateFrom, dates.dateTo, [p.toDeleteId], 1).catch(function(){ return { count: 0 }; }),
+      ]).then(function(pages) {
+        done++;
+        var counter = document.getElementById('b24t-ann-ts-counter');
+        if (counter) counter.textContent = done + ' / ' + projects.length;
+        var reqVer   = (pages[0].count) || 0;
+        var toDelete = (pages[1].count) || 0;
         if (reqVer > 0 || toDelete > 0) {
           results.push({ name: p.name, id: p.id, reqVer: reqVer, toDelete: toDelete });
         }
-      } catch(e) {}
-    }
+      });
+    }));
 
     bgCache.tagstats = { results: results, dates: dates, ts: Date.now() };
     annotatorData.tagstats = bgCache.tagstats;

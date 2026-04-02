@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.20.4
+// @version      0.20.5
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.20.4';
+  const VERSION = '0.20.5';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -394,7 +394,7 @@
   // GRAPHQL HELPERS
   // ───────────────────────────────────────────
 
-  async function gql(operationName, variables, query) {
+  async function gql(operationName, variables, query, opts) {
     if (!state.tokenHeaders) throw new Error('TOKEN_NOT_READY');
     const res = await origFetch('/api/graphql', {
       method: 'POST',
@@ -415,7 +415,7 @@
     if (data.errors) {
       const _errCode = data.errors[0]?.extensions?.code;
       if (_errCode === 'PERMISSION_DENIED') {
-        addLog(`⚠ [DIAG/GQL] ${operationName}: PERMISSION_DENIED`, 'diag');
+        if (!opts?.silent) addLog(`⚠ [DIAG/GQL] ${operationName}: PERMISSION_DENIED`, 'diag');
         throw new Error('GRAPHQL_PERMISSION_DENIED');
       }
       addLog(`⚠ [DIAG/GQL] ${operationName} GQL error: ${JSON.stringify(data.errors).substring(0, 200)}`, 'warn');
@@ -424,10 +424,10 @@
     return data.data;
   }
 
-  async function gqlRetry(operationName, variables, query, retries = 3) {
+  async function gqlRetry(operationName, variables, query, retries = 3, opts) {
     for (let i = 0; i < retries; i++) {
       try {
-        return await gql(operationName, variables, query);
+        return await gql(operationName, variables, query, opts);
       } catch (e) {
         if (e.message === 'GRAPHQL_AUTH_ERROR' || e.message === 'GRAPHQL_PERMISSION_DENIED') throw e;
         if (i < retries - 1) {
@@ -458,7 +458,7 @@
     return data.createTag;
   }
 
-  async function getMentions(projectId, dateFrom, dateTo, gr, page) {
+  async function getMentions(projectId, dateFrom, dateTo, gr, page, opts) {
     const variables = {
       projectId,
       dateRange: { from: dateFrom, to: dateTo },
@@ -486,7 +486,7 @@
           tags { id title }
         }
       }
-    }`);
+    }`, 3, opts);
     return data.getMentions;
   }
 
@@ -1859,7 +1859,7 @@
       a.click(); URL.revokeObjectURL(url);
     },
   };
-  window.b24tagger = window.B24Tagger; // lowercase alias dla wygody konsoli
+  _win.b24tagger = _win.B24Tagger; // lowercase alias dla wygody konsoli
 
   // ───────────────────────────────────────────
   // UI - STYLES
@@ -8370,8 +8370,8 @@ function showOnboarding(onComplete) {
     for (var i = 0; i < projects.length; i++) {
       var p = projects[i];
       try {
-        var reqPage = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.reqVerId],   1);
-        var delPage = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.toDeleteId], 1);
+        var reqPage = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.reqVerId],   1, { silent: true });
+        var delPage = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.toDeleteId], 1, { silent: true });
         var reqVer   = reqPage.count  || 0;
         var toDelete = delPage.count  || 0;
         if (reqVer > 0 || toDelete > 0) {

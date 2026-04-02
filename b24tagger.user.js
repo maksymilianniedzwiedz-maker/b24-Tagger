@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.20.9
+// @version      0.21.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.20.9';
+  const VERSION = '0.21.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -136,7 +136,7 @@
     NEWS_SESSION_URLS:'b24tagger_news_session_urls',
     NEWS_LANG_MAP:    'b24tagger_news_lang_map',
     NEWS_WIN_SIZE:    'b24tagger_news_win_size',
-    WELCOME_SHOWN:    'b24tagger_welcome_shown',
+    WELCOME_SHOWN:    'b24tagger_welcome_shown_v0210',
     UPDATE_CHANNEL:  'b24tagger_update_channel',
   };
   const MAX_BATCH_SIZE = 50;
@@ -7200,23 +7200,26 @@ function showOnboarding(onComplete) {
     };
 
     let plannedHtml =
-      '<div style="font-size:12px;color:#4a4a66;margin-bottom:12px;line-height:1.6;">Co planujemy zrobić zanim wyjdzie wersja stabilna:</div>' +
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;padding:8px 10px;background:#0d0d16;border-radius:7px;border:1px solid #1e1e2e;">' +
-        Object.entries(prioMeta).map(function(e) {
-          return '<span style="display:flex;align-items:center;gap:4px;font-size:11px;color:#8080aa;">' +
-            '<span style="width:8px;height:8px;border-radius:50%;background:' + e[1].color + ';flex-shrink:0;"></span>' +
-            e[1].label + '</span>';
-        }).join('') +
-      '</div>';
+      '<div style="font-size:13px;font-weight:600;color:#c0c0e0;margin-bottom:12px;line-height:1.6;">Roadmap — v1.0.0 i nowsze</div>';
     PLANNED_FEATURES.forEach(function(f) {
       var pm = prioMeta[f.priority] || { color: '#6060aa' };
       plannedHtml +=
         '<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid #1a1a22;">' +
           '<span style="flex-shrink:0;width:8px;height:8px;border-radius:50%;background:' + pm.color + ';margin-top:5px;"></span>' +
           '<span style="font-size:13px;color:#a0a0cc;line-height:1.6;flex:1;">' + f.text + '</span>' +
-          (f.next ? '<span style="flex-shrink:0;font-size:11px;background:#6c6cff22;color:#6c6cff;padding:2px 8px;border-radius:99px;white-space:nowrap;">w toku</span>' : '') +
         '</div>';
     });
+    plannedHtml +=
+      '<div style="padding:10px 0 4px;font-size:12px;color:#4a4a66;line-height:1.6;font-style:italic;">' +
+        '...i inne funkcje zgłaszane przez użytkowników — masz pomysł lub coś nie działa? Daj znać przez formularz feedbacku.' +
+      '</div>' +
+      '<div style="margin-top:14px;padding:14px;background:#1a0d2e;border-radius:8px;border:1px solid #3d1a6e;">' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+          '<span style="font-size:14px;">✨</span>' +
+          '<span style="font-size:11px;font-weight:600;color:#a855f7;letter-spacing:0.06em;">W PLANACH</span>' +
+        '</div>' +
+        '<div style="font-size:13px;color:#9060cc;line-height:1.6;">Automatyczna klasyfikacja AI — tłumaczenie wzmianek na bieżąco, automatyczna ocena sentymentu i klasyfikacja za pomocą modeli AI.</div>' +
+      '</div>';
 
     var modal = document.createElement('div');
     modal.id = 'b24t-welcome-modal';
@@ -7230,7 +7233,7 @@ function showOnboarding(onComplete) {
             '<div style="width:38px;height:38px;background:#6c6cff22;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;">🛠️</div>' +
             '<div style="flex:1;">' +
               '<div style="font-size:16px;font-weight:700;color:#e2e2e8;letter-spacing:-0.01em;">B24 Tagger <span style="font-size:11px;color:#6c6cff;letter-spacing:0.08em;font-weight:600;">BETA</span></div>' +
-              '<div style="font-size:12px;color:#3a3a55;margin-top:3px;">v' + VERSION + ' · wersja eksperymentalna</div>' +
+              '<div style="font-size:12px;color:#3a3a55;margin-top:3px;">v' + VERSION + ' · ostatnia wersja przed stable</div>' +
             '</div>' +
           '</div>' +
           '<div style="display:flex;gap:2px;margin-bottom:0;">' +
@@ -7242,13 +7245,14 @@ function showOnboarding(onComplete) {
         '<div style="overflow-y:auto;flex:1;min-height:0;">' +
           // Tab: Witaj
           '<div id="b24t-wp-welcome" style="padding:24px;">' +
-            '<p style="font-size:14px;color:#c0c0e0;line-height:1.8;margin:0 0 16px 0;">' +
-              'Pracujemy nad wersją stabilną wtyczki. Zanim się pojawi, czeka nas kilka ważnych rzeczy: ' +
-              'poprawki i optymalizacja różnych funkcji, w tym tagowania za pomocą pliku. ' +
-              'Aktualizacja panelu annotatorskiego, poprawki interfejsu i wiele więcej.' +
+            '<p style="font-size:14px;color:#c0c0e0;line-height:1.8;margin:0 0 14px 0;">' +
+              'Wersja <strong style="color:#e2e2e8;">0.21.0</strong> to ostatnia oficjalna wersja przed wydaniem wersji <strong style="color:#6c6cff;">1.0.0 stable</strong>.' +
+            '</p>' +
+            '<p style="font-size:14px;color:#c0c0e0;line-height:1.8;margin:0 0 14px 0;">' +
+              'Od poprzedniej wersji naprawiono kilka błędów związanych z tagowaniem za pomocą pliku.' +
             '</p>' +
             '<p style="font-size:13px;color:#4a4a66;line-height:1.7;margin:0;">' +
-              'To okienko pojawi się tylko raz. Co konkretnie jest planowane — zawsze znajdziesz w zakładce <strong style="color:#6060aa;">Planowane</strong>.' +
+              'To okienko pojawi się tylko raz. Co jest planowane na wersję 1.0.0 i nowsze — znajdziesz w zakładce <strong style="color:#6060aa;">Planowane</strong>.' +
             '</p>' +
           '</div>' +
           // Tab: Planowane
@@ -7342,27 +7346,12 @@ function showOnboarding(onComplete) {
 
   // Planned features list
   const PLANNED_FEATURES = [
-    // ── Krytyczne (blokują stable) ──
-    { priority: 'high', text: 'Overall stats: kafelek \"pozostało do otagowania\" z paskiem postępu i % ukończenia', next: true },
-    { priority: 'high', text: 'Overall stats: tryb domykania miesiąca — automatyczne oznaczanie projektów jako Completed, przycisk ręcznego zamknięcia miesiąca', next: true },
-    { priority: 'high', text: 'Naprawienie funkcji czyszczenia plikiem', next: true },
-    { priority: 'high', text: 'Równoległe fetche + optymalizacja batchowania — stress testy realnych limitów Brand24 API', next: true },
-    { priority: 'high', text: 'Fallbacki — zabezpieczenia żeby błędy nie blokowały workflow wtyczki', next: false },
-    { priority: 'high', text: 'Dynamiczne rozmiary elementów UI we wszystkich panelach', next: false },
-    { priority: 'high', text: 'Naprawa wyświetlania changeloga (pojawia się losowo)', next: false },
-    // ── Ważne ──
-    { priority: 'medium', text: 'Z-index: aktywny lub przesuwany panel zawsze na wierzchu', next: false },
-    { priority: 'medium', text: 'News: poprawki działania paneli trzymających się razem', next: false },
-    // ── Nice to have ──
-    { priority: 'low', text: 'Ulepszenia UI dla wygody użytkownika — do rewizji', next: false },
-    { priority: 'low', text: 'Kompleksowa rewizja słownictwa w całej wtyczce', next: false },
-    { priority: 'low', text: 'Onboarding: możliwość pominięcia, poprawki tekstów, tutorial dla nowych elementów', next: false },
-    { priority: 'low', text: 'Tryb pomocy: brakujące opisy, rewizja słownictwa, poprawki wyświetlania', next: false },
-    // ── Przyszłość ──
-    { priority: 'ai', text: 'Dostęp do AI API — tłumaczenie wzmianek na bieżąco, automatyczna klasyfikacja, tryb tworzenia customowych klasyfikatorów i inne...', next: false },
-    { priority: 'medium', text: 'Podgląd wzmianki on-hover — najedź na URL w logu żeby zobaczyć treść i autora', next: false },
-    { priority: 'medium', text: 'Integracja z Newsami — przeglądanie i operacje na wzmiankach z sekcji News bezpośrednio z poziomu wtyczki', next: false },
-    { priority: 'medium', text: 'Bulk rename tagów — masowa zmiana nazwy tagu w projekcie', next: false },
+    { priority: 'high', text: 'Panel postępu tagowania — widoczny kafelek z liczbą pozostałych wzmianek, paskiem ukończenia i procentem postępu' },
+    { priority: 'high', text: 'Tryb domykania miesiąca — zamknięcie wszystkich projektów jednym kliknięciem z automatycznym oznaczeniem jako ukończone' },
+    { priority: 'high', text: 'Czyszczenie tagów plikiem — naprawa funkcji usuwania tagów na podstawie dostarczonego pliku CSV' },
+    { priority: 'high', text: 'Szybsze działanie — równoległe pobieranie danych i optymalizacja komunikacji z API Brand24' },
+    { priority: 'high', text: 'Stabilność sesji — zabezpieczenia przed błędami, żeby pojedynczy problem nie przerywał całej operacji tagowania' },
+    { priority: 'high', text: 'Dynamiczne rozmiary paneli — interfejs dopasowujący się do zawartości i rozdzielczości ekranu' },
   ];
 
   function sendToSlack(payload, onSuccess, onError) {
@@ -7528,25 +7517,26 @@ function showOnboarding(onComplete) {
       low:    { color: '#4ade80', label: 'Niski',  desc: 'priorytet niski' },
     };
     let plannedHtml =
-      '<div style="font-size:12px;color:#4a4a66;margin-bottom:12px;line-height:1.6;">Lista funkcji planowanych w przyszłych wersjach. Masz pomysł? Skorzystaj z zakładki Feedback!</div>' +
-      // Legenda priorytetów
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;padding:8px 10px;background:#0d0d16;border-radius:7px;border:1px solid #1e1e2e;">' +
-        Object.entries(prioMeta).map(function(e) {
-          return '<span style="display:flex;align-items:center;gap:4px;font-size:11px;color:#8080aa;">' +
-            '<span style="width:8px;height:8px;border-radius:50%;background:' + e[1].color + ';flex-shrink:0;"></span>' +
-            e[1].label +
-          '</span>';
-        }).join('') +
-      '</div>';
+      '<div style="font-size:13px;font-weight:600;color:#c0c0e0;margin-bottom:12px;line-height:1.6;">Roadmap — v1.0.0 i nowsze</div>';
     PLANNED_FEATURES.forEach(function(f) {
       const pm = prioMeta[f.priority] || { color: '#6060aa' };
       plannedHtml +=
         '<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid #1a1a22;">' +
           '<span style="flex-shrink:0;width:8px;height:8px;border-radius:50%;background:' + pm.color + ';margin-top:5px;"></span>' +
           '<span style="font-size:13px;color:#a0a0cc;line-height:1.6;flex:1;">' + f.text + '</span>' +
-          (f.next ? '<span style="flex-shrink:0;font-size:11px;background:#6c6cff22;color:#6c6cff;padding:2px 8px;border-radius:99px;white-space:nowrap;">następna wersja</span>' : '') +
         '</div>';
     });
+    plannedHtml +=
+      '<div style="padding:10px 0 4px;font-size:12px;color:#4a4a66;line-height:1.6;font-style:italic;">' +
+        '...i inne funkcje zgłaszane przez użytkowników — masz pomysł lub coś nie działa? Daj znać przez formularz feedbacku.' +
+      '</div>' +
+      '<div style="margin-top:14px;padding:14px;background:#1a0d2e;border-radius:8px;border:1px solid #3d1a6e;">' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+          '<span style="font-size:14px;">✨</span>' +
+          '<span style="font-size:11px;font-weight:600;color:#a855f7;letter-spacing:0.06em;">W PLANACH</span>' +
+        '</div>' +
+        '<div style="font-size:13px;color:#9060cc;line-height:1.6;">Automatyczna klasyfikacja AI — tłumaczenie wzmianek na bieżąco, automatyczna ocena sentymentu i klasyfikacja za pomocą modeli AI.</div>' +
+      '</div>';
 
     const modal = document.createElement('div');
     modal.id = 'b24t-whats-new-modal';

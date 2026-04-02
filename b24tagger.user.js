@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.20.3
+// @version      0.20.4
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.20.3';
+  const VERSION = '0.20.4';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -413,6 +413,11 @@
     }
     const data = await res.json();
     if (data.errors) {
+      const _errCode = data.errors[0]?.extensions?.code;
+      if (_errCode === 'PERMISSION_DENIED') {
+        addLog(`⚠ [DIAG/GQL] ${operationName}: PERMISSION_DENIED`, 'diag');
+        throw new Error('GRAPHQL_PERMISSION_DENIED');
+      }
       addLog(`⚠ [DIAG/GQL] ${operationName} GQL error: ${JSON.stringify(data.errors).substring(0, 200)}`, 'warn');
       throw new Error(data.errors[0]?.message || 'GRAPHQL_ERROR');
     }
@@ -424,7 +429,7 @@
       try {
         return await gql(operationName, variables, query);
       } catch (e) {
-        if (e.message === 'GRAPHQL_AUTH_ERROR') throw e;
+        if (e.message === 'GRAPHQL_AUTH_ERROR' || e.message === 'GRAPHQL_PERMISSION_DENIED') throw e;
         if (i < retries - 1) {
           addLog(`⚠ Retry ${i + 1}/${retries}: ${e.message}`, 'warn');
           await sleep(RETRY_DELAYS[i]);
@@ -3939,8 +3944,6 @@
     state.stats = { tagged: 0, skipped: 0, noMatch: 0, conflicts: 0 };
     state.currentPartitionIdx = 0;
     updateStatusUI();
-    startSessionTimer();
-    startHealthCheck();
 
     addLog(`▶ Start ${state.testRunMode ? '[TEST RUN]' : '[WŁAŚCIWY]'} — projekt ${state.projectName}`, 'success');
 

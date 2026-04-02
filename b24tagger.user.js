@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.20.6
+// @version      0.20.7
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.20.6';
+  const VERSION = '0.20.7';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -563,9 +563,15 @@
   function parseCSV(text) {
     const lines = text.trim().replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
     if (!lines.length) return [];
-    const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+    // Auto-detect separator: porównaj liczbę ';' i ',' w nagłówku
+    const firstLine = lines[0];
+    const sep = (firstLine.split(';').length > firstLine.split(',').length) ? ';' : ',';
+    const valRe = sep === ';'
+      ? /(".*?"|[^;]+|(?<=;)(?=;)|(?<=;)$|^(?=;))/g
+      : /(".*?"|[^,]+|(?<=,)(?=,)|(?<=,)$|^(?=,))/g;
+    const headers = firstLine.split(sep).map(h => h.trim().replace(/^"|"$/g, ''));
     return lines.slice(1).map(line => {
-      const vals = line.match(/(".*?"|[^,]+|(?<=,)(?=,)|(?<=,)$|^(?=,))/g) || [];
+      const vals = line.match(valRe) || [];
       const row = {};
       headers.forEach((h, i) => {
         row[h] = (vals[i] || '').trim().replace(/^"|"$/g, '');

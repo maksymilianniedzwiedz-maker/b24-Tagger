@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.20.1
+// @version      0.20.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.20.1';
+  const VERSION = '0.20.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -177,6 +177,8 @@
     switchViewTagId: null,
     autoPartition: false,
     partitionLimit: 1000,
+    _sniffUiTag: false,
+    _netMonitor: null,
   };
 
   // ───────────────────────────────────────────
@@ -339,7 +341,7 @@
       } catch(e) {}
     }
     // [DEV TOOL] UI TAG SNIFF: przechwytuje mutacje tagowania UI Brand24
-    // Aktywuj z konsoli: b24tagger.sniffUiTag() — loguje jeden request i wyłącza się
+    // Aktywuj z konsoli: B24Tagger.debug.sniffUiTag() — loguje jeden request i wyłącza się
     if (state._sniffUiTag && url.includes('graphql') && bodyStr.includes('mutation') &&
         (bodyStr.toLowerCase().includes('tag') || bodyStr.toLowerCase().includes('label'))) {
       try {
@@ -978,7 +980,7 @@
     matchDiag.conflict   = skipped.filter(s => s.reason === 'CONFLICT_IGNORED').length;
 
     addLog(
-      `ℹ [DIAG/MATCH] Wyniki matchowania ${matchDiag.total} wierszy vs ${matchDiag.mapSize} wzmianek w mapie:
+      `ℹ Wyniki matchowania ${matchDiag.total} wierszy vs ${matchDiag.mapSize} wzmianek w mapie:
 ` +
       `  ✓ do otagowania: ${matchDiag.willTag}
 ` +
@@ -1004,7 +1006,7 @@
 
     if (missingInMap.length > 0) {
       addLog(
-        `⚠ [DIAG/DOMAINS] Domeny z pliku NIEOBECNE w mapie: ${missingInMap.join(', ')}
+        `⚠ Domeny z pliku nieobecne w mapie: ${missingInMap.join(', ')}
 ` +
         `  → Brand24 API nie zwraca wzmianek z tych domen dla tego projektu/zakresu`,
         'warn'
@@ -1019,7 +1021,7 @@
         const dom = normVal.split('/')[0];
         const mapSample = matchDiag.mapSamplesByDomain[dom];
         addLog(
-          `⚠ [DIAG/NO_MATCH]
+          `⚠ Brak dopasowania:
 ` +
           `  plik: "${normVal}"
 ` +
@@ -1497,17 +1499,7 @@
 
     const div = document.createElement('div');
     div.className = `b24t-log-entry b24t-log-${type}`;
-    // typ 'diag' — prefiks [DIAG] w #f87171, reszta normalnym kolorem error
-    if (type === 'diag') {
-      const diagMatch = message.match(/^(\[DIAG\]\s*)(.*)/s);
-      if (diagMatch) {
-        div.innerHTML = `<span class="b24t-log-time">${time}</span><span class="b24t-log-msg"><span class="b24t-log-diag-prefix">${diagMatch[1]}</span>${diagMatch[2]}</span><span class="b24t-log-elapsed"></span>`;
-      } else {
-        div.innerHTML = `<span class="b24t-log-time">${time}</span><span class="b24t-log-msg"><span class="b24t-log-diag-prefix">[DIAG] </span>${message}</span><span class="b24t-log-elapsed"></span>`;
-      }
-    } else {
-      div.innerHTML = `<span class="b24t-log-time">${time}</span><span class="b24t-log-msg">${message}</span><span class="b24t-log-elapsed"></span>`;
-    }
+    div.innerHTML = `<span class="b24t-log-time">${time}</span><span class="b24t-log-msg">${message}</span><span class="b24t-log-elapsed"></span>`;
     log.appendChild(div);
     log.scrollTop = log.scrollHeight;
 
@@ -1834,6 +1826,15 @@
       clearCheckpoint: () => { clearCheckpoint(); addLog('🗑 Checkpoint wyczyszczony.', 'info'); },
       getToken: () => state.tokenHeaders,
       checkForUpdate: (manual) => checkForUpdate(manual),
+      netMonitor: function(shortcodes) {
+        const sc = Array.isArray(shortcodes) ? shortcodes : [shortcodes];
+        state._netMonitor = { targetShortcodes: sc, found: new Set() };
+        addLog('[NET_MONITOR] Aktywny — monitoruję: ' + sc.join(', '), 'info');
+      },
+      netMonitorStop: function() {
+        state._netMonitor = null;
+        addLog('[NET_MONITOR] Wyłączony.', 'info');
+      },
     },
     exportReport,
     exportPartitions,
@@ -1852,6 +1853,7 @@
       a.click(); URL.revokeObjectURL(url);
     },
   };
+  window.b24tagger = window.B24Tagger; // lowercase alias dla wygody konsoli
 
   // ───────────────────────────────────────────
   // UI - STYLES
@@ -9067,19 +9069,9 @@ function showOnboarding(onComplete) {
   function _appendLogPanelEntry(panel, entry) {
     var body = document.getElementById('b24t-logp-body');
     if (!body) return;
-    var colors = { info: '#9ca3af', success: '#4ade80', warn: '#fbbf24', error: '#f87171', diag: '#f87171' };
+    var colors = { info: '#9ca3af', success: '#4ade80', warn: '#fbbf24', error: '#f87171' };
     var msgColor = colors[entry.type] || '#9ca3af';
-    var msgHtml;
-    if (entry.type === 'diag') {
-      var dm = entry.message.match(/^(\[DIAG\]\s*)(.*)/s);
-      if (dm) {
-        msgHtml = '<span style="color:#f87171;font-weight:700;">' + dm[1] + '</span>' + dm[2];
-      } else {
-        msgHtml = '<span style="color:#f87171;font-weight:700;">[DIAG] </span>' + entry.message;
-      }
-    } else {
-      msgHtml = entry.message;
-    }
+    var msgHtml = entry.message;
     var row = document.createElement('div');
     row.dataset.logType = entry.type;
     row.style.cssText = 'display:flex;gap:8px;padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px;line-height:1.5;';

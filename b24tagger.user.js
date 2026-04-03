@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.21
+// @version      0.21.22
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.21';
+  const VERSION = '0.21.22';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3242,19 +3242,6 @@
     if (!w) return;
 
     var newScale = (w >= BASE_PANEL_W) ? 1 : Math.max(0.5, w / BASE_PANEL_W);
-    var lastScale = parseFloat(panel.dataset.zoomScale || 1);
-
-    // Gdy skala się zmienia — proporcjonalnie dostosuj wysokość panelu
-    // Eliminuje pustą przestrzeń na dole przy zawężaniu panelu
-    if (Math.abs(newScale - lastScale) > 0.001) {
-      var h = panel.offsetHeight;
-      if (h > 0) {
-        var newH = Math.max(200, Math.round(h * newScale / lastScale));
-        panel.style.height = newH + 'px';
-        panel.style.maxHeight = newH + 'px';
-      }
-      panel.dataset.zoomScale = newScale;
-    }
 
     var panelH = panel.offsetHeight;
     inner.style.zoom = newScale;

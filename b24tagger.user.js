@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.9
+// @version      0.21.10
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.9';
+  const VERSION = '0.21.10';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -140,7 +140,7 @@
     UPDATE_CHANNEL:   'b24tagger_update_channel',
     MONTH_CLOSE_DONE: 'b24tagger_month_close_done',
   };
-  const MAX_BATCH_SIZE = 50;
+  const MAX_BATCH_SIZE = 500;
   let MAP_FETCH_CONCURRENCY = 5; // równoległość pobierania stron w buildUrlMap (fallback: 3)
   const STATS_FETCH_CONCURRENCY = 10; // równoległość pobierania projektów w _fetchOverallStats
   const HEALTH_CHECK_INTERVAL = 30000;
@@ -884,7 +884,7 @@
       if (batchEnd % 10 < MAP_FETCH_CONCURRENCY || batchEnd >= _remainingPages.length) {
         addLog(`→ Mapa: ${fetched}/${totalPages} stron (${Object.keys(map).length} wzmianek)`, 'info');
       }
-      if (i + MAP_FETCH_CONCURRENCY < _remainingPages.length) await sleep(50);
+      if (i + MAP_FETCH_CONCURRENCY < _remainingPages.length) await sleep(0);
     }
 
     const _mapElapsed = Date.now() - _mapTStart;
@@ -1148,7 +1148,7 @@
         await bulkUntagMentions(slice.map(String), batch.oldTagId);
         if (!batches[batch.newTagId]) batches[batch.newTagId] = [];
         batches[batch.newTagId].push(...slice);
-        await sleep(1500);
+        await sleep(200);
       }
     }
 
@@ -1166,7 +1166,7 @@
         await bulkTagMentions(slice.map(String), parseInt(tagId));
         state.stats.tagged += slice.length;
         updateStatsUI();
-        await sleep(1500);
+        await sleep(200);
       }
     }
 
@@ -1255,7 +1255,7 @@
     // Activate Untagged filter
     addLog('→ Aktywuję filtr Untagged', 'info');
     activateUntaggedFilter();
-    await sleep(1500);
+    await sleep(500);
 
     // Process partitions
     for (let idx = state.currentPartitionIdx; idx < state.partitions.length; idx++) {
@@ -10937,7 +10937,6 @@ Tej operacji nie można cofnąć.`)) {
         tagged += slice.length;
         setProgress(tagged, ids.length);
         setStatus(`Otagowano ${tagged}/${ids.length}...`, 'info');
-        await sleep(200);
       }
 
       setStatus(`✓ Gotowe! Otagowano ${tagged} wzmianek tagiem "${tagName}"`, 'success');
@@ -11095,7 +11094,6 @@ Tej operacji nie można cofnąć.`)) {
         if (!confirm(`Usunąć tag "${tagName}" z ${ids.length} wzmianek?`)) { setStatus('Anulowano.', 'warn'); return; }
         for (let i = 0; i < ids.length; i += MAX_BATCH_SIZE) {
           await bulkUntagMentions(ids.slice(i, i + MAX_BATCH_SIZE), tagId);
-          await sleep(200);
         }
         setStatus(`✓ Usunięto tag "${tagName}" z ${ids.length} wzmianek`, 'success');
         addLog(`✓ Quick Untag: ${ids.length} wzmianek ← ${tagName}`, 'success');

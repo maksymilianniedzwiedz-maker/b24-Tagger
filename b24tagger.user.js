@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.6
+// @version      0.21.7
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.6';
+  const VERSION = '0.21.7';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1885,7 +1885,7 @@
       clearCheckpoint: () => { clearCheckpoint(); addLog('🗑 Checkpoint wyczyszczony.', 'info'); },
       getToken: () => state.tokenHeaders,
       checkForUpdate: (manual) => checkForUpdate(manual),
-      stressTestBuildUrlMap: async function() {
+      stressTestBuildUrlMap: async function(dateFrom, dateTo) {
         const levels = [1, 2, 3, 5];
         const results = [];
         addLog('[STRESS] Rozpoczynam stress test buildUrlMap — concurrency: ' + levels.join('→'), 'info');
@@ -1893,7 +1893,7 @@
         for (const c of levels) {
           MAP_FETCH_CONCURRENCY = c;
           state.status = 'running';
-          const dates = getAnnotatorDates();
+          const dates = (dateFrom && dateTo) ? { dateFrom, dateTo } : getAnnotatorDates();
           addLog(`[STRESS] concurrency=${c} — start (${dates.dateFrom} → ${dates.dateTo})`, 'info');
           const t0 = Date.now();
           let mapResult = {};

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.2
+// @version      0.21.3
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.2';
+  const VERSION = '0.21.3';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -9955,7 +9955,9 @@ To jest NIEODWRACALNE.`)) return;
       addLog('[CACHE] overallStats: gorący (' + ageStr + ' temu), renderuję od razu', 'info');
       renderOverallStatsData(dataEl, bgCache.overallStats.results, group, bgCache.overallStats);
       _bgFetchOverallStats(group).then(function(fresh) {
-        if (fresh && dataEl.isConnected) renderOverallStatsData(dataEl, fresh.results, group, fresh);
+        var _c = document.getElementById('b24t-ann-tab-overall-content');
+        var _e = _c && _c.querySelector('#b24t-overall-data');
+        if (fresh && _e) renderOverallStatsData(_e, fresh.results, group, fresh);
       }).catch(function(e){ addLog('[BG] overallStats refresh error: ' + e.message, 'warn'); });
       return;
     }
@@ -9963,10 +9965,14 @@ To jest NIEODWRACALNE.`)) return;
     addLog('📊 [Overall] Pobieranie: ' + group.name + ' (' + group.projectIds.length + ' proj.)', 'info');
     try {
       var fresh = await _fetchOverallStats(group, function(partial, dFrom, dTo, lbl) {
-        if (dataEl.isConnected) renderOverallStatsData(dataEl, partial, group, { dateFrom: dFrom, dateTo: dTo, label: lbl, ts: Date.now() });
+        var _c = document.getElementById('b24t-ann-tab-overall-content');
+        var _e = _c && _c.querySelector('#b24t-overall-data');
+        if (_e) renderOverallStatsData(_e, partial, group, { dateFrom: dFrom, dateTo: dTo, label: lbl, ts: Date.now() });
       });
       bgCache.overallStats = { groupId: group.id, results: fresh.results, dateFrom: fresh.dateFrom, dateTo: fresh.dateTo, label: fresh.label, ts: Date.now() };
-      if (dataEl.isConnected) renderOverallStatsData(dataEl, fresh.results, group, bgCache.overallStats);
+      var _c = document.getElementById('b24t-ann-tab-overall-content');
+      var _e = _c && _c.querySelector('#b24t-overall-data');
+      if (_e) renderOverallStatsData(_e, fresh.results, group, bgCache.overallStats);
     } finally {
       _overallStatsInFlight = false;
     }

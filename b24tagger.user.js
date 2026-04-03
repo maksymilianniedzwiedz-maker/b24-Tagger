@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.17
+// @version      0.21.18
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.17';
+  const VERSION = '0.21.18';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -144,6 +144,7 @@
   };
   const MAX_BATCH_SIZE = 500;
   const DEL_BATCH_DEFAULT = 10; // domyślny batch równoległych deletów (edytowalny w UI)
+  const BASE_PANEL_W = 440; // bazowa szerokość głównego panelu — punkt odniesienia dla zoomu
   let MAP_FETCH_CONCURRENCY = 8; // równoległość pobierania stron w buildUrlMap (fallback: 3)
   const STATS_FETCH_CONCURRENCY = 10; // równoległość pobierania projektów w _fetchOverallStats
   const BG_CONCURRENCY  = 5; // równoległość prefetchu danych annotatorskich w tle
@@ -2199,12 +2200,16 @@
         box-shadow: var(--b24t-shadow);
         user-select: none;
         overflow: hidden;
-        display: flex;
-        flex-direction: column;
         transition: box-shadow 0.25s ease, background 0.3s ease, border-color 0.3s ease, color 0.3s ease;
         /* animation removed — was causing glitch on Plik tab */
       }
       #b24t-panel:hover { box-shadow: var(--b24t-shadow-h); }
+      #b24t-panel-inner {
+        width: 440px; /* musi być zgodne z BASE_PANEL_W w JS */
+        display: flex;
+        flex-direction: column;
+        transform-origin: top left;
+      }
       #b24t-panel.b24t-resizing { opacity: 0.97; box-shadow: var(--b24t-shadow-drag); transition: none !important; }
       #b24t-panel.b24t-resizing * { pointer-events: none !important; user-select: none !important; }
       #b24t-panel.dragging { opacity: 0.94; box-shadow: var(--b24t-shadow-drag); cursor: grabbing; }
@@ -2949,7 +2954,7 @@
     const panel = document.createElement('div');
     panel.id = 'b24t-panel';
 
-    panel.innerHTML = `
+    panel.innerHTML = `<div id="b24t-panel-inner">
       <!-- TOPBAR -->
       <div id="b24t-topbar">
         <span class="b24t-logo">B24 Tagger <span style="font-size:10px;opacity:0.8;letter-spacing:0.08em;">BETA</span></span>
@@ -3205,7 +3210,7 @@
       <div id="b24t-report-modal">
         <div class="b24t-report-content"></div>
       </div>
-    `;
+    </div>`;
 
     return panel;
   }
@@ -3226,8 +3231,23 @@
     return (window.innerWidth < 1366 || window.innerHeight < 800) ? 'compact' : 'normal';
   }
 
+  // Skaluje zawartość głównego panelu proporcjonalnie do jego szerokości
+  function _applyPanelZoom(panel) {
+    var inner = document.getElementById('b24t-panel-inner');
+    if (!inner || !panel) return;
+    var w = panel.offsetWidth;
+    if (!w) return;
+    var scale = Math.max(0.5, Math.min(1.0, w / BASE_PANEL_W));
+    inner.style.zoom = scale;
+  }
+
   // Dodaje/usuwa klasę b24t-compact na panelu w zależności od jego szerokości
+  // Dla głównego panelu (#b24t-panel) używa zoom zamiast compact class
   function _updatePanelClass(panel) {
+    if (panel && panel.id === 'b24t-panel') {
+      _applyPanelZoom(panel);
+      return;
+    }
     var w = panel.offsetWidth;
     if (w > 0 && w < 400) {
       panel.classList.add('b24t-compact');

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.10
+// @version      0.21.16
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.10';
+  const VERSION = '0.21.16';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -139,10 +139,16 @@
     WELCOME_SHOWN:    'b24tagger_welcome_shown_v0210',
     UPDATE_CHANNEL:   'b24tagger_update_channel',
     MONTH_CLOSE_DONE: 'b24tagger_month_close_done',
+    DEL_BATCH:        'b24tagger_del_batch',
+    DEL_BATCH_WARNED: 'b24tagger_del_batch_warned',
   };
   const MAX_BATCH_SIZE = 500;
-  let MAP_FETCH_CONCURRENCY = 5; // równoległość pobierania stron w buildUrlMap (fallback: 3)
+  const DEL_BATCH_DEFAULT = 10; // domyślny batch równoległych deletów (edytowalny w UI)
+  let MAP_FETCH_CONCURRENCY = 8; // równoległość pobierania stron w buildUrlMap (fallback: 3)
   const STATS_FETCH_CONCURRENCY = 10; // równoległość pobierania projektów w _fetchOverallStats
+  const BG_CONCURRENCY  = 5; // równoległość prefetchu danych annotatorskich w tle
+  const QT_CONCURRENCY  = 2; // równoległość batchów w Quick Tag / Quick Untag
+  const TAG_CONCURRENCY = 2; // równoległość batchów bulkTag w runTagging
   const HEALTH_CHECK_INTERVAL = 30000;
   const ACTION_TIMEOUT_WARN = 10000;
   const RETRY_DELAYS = [2000, 4000, 8000, 12000, 20000]; // 5 prób — Brand24 API czasem losowo failuje
@@ -184,6 +190,9 @@
     _sniffUiTag: false,
     _netMonitor: null,
   };
+
+  // Batch size dla masowego usuwania — domyślnie DEL_BATCH_DEFAULT, edytowalny przez UI
+  let _deleteBatch = DEL_BATCH_DEFAULT;
 
   // ───────────────────────────────────────────
   // LOCAL STORAGE HELPERS
@@ -820,9 +829,9 @@
       return map;
     }
 
-    // ── KROK 6: pozostałe strony BATCHOWO (MAP_FETCH_CONCURRENCY) ──────────────────────
-    // Deduplication przez mentionIdsSeen obsługuje duplikaty wynikające z niestabilnej
-    // paginacji Brand24 przy równoległych requestach.
+    // ── KROK 6: pozostałe strony — sliding window pool (MAP_FETCH_CONCURRENCY workerów) ──
+    // Każdy worker od razu bierze kolejną stronę po zakończeniu — nie ma "najwolniejszego
+    // w batchu" który blokuje całą rundę. Deduplication przez mentionIdsSeen.
     diag.step = 'build_map_pages';
     let fetched = 1;
     let pageErrors = 0;
@@ -830,20 +839,17 @@
     const mentionIdsSeen = new Set();
     first.results.forEach(m => { if (m.id) mentionIdsSeen.add(String(m.id)); });
 
-    const _remainingPages = [];
-    for (let p = 2; p <= totalPages; p++) _remainingPages.push(p);
     const _mapTStart = Date.now();
+    let _poolNextPage = 2; // shared counter — atomowy w JS (single-threaded)
 
-    for (let i = 0; i < _remainingPages.length; i += MAP_FETCH_CONCURRENCY) {
-      if (state.status !== 'running') break;
-      const batch = _remainingPages.slice(i, i + MAP_FETCH_CONCURRENCY);
-      const batchResults = await Promise.all(
-        batch.map(p => getMentions(state.projectId, dateFrom, dateTo, gr, p)
-          .catch(e => ({ _err: e.message, _page: p })))
-      );
-      for (let bi = 0; bi < batch.length; bi++) {
-        const p = batch[bi];
-        const result = batchResults[bi];
+    const _mapWorker = async () => {
+      while (true) {
+        if (state.status !== 'running') break;
+        const p = _poolNextPage;
+        if (p > totalPages) break;
+        _poolNextPage++;
+        const result = await getMentions(state.projectId, dateFrom, dateTo, gr, p)
+          .catch(e => ({ _err: e.message, _page: p }));
         if (result && result._err !== undefined) {
           pageErrors++;
           addLog(`⚠ [DIAG/API] Błąd strony ${p}: ${result._err}`, 'warn');
@@ -858,16 +864,11 @@
         result.results.forEach(m => {
           const matchUrl = m.url || m.openUrl;
           const idStr = String(m.id);
-          if (mentionIdsSeen.has(idStr)) {
-            pageDupeIds++;
-            diag.dupeKeys++;
-            allDupeIds++;
-            return;
-          }
+          if (mentionIdsSeen.has(idStr)) { pageDupeIds++; diag.dupeKeys++; allDupeIds++; return; }
           mentionIdsSeen.add(idStr);
           if (matchUrl) {
             const key = normalizeUrl(matchUrl);
-            if (map[key]) diag.dupeKeys++; // URL dupe — inny ID, ten sam URL
+            if (map[key]) diag.dupeKeys++;
             map[key] = { id: String(m.id), existingTags: m.tags || [] };
           } else {
             diag.urlFieldEmpty++;
@@ -878,14 +879,14 @@
         }
         fetched++;
         diag.fetchedPages = fetched;
+        updateProgress('map', fetched, totalPages);
+        if (fetched % 10 === 0 || fetched >= totalPages) {
+          addLog(`→ Mapa: ${fetched}/${totalPages} stron (${Object.keys(map).length} wzmianek)`, 'info');
+        }
+        await sleep(0); // yield do UI między stronami
       }
-      updateProgress('map', fetched, totalPages);
-      const batchEnd = i + MAP_FETCH_CONCURRENCY;
-      if (batchEnd % 10 < MAP_FETCH_CONCURRENCY || batchEnd >= _remainingPages.length) {
-        addLog(`→ Mapa: ${fetched}/${totalPages} stron (${Object.keys(map).length} wzmianek)`, 'info');
-      }
-      if (i + MAP_FETCH_CONCURRENCY < _remainingPages.length) await sleep(0);
-    }
+    };
+    await Promise.all(Array.from({ length: MAP_FETCH_CONCURRENCY }, _mapWorker));
 
     const _mapElapsed = Date.now() - _mapTStart;
     addLog(`ℹ [DIAG/PERF] Mapa ${totalPages} stron: ${_mapElapsed}ms | concurrency=${MAP_FETCH_CONCURRENCY} | dupeId=${allDupeIds} (${first.count > 0 ? (allDupeIds / first.count * 100).toFixed(1) : 0}%)`, 'info');
@@ -1152,19 +1153,21 @@
       }
     }
 
-    // Execute tag batches
+    // Execute tag batches — TAG_CONCURRENCY batchów równolegle per tagId
     const tagIds = Object.keys(batches);
     let batchNum = 0;
     for (const tagId of tagIds) {
       const ids = batches[tagId];
       const tagName = Object.entries(state.tags).find(([, id]) => id === parseInt(tagId))?.[0] || tagId;
-      for (let i = 0; i < ids.length; i += MAX_BATCH_SIZE) {
-        batchNum++;
-        const slice = ids.slice(i, i + MAX_BATCH_SIZE);
+      const slices = [];
+      for (let i = 0; i < ids.length; i += MAX_BATCH_SIZE) slices.push(ids.slice(i, i + MAX_BATCH_SIZE));
+      for (let i = 0; i < slices.length; i += TAG_CONCURRENCY) {
+        const concSlices = slices.slice(i, i + TAG_CONCURRENCY);
+        batchNum += concSlices.length;
         updateProgress('tag', batchNum, tagIds.length);
-        addLog(`→ bulkTag: ${slice.length} → ${tagName}`, 'info');
-        await bulkTagMentions(slice.map(String), parseInt(tagId));
-        state.stats.tagged += slice.length;
+        addLog(`→ bulkTag: ${concSlices.reduce((s, sl) => s + sl.length, 0)} → ${tagName} (${concSlices.length}× równolegle)`, 'info');
+        await Promise.all(concSlices.map(slice => bulkTagMentions(slice.map(String), parseInt(tagId))));
+        state.stats.tagged += concSlices.reduce((s, sl) => s + sl.length, 0);
         updateStatsUI();
         await sleep(200);
       }
@@ -2206,6 +2209,38 @@
       #b24t-panel.b24t-resizing * { pointer-events: none !important; user-select: none !important; }
       #b24t-panel.dragging { opacity: 0.94; box-shadow: var(--b24t-shadow-drag); cursor: grabbing; }
 
+      /* ── OVERFLOW GUARD — elementy flex/grid nie wychodzą poza panel ── */
+      #b24t-body > * { min-width: 0; }
+      .b24t-section { min-width: 0; }
+      .b24t-map-row > * { min-width: 0; overflow: hidden; }
+      #b24t-body { width: 100%; box-sizing: border-box; }
+      #b24t-annotator-panel > * { min-width: 0; }
+      .b24t-ann-content { min-width: 0; width: 100%; box-sizing: border-box; overflow-x: hidden; }
+      .b24t-ann-content > * { max-width: 100%; box-sizing: border-box; }
+      [data-news-panel] > * { min-width: 0; }
+
+      /* ── COMPACT MODE (panel width < 400px lub mały ekran) ── */
+      #b24t-panel.b24t-compact { font-size: 11.5px; }
+      #b24t-panel.b24t-compact #b24t-topbar { padding: 8px 10px; }
+      #b24t-panel.b24t-compact #b24t-meta-bar { padding: 4px 10px; font-size: 10px; }
+      #b24t-panel.b24t-compact .b24t-section { padding: 9px 10px; }
+      #b24t-panel.b24t-compact .b24t-section-label { font-size: 9px; margin-bottom: 7px; }
+      #b24t-panel.b24t-compact .b24t-project-name { font-size: 13px; }
+      #b24t-panel.b24t-compact .b24t-project-meta { font-size: 11px; }
+      #b24t-panel.b24t-compact .b24t-map-row { grid-template-columns: 1fr 80px; }
+      #b24t-panel.b24t-compact .b24t-map-count { display: none; }
+      #b24t-panel.b24t-compact .b24t-toggle-label { font-size: 11.5px; }
+      #b24t-panel.b24t-compact .b24t-radio span { font-size: 11.5px; }
+      #b24t-panel.b24t-compact .b24t-checkbox-row label { font-size: 11.5px; }
+
+      /* ── COMPACT MODE — annotator panel ── */
+      #b24t-annotator-panel.b24t-compact { font-size: 12px !important; }
+      #b24t-annotator-panel.b24t-compact #b24t-ann-header { padding: 8px 12px !important; }
+      #b24t-annotator-panel.b24t-compact .b24t-ann-content { font-size: 12px !important; }
+      #b24t-annotator-panel.b24t-compact .b24t-tab { font-size: 11px !important; padding: 4px 7px !important; }
+
+      /* ── COMPACT MODE — news panels ── */
+      [data-news-panel].b24t-compact { font-size: 11.5px !important; }
 
       /* ── TOPBAR ── */
       #b24t-topbar {
@@ -2238,11 +2273,15 @@
         color: #ffffff;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        flex-shrink: 0;
+        flex-shrink: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
         text-shadow: 0 1px 3px rgba(0,0,0,0.2);
       }
-      .b24t-version { font-size: 10px; color: rgba(255,255,255,0.65); margin-left: 4px; }
-      #b24t-topbar-right { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+      .b24t-version { font-size: 10px; color: rgba(255,255,255,0.65); margin-left: 4px; flex-shrink: 1; white-space: nowrap; overflow: hidden; }
+      #b24t-topbar-right { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
 
       /* ── DARK MODE TOGGLE SLIDER ── */
       #b24t-theme-toggle {
@@ -3182,10 +3221,25 @@
 
   const RESIZE_HANDLE_SIZE = 8; // px strefa klikania krawędzi
 
+  // Zwraca 'compact' jeśli ekran jest mały (laptop z małą przekątną)
+  function _getScreenProfile() {
+    return (window.innerWidth < 1366 || window.innerHeight < 800) ? 'compact' : 'normal';
+  }
+
+  // Dodaje/usuwa klasę b24t-compact na panelu w zależności od jego szerokości
+  function _updatePanelClass(panel) {
+    var w = panel.offsetWidth;
+    if (w > 0 && w < 400) {
+      panel.classList.add('b24t-compact');
+    } else {
+      panel.classList.remove('b24t-compact');
+    }
+  }
+
   function setupResize(panel, lsKey, opts) {
     opts = opts || {};
-    var minW = opts.minW || 360;
-    var maxW = opts.maxW || 720;
+    var minW = opts.minW || 300;
+    var maxW = opts.maxW || Math.min(720, Math.round(window.innerWidth * 0.85));
     var minH = opts.minH || 300;
     var maxH = opts.maxH || Math.round(window.innerHeight * 0.92);
 
@@ -3199,6 +3253,7 @@
         panel.style.maxHeight = h + 'px';
       }
     }
+    _updatePanelClass(panel);
 
     // Dodaj CSS cursor na krawędziach przez mousemove
     var isResizing = false;
@@ -3300,7 +3355,7 @@
       } else {
         panel.style.height = newH + 'px';
       }
-
+      _updatePanelClass(panel);
     });
 
     document.addEventListener('mouseup', function() {
@@ -3317,7 +3372,14 @@
 
       // Też zapisz pozycję (bo mogła się zmienić przy resize od lewej/góry)
       lsSet(LS.UI_POS, { left: panel.style.left, top: panel.style.top });
+      _updatePanelClass(panel);
     });
+
+    // ResizeObserver jako fallback — łapie zmiany rozmiaru z każdego źródła
+    if (typeof ResizeObserver !== 'undefined') {
+      var ro = new ResizeObserver(function() { _updatePanelClass(panel); });
+      ro.observe(panel);
+    }
   }
 
   function setupDragging(panel) {
@@ -6114,7 +6176,7 @@ function showOnboarding(onComplete) {
     var annTab = document.getElementById('b24t-annotator-tab');
     var annTabW = annTab ? annTab.getBoundingClientRect().width : 40;
     var baseRight = annTabW + 10;
-    var PANEL_W = 360;
+    var PANEL_W = Math.min(360, Math.max(280, Math.round(window.innerWidth * 0.30)));
     var GAP = 10;
     var topList   = 80;
     var topImport = null; // will be set after list renders — use estimate
@@ -6159,6 +6221,7 @@ function showOnboarding(onComplete) {
     p1.appendChild(hdr1);
     p1.appendChild(body1);
     document.body.appendChild(p1);
+    _updatePanelClass(p1);
 
     // ─── LEGEND PANEL (small, attached top-right of P1) ───
     var legend = document.createElement('div');
@@ -6249,6 +6312,7 @@ function showOnboarding(onComplete) {
     p2.appendChild(hdr2);
     p2.appendChild(body2);
     document.body.appendChild(p2);
+    _updatePanelClass(p2);
 
     // ─── PANEL 3: Formularz wzmianki (right column) ───
     var p3 = _newsPanelBase('b24t-news-p3', PANEL_W, topList, baseRight + PANEL_W + GAP, 2147483630);
@@ -8552,17 +8616,21 @@ function showOnboarding(onComplete) {
     addLog('📅 Zakres: ' + dates.label + ' (' + dates.dateFrom + ' → ' + dates.dateTo + ')', 'info');
     addLog('⟳ [BG] prefetch tagstats (' + projects.length + ' projektów)...', 'info');
     var results = [];
-    for (var i = 0; i < projects.length; i++) {
-      var p = projects[i];
-      try {
-        var reqPage = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.reqVerId],   1, { silent: true });
-        var delPage = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.toDeleteId], 1, { silent: true });
-        var reqVer   = reqPage.count  || 0;
-        var toDelete = delPage.count  || 0;
-        if (reqVer > 0 || toDelete > 0) {
-          results.push({ name: p.name, id: p.id, reqVer: reqVer, toDelete: toDelete });
-        }
-      } catch(e) {}
+    for (var i = 0; i < projects.length; i += BG_CONCURRENCY) {
+      var chunk = projects.slice(i, i + BG_CONCURRENCY);
+      var chunkResults = await Promise.all(chunk.map(async function(p) {
+        try {
+          var reqPage = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.reqVerId],   1, { silent: true });
+          var delPage = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.toDeleteId], 1, { silent: true });
+          var reqVer   = reqPage.count  || 0;
+          var toDelete = delPage.count  || 0;
+          if (reqVer > 0 || toDelete > 0) {
+            return { name: p.name, id: p.id, reqVer: reqVer, toDelete: toDelete };
+          }
+        } catch(e) {}
+        return null;
+      }));
+      results.push.apply(results, chunkResults.filter(Boolean));
     }
     bgCache.tagstats = { results: results, dates: dates, ts: Date.now() };
     // Jeśli annotatorData.tagstats jest null (panel nie był otwarty) — wypełnij też go
@@ -8582,21 +8650,22 @@ function showOnboarding(onComplete) {
     var tagName = Object.entries(state.tags || {}).find(function(e){ return e[1] === tagId; })?.[0] || String(tagId);
     addLog('⟳ [BG] prefetch allProjects[' + tagName + '] (' + projects.length + ' projektów)...', 'info');
     var results = [];
-    for (var i = 0; i < projects.length; i++) {
-      var p = projects[i];
-      try {
-        var page  = await getMentions(p.id, dateFrom, dateTo, [tagId], 1);
-        var count = page.count || 0;
-        p._tagCount = count;
-        p._dateFrom = dateFrom;
-        p._dateTo   = dateTo;
-        if (count > 0) {
-          results.push({ p: p, count: count });
+    for (var i = 0; i < projects.length; i += BG_CONCURRENCY) {
+      var chunk = projects.slice(i, i + BG_CONCURRENCY);
+      var chunkResults = await Promise.all(chunk.map(async function(p) {
+        try {
+          var page  = await getMentions(p.id, dateFrom, dateTo, [tagId], 1);
+          var count = page.count || 0;
+          p._tagCount = count;
+          p._dateFrom = dateFrom;
+          p._dateTo   = dateTo;
+          return count > 0 ? { p: p, count: count } : null;
+        } catch(e) {
+          addLog('✕ [DIAG] getMentions(' + p.id + '/' + tagName + '): ' + e.message, 'diag');
+          return { p: p, count: -1, error: e.message };
         }
-      } catch(e) {
-        results.push({ p: p, count: -1, error: e.message });
-        addLog('✕ [DIAG] getMentions(' + p.id + '/' + tagName + '): ' + e.message, 'diag');
-      }
+      }));
+      results.push.apply(results, chunkResults.filter(Boolean));
     }
     bgCache.allProjects[tagId] = { results: results, ts: Date.now() };
     var withData = results.filter(function(r){ return r.count > 0; });
@@ -8711,9 +8780,15 @@ function showOnboarding(onComplete) {
 
     document.body.appendChild(panel);
 
+    // Dopasuj startowy rozmiar annotator panelu do ekranu (jeśli brak zapisanego)
+    if (!lsGet(LS.UI_ANN_SIZE)) {
+      if (_getScreenProfile() === 'compact') {
+        panel.style.width = Math.min(380, Math.round(window.innerWidth * 0.50)) + 'px';
+      }
+    }
     // Resize annotator panel — wszystkie krawędzie
     setupResize(panel, LS.UI_ANN_SIZE, {
-      minW: 320, maxW: 640,
+      minW: 300, maxW: Math.min(640, Math.round(window.innerWidth * 0.80)),
       minH: 240, maxH: Math.round(window.innerHeight * 0.85),
       useMaxHeight: false
     });
@@ -9077,9 +9152,9 @@ function showOnboarding(onComplete) {
       return 0;
     }
 
-    addLog(`→ Usuwam ${allIds.length} wzmianek z tagiem "${tagName}"...`, 'warn');
+    addLog(`→ Usuwam ${allIds.length} wzmianek z tagiem "${tagName}"... (batch=${_deleteBatch})`, 'warn');
     let deleted = 0;
-    const BATCH = 5;
+    const BATCH = _deleteBatch;
     for (let i = 0; i < allIds.length; i += BATCH) {
       if (state.status === 'paused' || state.status === 'idle') break;
       const chunk = allIds.slice(i, i + BATCH);
@@ -9207,6 +9282,49 @@ function showOnboarding(onComplete) {
     });
   }
 
+  // Modal ostrzeżenia przed zmianą batch size delete — pokazuje się tylko raz
+  function _showDeleteBatchWarning() {
+    return new Promise(function(resolve) {
+      var modal = document.createElement('div');
+      modal.className = 'b24t-modal-overlay';
+      modal.innerHTML = `
+        <div class="b24t-modal" style="width:380px;">
+          <div class="b24t-modal-title" style="color:#f87171;">⚠ Zaawansowane ustawienie — przeczytaj</div>
+          <div class="b24t-modal-text" style="line-height:1.7;">
+            <strong style="color:#f87171;">Zwiększenie batch size przyspiesza usuwanie</strong>,
+            ale proporcjonalnie zwiększa ryzyko pomyłki.<br><br>
+            Przy batch = 10 usuwanych jest 10 wzmianek na raz.
+            Przy batch = 100 — już 100. Błąd ludzki (zły tag, zły zakres dat)
+            przy większym batchu oznacza <strong>więcej nieodwracalnie usuniętych wzmianek</strong>
+            zanim zdążysz zatrzymać operację.<br><br>
+            <strong>Twórca wtyczki nie ponosi odpowiedzialności</strong>
+            za skutki działań użytkownika z niestandardowymi ustawieniami.<br><br>
+            <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.3);border-radius:7px;padding:10px;">
+              <input type="checkbox" id="b24t-delbatch-cb" style="margin-top:2px;flex-shrink:0;accent-color:#f87171;">
+              <span style="font-size:12px;">Rozumiem ryzyko i biorę pełną odpowiedzialność za swoje działania</span>
+            </label>
+          </div>
+          <div class="b24t-modal-actions">
+            <button data-action="cancel" class="b24t-btn-secondary">Anuluj</button>
+            <button data-action="confirm" class="b24t-btn-danger" id="b24t-delbatch-confirm" disabled style="flex:1.5;">
+              Rozumiem — odblokuj
+            </button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      var cb  = modal.querySelector('#b24t-delbatch-cb');
+      var btn = modal.querySelector('#b24t-delbatch-confirm');
+      cb.addEventListener('change', function() { btn.disabled = !cb.checked; });
+      modal.querySelectorAll('button').forEach(function(b) {
+        b.addEventListener('click', function() {
+          document.body.removeChild(modal);
+          resolve(b.dataset.action === 'confirm' && cb.checked);
+        });
+      });
+    });
+  }
+
   // Build auto-delete key for localStorage (per project + tag)
   function buildAutoDeleteKey(projectId, tagId) {
     return `${projectId}_${tagId}`;
@@ -9230,8 +9348,8 @@ function showOnboarding(onComplete) {
 
     addLog(`→ Znaleziono ${allIds.length} wzmianek do usunięcia`, 'warn');
 
-    // Delete in parallel batches of 5 (safe concurrency for Brand24 API)
-    const BATCH = 5;
+    // Delete in parallel batches (_deleteBatch, domyślnie DEL_BATCH_DEFAULT)
+    const BATCH = _deleteBatch;
     let deleted = 0;
     for (let i = 0; i < allIds.length; i += BATCH) {
       if (state.status === 'paused' || state.status === 'idle') break;
@@ -10521,6 +10639,19 @@ To jest NIEODWRACALNE.`)) return;
           🗑 Usuń wyświetlane wzmianki
         </button>
       </div>
+
+      <!-- BATCH SIZE -->
+      <div class="b24t-section" style="padding:8px 14px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-size:10px;color:var(--b24t-text-faint);">Równoległy batch delete:</span>
+          <input type="number" id="b24t-del-batch-input" min="1" max="1000"
+            value="${DEL_BATCH_DEFAULT}"
+            title="Ile wzmianek usuwać równocześnie (domyślnie ${DEL_BATCH_DEFAULT}, max 1000)"
+            style="width:58px;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text);border-radius:4px;padding:3px 6px;font-size:11px;font-family:inherit;text-align:center;">
+          <span style="font-size:10px;color:var(--b24t-text-faint);">/ 1000 max</span>
+          <span id="b24t-del-batch-lock" style="font-size:10px;color:#f87171;cursor:pointer;" title="Kliknij by zmienić">🔒 zablokowane</span>
+        </div>
+      </div>
     `;
     return div;
   }
@@ -10589,6 +10720,40 @@ To jest NIEODWRACALNE.`)) return;
   function wireDeleteEvents(panel) {
     const delTab = panel.querySelector('#b24t-delete-tab');
     if (!delTab) return;
+
+    // Batch size input — wiring
+    const batchInput = delTab.querySelector('#b24t-del-batch-input');
+    const batchLock  = delTab.querySelector('#b24t-del-batch-lock');
+    if (batchInput && batchLock) {
+      const savedBatch = lsGet(LS.DEL_BATCH);
+      const alreadyWarned = lsGet(LS.DEL_BATCH_WARNED);
+      if (savedBatch) { _deleteBatch = savedBatch; batchInput.value = savedBatch; }
+      // Start locked unless user already accepted warning
+      batchInput.readOnly = !alreadyWarned;
+      batchInput.style.opacity = alreadyWarned ? '1' : '0.45';
+      batchLock.style.display = alreadyWarned ? 'none' : '';
+
+      // Click lock icon OR focus on locked input → show warning
+      async function tryUnlock() {
+        if (lsGet(LS.DEL_BATCH_WARNED)) { batchInput.readOnly = false; batchInput.style.opacity = '1'; batchLock.style.display = 'none'; return; }
+        const accepted = await _showDeleteBatchWarning();
+        if (accepted) {
+          lsSet(LS.DEL_BATCH_WARNED, true);
+          batchInput.readOnly = false;
+          batchInput.style.opacity = '1';
+          batchLock.style.display = 'none';
+          batchInput.focus();
+        }
+      }
+      batchLock.addEventListener('click', tryUnlock);
+      batchInput.addEventListener('focus', function() { if (batchInput.readOnly) { batchInput.blur(); tryUnlock(); } });
+      batchInput.addEventListener('change', function() {
+        const val = Math.max(1, Math.min(1000, parseInt(batchInput.value) || DEL_BATCH_DEFAULT));
+        batchInput.value = val;
+        _deleteBatch = val;
+        lsSet(LS.DEL_BATCH, val);
+      });
+    }
 
     // Populate tag dropdown when tab becomes visible
     const updateDelTags = () => {
@@ -10928,13 +11093,15 @@ Tej operacji nie można cofnąć.`)) {
         return;
       }
 
-      // Tag in batches
+      // Tag in batches — QT_CONCURRENCY batchów równolegle
       setStatus(`Tagowanie ${ids.length} wzmianek → ${tagName}...`, 'info');
       let tagged = 0;
-      for (let i = 0; i < ids.length; i += MAX_BATCH_SIZE) {
-        const slice = ids.slice(i, i + MAX_BATCH_SIZE);
-        await bulkTagMentions(slice, tagId);
-        tagged += slice.length;
+      const qtSlices = [];
+      for (let i = 0; i < ids.length; i += MAX_BATCH_SIZE) qtSlices.push(ids.slice(i, i + MAX_BATCH_SIZE));
+      for (let i = 0; i < qtSlices.length; i += QT_CONCURRENCY) {
+        const concSlices = qtSlices.slice(i, i + QT_CONCURRENCY);
+        await Promise.all(concSlices.map(slice => bulkTagMentions(slice, tagId)));
+        tagged += concSlices.reduce((s, sl) => s + sl.length, 0);
         setProgress(tagged, ids.length);
         setStatus(`Otagowano ${tagged}/${ids.length}...`, 'info');
       }
@@ -11092,8 +11259,10 @@ Tej operacji nie można cofnąć.`)) {
         }
         if (!ids.length) { setStatus('Brak wzmianek.', 'warn'); return; }
         if (!confirm(`Usunąć tag "${tagName}" z ${ids.length} wzmianek?`)) { setStatus('Anulowano.', 'warn'); return; }
-        for (let i = 0; i < ids.length; i += MAX_BATCH_SIZE) {
-          await bulkUntagMentions(ids.slice(i, i + MAX_BATCH_SIZE), tagId);
+        const utSlices = [];
+        for (let i = 0; i < ids.length; i += MAX_BATCH_SIZE) utSlices.push(ids.slice(i, i + MAX_BATCH_SIZE));
+        for (let i = 0; i < utSlices.length; i += QT_CONCURRENCY) {
+          await Promise.all(utSlices.slice(i, i + QT_CONCURRENCY).map(slice => bulkUntagMentions(slice, tagId)));
         }
         setStatus(`✓ Usunięto tag "${tagName}" z ${ids.length} wzmianek`, 'success');
         addLog(`✓ Quick Untag: ${ids.length} wzmianek ← ${tagName}`, 'success');
@@ -11222,7 +11391,14 @@ Tej operacji nie można cofnąć.`)) {
 
     setupDragging(panel);
     setupCollapse(panel);
-    setupResize(panel, LS.UI_SIZE, { minW: 360, maxW: 720, minH: 380, maxH: Math.round(window.innerHeight * 0.92), useMaxHeight: true });
+    // Dopasuj domyślny rozmiar startowy do rozmiaru ekranu (tylko gdy użytkownik nie ma zapisanego)
+    if (!lsGet(LS.UI_SIZE)) {
+      if (_getScreenProfile() === 'compact') {
+        panel.style.width  = Math.min(380, Math.round(window.innerWidth  * 0.55)) + 'px';
+        panel.style.height = Math.min(480, Math.round(window.innerHeight * 0.72)) + 'px';
+      }
+    }
+    setupResize(panel, LS.UI_SIZE, { minW: 300, maxW: Math.min(720, Math.round(window.innerWidth * 0.85)), minH: 300, maxH: Math.round(window.innerHeight * 0.92), useMaxHeight: true });
     wireEvents(panel);
     wireDeleteEvents(panel);
     wireQuickTagEvents(panel);

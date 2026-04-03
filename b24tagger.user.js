@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.3
+// @version      0.21.4
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.3';
+  const VERSION = '0.21.4';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -137,7 +137,8 @@
     NEWS_LANG_MAP:    'b24tagger_news_lang_map',
     NEWS_WIN_SIZE:    'b24tagger_news_win_size',
     WELCOME_SHOWN:    'b24tagger_welcome_shown_v0210',
-    UPDATE_CHANNEL:  'b24tagger_update_channel',
+    UPDATE_CHANNEL:   'b24tagger_update_channel',
+    MONTH_CLOSE_DONE: 'b24tagger_month_close_done',
   };
   const MAX_BATCH_SIZE = 50;
   const HEALTH_CHECK_INTERVAL = 30000;
@@ -9797,6 +9798,16 @@ To jest NIEODWRACALNE.`)) return;
     });
   }
 
+  function getMcCompletedPids(monthKey, groupId) {
+    var done = lsGet(LS.MONTH_CLOSE_DONE, {});
+    return done[monthKey + '|' + groupId] || [];
+  }
+  function setMcCompletedPids(monthKey, groupId, pids) {
+    var done = lsGet(LS.MONTH_CLOSE_DONE, {});
+    done[monthKey + '|' + groupId] = pids;
+    lsSet(LS.MONTH_CLOSE_DONE, done);
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // OVERALL STATS (v0.10.0)
   // ─────────────────────────────────────────────────────────────────────────────
@@ -9969,6 +9980,23 @@ To jest NIEODWRACALNE.`)) return;
         var _e = _c && _c.querySelector('#b24t-overall-data');
         if (_e) renderOverallStatsData(_e, partial, group, { dateFrom: dFrom, dateTo: dTo, label: lbl, ts: Date.now() });
       });
+      // Auto-domykanie: projekty z Pozostało = 0 w trybie domykania miesiąca
+      if (fresh.dateFrom && group.relevantTagId) {
+        var _dm = fresh.dateFrom.slice(0, 7);
+        var _cm = _localDateStr(new Date()).slice(0, 7);
+        if (_cm > _dm) {
+          var _mcPids = getMcCompletedPids(_dm, group.id).slice();
+          var _mcChanged = false;
+          fresh.results.forEach(function(r) {
+            if (!r.error && !r.loading && r.total != null && !_mcPids.includes(r.pid)) {
+              if (Math.max(0, (r.total || 0) - (r.relevant || 0) - (r.toDelete || 0)) === 0) {
+                _mcPids.push(r.pid); _mcChanged = true;
+              }
+            }
+          });
+          if (_mcChanged) setMcCompletedPids(_dm, group.id, _mcPids);
+        }
+      }
       bgCache.overallStats = { groupId: group.id, results: fresh.results, dateFrom: fresh.dateFrom, dateTo: fresh.dateTo, label: fresh.label, ts: Date.now() };
       var _c = document.getElementById('b24t-ann-tab-overall-content');
       var _e = _c && _c.querySelector('#b24t-overall-data');
@@ -9988,6 +10016,15 @@ To jest NIEODWRACALNE.`)) return;
   function renderOverallStatsData(el, results, group, cached) {
     if (!el) return;
     var hasRelevant = group.relevantTagId != null;
+    // Okres i tryb domykania miesiąca
+    var dateFrom = (cached && cached.dateFrom) || (results[0] && results[0].dateFrom) || '';
+    var dateTo   = (cached && cached.dateTo)   || (results[0] && results[0].dateTo)   || '';
+    var label    = (cached && cached.label)    || '';
+    var dataMonth = dateFrom ? dateFrom.slice(0, 7) : '';
+    var curMonth  = _localDateStr(new Date()).slice(0, 7);
+    var isMonthClosing = !!(dataMonth && curMonth > dataMonth);
+    var completedPids = isMonthClosing ? getMcCompletedPids(dataMonth, group.id) : [];
+    // Sumy
     var totalAll = 0, totalRelevant = 0, totalReqVer = 0, totalToDelete = 0;
     results.forEach(function(r) {
       if (!r.error && !r.loading) {
@@ -10014,6 +10051,33 @@ To jest NIEODWRACALNE.`)) return;
           '</div>' +
           '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:4px;text-align:right;">' + (totalRelevant + totalToDelete) + ' / ' + totalAll + ' otagowanych</div>' +
         '</div>';
+    }
+    // Baner domykania miesiąca
+    var monthClosingHtml = '';
+    if (isMonthClosing) {
+      var _nonPending = results.filter(function(r) { return !r.loading && !r.error; });
+      var _doneCount  = _nonPending.filter(function(r) { return completedPids.includes(r.pid); }).length;
+      var _allDone    = results.every(function(r) { return r.error || completedPids.includes(r.pid); }) && _nonPending.length > 0;
+      if (_allDone) {
+        monthClosingHtml =
+          '<div style="margin-bottom:10px;padding:10px 12px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;display:flex;align-items:center;gap:10px;">' +
+            '<span style="font-size:20px;">✅</span>' +
+            '<div>' +
+              '<div style="font-size:12px;font-weight:700;color:#14532d;">Miesiąc domknięty</div>' +
+              '<div style="font-size:11px;color:#166534;margin-top:1px;">Wszystkie projekty ukończone</div>' +
+            '</div>' +
+          '</div>';
+      } else {
+        monthClosingHtml =
+          '<div style="margin-bottom:10px;padding:10px 12px;background:#fefce8;border:1px solid #fde047;border-radius:8px;display:flex;align-items:center;gap:10px;">' +
+            '<span style="font-size:20px;">🗓</span>' +
+            '<div style="flex:1;">' +
+              '<div style="font-size:12px;font-weight:700;color:#713f12;">Domykanie miesiąca</div>' +
+              '<div style="font-size:11px;color:#854d0e;margin-top:1px;">' + _doneCount + ' z ' + _nonPending.length + ' projektów ukończonych</div>' +
+            '</div>' +
+            '<button id="b24t-mc-force-close" style="background:#f59e0b;color:#fff;border:none;border-radius:7px;padding:6px 12px;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer;flex-shrink:0;">Zamknij miesiąc</button>' +
+          '</div>';
+      }
     }
     // Kafelki
     var thREL = '';
@@ -10044,6 +10108,16 @@ To jest NIEODWRACALNE.`)) return;
     var warnHtml = !hasRelevant
       ? '<div style="margin-bottom:8px;padding:7px 10px;background:var(--b24t-warn-bg);border:1px solid color-mix(in srgb,var(--b24t-warn) 30%,transparent);border-radius:7px;font-size:11px;color:var(--b24t-warn);line-height:1.5;">Ustaw tag Relevantne w ustawieniach (⚙) aby widzieć pełne dane.</div>' : '';
     var tableRows = results.map(function(r) {
+      if (isMonthClosing && !r.loading && completedPids.includes(r.pid)) {
+        var relTdC = hasRelevant ? '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#86efac;text-align:right;">' + (r.relevant != null ? r.relevant : '—') + '</td>' : '';
+        return '<tr style="border-top:1px solid var(--b24t-border-sub);background:rgba(22,163,74,0.07);">' +
+          '<td style="padding:6px 8px;font-size:11px;color:#16a34a;text-decoration:line-through;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + r.name + '">✓ ' + r.name + '</td>' +
+          '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#86efac;text-align:right;">' + (r.total != null ? r.total : '—') + '</td>' +
+          relTdC +
+          '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#86efac;text-align:right;">' + (r.reqVer != null ? r.reqVer : '—') + '</td>' +
+          '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#86efac;text-align:right;">' + (r.toDelete != null ? r.toDelete : '—') + '</td>' +
+        '</tr>';
+      }
       if (r.loading) return '<tr style="border-top:1px solid var(--b24t-border-sub);"><td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="' + colCount + '" style="padding:6px 8px;font-size:10px;color:var(--b24t-text-faint);text-align:center;">⏳ ładowanie…</td></tr>';
       if (r.error)   return '<tr style="border-top:1px solid var(--b24t-border-sub);"><td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="' + colCount + '" style="padding:6px 8px;font-size:10px;color:var(--b24t-err);">błąd: ' + r.error + '</td></tr>';
       var relTd = hasRelevant ? '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#16a34a;text-align:right;">' + (r.relevant != null ? r.relevant : '—') + '</td>' : '';
@@ -10055,17 +10129,13 @@ To jest NIEODWRACALNE.`)) return;
         '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#dc2626;text-align:right;">'  + (r.toDelete != null ? r.toDelete : '—') + '</td>' +
       '</tr>';
     }).join('');
-    // Informacja o okresie — z cached lub z pierwszego wyniku
-    var dateFrom = (cached && cached.dateFrom) || (results[0] && results[0].dateFrom) || '';
-    var dateTo   = (cached && cached.dateTo)   || (results[0] && results[0].dateTo)   || '';
-    var label    = (cached && cached.label)    || '';
     var periodHtml = (dateFrom && dateTo)
       ? '<div style="display:flex;align-items:center;gap:6px;padding:6px 0;margin-bottom:8px;border-bottom:1px solid var(--b24t-border-sub);">' +
           '<span style="font-size:11px;color:var(--b24t-text-faint);">📅 Okres:</span>' +
           '<span style="font-size:11px;font-weight:600;color:var(--b24t-text-muted);">' + (label ? label + ' ' : '') + '(' + dateFrom + ' → ' + dateTo + ')</span>' +
         '</div>'
       : '';
-    el.innerHTML = periodHtml + progressHtml + warnHtml + cards +
+    el.innerHTML = periodHtml + progressHtml + monthClosingHtml + warnHtml + cards +
       '<div style="border:1px solid var(--b24t-border);border-radius:8px;overflow:hidden;">' +
         '<table style="width:100%;border-collapse:collapse;">' +
           '<tr style="background:var(--b24t-bg-deep);">' +
@@ -10079,6 +10149,17 @@ To jest NIEODWRACALNE.`)) return;
         '</table>' +
       '</div>' +
       '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:6px;text-align:right;">' + group.name + ' · ' + results.length + ' projektów</div>';
+    // Przycisk "Zamknij miesiąc"
+    var _mcBtn = el.querySelector('#b24t-mc-force-close');
+    if (_mcBtn) {
+      _mcBtn.addEventListener('click', function() {
+        var allPids = results.filter(function(r) { return !r.error; }).map(function(r) { return r.pid; });
+        setMcCompletedPids(dataMonth, group.id, allPids);
+        var _c = document.getElementById('b24t-ann-tab-overall-content');
+        var _e = _c && _c.querySelector('#b24t-overall-data');
+        if (_e) renderOverallStatsData(_e, results, group, cached);
+      });
+    }
   }
 
   function showOverallStatsSettings(group) {

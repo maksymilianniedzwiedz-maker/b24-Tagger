@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.5
+// @version      0.21.6
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.5';
+  const VERSION = '0.21.6';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -141,6 +141,7 @@
     MONTH_CLOSE_DONE: 'b24tagger_month_close_done',
   };
   const MAX_BATCH_SIZE = 50;
+  let MAP_FETCH_CONCURRENCY = 3; // domyślna równoległość pobierania stron w buildUrlMap
   const HEALTH_CHECK_INTERVAL = 30000;
   const ACTION_TIMEOUT_WARN = 10000;
   const RETRY_DELAYS = [2000, 4000, 8000, 12000, 20000]; // 5 prób — Brand24 API czasem losowo failuje
@@ -818,60 +819,75 @@
       return map;
     }
 
-    // ── KROK 6: pozostałe strony SEKWENCYJNIE ───────────────────────────
-    // Parallel powoduje niestabilną paginację Brand24 — te same wzmianki pojawiają się
-    // na wielu stronach gdy sortowanie jest niestabilne przy concurrent requests.
+    // ── KROK 6: pozostałe strony BATCHOWO (MAP_FETCH_CONCURRENCY) ──────────────────────
+    // Deduplication przez mentionIdsSeen obsługuje duplikaty wynikające z niestabilnej
+    // paginacji Brand24 przy równoległych requestach.
     diag.step = 'build_map_pages';
     let fetched = 1;
     let pageErrors = 0;
+    let allDupeIds = 0;
     const mentionIdsSeen = new Set();
     first.results.forEach(m => { if (m.id) mentionIdsSeen.add(String(m.id)); });
 
-    for (let p = 2; p <= totalPages; p++) {
+    const _remainingPages = [];
+    for (let p = 2; p <= totalPages; p++) _remainingPages.push(p);
+    const _mapTStart = Date.now();
+
+    for (let i = 0; i < _remainingPages.length; i += MAP_FETCH_CONCURRENCY) {
       if (state.status !== 'running') break;
-      let result;
-      try {
-        result = await getMentions(state.projectId, dateFrom, dateTo, gr, p);
-      } catch(e) {
-        pageErrors++;
-        addLog(`⚠ [DIAG/API] Błąd strony ${p}: ${e.message}`, 'warn');
-        continue;
-      }
-      if (!result || !result.results) {
-        pageErrors++;
-        addLog(`⚠ [DIAG/API] Strona ${p}: null response`, 'warn');
-        continue;
-      }
-      let pageDupeIds = 0;
-      result.results.forEach(m => {
-        const matchUrl = m.url || m.openUrl;
-        const idStr = String(m.id);
-        if (mentionIdsSeen.has(idStr)) {
-          pageDupeIds++;
-          diag.dupeKeys++;
-          return; // pomiń duplikat — ta wzmianka już jest w mapie
+      const batch = _remainingPages.slice(i, i + MAP_FETCH_CONCURRENCY);
+      const batchResults = await Promise.all(
+        batch.map(p => getMentions(state.projectId, dateFrom, dateTo, gr, p)
+          .catch(e => ({ _err: e.message, _page: p })))
+      );
+      for (let bi = 0; bi < batch.length; bi++) {
+        const p = batch[bi];
+        const result = batchResults[bi];
+        if (result && result._err !== undefined) {
+          pageErrors++;
+          addLog(`⚠ [DIAG/API] Błąd strony ${p}: ${result._err}`, 'warn');
+          continue;
         }
-        mentionIdsSeen.add(idStr);
-        if (matchUrl) {
-          const key = normalizeUrl(matchUrl);
-          if (map[key]) diag.dupeKeys++; // URL dupe — inny ID, ten sam URL
-          map[key] = { id: String(m.id), existingTags: m.tags || [] };
-        } else {
-          diag.urlFieldEmpty++;
+        if (!result || !result.results) {
+          pageErrors++;
+          addLog(`⚠ [DIAG/API] Strona ${p}: null response`, 'warn');
+          continue;
         }
-      });
-      if (pageDupeIds > 0) {
-        addLog(`⚠ [DIAG/PAGINATION] Strona ${p}: ${pageDupeIds} duplikatów ID — Brand24 niestabilna paginacja`, 'warn');
+        let pageDupeIds = 0;
+        result.results.forEach(m => {
+          const matchUrl = m.url || m.openUrl;
+          const idStr = String(m.id);
+          if (mentionIdsSeen.has(idStr)) {
+            pageDupeIds++;
+            diag.dupeKeys++;
+            allDupeIds++;
+            return;
+          }
+          mentionIdsSeen.add(idStr);
+          if (matchUrl) {
+            const key = normalizeUrl(matchUrl);
+            if (map[key]) diag.dupeKeys++; // URL dupe — inny ID, ten sam URL
+            map[key] = { id: String(m.id), existingTags: m.tags || [] };
+          } else {
+            diag.urlFieldEmpty++;
+          }
+        });
+        if (pageDupeIds > 0) {
+          addLog(`⚠ [DIAG/PAGINATION] Strona ${p}: ${pageDupeIds} duplikatów ID — Brand24 niestabilna paginacja`, 'warn');
+        }
+        fetched++;
+        diag.fetchedPages = fetched;
       }
-      fetched++;
-      diag.fetchedPages = fetched;
       updateProgress('map', fetched, totalPages);
-      if (p % 10 === 0 || p === totalPages) {
+      const batchEnd = i + MAP_FETCH_CONCURRENCY;
+      if (batchEnd % 10 < MAP_FETCH_CONCURRENCY || batchEnd >= _remainingPages.length) {
         addLog(`→ Mapa: ${fetched}/${totalPages} stron (${Object.keys(map).length} wzmianek)`, 'info');
       }
-      await sleep(50);
+      if (i + MAP_FETCH_CONCURRENCY < _remainingPages.length) await sleep(50);
     }
 
+    const _mapElapsed = Date.now() - _mapTStart;
+    addLog(`ℹ [DIAG/PERF] Mapa ${totalPages} stron: ${_mapElapsed}ms | concurrency=${MAP_FETCH_CONCURRENCY} | dupeId=${allDupeIds} (${first.count > 0 ? (allDupeIds / first.count * 100).toFixed(1) : 0}%)`, 'info');
     diag.mentionsInMap = Object.keys(map).length;
 
     // ── KROK 7: weryfikacja kompletności ─────────────────────────────────
@@ -1869,6 +1885,32 @@
       clearCheckpoint: () => { clearCheckpoint(); addLog('🗑 Checkpoint wyczyszczony.', 'info'); },
       getToken: () => state.tokenHeaders,
       checkForUpdate: (manual) => checkForUpdate(manual),
+      stressTestBuildUrlMap: async function() {
+        const levels = [1, 2, 3, 5];
+        const results = [];
+        addLog('[STRESS] Rozpoczynam stress test buildUrlMap — concurrency: ' + levels.join('→'), 'info');
+        const prevStatus = state.status;
+        for (const c of levels) {
+          MAP_FETCH_CONCURRENCY = c;
+          state.status = 'running';
+          const dates = getAnnotatorDates();
+          addLog(`[STRESS] concurrency=${c} — start (${dates.dateFrom} → ${dates.dateTo})`, 'info');
+          const t0 = Date.now();
+          let mapResult = {};
+          try { mapResult = await buildUrlMap(dates.dateFrom, dates.dateTo, false); } catch(e) { addLog(`[STRESS] concurrency=${c} BŁĄD: ${e.message}`, 'warn'); }
+          state.status = 'idle';
+          const elapsed = Date.now() - t0;
+          const size = Object.keys(mapResult).length;
+          results.push({ concurrency: c, elapsed, size });
+          addLog(`[STRESS] concurrency=${c}: ${elapsed}ms | wzmianek=${size}`, 'info');
+          if (c !== levels[levels.length - 1]) await sleep(3000);
+        }
+        MAP_FETCH_CONCURRENCY = 3;
+        state.status = prevStatus;
+        addLog('[STRESS] ═══ WYNIKI STRESS TEST buildUrlMap ═══', 'info');
+        results.forEach(r => addLog(`  concurrency=${r.concurrency}: ${r.elapsed}ms | ${r.size} wzmianek`, 'info'));
+        return results;
+      },
       netMonitor: function(shortcodes) {
         const sc = Array.isArray(shortcodes) ? shortcodes : [shortcodes];
         state._netMonitor = { targetShortcodes: sc, found: new Set() };

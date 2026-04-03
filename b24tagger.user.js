@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.8
+// @version      0.21.9
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.8';
+  const VERSION = '0.21.9';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1887,17 +1887,17 @@
       getToken: () => state.tokenHeaders,
       checkForUpdate: (manual) => checkForUpdate(manual),
       stressTestBulk: async function(tagId, dateFrom, dateTo) {
+        // Stress test batch size: [300, 500, 1000, 1500, 2000] z sleep=500ms między parami tag/untag
         if (!tagId) { addLog('[STRESS/BULK] Użycie: stressTestBulk(tagId, dateFrom?, dateTo?)', 'warn'); return; }
         const dFrom = dateFrom || getAnnotatorDates().dateFrom;
         const dTo   = dateTo   || getAnnotatorDates().dateTo;
-        const batchSizes = [50, 100, 200];
+        const batchSizes = [300, 500, 1000, 1500, 2000];
         const results = [];
         addLog(`[STRESS/BULK] Zbieram ID z projektu ${state.projectId} (${dFrom}→${dTo})...`, 'info');
         state.status = 'running';
         const map = await buildUrlMap(dFrom, dTo, false);
         state.status = 'idle';
         const allIds = Object.values(map).map(function(v) { return String(v.id); });
-        if (allIds.length < 50) { addLog('[STRESS/BULK] Za mało wzmianek (<50) — przerwano', 'warn'); return; }
         addLog(`[STRESS/BULK] Zebrano ${allIds.length} ID. Testuję batch sizes: ${batchSizes.join(', ')}`, 'info');
         for (const bs of batchSizes) {
           const testIds = allIds.slice(0, Math.min(bs, allIds.length));
@@ -1907,7 +1907,7 @@
             await bulkTagMentions(testIds, tagId);
             const tagMs = Date.now() - tTag;
             addLog(`[STRESS/BULK] batch=${testIds.length}: TAG OK ${tagMs}ms`, 'info');
-            await sleep(1000);
+            await sleep(500);
             const tUntag = Date.now();
             await bulkUntagMentions(testIds, tagId);
             const untagMs = Date.now() - tUntag;
@@ -1920,10 +1920,51 @@
           }
           if (bs !== batchSizes[batchSizes.length - 1]) await sleep(2000);
         }
-        addLog('[STRESS/BULK] ═══ WYNIKI ═══', 'info');
+        addLog('[STRESS/BULK] ═══ WYNIKI BATCH SIZE ═══', 'info');
         results.forEach(function(r) {
           if (r.ok) addLog(`  batch=${r.bs}: tag=${r.tagMs}ms | untag=${r.untagMs}ms`, 'info');
           else addLog(`  batch=${r.bs}: FAIL — ${r.error}`, 'warn');
+        });
+        return results;
+      },
+      stressTestBulkSleep: async function(tagId, batchSize, dateFrom, dateTo) {
+        // Stress test sleep: jak długo trzeba czekać między requestami bulk?
+        // Uruchamia pary tag→untag z różnymi sleep między nimi: 0, 100, 200, 500ms
+        if (!tagId) { addLog('[STRESS/SLEEP] Użycie: stressTestBulkSleep(tagId, batchSize?, dateFrom?, dateTo?)', 'warn'); return; }
+        const bs = batchSize || 200;
+        const dFrom = dateFrom || getAnnotatorDates().dateFrom;
+        const dTo   = dateTo   || getAnnotatorDates().dateTo;
+        const sleepValues = [0, 100, 200, 500];
+        const results = [];
+        addLog(`[STRESS/SLEEP] Zbieram ID z projektu ${state.projectId}...`, 'info');
+        state.status = 'running';
+        const map = await buildUrlMap(dFrom, dTo, false);
+        state.status = 'idle';
+        const allIds = Object.values(map).map(function(v) { return String(v.id); }).slice(0, bs);
+        addLog(`[STRESS/SLEEP] Testuję sleep: ${sleepValues.join(', ')}ms | batch=${allIds.length}`, 'info');
+        for (const sleepMs of sleepValues) {
+          addLog(`[STRESS/SLEEP] sleep=${sleepMs}ms — tag...`, 'info');
+          try {
+            const t0 = Date.now();
+            await bulkTagMentions(allIds, tagId);
+            const tagMs = Date.now() - t0;
+            await sleep(sleepMs);
+            const t1 = Date.now();
+            await bulkUntagMentions(allIds, tagId);
+            const untagMs = Date.now() - t1;
+            addLog(`[STRESS/SLEEP] sleep=${sleepMs}ms: TAG ${tagMs}ms | UNTAG ${untagMs}ms — OK`, 'info');
+            results.push({ sleepMs, tagMs, untagMs, ok: true });
+          } catch(e) {
+            addLog(`[STRESS/SLEEP] sleep=${sleepMs}ms: FAIL — ${e.message}`, 'warn');
+            results.push({ sleepMs, ok: false, error: e.message });
+            try { await bulkUntagMentions(allIds, tagId); } catch(_) {}
+          }
+          if (sleepMs !== sleepValues[sleepValues.length - 1]) await sleep(3000);
+        }
+        addLog('[STRESS/SLEEP] ═══ WYNIKI SLEEP TEST ═══', 'info');
+        results.forEach(function(r) {
+          if (r.ok) addLog(`  sleep=${r.sleepMs}ms: tag=${r.tagMs}ms | untag=${r.untagMs}ms`, 'info');
+          else addLog(`  sleep=${r.sleepMs}ms: FAIL — ${r.error}`, 'warn');
         });
         return results;
       },

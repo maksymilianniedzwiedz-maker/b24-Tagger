@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.0
+// @version      0.21.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.0';
+  const VERSION = '0.21.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -9810,7 +9810,7 @@ To jest NIEODWRACALNE.`)) return;
     if (g) { g.relevantTagId = tagId; saveGroups(groups); }
   }
 
-  async function _fetchOverallStats(group) {
+  async function _fetchOverallStats(group, onProgress) {
     var projects = lsGet(LS.PROJECTS, {});
     // Użyj tej samej logiki dat co zakładka Projekt — current month, wyjątek dla 1-2 dnia
     var dates = getAnnotatorDates();
@@ -9818,45 +9818,56 @@ To jest NIEODWRACALNE.`)) return;
     var dateTo   = dates.dateTo;
     addLog('→ [Overall] ' + group.name + ': pobieranie ' + group.projectIds.length + ' projektów (' + dateFrom + ' → ' + dateTo + ')...', 'info');
     var results = [];
+    if (onProgress) {
+      onProgress(group.projectIds.map(function(pid) {
+        return { pid: pid, name: _pnResolve(pid) || ('ID:' + pid), loading: true };
+      }), dateFrom, dateTo, dates.label);
+    }
     for (var i = 0; i < group.projectIds.length; i++) {
       var pid = group.projectIds[i];
       var pData = projects[pid];
       if (!pData) {
         addLog('[DIAG] _fetchOverallStats: projekt ID:' + pid + ' nieznany w LS.PROJECTS', 'diag');
-        results.push({ pid: pid, name: 'ID:' + pid, error: 'projekt nieznany' }); continue;
-      }
-      var name = _pnResolve(pid);
-      var tagIds   = pData.tagIds || {};
-      // Szukamy reqVer i toDel w tagIds map
-      var reqVerId = null, toDelId = null;
-      Object.entries(tagIds).forEach(function(e) {
-        if (e[0] === 'REQUIRES_VERIFICATION') reqVerId = e[1];
-        if (e[0] === 'TO_DELETE') toDelId = e[1];
-      });
-      // Fallback do znanych ID
-      if (!reqVerId) reqVerId = 1154586;
-      if (!toDelId)  toDelId  = 1154757;
-      var relTagId = group.relevantTagId || null;
-      try {
-        var queries = [
-          getMentions(pid, dateFrom, dateTo, [], 1),   // total — bez filtra tagu
-          relTagId ? getMentions(pid, dateFrom, dateTo, [relTagId], 1) : Promise.resolve({ count: null }),
-          getMentions(pid, dateFrom, dateTo, [reqVerId], 1),
-          getMentions(pid, dateFrom, dateTo, [toDelId],  1),
-        ];
-        var counts = await Promise.all(queries);
-        results.push({
-          pid: pid, name: name,
-          total:    counts[0].count,
-          relevant: counts[1].count,
-          reqVer:   counts[2].count,
-          toDelete: counts[3].count,
-          dateFrom: dateFrom, dateTo: dateTo,
+        results.push({ pid: pid, name: 'ID:' + pid, error: 'projekt nieznany' });
+      } else {
+        var name = _pnResolve(pid);
+        var tagIds   = pData.tagIds || {};
+        // Szukamy reqVer i toDel w tagIds map
+        var reqVerId = null, toDelId = null;
+        Object.entries(tagIds).forEach(function(e) {
+          if (e[0] === 'REQUIRES_VERIFICATION') reqVerId = e[1];
+          if (e[0] === 'TO_DELETE') toDelId = e[1];
         });
-        addLog('✓ [Overall] ' + name + ': ALL:' + counts[0].count + ' REQ:' + counts[2].count + ' DEL:' + counts[3].count, 'success');
-      } catch(e) {
-        addLog('✕ [DIAG] getMentions(' + pid + '): ' + e.message, 'diag');
-        results.push({ pid: pid, name: name, error: e.message });
+        // Fallback do znanych ID
+        if (!reqVerId) reqVerId = 1154586;
+        if (!toDelId)  toDelId  = 1154757;
+        var relTagId = group.relevantTagId || null;
+        try {
+          var queries = [
+            getMentions(pid, dateFrom, dateTo, [], 1),   // total — bez filtra tagu
+            relTagId ? getMentions(pid, dateFrom, dateTo, [relTagId], 1) : Promise.resolve({ count: null }),
+            getMentions(pid, dateFrom, dateTo, [reqVerId], 1),
+            getMentions(pid, dateFrom, dateTo, [toDelId],  1),
+          ];
+          var counts = await Promise.all(queries);
+          results.push({
+            pid: pid, name: name,
+            total:    counts[0].count,
+            relevant: counts[1].count,
+            reqVer:   counts[2].count,
+            toDelete: counts[3].count,
+            dateFrom: dateFrom, dateTo: dateTo,
+          });
+          addLog('✓ [Overall] ' + name + ': ALL:' + counts[0].count + ' REQ:' + counts[2].count + ' DEL:' + counts[3].count, 'success');
+        } catch(e) {
+          addLog('✕ [DIAG] getMentions(' + pid + '): ' + e.message, 'diag');
+          results.push({ pid: pid, name: name, error: e.message });
+        }
+      }
+      if (onProgress) {
+        onProgress(results.concat(group.projectIds.slice(i + 1).map(function(p) {
+          return { pid: p, name: _pnResolve(p) || ('ID:' + p), loading: true };
+        })), dateFrom, dateTo, dates.label);
       }
     }
     return { results: results, dateFrom: dateFrom, dateTo: dateTo, label: dates.label };
@@ -9941,10 +9952,12 @@ To jest NIEODWRACALNE.`)) return;
       return;
     }
     _overallStatsInFlight = true;
-    dataEl.innerHTML = '<div style="padding:20px 0;text-align:center;"><div style="font-size:22px;animation:b24t-spin 1s linear infinite;display:inline-block;">&#8635;</div><div style="font-size:11px;color:var(--b24t-text-faint);margin-top:8px;">Pobieram statystyki...</div></div>';
     try {
-      var fresh = await _bgFetchOverallStats(group);
-      if (fresh && dataEl.isConnected) renderOverallStatsData(dataEl, fresh.results, group, fresh);
+      var fresh = await _fetchOverallStats(group, function(partial, dFrom, dTo, lbl) {
+        if (dataEl.isConnected) renderOverallStatsData(dataEl, partial, group, { dateFrom: dFrom, dateTo: dTo, label: lbl, ts: Date.now() });
+      });
+      bgCache.overallStats = { groupId: group.id, results: fresh.results, dateFrom: fresh.dateFrom, dateTo: fresh.dateTo, label: fresh.label, ts: Date.now() };
+      if (dataEl.isConnected) renderOverallStatsData(dataEl, fresh.results, group, bgCache.overallStats);
     } finally {
       _overallStatsInFlight = false;
     }
@@ -9962,31 +9975,69 @@ To jest NIEODWRACALNE.`)) return;
     var hasRelevant = group.relevantTagId != null;
     var totalAll = 0, totalRelevant = 0, totalReqVer = 0, totalToDelete = 0;
     results.forEach(function(r) {
-      if (!r.error) {
-        if (r.total    != null) totalAll       += r.total;
-        if (r.relevant != null) totalRelevant  += r.relevant;
-        if (r.reqVer   != null) totalReqVer    += r.reqVer;
-        if (r.toDelete != null) totalToDelete  += r.toDelete;
+      if (!r.error && !r.loading) {
+        if (r.total    != null) totalAll      += r.total;
+        if (r.relevant != null) totalRelevant += r.relevant;
+        if (r.reqVer   != null) totalReqVer   += r.reqVer;
+        if (r.toDelete != null) totalToDelete += r.toDelete;
       }
     });
-    // Kafelki — zawsze: Total + opcjonalnie Relevantne + zawsze REQ + DEL
-    var cards = _statsCard('Wszystkie', totalAll, 'var(--b24t-text-muted)', 'var(--b24t-bg-elevated)');
-    if (hasRelevant) cards += _statsCard('Relevantne', totalRelevant, '#16a34a', '#dcfce7');
-    cards += _statsCard('Do weryfikacji', totalReqVer, '#d97706', '#fef3c7');
-    cards += _statsCard('Do usunięcia', totalToDelete, '#dc2626', '#fee2e2');
-    var colCount = hasRelevant ? 4 : 3;
+    var totalRemaining = hasRelevant ? Math.max(0, totalAll - totalRelevant - totalToDelete) : null;
+    var pct = (hasRelevant && totalAll > 0) ? Math.round((totalRelevant + totalToDelete) / totalAll * 100) : null;
+    // Pasek postępu
+    var progressHtml = '';
+    if (hasRelevant) {
+      var pctVal = pct != null ? pct : 0;
+      progressHtml =
+        '<div style="margin-bottom:10px;padding:10px 12px;background:var(--b24t-bg-elevated);border-radius:8px;">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+            '<span style="font-size:11px;font-weight:600;color:var(--b24t-text-faint);">Postęp ukończenia</span>' +
+            '<span style="font-size:13px;font-weight:800;color:#4f46e5;">' + (pct != null ? pct + '%' : '—') + '</span>' +
+          '</div>' +
+          '<div style="background:var(--b24t-bg-deep);border-radius:99px;height:7px;overflow:hidden;">' +
+            '<div style="width:' + pctVal + '%;height:100%;background:linear-gradient(90deg,#6366f1,#4f46e5);border-radius:99px;transition:width 0.5s ease;"></div>' +
+          '</div>' +
+          '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:4px;text-align:right;">' + (totalRelevant + totalToDelete) + ' / ' + totalAll + ' otagowanych</div>' +
+        '</div>';
+    }
+    // Kafelki
+    var thREL = '';
+    var cards;
+    var colCount;
+    if (hasRelevant) {
+      thREL = '<th style="padding:6px 8px;font-size:10px;color:#16a34a;text-align:right;font-weight:600;">REL</th>';
+      colCount = 4;
+      cards =
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px;">' +
+          _statsCard('Wszystkie',  totalAll,       'var(--b24t-text-muted)', 'var(--b24t-bg-elevated)') +
+          _statsCard('Relevantne', totalRelevant,  '#16a34a', '#dcfce7') +
+          _statsCard('Pozostało',  totalRemaining, '#4f46e5', '#eef2ff') +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">' +
+          _statsCard('Do weryfikacji', totalReqVer,   '#d97706', '#fef3c7') +
+          _statsCard('Do usunięcia',   totalToDelete, '#dc2626', '#fee2e2') +
+        '</div>';
+    } else {
+      colCount = 3;
+      cards =
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;">' +
+          _statsCard('Wszystkie',      totalAll,      'var(--b24t-text-muted)', 'var(--b24t-bg-elevated)') +
+          _statsCard('Do weryfikacji', totalReqVer,   '#d97706', '#fef3c7') +
+          _statsCard('Do usunięcia',   totalToDelete, '#dc2626', '#fee2e2') +
+        '</div>';
+    }
     var warnHtml = !hasRelevant
       ? '<div style="margin-bottom:8px;padding:7px 10px;background:var(--b24t-warn-bg);border:1px solid color-mix(in srgb,var(--b24t-warn) 30%,transparent);border-radius:7px;font-size:11px;color:var(--b24t-warn);line-height:1.5;">Ustaw tag Relevantne w ustawieniach (⚙) aby widzieć pełne dane.</div>' : '';
-    var thREL = hasRelevant ? '<th style="padding:6px 8px;font-size:10px;color:#16a34a;text-align:right;font-weight:600;">REL</th>' : '';
     var tableRows = results.map(function(r) {
-      if (r.error) return '<tr><td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="' + colCount + '" style="padding:6px 8px;font-size:10px;color:var(--b24t-err);">błąd: ' + r.error + '</td></tr>';
+      if (r.loading) return '<tr style="border-top:1px solid var(--b24t-border-sub);"><td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="' + colCount + '" style="padding:6px 8px;font-size:10px;color:var(--b24t-text-faint);text-align:center;">⏳ ładowanie…</td></tr>';
+      if (r.error)   return '<tr style="border-top:1px solid var(--b24t-border-sub);"><td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="' + colCount + '" style="padding:6px 8px;font-size:10px;color:var(--b24t-err);">błąd: ' + r.error + '</td></tr>';
       var relTd = hasRelevant ? '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#16a34a;text-align:right;">' + (r.relevant != null ? r.relevant : '—') + '</td>' : '';
       return '<tr style="border-top:1px solid var(--b24t-border-sub);">' +
         '<td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + r.name + '">' + r.name + '</td>' +
-        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-text-muted);text-align:right;">' + (r.total != null ? r.total : '—') + '</td>' +
+        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-text-muted);text-align:right;">' + (r.total   != null ? r.total   : '—') + '</td>' +
         relTd +
-        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#d97706;text-align:right;">' + (r.reqVer  != null ? r.reqVer  : '—') + '</td>' +
-        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#dc2626;text-align:right;">' + (r.toDelete != null ? r.toDelete : '—') + '</td>' +
+        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#d97706;text-align:right;">'  + (r.reqVer  != null ? r.reqVer  : '—') + '</td>' +
+        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#dc2626;text-align:right;">'  + (r.toDelete != null ? r.toDelete : '—') + '</td>' +
       '</tr>';
     }).join('');
     // Informacja o okresie — z cached lub z pierwszego wyniku
@@ -9999,8 +10050,7 @@ To jest NIEODWRACALNE.`)) return;
           '<span style="font-size:11px;font-weight:600;color:var(--b24t-text-muted);">' + (label ? label + ' ' : '') + '(' + dateFrom + ' → ' + dateTo + ')</span>' +
         '</div>'
       : '';
-    el.innerHTML = periodHtml + warnHtml +
-      '<div style="display:grid;grid-template-columns:' + (hasRelevant ? '1fr 1fr 1fr 1fr' : '1fr 1fr 1fr') + ';gap:6px;margin-bottom:10px;">' + cards + '</div>' +
+    el.innerHTML = periodHtml + progressHtml + warnHtml + cards +
       '<div style="border:1px solid var(--b24t-border);border-radius:8px;overflow:hidden;">' +
         '<table style="width:100%;border-collapse:collapse;">' +
           '<tr style="background:var(--b24t-bg-deep);">' +

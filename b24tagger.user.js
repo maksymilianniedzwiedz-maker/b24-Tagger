@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.19
+// @version      0.21.20
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.19';
+  const VERSION = '0.21.20';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2208,11 +2208,10 @@
       #b24t-panel:hover { box-shadow: var(--b24t-shadow-h); }
       #b24t-panel-inner {
         width: 440px; /* musi być zgodne z BASE_PANEL_W w JS; nadpisywane przez JS gdy panel >= 440px */
-        flex: 1;
-        min-height: 0;
         display: flex;
         flex-direction: column;
         transform-origin: top left;
+        flex-shrink: 0; /* nie kurczy się przez flex rodzica — min-height liczy JS */
       }
       #b24t-panel.b24t-resizing { opacity: 0.97; box-shadow: var(--b24t-shadow-drag); transition: none !important; }
       #b24t-panel.b24t-resizing * { pointer-events: none !important; user-select: none !important; }
@@ -3240,16 +3239,13 @@
     var inner = document.getElementById('b24t-panel-inner');
     if (!inner || !panel) return;
     var w = panel.offsetWidth;
+    var h = panel.offsetHeight;
     if (!w) return;
-    if (w >= BASE_PANEL_W) {
-      // Panel normalny lub szerszy — brak zoomu, inner wypełnia całość
-      inner.style.zoom = 1;
-      inner.style.width = '100%';
-    } else {
-      // Panel węższy niż bazowy — skaluj proporcjonalnie
-      inner.style.zoom = Math.max(0.5, w / BASE_PANEL_W);
-      inner.style.width = BASE_PANEL_W + 'px';
-    }
+    var scale = (w >= BASE_PANEL_W) ? 1 : Math.max(0.5, w / BASE_PANEL_W);
+    inner.style.zoom = scale;
+    inner.style.width = (scale < 1) ? BASE_PANEL_W + 'px' : '100%';
+    // min-height kompensuje zoom: po przeskalowaniu inner wizualnie wypełnia cały panel
+    inner.style.minHeight = h ? Math.ceil(h / scale) + 'px' : '';
   }
 
   // Dodaje/usuwa klasę b24t-compact na panelu w zależności od jego szerokości

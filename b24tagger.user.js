@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.23
+// @version      0.21.24
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.23';
+  const VERSION = '0.21.24';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2375,11 +2375,33 @@
       #b24t-btn-check-update { color: var(--b24t-text-faint) !important; border-color: var(--b24t-border) !important; }
       #b24t-session-timer-sub { color: var(--b24t-text-faint) !important; }
 
+      /* ── FLEX CONTRACT (panel vertical layout) ───────────────────────────
+         #b24t-panel          flex col, explicit height (set by resize JS)
+           └─ #b24t-panel-inner  flex: 1 1 auto  ← fills panel
+                ├─ #b24t-topbar      flex: 0 0 auto  (fixed)
+                ├─ #b24t-meta-bar    flex: 0 0 auto  (fixed)
+                ├─ #b24t-tabs        flex: 0 0 auto  (fixed)
+                ├─ #b24t-body        flex: 1 1 auto  ← ONLY stretchy child of inner
+                │    └─ #b24t-main-tab   flex: 1 1 auto  ← fills body
+                │         ├─ .b24t-section  flex: 0 0 auto  (Projekt, Plik, Postęp, Stats…)
+                │         └─ #b24t-log-section  flex: 1 1 auto  ← ONLY stretchy section
+                │              ├─ .b24t-section-label  flex: 0 0 auto
+                │              └─ #b24t-log  flex: 1, overflow-y: auto  ← scrolls here
+                └─ #b24t-actions     flex: 0 0 auto  (footer, always pinned bottom)
+         RULE: exactly ONE element with flex-grow > 0 per flex column level.
+         RULE: no height: fixed values on #b24t-log or #b24t-log-section.
+         RULE: no position:absolute hacks on footer.
+      ── */
       /* ── BODY ── */
-      #b24t-body { overflow-y: auto; flex: 1; min-height: 0; background: var(--b24t-panel-grad); transition: background 0.3s; }
+      #b24t-body { display: flex; flex-direction: column; overflow: hidden; flex: 1; min-height: 0; background: var(--b24t-panel-grad); transition: background 0.3s; }
       #b24t-body::-webkit-scrollbar { width: 3px; }
       #b24t-body::-webkit-scrollbar-track { background: transparent; }
       #b24t-body::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
+      /* main-tab fills body; other tabs are display:none so don't participate in flex */
+      #b24t-main-tab { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+      /* LOG section — the ONLY flex-grow element inside main-tab */
+      #b24t-log-section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; border-bottom: none; }
+      #b24t-log-section .b24t-section-label { flex: 0 0 auto; }
 
       /* ── SECTIONS ── */
       .b24t-section {
@@ -2509,7 +2531,7 @@
 
       /* ── LOG ── */
       #b24t-log {
-        height: 120px; overflow-y: auto;
+        flex: 1; min-height: 80px; overflow-y: auto;
         font-size: 12px; line-height: 1.6;
         background: var(--b24t-bg-section-c);
         transition: background 0.3s;
@@ -3171,7 +3193,7 @@
         </div>
 
         <!-- LOG -->
-        <div class="b24t-section">
+        <div class="b24t-section" id="b24t-log-section">
           <div class="b24t-section-label">
             Log
             <button class="b24t-log-clear" id="b24t-log-clear">wyczyść</button>

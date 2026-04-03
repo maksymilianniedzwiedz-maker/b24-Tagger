@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.7
+// @version      0.21.8
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.7';
+  const VERSION = '0.21.8';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -141,7 +141,8 @@
     MONTH_CLOSE_DONE: 'b24tagger_month_close_done',
   };
   const MAX_BATCH_SIZE = 50;
-  let MAP_FETCH_CONCURRENCY = 3; // domyślna równoległość pobierania stron w buildUrlMap
+  let MAP_FETCH_CONCURRENCY = 5; // równoległość pobierania stron w buildUrlMap (fallback: 3)
+  const STATS_FETCH_CONCURRENCY = 10; // równoległość pobierania projektów w _fetchOverallStats
   const HEALTH_CHECK_INTERVAL = 30000;
   const ACTION_TIMEOUT_WARN = 10000;
   const RETRY_DELAYS = [2000, 4000, 8000, 12000, 20000]; // 5 prób — Brand24 API czasem losowo failuje
@@ -1885,6 +1886,47 @@
       clearCheckpoint: () => { clearCheckpoint(); addLog('🗑 Checkpoint wyczyszczony.', 'info'); },
       getToken: () => state.tokenHeaders,
       checkForUpdate: (manual) => checkForUpdate(manual),
+      stressTestBulk: async function(tagId, dateFrom, dateTo) {
+        if (!tagId) { addLog('[STRESS/BULK] Użycie: stressTestBulk(tagId, dateFrom?, dateTo?)', 'warn'); return; }
+        const dFrom = dateFrom || getAnnotatorDates().dateFrom;
+        const dTo   = dateTo   || getAnnotatorDates().dateTo;
+        const batchSizes = [50, 100, 200];
+        const results = [];
+        addLog(`[STRESS/BULK] Zbieram ID z projektu ${state.projectId} (${dFrom}→${dTo})...`, 'info');
+        state.status = 'running';
+        const map = await buildUrlMap(dFrom, dTo, false);
+        state.status = 'idle';
+        const allIds = Object.values(map).map(function(v) { return String(v.id); });
+        if (allIds.length < 50) { addLog('[STRESS/BULK] Za mało wzmianek (<50) — przerwano', 'warn'); return; }
+        addLog(`[STRESS/BULK] Zebrano ${allIds.length} ID. Testuję batch sizes: ${batchSizes.join(', ')}`, 'info');
+        for (const bs of batchSizes) {
+          const testIds = allIds.slice(0, Math.min(bs, allIds.length));
+          addLog(`[STRESS/BULK] batch=${testIds.length} — tagowanie...`, 'info');
+          const tTag = Date.now();
+          try {
+            await bulkTagMentions(testIds, tagId);
+            const tagMs = Date.now() - tTag;
+            addLog(`[STRESS/BULK] batch=${testIds.length}: TAG OK ${tagMs}ms`, 'info');
+            await sleep(1000);
+            const tUntag = Date.now();
+            await bulkUntagMentions(testIds, tagId);
+            const untagMs = Date.now() - tUntag;
+            addLog(`[STRESS/BULK] batch=${testIds.length}: UNTAG OK ${untagMs}ms`, 'info');
+            results.push({ bs: testIds.length, tagMs, untagMs, ok: true });
+          } catch(e) {
+            addLog(`[STRESS/BULK] batch=${testIds.length}: FAIL — ${e.message}`, 'warn');
+            results.push({ bs: testIds.length, ok: false, error: e.message });
+            try { await bulkUntagMentions(testIds, tagId); } catch(_) {}
+          }
+          if (bs !== batchSizes[batchSizes.length - 1]) await sleep(2000);
+        }
+        addLog('[STRESS/BULK] ═══ WYNIKI ═══', 'info');
+        results.forEach(function(r) {
+          if (r.ok) addLog(`  batch=${r.bs}: tag=${r.tagMs}ms | untag=${r.untagMs}ms`, 'info');
+          else addLog(`  batch=${r.bs}: FAIL — ${r.error}`, 'warn');
+        });
+        return results;
+      },
       stressTestBuildUrlMap: async function(dateFrom, dateTo) {
         const levels = [1, 2, 3, 5];
         const results = [];
@@ -9908,48 +9950,41 @@ To jest NIEODWRACALNE.`)) return;
         return { pid: pid, name: _pnResolve(pid) || ('ID:' + pid), loading: true };
       }), dateFrom, dateTo, dates.label);
     }
-    for (var i = 0; i < group.projectIds.length; i++) {
-      var pid = group.projectIds[i];
-      var pData = projects[pid];
-      if (!pData) {
-        addLog('[DIAG] _fetchOverallStats: projekt ID:' + pid + ' nieznany w LS.PROJECTS', 'diag');
-        results.push({ pid: pid, name: 'ID:' + pid, error: 'projekt nieznany' });
-      } else {
+    // Pobieranie projektów batchami (STATS_FETCH_CONCURRENCY równocześnie)
+    for (var bi = 0; bi < group.projectIds.length; bi += STATS_FETCH_CONCURRENCY) {
+      var batchPids = group.projectIds.slice(bi, bi + STATS_FETCH_CONCURRENCY);
+      var batchResults = await Promise.all(batchPids.map(function(pid) {
+        var pData = projects[pid];
+        if (!pData) {
+          addLog('[DIAG] _fetchOverallStats: projekt ID:' + pid + ' nieznany w LS.PROJECTS', 'diag');
+          return Promise.resolve({ pid: pid, name: 'ID:' + pid, error: 'projekt nieznany' });
+        }
         var name = _pnResolve(pid);
-        var tagIds   = pData.tagIds || {};
-        // Szukamy reqVer i toDel w tagIds map
+        var tagIds = pData.tagIds || {};
         var reqVerId = null, toDelId = null;
         Object.entries(tagIds).forEach(function(e) {
           if (e[0] === 'REQUIRES_VERIFICATION') reqVerId = e[1];
           if (e[0] === 'TO_DELETE') toDelId = e[1];
         });
-        // Fallback do znanych ID
         if (!reqVerId) reqVerId = 1154586;
         if (!toDelId)  toDelId  = 1154757;
         var relTagId = group.relevantTagId || null;
-        try {
-          var queries = [
-            getMentions(pid, dateFrom, dateTo, [], 1),   // total — bez filtra tagu
-            relTagId ? getMentions(pid, dateFrom, dateTo, [relTagId], 1) : Promise.resolve({ count: null }),
-            getMentions(pid, dateFrom, dateTo, [reqVerId], 1),
-            getMentions(pid, dateFrom, dateTo, [toDelId],  1),
-          ];
-          var counts = await Promise.all(queries);
-          results.push({
-            pid: pid, name: name,
-            total:    counts[0].count,
-            relevant: counts[1].count,
-            reqVer:   counts[2].count,
-            toDelete: counts[3].count,
-            dateFrom: dateFrom, dateTo: dateTo,
-          });
-        } catch(e) {
+        var queries = [
+          getMentions(pid, dateFrom, dateTo, [], 1),
+          relTagId ? getMentions(pid, dateFrom, dateTo, [relTagId], 1) : Promise.resolve({ count: null }),
+          getMentions(pid, dateFrom, dateTo, [reqVerId], 1),
+          getMentions(pid, dateFrom, dateTo, [toDelId], 1),
+        ];
+        return Promise.all(queries).then(function(counts) {
+          return { pid: pid, name: name, total: counts[0].count, relevant: counts[1].count, reqVer: counts[2].count, toDelete: counts[3].count, dateFrom: dateFrom, dateTo: dateTo };
+        }).catch(function(e) {
           addLog('✕ [DIAG] getMentions(' + pid + '): ' + e.message, 'diag');
-          results.push({ pid: pid, name: name, error: e.message });
-        }
-      }
+          return { pid: pid, name: name, error: e.message };
+        });
+      }));
+      results.push.apply(results, batchResults);
       if (onProgress) {
-        onProgress(results.concat(group.projectIds.slice(i + 1).map(function(p) {
+        onProgress(results.concat(group.projectIds.slice(bi + STATS_FETCH_CONCURRENCY).map(function(p) {
           return { pid: p, name: _pnResolve(p) || ('ID:' + p), loading: true };
         })), dateFrom, dateTo, dates.label);
       }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.4
+// @version      0.21.5
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.4';
+  const VERSION = '0.21.5';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3245,6 +3245,22 @@
       panel.classList.remove('dragging');
       lsSet(LS.UI_POS, { left: panel.style.left, top: panel.style.top });
     });
+
+    // Clampuj pozycję panelu przy zmianie rozmiaru okna
+    window.addEventListener('resize', () => {
+      if (!panel.style.left && !panel.style.top) return;
+      var l = parseInt(panel.style.left) || 0;
+      var tp = parseInt(panel.style.top)  || 0;
+      var nl = Math.max(0, Math.min(window.innerWidth  - (panel.offsetWidth  || 300), l));
+      var nt = Math.max(0, Math.min(window.innerHeight - 60, tp));
+      if (nl !== l || nt !== tp) {
+        panel.style.left   = nl + 'px';
+        panel.style.top    = nt + 'px';
+        panel.style.right  = 'auto';
+        panel.style.bottom = 'auto';
+        lsSet(LS.UI_POS, { left: panel.style.left, top: panel.style.top });
+      }
+    });
   }
 
   function setupCollapse(panel) {
@@ -5794,7 +5810,8 @@ function showOnboarding(onComplete) {
     // 3. GM fetch /searches/add-new-mention/?sid=ID — Django page that always has tknB24 hidden input
     var sid = state.projectId || '';
     if (!sid) { cb(null, '\u26a0 Brak ID projektu. Przejd\u017a na stron\u0119 projektu Brand24.'); return; }
-    var fetchUrl = 'https://app.brand24.com/searches/add-new-mention/?sid=' + sid;
+    var _b24base = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
+    var fetchUrl = _b24base + '/searches/add-new-mention/?sid=' + sid;
     GM_xmlhttpRequest({
       method: 'GET',
       url: fetchUrl,
@@ -6169,13 +6186,9 @@ function showOnboarding(onComplete) {
           '</select>',
         '</div>',
       '</div>',
-      '<div id="b24t-news-tag-row" style="padding:7px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;display:flex;align-items:center;gap:8px;">',
-        '<span style="color:' + t.textMuted + ';font-size:10px;">Tag:</span>',
-        '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;">',
-          '<input type="checkbox" id="b24t-news-tag-dodane" checked style="cursor:pointer;accent-color:#6366f1;">',
-          '<span style="font-size:11px;font-weight:600;color:' + t.text + ';">dodane</span>',
-          '<span id="b24t-news-tag-dodane-status" style="font-size:9px;color:' + t.textFaint + ';">(sprawdzanie...)</span>',
-        '</label>',
+      '<div id="b24t-news-tag-row" style="padding:7px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;">' +
+        '<div style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;margin-bottom:6px;">TAGI</div>' +
+        '<div id="b24t-news-tag-list" style="display:flex;flex-wrap:wrap;gap:5px;"></div>' +
       '</div>',
       '<button id="b24t-news-submit-btn" style="padding:9px;border-radius:9px;border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:12px;font-weight:700;cursor:pointer;width:100%;letter-spacing:0.03em;transition:opacity 0.15s;">✚ Dodaj wzmiankę do Brand24</button>',
       '<div id="b24t-news-submit-status" style="font-size:10px;text-align:center;min-height:14px;font-weight:500;"></div>',
@@ -6190,7 +6203,28 @@ function showOnboarding(onComplete) {
       _newsStackPanels();
     });
 
-    _newsCheckTagDodane();
+    // Wypełnij listę tagów — dodane domyślnie zaznaczone, reszta odznaczona
+    (function() {
+      var tagList = document.getElementById('b24t-news-tag-list');
+      if (!tagList || !state.tags) return;
+      var tags = Object.entries(state.tags).sort(function(a, b) {
+        var aD = a[0].toLowerCase().indexOf('dodane') !== -1;
+        var bD = b[0].toLowerCase().indexOf('dodane') !== -1;
+        if (aD !== bD) return aD ? -1 : 1;
+        return a[0].localeCompare(b[0]);
+      });
+      var t2 = _newsTheme();
+      tagList.innerHTML = tags.map(function(entry) {
+        var name = entry[0], tid = entry[1];
+        var isDodane = name.toLowerCase().indexOf('dodane') !== -1;
+        return '<label style="display:flex;align-items:center;gap:3px;cursor:pointer;padding:3px 7px;border-radius:6px;background:' + (isDodane ? 'rgba(99,102,241,0.15)' : t2.bgInput) + ';border:1px solid ' + (isDodane ? 'rgba(99,102,241,0.35)' : t2.borderSub) + ';">' +
+          '<input type="checkbox" data-tag-id="' + tid + '"' + (isDodane ? ' id="b24t-news-tag-dodane" checked' : '') + ' style="cursor:pointer;accent-color:#6366f1;width:11px;height:11px;">' +
+          '<span style="font-size:10px;font-weight:' + (isDodane ? '700' : '500') + ';color:' + t2.text + ';">' + name + '</span>' +
+          (isDodane ? '<span id="b24t-news-tag-dodane-status" style="font-size:9px;color:' + t2.textFaint + ';">(sprawdzanie...)</span>' : '') +
+        '</label>';
+      }).join('');
+      _newsCheckTagDodane();
+    })();
   }
 
   // Keep Import panel flush below Lista panel (left column)
@@ -6857,7 +6891,6 @@ function showOnboarding(onComplete) {
         var fMinute  = (document.getElementById('b24t-news-f-minute')   || {}).value || '00';
         var fSent    = (document.getElementById('b24t-news-f-sentiment')|| {}).value || '0';
         var fCountry = (document.getElementById('b24t-news-f-country')  || {}).value || '';
-        var useDodane= document.getElementById('b24t-news-tag-dodane');
         var formErr  = document.getElementById('b24t-news-form-err');
         var subStatus= document.getElementById('b24t-news-submit-status');
 
@@ -6890,12 +6923,12 @@ function showOnboarding(onComplete) {
             return;
           }
 
-        // Find "dodane" tag ID
-        var dodaneTagId = null;
-        if (useDodane && useDodane.checked && !useDodane.disabled && state.tags) {
-          var dodaneKey = Object.keys(state.tags).find(function(k) { return k.toLowerCase().indexOf('dodane') !== -1; });
-          if (dodaneKey) dodaneTagId = state.tags[dodaneKey];
-        }
+        // Zbierz zaznaczone tagi z listy
+        var selectedTagIds = [];
+        document.querySelectorAll('#b24t-news-tag-list input[type="checkbox"]:checked:not([disabled])').forEach(function(cb) {
+          var tid = parseInt(cb.dataset.tagId);
+          if (tid) selectedTagIds.push(tid);
+        });
 
         var bodyParts = [
           'tknB24=' + encodeURIComponent(tkn),
@@ -6911,7 +6944,7 @@ function showOnboarding(onComplete) {
           'mention_created_date_hour=' + encodeURIComponent(fHour),
           'mention_created_date_minute=' + encodeURIComponent(fMinute),
         ];
-        if (dodaneTagId) bodyParts.push('tag[]=' + encodeURIComponent(dodaneTagId));
+        selectedTagIds.forEach(function(tid) { bodyParts.push('tag[]=' + encodeURIComponent(tid)); });
         var body = bodyParts.join('&');
 
         submitBtn.disabled = true;
@@ -6920,7 +6953,7 @@ function showOnboarding(onComplete) {
 
         GM_xmlhttpRequest({
           method: 'POST',
-          url: 'https://app.brand24.com/searches/add-new-mention/?sid=' + sid,
+          url: (window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com') + '/searches/add-new-mention/?sid=' + sid,
           headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
           data: body,
           onload: function(resp) {

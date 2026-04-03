@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.18
+// @version      0.21.19
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.18';
+  const VERSION = '0.21.19';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2200,12 +2200,16 @@
         box-shadow: var(--b24t-shadow);
         user-select: none;
         overflow: hidden;
+        display: flex;
+        flex-direction: column;
         transition: box-shadow 0.25s ease, background 0.3s ease, border-color 0.3s ease, color 0.3s ease;
         /* animation removed — was causing glitch on Plik tab */
       }
       #b24t-panel:hover { box-shadow: var(--b24t-shadow-h); }
       #b24t-panel-inner {
-        width: 440px; /* musi być zgodne z BASE_PANEL_W w JS */
+        width: 440px; /* musi być zgodne z BASE_PANEL_W w JS; nadpisywane przez JS gdy panel >= 440px */
+        flex: 1;
+        min-height: 0;
         display: flex;
         flex-direction: column;
         transform-origin: top left;
@@ -3237,8 +3241,15 @@
     if (!inner || !panel) return;
     var w = panel.offsetWidth;
     if (!w) return;
-    var scale = Math.max(0.5, Math.min(1.0, w / BASE_PANEL_W));
-    inner.style.zoom = scale;
+    if (w >= BASE_PANEL_W) {
+      // Panel normalny lub szerszy — brak zoomu, inner wypełnia całość
+      inner.style.zoom = 1;
+      inner.style.width = '100%';
+    } else {
+      // Panel węższy niż bazowy — skaluj proporcjonalnie
+      inner.style.zoom = Math.max(0.5, w / BASE_PANEL_W);
+      inner.style.width = BASE_PANEL_W + 'px';
+    }
   }
 
   // Dodaje/usuwa klasę b24t-compact na panelu w zależności od jego szerokości

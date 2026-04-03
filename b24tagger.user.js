@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.20
+// @version      0.21.21
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.20';
+  const VERSION = '0.21.21';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3239,13 +3239,28 @@
     var inner = document.getElementById('b24t-panel-inner');
     if (!inner || !panel) return;
     var w = panel.offsetWidth;
-    var h = panel.offsetHeight;
     if (!w) return;
-    var scale = (w >= BASE_PANEL_W) ? 1 : Math.max(0.5, w / BASE_PANEL_W);
-    inner.style.zoom = scale;
-    inner.style.width = (scale < 1) ? BASE_PANEL_W + 'px' : '100%';
+
+    var newScale = (w >= BASE_PANEL_W) ? 1 : Math.max(0.5, w / BASE_PANEL_W);
+    var lastScale = parseFloat(panel.dataset.zoomScale || 1);
+
+    // Gdy skala się zmienia — proporcjonalnie dostosuj wysokość panelu
+    // Eliminuje pustą przestrzeń na dole przy zawężaniu panelu
+    if (Math.abs(newScale - lastScale) > 0.001) {
+      var h = panel.offsetHeight;
+      if (h > 0) {
+        var newH = Math.max(200, Math.round(h * newScale / lastScale));
+        panel.style.height = newH + 'px';
+        panel.style.maxHeight = newH + 'px';
+      }
+      panel.dataset.zoomScale = newScale;
+    }
+
+    var panelH = panel.offsetHeight;
+    inner.style.zoom = newScale;
+    inner.style.width = (newScale < 1) ? BASE_PANEL_W + 'px' : '100%';
     // min-height kompensuje zoom: po przeskalowaniu inner wizualnie wypełnia cały panel
-    inner.style.minHeight = h ? Math.ceil(h / scale) + 'px' : '';
+    inner.style.minHeight = (newScale < 1 && panelH) ? Math.ceil(panelH / newScale) + 'px' : '';
   }
 
   // Dodaje/usuwa klasę b24t-compact na panelu w zależności od jego szerokości

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.1
+// @version      0.21.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.1';
+  const VERSION = '0.21.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -9816,7 +9816,6 @@ To jest NIEODWRACALNE.`)) return;
     var dates = getAnnotatorDates();
     var dateFrom = dates.dateFrom;
     var dateTo   = dates.dateTo;
-    addLog('→ [Overall] ' + group.name + ': pobieranie ' + group.projectIds.length + ' projektów (' + dateFrom + ' → ' + dateTo + ')...', 'info');
     var results = [];
     if (onProgress) {
       onProgress(group.projectIds.map(function(pid) {
@@ -9858,7 +9857,6 @@ To jest NIEODWRACALNE.`)) return;
             toDelete: counts[3].count,
             dateFrom: dateFrom, dateTo: dateTo,
           });
-          addLog('✓ [Overall] ' + name + ': ALL:' + counts[0].count + ' REQ:' + counts[2].count + ' DEL:' + counts[3].count, 'success');
         } catch(e) {
           addLog('✕ [DIAG] getMentions(' + pid + '): ' + e.message, 'diag');
           results.push({ pid: pid, name: name, error: e.message });
@@ -9912,6 +9910,16 @@ To jest NIEODWRACALNE.`)) return;
       ? '<div id="b24t-overall-data" style="padding:12px;"></div>'
       : '<div style="padding:24px 16px;text-align:center;"><div style="font-size:24px;margin-bottom:8px;">&#128070;</div><div style="font-size:12px;color:var(--b24t-text-faint);line-height:1.6;">Wybierz grupe projektow<br>aby zobaczyc statystyki.</div></div>';
     el.innerHTML = selectorHtml + bodyHtml;
+    if (selectedGroup) {
+      var _initDataEl = el.querySelector('#b24t-overall-data');
+      if (_initDataEl) {
+        var _cacheHot = _bgCacheFresh(bgCache.overallStats) && bgCache.overallStats.groupId === selectedGroup.id;
+        var _initResults = _cacheHot
+          ? bgCache.overallStats.results
+          : selectedGroup.projectIds.map(function(pid) { return { pid: pid, name: _pnResolve(pid) || ('ID:' + pid), loading: true }; });
+        renderOverallStatsData(_initDataEl, _initResults, selectedGroup, _cacheHot ? bgCache.overallStats : {});
+      }
+    }
     var selEl = el.querySelector('#b24t-overall-group-sel');
     selEl.addEventListener('change', function() {
       var gid = selEl.value;
@@ -9952,6 +9960,7 @@ To jest NIEODWRACALNE.`)) return;
       return;
     }
     _overallStatsInFlight = true;
+    addLog('📊 [Overall] Pobieranie: ' + group.name + ' (' + group.projectIds.length + ' proj.)', 'info');
     try {
       var fresh = await _fetchOverallStats(group, function(partial, dFrom, dTo, lbl) {
         if (dataEl.isConnected) renderOverallStatsData(dataEl, partial, group, { dateFrom: dFrom, dateTo: dTo, label: lbl, ts: Date.now() });

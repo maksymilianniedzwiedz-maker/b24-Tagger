@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.22
+// @version      0.21.23
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.22';
+  const VERSION = '0.21.23';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2211,7 +2211,7 @@
         display: flex;
         flex-direction: column;
         transform-origin: top left;
-        flex-shrink: 0; /* nie kurczy się przez flex rodzica — min-height liczy JS */
+        flex: 1 1 auto; /* rozciąga się do pełnej wysokości #b24t-panel po resize */
       }
       #b24t-panel.b24t-resizing { opacity: 0.97; box-shadow: var(--b24t-shadow-drag); transition: none !important; }
       #b24t-panel.b24t-resizing * { pointer-events: none !important; user-select: none !important; }
@@ -2376,7 +2376,7 @@
       #b24t-session-timer-sub { color: var(--b24t-text-faint) !important; }
 
       /* ── BODY ── */
-      #b24t-body { overflow-y: auto; flex: 1; min-height: 0; max-height: 72vh; background: var(--b24t-panel-grad); transition: background 0.3s; }
+      #b24t-body { overflow-y: auto; flex: 1; min-height: 0; background: var(--b24t-panel-grad); transition: background 0.3s; }
       #b24t-body::-webkit-scrollbar { width: 3px; }
       #b24t-body::-webkit-scrollbar-track { background: transparent; }
       #b24t-body::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }

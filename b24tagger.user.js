@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.24
+// @version      0.21.25
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.24';
+  const VERSION = '0.21.25';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2184,6 +2184,12 @@
         from { transform: rotate(0deg); } to { transform: rotate(360deg); }
       }
 
+      /* LAYOUT CONTRACT: Only #b24t-log has flex-grow inside the panel tree.
+         Do not add flex-grow to any other child of #b24t-panel-inner.
+         Do not set fixed heights (height/min-height) on #b24t-log or #b24t-log-section.
+         Panel overflow is hidden — #b24t-log scrolls internally via overflow-y: auto.
+         Resize JS sets height on #b24t-panel only — nothing else should have explicit height. */
+
       /* ── MAIN PANEL ── */
       #b24t-panel {
         position: fixed;
@@ -2212,6 +2218,7 @@
         flex-direction: column;
         transform-origin: top left;
         flex: 1 1 auto; /* rozciąga się do pełnej wysokości #b24t-panel po resize */
+        min-height: 0; /* required: allows flex shrink to work inside #b24t-panel overflow:hidden */
       }
       #b24t-panel.b24t-resizing { opacity: 0.97; box-shadow: var(--b24t-shadow-drag); transition: none !important; }
       #b24t-panel.b24t-resizing * { pointer-events: none !important; user-select: none !important; }
@@ -2252,6 +2259,7 @@
 
       /* ── TOPBAR ── */
       #b24t-topbar {
+        flex: 0 0 auto;
         display: flex;
         align-items: center;
         padding: 11px 14px;
@@ -2346,6 +2354,7 @@
 
       /* ── TOKEN STATUS BAR ── */
       #b24t-meta-bar {
+        flex: 0 0 auto;
         display: flex; align-items: center; justify-content: space-between;
         padding: 5px 14px;
         background: var(--b24t-bg-deep);
@@ -2360,6 +2369,7 @@
 
       /* ── SUBBAR ── */
       #b24t-subbar {
+        flex: 0 0 auto;
         background: var(--b24t-bg-deep) !important;
         border-bottom: 1px solid var(--b24t-border-sub) !important;
         transition: background 0.3s, border-color 0.3s;
@@ -2393,7 +2403,7 @@
          RULE: no position:absolute hacks on footer.
       ── */
       /* ── BODY ── */
-      #b24t-body { display: flex; flex-direction: column; overflow: hidden; flex: 1; min-height: 0; background: var(--b24t-panel-grad); transition: background 0.3s; }
+      #b24t-body { display: flex; flex-direction: column; overflow: hidden; flex: 1 1 auto; min-height: 0; background: var(--b24t-panel-grad); transition: background 0.3s; }
       #b24t-body::-webkit-scrollbar { width: 3px; }
       #b24t-body::-webkit-scrollbar-track { background: transparent; }
       #b24t-body::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
@@ -2531,7 +2541,7 @@
 
       /* ── LOG ── */
       #b24t-log {
-        flex: 1; min-height: 80px; overflow-y: auto;
+        flex: 1 1 auto; min-height: 0; overflow-y: auto;
         font-size: 12px; line-height: 1.6;
         background: var(--b24t-bg-section-c);
         transition: background 0.3s;
@@ -2556,10 +2566,10 @@
 
       /* ── ACTION BAR ── */
       #b24t-actions {
+        flex: 0 0 auto;
         display: flex; gap: 6px; padding: 10px 14px;
         background: var(--b24t-section-grad-c);
         border-top: 2px solid var(--b24t-border);
-        flex-shrink: 0;
         transition: background 0.3s, border-color 0.3s;
       }
       .b24t-btn-primary {
@@ -2616,6 +2626,7 @@
 
       /* ── TABS — liquid glass pill style ── */
       #b24t-tabs {
+        flex: 0 0 auto;
         display: flex;
         align-items: center;
         gap: 5px;

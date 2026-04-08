@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.25
+// @version      0.21.26
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.25';
+  const VERSION = '0.21.26';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -143,7 +143,7 @@
     DEL_BATCH_WARNED: 'b24tagger_del_batch_warned',
   };
   const MAX_BATCH_SIZE = 500;
-  const DEL_BATCH_DEFAULT = 10; // domyślny batch równoległych deletów (edytowalny w UI)
+  const DEL_BATCH_DEFAULT = 25; // domyślny batch równoległych deletów (edytowalny w UI)
   const BASE_PANEL_W = 440; // bazowa szerokość głównego panelu — punkt odniesienia dla zoomu
   let MAP_FETCH_CONCURRENCY = 8; // równoległość pobierania stron w buildUrlMap (fallback: 3)
   const STATS_FETCH_CONCURRENCY = 10; // równoległość pobierania projektów w _fetchOverallStats
@@ -10927,13 +10927,13 @@ To jest NIEODWRACALNE.`)) return;
 
         setStatus(`Usuwam ${allIds.length} wzmianek...`);
         let deleted = 0;
-        const BATCH_QD = 5;
+        const BATCH_QD = _deleteBatch;
         for (let i = 0; i < allIds.length; i += BATCH_QD) {
           const chunk = allIds.slice(i, i + BATCH_QD);
           await Promise.all(chunk.map(id => deleteMention(id)));
           deleted += chunk.length;
           setProgress(deleted, allIds.length);
-          if (deleted % 25 === 0 || deleted === allIds.length) setStatus(`Usunięto ${deleted}/${allIds.length}...`);
+          if (deleted % BATCH_QD === 0 || deleted === allIds.length) setStatus(`Usunięto ${deleted}/${allIds.length}...`);
         }
 
         setStatus(`✓ Usunięto ${deleted} wzmianek`, 'success');

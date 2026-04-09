@@ -1,0 +1,1468 @@
+[
+  {
+    "version": "0.21.27",
+    "date": "2026-04-09",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Delete current view: batch deletowania używa teraz _deleteBatch zamiast hardcoded 5 — spójne z pozostałymi funkcjami delete"
+      }
+    ]
+  },
+  {
+    "version": "0.21.26",
+    "date": "2026-04-08",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Quick Delete: batch deletowania używa teraz _deleteBatch zamiast hardcoded 5 — ustawienie w UI działa poprawnie"
+      },
+      {
+        "type": "perf",
+        "text": "DEL_BATCH_DEFAULT: 10→25 — szybsze domyślne usuwanie w Quick Delete"
+      }
+    ]
+  },
+  {
+    "version": "0.21.16",
+    "date": "2026-04-03",
+    "changes": [
+      {
+        "type": "perf",
+        "text": "buildUrlMap: sliding window pool zamiast batch-wait — brak czekania na najwolniejszy request w batchu"
+      },
+      {
+        "type": "perf",
+        "text": "MAP_FETCH_CONCURRENCY default: 5→8 (spójne z FETCH_CONCURRENCY=10 w fetchAllIds)"
+      }
+    ]
+  },
+  {
+    "version": "0.21.15",
+    "date": "2026-04-03",
+    "changes": [
+      {
+        "type": "feat",
+        "text": "Quick Delete: pole batch size z modalem ostrzeżenia (domyślnie 10, max 1000, jednorazowe potwierdzenie)"
+      },
+      {
+        "type": "perf",
+        "text": "Delete batch default: 10 (DEL_BATCH_DEFAULT), deleteMentionsByTag i runDeleteByTag używają _deleteBatch"
+      }
+    ]
+  },
+  {
+    "version": "0.21.14",
+    "date": "2026-04-03",
+    "changes": [
+      {
+        "type": "perf",
+        "text": "BG prefetch tagstats i allProjects: równoległe fetche (BG_CONCURRENCY=5) zamiast sekwencyjnych"
+      },
+      {
+        "type": "perf",
+        "text": "Quick Tag / Quick Untag: QT_CONCURRENCY=2 — 2 batche jednocześnie"
+      },
+      {
+        "type": "perf",
+        "text": "runTagging tag batches: TAG_CONCURRENCY=2 — 2 bulkTag jednocześnie per tagId"
+      },
+      {
+        "type": "perf",
+        "text": "runDeleteByTag: BATCH 5→8 — 60% więcej równoległych deletów"
+      }
+    ]
+  },
+  {
+    "version": "0.21.13",
+    "date": "2026-04-03",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Topbar: logo shrinkuje zamiast wypychać przyciski poza panel (flex-shrink:1, text-overflow:ellipsis)"
+      },
+      {
+        "type": "fix",
+        "text": "Topbar-right (collapse, hide, help) zawsze widoczne — flex-shrink:0"
+      },
+      {
+        "type": "fix",
+        "text": "Annotator tabs: overflow-x:hidden + max-width:100% na zawartości — przycisk Odśwież nie wychodzi poza panel"
+      }
+    ]
+  },
+  {
+    "version": "0.21.12",
+    "date": "2026-04-03",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Responsywny UI na wszystkich panelach: annotator panel, news panels (p1/p2) — compact mode + overflow guard"
+      },
+      {
+        "type": "fix",
+        "text": "Annotator panel: screen profile detection, minW 300px, viewport-aware maxW"
+      },
+      {
+        "type": "fix",
+        "text": "News panels: PANEL_W viewport-aware (min 280, max 360, 30% viewport)"
+      }
+    ]
+  },
+  {
+    "version": "0.21.11",
+    "date": "2026-04-03",
+    "changes": [
+      {
+        "type": "feat",
+        "text": "Responsywny UI: panel dostosowuje zawartość do swojej szerokości (klasa b24t-compact < 400px)"
+      },
+      {
+        "type": "feat",
+        "text": "Wykrywanie małego ekranu (viewport < 1366×800): startowy rozmiar panelu dopasowany do laptopa"
+      },
+      {
+        "type": "fix",
+        "text": "Overflow guard: elementy flex/grid nie wylewają się poza panel przy zmianach rozmiaru"
+      },
+      {
+        "type": "fix",
+        "text": "minW zmniejszone do 300px, maxW capped do 85% viewport width"
+      }
+    ]
+  },
+  {
+    "version": "0.21.7",
+    "date": "2026-04-03",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "stressTestBuildUrlMap: opcjonalne parametry dateFrom/dateTo"
+      }
+    ]
+  },
+  {
+    "version": "0.21.6",
+    "date": "2026-04-03",
+    "changes": [
+      {
+        "type": "perf",
+        "text": "buildUrlMap: równoległe pobieranie stron (MAP_FETCH_CONCURRENCY=3) — 3.3× szybciej na dużych projektach"
+      },
+      {
+        "type": "feature",
+        "text": "Debug bridge: stressTestBuildUrlMap() — automatyczny stress test concurrency 1→2→3→5 z raportem"
+      }
+    ]
+  },
+  {
+    "version": "0.21.5",
+    "date": "2026-04-03",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "News PL: naprawa domeny przy pobieraniu tokenu i submitowaniu (panel.brand24.pl)"
+      },
+      {
+        "type": "feature",
+        "text": "News: wybór tagów z listy przy dodawaniu wzmianki (selectedTagIds)"
+      },
+      {
+        "type": "fix",
+        "text": "UI: panel nie znika przy zmianie rozmiaru okna przeglądarki (resize clamp)"
+      }
+    ]
+  },
+  {
+    "version": "0.21.4",
+    "date": "2026-04-03",
+    "changes": [
+      {
+        "type": "feature",
+        "text": "Overall Stats: tryb domykania miesiąca — auto-complete projektów, baner statusu, przycisk 'Zamknij miesiąc'"
+      }
+    ]
+  },
+  {
+    "version": "0.21.3",
+    "date": "2026-04-03",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Overall Stats: naprawa aktualizacji panelu po szybkim wejściu w zakładkę (fresh querySelector)"
+      }
+    ]
+  },
+  {
+    "version": "0.21.2",
+    "date": "2026-04-03",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Overall Stats: natychmiastowy skeleton przy wejściu w zakładkę"
+      },
+      {
+        "type": "fix",
+        "text": "Overall Stats: wyciszenie logów per-projekt"
+      }
+    ]
+  },
+  {
+    "version": "0.21.1",
+    "date": "2026-04-03",
+    "changes": [
+      {
+        "type": "feature",
+        "text": "Overall Stats: nowy kafelek 'Pozostało' (total - relevantne - toDelete) w układzie 3+2"
+      },
+      {
+        "type": "feature",
+        "text": "Overall Stats: pasek postępu ukończenia z % i licznikiem otagowanych"
+      },
+      {
+        "type": "feature",
+        "text": "Overall Stats: streaming danych — projekty ładują się kolejno z wskaźnikiem ładowania per wiersz"
+      }
+    ]
+  },
+  {
+    "version": "0.19.2",
+    "date": "2026-03-30",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "MAX_BATCH_SIZE 100→50 — Brand24 rate limit przy rapid bulk"
+      },
+      {
+        "type": "fix",
+        "text": "sleep między bulk requestami 200→1500ms (tag i untag)"
+      }
+    ]
+  },
+  {
+    "version": "0.19.1",
+    "date": "2026-03-30",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "MAX_BATCH_SIZE 500→100 — Brand24 ISE przy >100 IDs/request"
+      }
+    ]
+  },
+  {
+    "version": "0.19.0",
+    "date": "2026-03-30",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Assessment column picker — ✕ zmień kolumnę z labelkami"
+      },
+      {
+        "type": "new",
+        "text": "Picker pokazuje uniq. wartości każdej kolumny jako podpowiedź"
+      },
+      {
+        "type": "new",
+        "text": "Zmiana kolumny re-renderuje mapowanie i odświeża walidację"
+      }
+    ]
+  },
+  {
+    "version": "0.17.4",
+    "date": "2026-03-28",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "News: komunikat duplikatu wskazuje na feedback Brand24"
+      }
+    ]
+  },
+  {
+    "version": "0.17.3",
+    "date": "2026-03-28",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "News: GM fetch z trailing slash i redirect:follow"
+      },
+      {
+        "type": "fix",
+        "text": "News: uproszczona logika fetchowania i wykrywania daty"
+      }
+    ]
+  },
+  {
+    "version": "0.17.2",
+    "date": "2026-03-28",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "News: prefill daty natychmiast przy aktywacji URL"
+      },
+      {
+        "type": "fix",
+        "text": "News: wykrywanie daty niezalezne od blokad GM fetch"
+      }
+    ]
+  },
+  {
+    "version": "0.17.1",
+    "date": "2026-03-28",
+    "changes": [
+      {
+        "type": "new",
+        "text": "News: data prefill rok+miesiac z biezacej daty"
+      },
+      {
+        "type": "new",
+        "text": "News: auto-wykrywanie daty artykulu przez GM fetch (meta/JSON-LD/time)"
+      }
+    ]
+  },
+  {
+    "version": "0.17.0",
+    "date": "2026-03-28",
+    "changes": [
+      {
+        "type": "new",
+        "text": "News: przycisk Wyczysc czysci tytul i tresc w P3"
+      },
+      {
+        "type": "fix",
+        "text": "News: auto-clear tytul/tresc po sukcesie i duplikacie"
+      },
+      {
+        "type": "fix",
+        "text": "News: kolejne URL otwieraja sie w tym samym oknie"
+      }
+    ]
+  },
+  {
+    "version": "0.16.11",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#22c55e",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "News side tab: nie otwiera Annotators Tab"
+      },
+      {
+        "type": "fix",
+        "text": "News side tab: znika gdy News otwarte, wraca po zamknieciu"
+      },
+      {
+        "type": "fix",
+        "text": "News panele: pozycjonowanie niezalezne od Annotators Panel"
+      }
+    ]
+  },
+  {
+    "version": "0.16.10",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#22c55e",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "News: panele niezalezne — zamkniecie Annotators nie zamyka News"
+      },
+      {
+        "type": "fix",
+        "text": "Annotators Tab: usuniety przycisk News (jest osobny side tab)"
+      }
+    ]
+  },
+  {
+    "version": "0.16.9",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#22c55e",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Side tab: konflikt ID z zakladka Plik naprawiony"
+      }
+    ]
+  },
+  {
+    "version": "0.16.8",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#22c55e",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Side tab B24 Tagger: panel wraca po kliknieciu"
+      },
+      {
+        "type": "fix",
+        "text": "Plik tab: usunieta animacja powodujaca glitch"
+      },
+      {
+        "type": "fix",
+        "text": "News: panele niezalezne od Annotators Tab"
+      }
+    ]
+  },
+  {
+    "version": "0.16.7",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#22c55e",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Side tabs: poprawiona logika widocznosci przy starcie"
+      }
+    ]
+  },
+  {
+    "version": "0.16.6",
+    "date": "2026-03-28",
+    "label": "New",
+    "labelColor": "#6c6cff",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Glowny panel: przycisk schowaj do boku (pulsujacy)"
+      },
+      {
+        "type": "new",
+        "text": "News: osobny przycisk boczny pod Annotators Tab"
+      }
+    ]
+  },
+  {
+    "version": "0.16.5",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#22c55e",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "News: token CSRF pobierany z add-new-mention (pewne zrodlo)"
+      }
+    ]
+  },
+  {
+    "version": "0.16.4",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#22c55e",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "News: token CSRF przechwytywany przy starcie strony (MutationObserver)"
+      }
+    ]
+  },
+  {
+    "version": "0.16.3",
+    "date": "2026-03-28",
+    "label": "New",
+    "labelColor": "#6c6cff",
+    "changes": [
+      {
+        "type": "new",
+        "text": "News: URL otwiera sie w nowym oknie (nie karcie)"
+      },
+      {
+        "type": "new",
+        "text": "News: wybor rozmiaru okna w naglowku P1 (4 opcje)"
+      }
+    ]
+  },
+  {
+    "version": "0.16.2",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#22c55e",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "News: token CSRF pobierany z DOM, cookie lub GM fetch"
+      }
+    ]
+  },
+  {
+    "version": "0.16.0",
+    "date": "2026-03-28",
+    "label": "Refactor",
+    "labelColor": "#fb923c",
+    "changes": [
+      {
+        "type": "perf",
+        "text": "Changelog przeniesiony do zewnętrznego JSON — mniejszy skrypt"
+      },
+      {
+        "type": "fix",
+        "text": "Auto-Delete: checkbox 'Zawsze włączaj' teraz zapisuje preferencję"
+      },
+      {
+        "type": "fix",
+        "text": "Usunięte martwe funkcje i ciche błędy w tle"
+      }
+    ]
+  },
+  {
+    "version": "0.15.6",
+    "date": "2026-03-28",
+    "label": "UI",
+    "labelColor": "#8080aa",
+    "changes": [
+      {
+        "type": "ui",
+        "text": "Feedback: osobne karty Bug Report i Suggestion"
+      }
+    ]
+  },
+  {
+    "version": "0.15.5",
+    "date": "2026-03-28",
+    "label": "New",
+    "labelColor": "#6c6cff",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Feedback otwiera formularz Google Forms z prefill"
+      }
+    ]
+  },
+  {
+    "version": "0.15.4",
+    "date": "2026-03-28",
+    "label": "New",
+    "labelColor": "#6c6cff",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Bug Report otwiera formularz Google Forms z prefill"
+      }
+    ]
+  },
+  {
+    "version": "0.15.3",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Przywrócono działanie Feedback i Bug Report"
+      },
+      {
+        "type": "new",
+        "text": "Deploy trafia też do prywatnego repo i24dev"
+      }
+    ]
+  },
+  {
+    "version": "0.15.2",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "News: poprawione wykrywanie kraju w URL"
+      },
+      {
+        "type": "new",
+        "text": "News: przycisk ✕ usuwa URL z listy fizycznie"
+      },
+      {
+        "type": "new",
+        "text": "News: legenda kolorów jako floating panel"
+      },
+      {
+        "type": "fix",
+        "text": "News: 'Następny' pomija irrelevantne i złe kraje"
+      }
+    ]
+  },
+  {
+    "version": "0.15.1",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "News: spójny komunikat o tagu 'dodane'"
+      },
+      {
+        "type": "fix",
+        "text": "News: nowy layout paneli, Import przyklejony pod Listą"
+      }
+    ]
+  },
+  {
+    "version": "0.15.0",
+    "date": "2026-03-28",
+    "label": "New",
+    "labelColor": "#22c55e",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Zwijanie panelu naprawione"
+      },
+      {
+        "type": "fix",
+        "text": "Annotators Tab: Overall — naprawiony layout"
+      },
+      {
+        "type": "new",
+        "text": "Moduł News w Annotators Tab — 3 draggable panele"
+      },
+      {
+        "type": "new",
+        "text": "News: auto-detekcja daty publikacji artykułu"
+      },
+      {
+        "type": "new",
+        "text": "News: tag 'dodane' z weryfikacją dostępności w projekcie"
+      }
+    ]
+  },
+  {
+    "version": "0.14.0",
+    "date": "2026-03-28",
+    "label": "Perf",
+    "labelColor": "#facc15",
+    "changes": [
+      {
+        "type": "perf",
+        "text": "Usuwanie ~5x szybsze — równoległe batche po 5"
+      },
+      {
+        "type": "fix",
+        "text": "Cross-delete: każdy projekt ma teraz przycisk Usuń"
+      }
+    ]
+  },
+  {
+    "version": "0.13.0",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Stopka panelu zawsze widoczna przy resize"
+      },
+      {
+        "type": "fix",
+        "text": "Annotators Tab: zakładki scrollują wewnątrz panelu"
+      },
+      {
+        "type": "fix",
+        "text": "Tagowanie bez dat: fallback na bieżący miesiąc"
+      },
+      {
+        "type": "new",
+        "text": "Walidacja pliku przy wczytaniu"
+      },
+      {
+        "type": "new",
+        "text": "Przycisk ✕ resetuje wczytany plik"
+      }
+    ]
+  },
+  {
+    "version": "0.12.0",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Zduplikowane wpisy 'Zakres' w logu usunięte"
+      },
+      {
+        "type": "fix",
+        "text": "Overall Stats: blokada podwójnych zapytań"
+      }
+    ]
+  },
+  {
+    "version": "0.11.0",
+    "date": "2026-03-28",
+    "label": "New",
+    "labelColor": "#6c6cff",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Rozbudowany log z cache hit/miss i postępem per projekt"
+      },
+      {
+        "type": "new",
+        "text": "Pełnoekranowy widok loga z filtrami i eksportem CSV"
+      },
+      {
+        "type": "new",
+        "text": "System diagnostyczny — wykrywanie anomalii [DIAG]"
+      }
+    ]
+  },
+  {
+    "version": "0.10.3",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Nazwy projektów: trwały resolver, nie pokazuje ID"
+      }
+    ]
+  },
+  {
+    "version": "0.10.2",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Daty w narzędziach annotatorskich: poprawny zakres i UTC"
+      },
+      {
+        "type": "fix",
+        "text": "Nazwy projektów w Grupach i cross-delete"
+      }
+    ]
+  },
+  {
+    "version": "0.10.1",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Overall Stats: brakujący kafelek, okres danych, nazwy projektów"
+      }
+    ]
+  },
+  {
+    "version": "0.10.0",
+    "date": "2026-03-28",
+    "label": "New",
+    "labelColor": "#6c6cff",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Annotators Tab: zakładki Grupy i Overall Stats"
+      },
+      {
+        "type": "new",
+        "text": "Grupy projektów: integracja z cross-delete"
+      }
+    ]
+  },
+  {
+    "version": "0.9.14",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Annotators Tab: Tagi i panel otwierają się z cache"
+      }
+    ]
+  },
+  {
+    "version": "0.9.13",
+    "date": "2026-03-28",
+    "label": "Perf",
+    "labelColor": "#facc15",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Background prefetch przy starcie wtyczki"
+      },
+      {
+        "type": "perf",
+        "text": "Cache odświeżany co 5 minut w tle"
+      }
+    ]
+  },
+  {
+    "version": "0.9.12",
+    "date": "2026-03-28",
+    "label": "New",
+    "labelColor": "#6c6cff",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Tryb pomocy: strefy dla Quick Tag, Delete i Historii"
+      }
+    ]
+  },
+  {
+    "version": "0.9.11",
+    "date": "2026-03-28",
+    "label": "UI",
+    "labelColor": "#8080aa",
+    "changes": [
+      {
+        "type": "ui",
+        "text": "Light mode: gradient Brand24 w headerze"
+      },
+      {
+        "type": "fix",
+        "text": "Tryb pomocy: fix scope, usunięty natywny tooltip"
+      }
+    ]
+  },
+  {
+    "version": "0.9.10",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Tryb pomocy: overlay i strefy widoczne nad panelem"
+      }
+    ]
+  },
+  {
+    "version": "0.9.9",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Przycisk ? działa — fix błędu zakresu JS"
+      }
+    ]
+  },
+  {
+    "version": "0.9.8",
+    "date": "2026-03-28",
+    "label": "UX",
+    "labelColor": "#60a5fa",
+    "changes": [
+      {
+        "type": "ui",
+        "text": "Annotators Tab: zakładki w stylu liquid glass"
+      },
+      {
+        "type": "fix",
+        "text": "Cross-delete: height:auto, spinner zamiast skeleton"
+      }
+    ]
+  },
+  {
+    "version": "0.9.7",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "VERSION w kodzie nie była aktualizowana przy deploy"
+      }
+    ]
+  },
+  {
+    "version": "0.9.6",
+    "date": "2026-03-28",
+    "label": "UI",
+    "labelColor": "#8080aa",
+    "changes": [
+      {
+        "type": "ui",
+        "text": "Modal What's New: ikona 🚀, hardkodowane kolory (fix light mode)"
+      },
+      {
+        "type": "ui",
+        "text": "Dev Patch Notes: badge'e kategorii + legenda"
+      }
+    ]
+  },
+  {
+    "version": "0.9.5",
+    "date": "2026-03-28",
+    "label": "Perf",
+    "labelColor": "#facc15",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Annotators Tab Tagi: 2 requesty zamiast setek"
+      },
+      {
+        "type": "ui",
+        "text": "Nazwa 'Narzędzia Annotatora' → 'Annotators Tab'"
+      }
+    ]
+  },
+  {
+    "version": "0.9.4",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Crash: features.includes — features jest obiektem, nie tablicą"
+      }
+    ]
+  },
+  {
+    "version": "0.9.3",
+    "date": "2026-03-28",
+    "label": "New",
+    "labelColor": "#6c6cff",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Cross-project delete — usuń tag ze wszystkich projektów"
+      }
+    ]
+  },
+  {
+    "version": "0.9.2",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "DEV patch notes uzupełnione, zasady wersjonowania udokumentowane"
+      }
+    ]
+  },
+  {
+    "version": "0.9.1",
+    "date": "2026-03-28",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Onboarding: panel wyśrodkowany, dodane kroki Bug Report i What's New"
+      }
+    ]
+  },
+  {
+    "version": "0.9.0",
+    "date": "2026-03-27",
+    "label": "Refactor",
+    "labelColor": "#fb923c",
+    "changes": [
+      {
+        "type": "perf",
+        "text": "Usunięte 15 duplikatów funkcji, martwy kod i zbędne zmienne"
+      }
+    ]
+  },
+  {
+    "version": "0.8.0",
+    "date": "2026-03-27",
+    "label": "UX",
+    "labelColor": "#60a5fa",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Onboarding i tryb pomocy (?)"
+      },
+      {
+        "type": "ui",
+        "text": "Czcionka Inter, poprawki light mode"
+      }
+    ]
+  },
+  {
+    "version": "0.7.0",
+    "date": "2026-03-27",
+    "label": "UI",
+    "labelColor": "#8080aa",
+    "changes": [
+      {
+        "type": "ui",
+        "text": "Redesign light/dark mode, powiększony panel annotatorski"
+      }
+    ]
+  },
+  {
+    "version": "0.6.0",
+    "date": "2026-03-27",
+    "label": "UI",
+    "labelColor": "#8080aa",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Light mode domyślny, toggle ☀️/🌙, design system CSS vars"
+      }
+    ]
+  },
+  {
+    "version": "0.5.13",
+    "date": "2026-03-27",
+    "label": "New",
+    "labelColor": "#6c6cff",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Annotators Tab: floating panel z kartami Projekt i Tagi"
+      }
+    ]
+  },
+  {
+    "version": "0.5.12",
+    "date": "2026-03-27",
+    "label": "New",
+    "labelColor": "#6c6cff",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Statystyki tagów: tabela projektów z REQUIRES_VERIFICATION i TO_DELETE"
+      }
+    ]
+  },
+  {
+    "version": "0.5.11",
+    "date": "2026-03-27",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Retry tagowania: 5 prób z wydłużonymi opóźnieniami"
+      }
+    ]
+  },
+  {
+    "version": "0.5.10",
+    "date": "2026-03-27",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Internal server error: batch 200 zamiast 1000"
+      },
+      {
+        "type": "fix",
+        "text": "Obcięte ID TikTok/Twitter w XLSX + fuzzy URL matching"
+      }
+    ]
+  },
+  {
+    "version": "0.5.9",
+    "date": "2026-03-27",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Podwójne wykonanie Match Preview, Audit Mode i wireHistoryTab"
+      }
+    ]
+  },
+  {
+    "version": "0.5.8",
+    "date": "2026-03-27",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Wykrywanie nazwy projektu: retry co 500ms przez 10s"
+      }
+    ]
+  },
+  {
+    "version": "0.5.7",
+    "date": "2026-03-27",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Auto-detekcja kolumny assessment nie myli się z source/platform"
+      }
+    ]
+  },
+  {
+    "version": "0.5.6",
+    "date": "2026-03-27",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Dashboard Annotatora — pozycja w panelu"
+      },
+      {
+        "type": "fix",
+        "text": "Wczytywanie XLSX — błąd sandboxu Tampermonkey"
+      }
+    ]
+  },
+  {
+    "version": "0.5.5",
+    "date": "2026-03-27",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Wczytywanie XLSX — błąd sandboxu Tampermonkey"
+      }
+    ]
+  },
+  {
+    "version": "0.5.4",
+    "date": "2026-03-27",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "XLSX: Cannot read properties of undefined"
+      }
+    ]
+  },
+  {
+    "version": "0.5.3",
+    "date": "2026-03-27",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Błędna nazwa projektu w panelu"
+      },
+      {
+        "type": "new",
+        "text": "Potwierdzenie przy operacjach na 200+ wzmiankowach"
+      }
+    ]
+  },
+  {
+    "version": "0.5.2",
+    "date": "2026-03-26",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Dashboard: zliczanie nieotagowanych"
+      },
+      {
+        "type": "perf",
+        "text": "Dashboard: binary search — ~7 requestów"
+      }
+    ]
+  },
+  {
+    "version": "0.5.1",
+    "date": "2026-03-26",
+    "label": "New",
+    "labelColor": "#6c6cff",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Dashboard Annotatora z licznikiem i postępem"
+      },
+      {
+        "type": "new",
+        "text": "Przycisk ⚙ z checkboxami dodatkowych funkcji"
+      }
+    ]
+  },
+  {
+    "version": "0.5.0",
+    "date": "2026-03-25",
+    "label": "Test",
+    "labelColor": "#3a3a55",
+    "changes": [
+      {
+        "type": "ui",
+        "text": "Test powiadomienia o aktualizacji"
+      }
+    ]
+  },
+  {
+    "version": "0.4.7",
+    "date": "2026-03-25",
+    "label": "Test",
+    "labelColor": "#3a3a55",
+    "changes": [
+      {
+        "type": "ui",
+        "text": "Test powiadomienia o aktualizacji"
+      }
+    ]
+  },
+  {
+    "version": "0.4.6",
+    "date": "2026-03-25",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Auto-update: brakujące uprawnienie @connect"
+      }
+    ]
+  },
+  {
+    "version": "0.4.5",
+    "date": "2026-03-25",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "checkForUpdate dodane do debug bridge"
+      }
+    ]
+  },
+  {
+    "version": "0.4.4",
+    "date": "2026-03-25",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Sprawdzanie aktualizacji przez GM_xmlhttpRequest"
+      }
+    ]
+  },
+  {
+    "version": "0.4.3",
+    "date": "2026-03-25",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Przycisk Zainstaluj otwiera ekran aktualizacji Tampermonkey"
+      }
+    ]
+  },
+  {
+    "version": "0.4.2",
+    "date": "2026-03-25",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Auto-sprawdzanie aktualizacji przy załadowaniu"
+      },
+      {
+        "type": "ui",
+        "text": "Popup aktualizacji w prawym górnym rogu"
+      }
+    ]
+  },
+  {
+    "version": "0.4.1",
+    "date": "2026-03-25",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Sprawdzanie aktualizacji przez fetch"
+      },
+      {
+        "type": "new",
+        "text": "Przycisk ↑ Aktualizacje w subbarze"
+      }
+    ]
+  },
+  {
+    "version": "0.4.0",
+    "date": "2026-03-25",
+    "label": "Test",
+    "labelColor": "#3a3a55",
+    "changes": [
+      {
+        "type": "ui",
+        "text": "Test powiadomienia o aktualizacji"
+      }
+    ]
+  },
+  {
+    "version": "0.3.9",
+    "date": "2026-03-25",
+    "label": "New",
+    "labelColor": "#6c6cff",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Baner o aktualizacji z przyciskiem Zainstaluj"
+      },
+      {
+        "type": "new",
+        "text": "Auto-sprawdzanie wersji raz na godzinę (GitHub)"
+      }
+    ]
+  },
+  {
+    "version": "0.3.8",
+    "date": "2026-03-25",
+    "label": "New",
+    "labelColor": "#6c6cff",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Webhook URL wyciągnięty z kodu — bezpieczne dla GitHub"
+      },
+      {
+        "type": "new",
+        "text": "Auto-update przez @updateURL / @downloadURL"
+      }
+    ]
+  },
+  {
+    "version": "0.3.7",
+    "date": "2026-03-25",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Crash log z pełnymi danymi diagnostycznymi i przyciskiem Bug Report"
+      }
+    ]
+  },
+  {
+    "version": "0.3.6",
+    "date": "2026-03-25",
+    "label": "New",
+    "labelColor": "#6c6cff",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Bug Report wysyła logi i stan sesji na Slack"
+      },
+      {
+        "type": "new",
+        "text": "Zakładka Feedback: tryb Bug Report / Suggestion"
+      }
+    ]
+  },
+  {
+    "version": "0.3.5",
+    "date": "2026-03-25",
+    "label": "UI",
+    "labelColor": "#8080aa",
+    "changes": [
+      {
+        "type": "ui",
+        "text": "Panel 440px, subbar, action bar przebudowany, zakładki z ikonami"
+      }
+    ]
+  },
+  {
+    "version": "0.3.4",
+    "date": "2026-03-25",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "ui",
+        "text": "Schemat wersjonowania 0.x.x, przycisk Changelog & Feedback"
+      }
+    ]
+  },
+  {
+    "version": "0.3.3",
+    "date": "2026-03-25",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "TOKEN_NOT_READY przy starcie"
+      }
+    ]
+  },
+  {
+    "version": "0.3.2",
+    "date": "2026-03-25",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "TOKEN_NOT_READY przy starcie"
+      }
+    ]
+  },
+  {
+    "version": "0.3.1",
+    "date": "2026-03-25",
+    "label": "Fix",
+    "labelColor": "#f87171",
+    "changes": [
+      {
+        "type": "ui",
+        "text": "Formularz feedbacku i lista planowanych funkcji"
+      }
+    ]
+  },
+  {
+    "version": "0.3.0",
+    "date": "2026-03-25",
+    "label": "New",
+    "labelColor": "#6c6cff",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Modal: changelog, planowane funkcje, feedback do zespołu"
+      }
+    ]
+  },
+  {
+    "version": "0.2.0",
+    "date": "2026-03-25",
+    "label": "New",
+    "labelColor": "#6c6cff",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Match Preview, ręczne mapowanie kolumn, historia sesji"
+      },
+      {
+        "type": "new",
+        "text": "Walidacja pliku, Audit Mode, dźwięk po zakończeniu"
+      },
+      {
+        "type": "perf",
+        "text": "Pobieranie danych 10x równolegle"
+      },
+      {
+        "type": "fix",
+        "text": "Matchowanie URL i auto-detekcja kolumn"
+      }
+    ]
+  },
+  {
+    "version": "0.1.0",
+    "date": "2026-03-24",
+    "label": "Init",
+    "labelColor": "#22c55e",
+    "changes": [
+      {
+        "type": "new",
+        "text": "Tagowanie z CSV/JSON/XLSX, Quick Tag, Quick Delete, Auto-Delete"
+      },
+      {
+        "type": "new",
+        "text": "Partycje, schematy, crash log, debug bridge, przeciągalny panel"
+      }
+    ]
+  }
+]

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.26
+// @version      0.21.27
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.26';
+  const VERSION = '0.21.27';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7349,103 +7349,105 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
-      "version": "0.17.4",
-      "date": "2026-03-28",
+      "version": "0.21.27",
+      "date": "2026-04-09",
       "label": "Fix",
       "labelColor": "#22c55e",
       "changes": [
-        {"type": "fix", "text": "News: komunikat duplikatu wskazuje na feedback Brand24"}
+        {"type": "fix", "text": "Delete current view: batch deletowania uzywa _deleteBatch zamiast hardcoded 5 — spojne z pozostalymi funkcjami delete"}
       ]
     },
     {
-      "version": "0.17.3",
-      "date": "2026-03-28",
+      "version": "0.21.26",
+      "date": "2026-04-08",
       "label": "Fix",
       "labelColor": "#22c55e",
       "changes": [
-        {"type": "fix", "text": "News: GM fetch z trailing slash, redirect:follow"},
-        {"type": "fix", "text": "News: uproszczona logika fetchowania i wykrywania daty"}
+        {"type": "fix", "text": "Quick Delete: batch deletowania uzywa _deleteBatch zamiast hardcoded 5"},
+        {"type": "perf", "text": "DEL_BATCH_DEFAULT: 10→25 — szybsze domyslne usuwanie"}
       ]
     },
     {
-      "version": "0.17.2",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#22c55e",
+      "version": "0.21.16",
+      "date": "2026-04-03",
+      "label": "Perf",
+      "labelColor": "#f59e0b",
       "changes": [
-        {"type": "fix", "text": "News: prefill daty natychmiast przy aktywacji URL"},
-        {"type": "fix", "text": "News: wykrywanie daty niezalezne od blokad GM fetch"}
+        {"type": "perf", "text": "buildUrlMap: sliding window pool zamiast batch-wait"},
+        {"type": "perf", "text": "MAP_FETCH_CONCURRENCY default: 5→8"}
       ]
     },
     {
-      "version": "0.17.1",
-      "date": "2026-03-28",
+      "version": "0.21.15",
+      "date": "2026-04-03",
       "label": "New",
       "labelColor": "#6c6cff",
       "changes": [
-        {"type": "new", "text": "News: data prefill rok+miesiac z biezacej daty"},
-        {"type": "new", "text": "News: auto-wykrywanie daty artykulu przez GM fetch"}
+        {"type": "feat", "text": "Quick Delete: pole batch size z modalem ostrzezenia (domyslnie 10, max 1000)"},
+        {"type": "perf", "text": "Delete batch default: 10 (DEL_BATCH_DEFAULT)"}
       ]
     },
     {
-      "version": "0.17.0",
-      "date": "2026-03-28",
+      "version": "0.21.14",
+      "date": "2026-04-03",
+      "label": "Perf",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "perf", "text": "BG prefetch tagstats i allProjects: rownolegle fetche (BG_CONCURRENCY=5)"},
+        {"type": "perf", "text": "Quick Tag / Quick Untag: QT_CONCURRENCY=2"},
+        {"type": "perf", "text": "runTagging tag batches: TAG_CONCURRENCY=2"},
+        {"type": "perf", "text": "runDeleteByTag: BATCH 5→8"}
+      ]
+    },
+    {
+      "version": "0.21.13",
+      "date": "2026-04-03",
+      "label": "Fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Topbar: logo shrinkuje zamiast wypychac przyciski poza panel"},
+        {"type": "fix", "text": "Topbar-right zawsze widoczny — flex-shrink:0"},
+        {"type": "fix", "text": "Annotator tabs: przycisk Odswiez nie wychodzi poza panel"}
+      ]
+    },
+    {
+      "version": "0.21.12",
+      "date": "2026-04-03",
+      "label": "Fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Responsywny UI: annotator panel, news panels — compact mode + overflow guard"},
+        {"type": "fix", "text": "News panels: PANEL_W viewport-aware (min 280, max 360)"}
+      ]
+    },
+    {
+      "version": "0.21.11",
+      "date": "2026-04-03",
       "label": "New",
       "labelColor": "#6c6cff",
       "changes": [
-        {"type": "new", "text": "News: przycisk Wyczysc czysci tytul i tresc w P3"},
-        {"type": "fix", "text": "News: auto-clear tytul/tresc po sukcesie i duplikacie"},
-        {"type": "fix", "text": "News: kolejne URL otwieraja sie w tym samym oknie"}
+        {"type": "feat", "text": "Responsywny UI: panel dostosowuje zawartosc do swojej szerokosci (klasa b24t-compact < 400px)"},
+        {"type": "feat", "text": "Wykrywanie malego ekranu (viewport < 1366x800)"},
+        {"type": "fix", "text": "minW 300px, maxW capped do 85% viewport width"}
       ]
     },
     {
-      "version": "0.16.11",
-      "date": "2026-03-28",
+      "version": "0.21.7",
+      "date": "2026-04-03",
       "label": "Fix",
       "labelColor": "#22c55e",
       "changes": [
-        {"type": "fix", "text": "News side tab: nie otwiera Annotators Tab"},
-        {"type": "fix", "text": "News side tab: znika gdy News otwarte, wraca po zamknieciu"},
-        {"type": "fix", "text": "News panele: pozycjonowanie niezalezne od Annotators Panel"}
+        {"type": "fix", "text": "stressTestBuildUrlMap: opcjonalne parametry dateFrom/dateTo"}
       ]
     },
     {
-      "version": "0.16.10",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#22c55e",
+      "version": "0.21.6",
+      "date": "2026-04-03",
+      "label": "Perf",
+      "labelColor": "#f59e0b",
       "changes": [
-        {"type": "fix", "text": "News: panele niezalezne — zamkniecie Annotators nie zamyka News"},
-        {"type": "fix", "text": "Annotators Tab: usuniety przycisk News (jest osobny side tab)"}
-      ]
-    },
-    {
-      "version": "0.16.9",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Side tab: konflikt ID z zakladka Plik naprawiony"}
-      ]
-    },
-    {
-      "version": "0.16.8",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Side tab B24 Tagger: panel wraca po kliknieciu"},
-        {"type": "fix", "text": "Plik tab: usunieta animacja powodujaca glitch"},
-        {"type": "fix", "text": "News: panele niezalezne od Annotators Tab"}
-      ]
-    },
-    {
-      "version": "0.16.7",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Side tabs: poprawiona logika widocznosci przy starcie"}
+        {"type": "perf", "text": "buildUrlMap: rownolegле pobieranie stron (MAP_FETCH_CONCURRENCY=3) — 3.3x szybciej"},
+        {"type": "feature", "text": "Debug bridge: stressTestBuildUrlMap() — stress test concurrency 1→2→3→5"}
       ]
     },
   ];
@@ -11002,7 +11004,7 @@ Tej operacji nie można cofnąć.`)) {
 
         setStatus(`Usuwam ${ids.length} wzmianek...`, 'info');
         let deleted = 0;
-        const BATCH_DV = 5;
+        const BATCH_DV = _deleteBatch;
         for (let i = 0; i < ids.length; i += BATCH_DV) {
           const chunk = ids.slice(i, i + BATCH_DV);
           await Promise.all(chunk.map(id => deleteMention(id)));

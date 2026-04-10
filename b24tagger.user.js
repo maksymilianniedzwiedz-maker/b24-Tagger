@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.5
+// @version      0.23.6
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.5';
+  const VERSION = '0.23.6';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2876,7 +2876,8 @@
         transition: transform 0.15s, background 0.15s, border-color 0.3s;
       }
       #b24t-news-side-tab:hover { background: var(--b24t-bg-section-c); transform: scale(1.06); }
-      #b24t-news-side-tab.active { background: var(--b24t-primary-bg); color: var(--b24t-primary); border-color: color-mix(in srgb, var(--b24t-primary) 40%, transparent); }
+      #b24t-news-side-tab.active { background: #6366f1; color: #fff; border-color: #4f46e5; }
+      #b24t-news-side-tab.active:hover { background: #4f46e5; }
       /* ── ANNOTATOR FLOATING PANEL ── */
       #b24t-annotator-tab {
         transition: opacity 0.2s, transform 0.2s;
@@ -6157,7 +6158,7 @@ function showOnboarding(onComplete) {
 
   // ── NEWS CONTENT SCANNER ──
   // Skanuje treść strony pod kątem słów kluczowych gdy URL nie zawiera żadnego dopasowania.
-  // Zwraca Promise<{status:'contentmatch'|'nomatch'|'blocked', score:Number, snippet:String}>
+  // Zwraca Promise<{status:'mention'|'contentmatch'|'keytopic'|'nomatch'|'blocked', score:Number, snippet:String}>
   //
   // Progi punktowe:
   //   keyword w tytule/og:title          → +8  (silny sygnał — autor strony wybrał ten tytuł)
@@ -6165,11 +6166,14 @@ function showOnboarding(onComplete) {
   //   keyword w h1                       → +5  (silny sygnał — nagłówek artykułu)
   //   keyword w pierwszym akapicie       → +4  (umiarkowany — lede artykułu)
   //   keyword w kolejnych akapitach      → +1 za każdy, maks. +3 łącznie
-  //   próg contentmatch                  → 5 pkt (jeden akapit to za mało, tytuł lub dwa akapity wystarczą)
+  //
+  // Poziomy relevancji:
+  //   mention     → 1–4 pkt   (wzmianka w treści — poboczna, ale relevantna)
+  //   contentmatch→ 5–11 pkt  (keyword w opisie meta lub kilka akapitów)
+  //   keytopic    → 12+ pkt   (keyword w tytule — artykuł o marce)
 
   var NEWS_CONTENT_SCAN_CONCURRENCY = 5;
   var NEWS_CONTENT_SCAN_TIMEOUT_MS  = 8000;
-  var NEWS_CONTENT_SCAN_THRESHOLD   = 5;
 
   var NEWS_NOISE_SELECTORS = [
     'script','style','noscript','svg','iframe',
@@ -6271,10 +6275,22 @@ function showOnboarding(onComplete) {
 
     score = Math.min(score, 30); // cap — żeby jeden artykuł pełen keywordów nie zaburzał skali
 
+    var status;
+    if (score <= 0)       status = 'nomatch';
+    else if (score <= 4)  status = 'mention';
+    else if (score <= 11) status = 'contentmatch';
+    else                  status = 'keytopic';
+
+    // Tytuł artykułu — preferuj og:title (redakcyjny), fallback: <title> (może zawierać serwis)
+    var articleTitle = (ogTitle || titleText).trim();
+    // Ogranicz do 200 znaków — <title> może być długi
+    if (articleTitle.length > 200) articleTitle = articleTitle.slice(0, 200);
+
     return {
-      status:  score >= NEWS_CONTENT_SCAN_THRESHOLD ? 'contentmatch' : 'nomatch',
+      status:  status,
       score:   score,
       snippet: snippet,
+      title:   articleTitle,
     };
   }
 
@@ -6449,6 +6465,29 @@ function showOnboarding(onComplete) {
   }
 
   // ── BUILD & OPEN NEWS PANELS ──
+  function _newsRefillTags() {
+    var tagList = document.getElementById('b24t-news-tag-list');
+    if (!tagList) return;
+    var tags = Object.entries(state.tags || {}).sort(function(a, b) {
+      var aD = a[0].toLowerCase().indexOf('dodane') !== -1;
+      var bD = b[0].toLowerCase().indexOf('dodane') !== -1;
+      if (aD !== bD) return aD ? -1 : 1;
+      return a[0].localeCompare(b[0]);
+    });
+    if (tags.length === 0) return; // projekt jeszcze nie załadowany — spróbuj później
+    var t2 = _newsThemeVars();
+    tagList.innerHTML = tags.map(function(entry) {
+      var name = entry[0], tid = entry[1];
+      var isDodane = name.toLowerCase().indexOf('dodane') !== -1;
+      return '<label style="display:flex;align-items:center;gap:3px;cursor:pointer;padding:3px 7px;border-radius:6px;background:' + (isDodane ? 'rgba(99,102,241,0.15)' : t2.bgInput) + ';border:1px solid ' + (isDodane ? 'rgba(99,102,241,0.35)' : t2.borderSub) + ';">' +
+        '<input type="checkbox" data-tag-id="' + tid + '"' + (isDodane ? ' id="b24t-news-tag-dodane" checked' : '') + ' style="cursor:pointer;accent-color:#6366f1;width:11px;height:11px;">' +
+        '<span style="font-size:10px;font-weight:' + (isDodane ? '700' : '500') + ';color:' + t2.text + ';">' + name + '</span>' +
+        (isDodane ? '<span id="b24t-news-tag-dodane-status" style="font-size:9px;color:' + t2.textFaint + ';">(sprawdzanie...)</span>' : '') +
+      '</label>';
+    }).join('');
+    _newsCheckTagDodane();
+  }
+
   function openNewsPanels() {
     // If already open — just show
     if (document.getElementById('b24t-news-p1')) {
@@ -6462,6 +6501,7 @@ function showOnboarding(onComplete) {
       requestAnimationFrame(function() {
         _newsStackPanels();
         if (_newsChipsRenderer) _newsChipsRenderer();
+        _newsRefillTags(); // odśwież tagi — projekt mógł się załadować po pierwszym buildie
       });
       return;
     }
@@ -6617,7 +6657,9 @@ function showOnboarding(onComplete) {
         title: 'RELEVANTNE',
         items: [
           { dot: '●', color: '#22c55e', label: 'Keyword w URL' },
-          { dot: '◆', color: '#06b6d4', label: 'Keyword w treści strony' },
+          { dot: '◆', color: '#4ade80', label: 'Główny temat (score 12+)' },
+          { dot: '◆', color: '#06b6d4', label: 'Kontekst (score 5–11)' },
+          { dot: '◆', color: '#facc15', label: 'Wzmianka (score 1–4)' },
           { dot: '●', color: '#f97316', label: 'Keyword w URL, inny kraj' },
         ]
       },
@@ -6678,7 +6720,8 @@ function showOnboarding(onComplete) {
         '</div>',
         '<textarea id="b24t-news-paste-area" rows="4" placeholder="Wklej URLe z arkusza H&M Manually...\n\nURLe nie zostaną przetworzone dopóki nie klikniesz &quot;Wczytaj URLe&quot; poniżej." style="width:100%;box-sizing:border-box;font-size:10px;padding:7px 9px;border-radius:8px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';resize:vertical;font-family:monospace;min-height:80px;line-height:1.5;"></textarea>',
         '<button id="b24t-news-import-btn" style="margin-top:6px;width:100%;padding:7px;border-radius:8px;border:none;background:var(--b24t-accent-grad);color:#fff;font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em;box-shadow:inset 0 1px 0 rgba(255,255,255,0.15);">▶ Wczytaj URLe</button>',
-        '<div id="b24t-news-import-info" style="display:none;font-size:10px;text-align:center;margin-top:4px;"></div>',
+        '<div id="b24t-news-import-info" style="display:none;font-size:10px;text-align:center;margin-top:4px;"></div>' +
+        '<div id="b24t-news-project-info" style="display:none;font-size:10px;text-align:center;margin-top:2px;"></div>',
       '</div>',
       // Country detection
       '<div id="b24t-news-country-row" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;">',
@@ -6792,28 +6835,8 @@ function showOnboarding(onComplete) {
       _newsStackPanels();
     });
 
-    // Wypełnij listę tagów — dodane domyślnie zaznaczone, reszta odznaczona
-    (function() {
-      var tagList = document.getElementById('b24t-news-tag-list');
-      if (!tagList || !state.tags) return;
-      var tags = Object.entries(state.tags).sort(function(a, b) {
-        var aD = a[0].toLowerCase().indexOf('dodane') !== -1;
-        var bD = b[0].toLowerCase().indexOf('dodane') !== -1;
-        if (aD !== bD) return aD ? -1 : 1;
-        return a[0].localeCompare(b[0]);
-      });
-      var t2 = _newsThemeVars();
-      tagList.innerHTML = tags.map(function(entry) {
-        var name = entry[0], tid = entry[1];
-        var isDodane = name.toLowerCase().indexOf('dodane') !== -1;
-        return '<label style="display:flex;align-items:center;gap:3px;cursor:pointer;padding:3px 7px;border-radius:6px;background:' + (isDodane ? 'rgba(99,102,241,0.15)' : t2.bgInput) + ';border:1px solid ' + (isDodane ? 'rgba(99,102,241,0.35)' : t2.borderSub) + ';">' +
-          '<input type="checkbox" data-tag-id="' + tid + '"' + (isDodane ? ' id="b24t-news-tag-dodane" checked' : '') + ' style="cursor:pointer;accent-color:#6366f1;width:11px;height:11px;">' +
-          '<span style="font-size:10px;font-weight:' + (isDodane ? '700' : '500') + ';color:' + t2.text + ';">' + name + '</span>' +
-          (isDodane ? '<span id="b24t-news-tag-dodane-status" style="font-size:9px;color:' + t2.textFaint + ';">(sprawdzanie...)</span>' : '') +
-        '</label>';
-      }).join('');
-      _newsCheckTagDodane();
-    })();
+    // Wypełnij listę tagów — wywoływane też przy każdym otwarciu panelu
+    _newsRefillTags();
   }
 
   // Keep Import panel flush below Lista panel (left column)
@@ -7046,7 +7069,9 @@ function showOnboarding(onComplete) {
     // ─── URL LIST ───
     function _statusDot(s) {
       if (s === 'match')        return { dot: '●', color: '#22c55e', label: 'Keyword w URL — relevantny' };
-      if (s === 'contentmatch') return { dot: '◆', color: '#06b6d4', label: 'Keyword w treści strony — sprawdź' };
+      if (s === 'keytopic')     return { dot: '◆', color: '#4ade80', label: 'Główny temat artykułu (score 12+)' };
+      if (s === 'contentmatch') return { dot: '◆', color: '#06b6d4', label: 'Keyword w treści — kilkukrotnie (score 5–11)' };
+      if (s === 'mention')      return { dot: '◆', color: '#facc15', label: 'Wzmianka w treści — poboczna (score 1–4)' };
       if (s === 'wrongcountry') return { dot: '●', color: '#f97316', label: 'Keyword w URL, ale wskazuje inny kraj' };
       if (s === 'opened')       return { dot: '●', color: '#a78bfa', label: 'Otwarty — w trakcie weryfikacji' };
       if (s === 'added')        return { dot: '✓', color: '#15803d', label: 'Dodany do Brand24' };
@@ -7058,7 +7083,7 @@ function showOnboarding(onComplete) {
     }
 
     function _newsUrlCounts() {
-      var c = { match: 0, contentmatch: 0, wrongcountry: 0, nomatch: 0, inproject: 0, opened: 0, added: 0, error: 0, scanning: 0, blocked: 0, total: 0 };
+      var c = { match: 0, keytopic: 0, contentmatch: 0, mention: 0, wrongcountry: 0, nomatch: 0, inproject: 0, opened: 0, added: 0, error: 0, scanning: 0, blocked: 0, total: 0 };
       newsState.urls.forEach(function(u) { c[u.status] = (c[u.status] || 0) + 1; c.total++; });
       return c;
     }
@@ -7133,9 +7158,10 @@ function showOnboarding(onComplete) {
     async function _newsRunProjectCheck() {
       if (!state.projectId) return;
       var recheckBtn = document.getElementById('b24t-news-recheck-btn');
+      var projectInfo = document.getElementById('b24t-news-project-info');
       var origLabel = recheckBtn ? recheckBtn.textContent : '';
       if (recheckBtn) { recheckBtn.disabled = true; recheckBtn.textContent = '⟳ Pobieranie…'; }
-      if (importInfo) { importInfo.textContent = '⟳ Sprawdzam wzmianki w projekcie…'; importInfo.style.display = ''; importInfo.style.color = '#a78bfa'; }
+      if (projectInfo) { projectInfo.textContent = '⟳ Sprawdzam wzmianki w projekcie…'; projectInfo.style.display = ''; projectInfo.style.color = '#a78bfa'; }
 
       try {
         var now = new Date();
@@ -7170,9 +7196,9 @@ function showOnboarding(onComplete) {
         var infoMsg = '✓ Sprawdzono ' + projectUrls.size + ' wzmianek';
         if (matchedCount > 0) infoMsg += ' — ' + matchedCount + ' URL' + (matchedCount === 1 ? '' : 'i') + ' już w projekcie';
         else infoMsg += ' — brak duplikatów';
-        if (importInfo) { importInfo.textContent = infoMsg; importInfo.style.color = matchedCount > 0 ? '#f59e0b' : '#22c55e'; }
+        if (projectInfo) { projectInfo.textContent = infoMsg; projectInfo.style.color = matchedCount > 0 ? '#f59e0b' : '#22c55e'; }
       } catch(e) {
-        if (importInfo) { importInfo.textContent = '✗ Błąd sprawdzania: ' + e.message; importInfo.style.color = '#ef4444'; }
+        if (projectInfo) { projectInfo.textContent = '✗ Błąd sprawdzania: ' + e.message; projectInfo.style.color = '#ef4444'; }
       }
 
       if (recheckBtn) { recheckBtn.disabled = false; recheckBtn.textContent = origLabel; }
@@ -7219,7 +7245,7 @@ function showOnboarding(onComplete) {
         if (progressBar) progressBar.style.width = Math.round(done / total * 100) + '%';
       } else {
         var handled = (counts.added || 0) + (counts.error || 0);
-        var workable = (counts.match || 0) + (counts.contentmatch || 0) + (counts.opened || 0) + handled;
+        var workable = (counts.match || 0) + (counts.keytopic || 0) + (counts.contentmatch || 0) + (counts.mention || 0) + (counts.opened || 0) + handled;
         if (progressLbl) progressLbl.textContent = handled + ' / ' + workable + ' relevantnych';
         if (progressBar) progressBar.style.width = (workable > 0 ? Math.round(handled / workable * 100) : 0) + '%';
       }
@@ -7249,9 +7275,10 @@ function showOnboarding(onComplete) {
         var shortUrl = entry.url.replace(/^https?:\/\//, '');
         if (shortUrl.length > 42) shortUrl = shortUrl.substring(0, 42) + '\u2026';
 
-        // Snippet dla contentmatch — widoczny poniżej URL jako mały podpis
+        // Snippet dla wyników content scan — widoczny poniżej URL jako mały podpis
         var snippetHtml = '';
-        if (entry.status === 'contentmatch' && entry.snippet) {
+        var _hasSnippet = (entry.status === 'contentmatch' || entry.status === 'mention' || entry.status === 'keytopic') && entry.snippet;
+        if (_hasSnippet) {
           snippetHtml = '<div style="font-size:9px;color:' + t.textFaint + ';margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + entry.snippet.replace(/"/g,'&quot;') + '">' + entry.snippet.slice(0,80) + '</div>';
         }
 
@@ -7318,7 +7345,12 @@ function showOnboarding(onComplete) {
         try { _dateElPre.focus(); _dateElPre.setSelectionRange(_dateElPre.value.length, _dateElPre.value.length); } catch(e) {}
       }
       if (_dateIconPre) { _dateIconPre.style.display = 'none'; }
-      // Otwórz okno natychmiast — fetch page info asynchronicznie (nadpisze prefill daty jeśli znajdzie)
+      // Pre-fill tytułu i snippetu ze skanowania treści (jeśli dostępne)
+      var fTitle = document.getElementById('b24t-news-f-title');
+      var fContent = document.getElementById('b24t-news-f-content');
+      if (fTitle) fTitle.value = entry.title || '';
+      if (fContent) fContent.value = entry.snippet || '';
+      // Otwórz okno natychmiast — fetch page info asynchronicznie (nadpisze prefill daty i tytułu jeśli znajdzie)
       _newsOpenUrl(entry.url);
       _newsFetchPageInfo(entry.url);
     }
@@ -7341,6 +7373,17 @@ function showOnboarding(onComplete) {
             dateIcon.style.display = 'inline';
             dateIcon.title = 'Data wykryta automatycznie ze strony (' + detectedDate + ') — mozesz ja edytowac';
           }
+        }
+        // Title auto-fill — tylko jeśli pole jest puste (nie nadpisuj tego co wkleił użytkownik)
+        var fTitleEl = document.getElementById('b24t-news-f-title');
+        if (fTitleEl && !fTitleEl.value) {
+          try {
+            var _doc = (new DOMParser()).parseFromString(html, 'text/html');
+            var _ogTitle = _doc.querySelector('meta[property="og:title"]') || _doc.querySelector('meta[name="og:title"]');
+            var _pageTitle = _ogTitle ? (_ogTitle.getAttribute('content') || '').trim()
+                                      : (_doc.querySelector('title') ? (_doc.querySelector('title').textContent || '').trim() : '');
+            if (_pageTitle) fTitleEl.value = _pageTitle.slice(0, 200);
+          } catch(e) {}
         }
         // Language check
         var detectedLang = _newsDetectLangFromResponse(html, url);
@@ -7532,6 +7575,7 @@ function showOnboarding(onComplete) {
           entry.status  = result.status;
           entry.score   = result.score;
           entry.snippet = result.snippet;
+          entry.title   = result.title || '';
           newsState.scanDone++;
           renderUrlList(); // aktualizacja na żywo — wpada do listy w momencie rozpoznania
         }
@@ -7547,13 +7591,18 @@ function showOnboarding(onComplete) {
       }
 
       var counts = _newsUrlCounts();
-      var matchCount   = counts.match        || 0;
-      var cmCount      = counts.contentmatch || 0;
-      var blockedCount = counts.blocked      || 0;
+      var matchCount    = counts.match        || 0;
+      var keytopicCount = counts.keytopic     || 0;
+      var cmCount       = counts.contentmatch || 0;
+      var mentionCount  = counts.mention      || 0;
+      var blockedCount  = counts.blocked      || 0;
       var doneMsg = '✓ ' + deduped.length + ' URL' + (deduped.length !== 1 ? 'i' : '');
       if (dupeCount > 0) doneMsg += ' (−' + dupeCount + ' dup.)';
-      doneMsg += ' — ' + matchCount + ' URL match, ' + cmCount + ' treść match';
-      if (blockedCount > 0) doneMsg += ', ' + blockedCount + ' niedostępnych';
+      doneMsg += ' — ' + matchCount + ' URL match';
+      if (keytopicCount > 0) doneMsg += ', ' + keytopicCount + ' gł. temat';
+      if (cmCount > 0)       doneMsg += ', ' + cmCount + ' kontekst';
+      if (mentionCount > 0)  doneMsg += ', ' + mentionCount + ' wzmiank' + (mentionCount === 1 ? 'a' : 'i');
+      if (blockedCount > 0)  doneMsg += ', ' + blockedCount + ' niedostępnych';
       if (importInfo) { importInfo.textContent = doneMsg; importInfo.style.display = ''; importInfo.style.color = '#22c55e'; }
 
       renderUrlList();
@@ -7850,6 +7899,20 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.6",
+      "date": "2026-04-11",
+      "label": "feat",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "feat", "text": "News: tiered scoring — mention (zolty, 1-4 pkt), contentmatch (cyan, 5-11 pkt), keytopic (zielony, 12+ pkt)"},
+        {"type": "feat", "text": "News: auto-fill tytulu artykulu i fragmentu z keyword do formularza wzmianki"},
+        {"type": "fix", "text": "News: przycisk boczny bialy przy aktywacji — CSS active solid indigo"},
+        {"type": "fix", "text": "News: przycisk boczny znikal po zamknieciu paneli"},
+        {"type": "fix", "text": "News: dropdown tagow pusty — _newsRefillTags() przy kazdym otwarciu"},
+        {"type": "fix", "text": "News: 'Sprawdzono X wzmianek' nadpisywalo wynik skanu — osobny element"}
+      ]
+    },
+    {
       "version": "0.23.5",
       "date": "2026-04-11",
       "label": "fix",
@@ -7955,16 +8018,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "Quick Delete: batch deletowania uzywa _deleteBatch zamiast hardcoded 5"},
         {"type": "perf", "text": "DEL_BATCH_DEFAULT: 10→25 — szybsze domyslne usuwanie"}
-      ]
-    },
-    {
-      "version": "0.21.16",
-      "date": "2026-04-03",
-      "label": "Perf",
-      "labelColor": "#f59e0b",
-      "changes": [
-        {"type": "perf", "text": "buildUrlMap: sliding window pool zamiast batch-wait"},
-        {"type": "perf", "text": "MAP_FETCH_CONCURRENCY default: 5→8"}
       ]
     },
   ];
@@ -11963,8 +12016,6 @@ Tej operacji nie można cofnąć.`)) {
           openNewsPanels();
           newsSideTab.classList.add('active');
         }
-        // Hide the side tab while news is open, restore on close
-        newsSideTab.style.display = newsState.panelsOpen ? 'flex' : 'none';
       });
       newsSideTab.style.display = 'none'; // shown by features.annotator_tools check
       document.body.appendChild(newsSideTab);

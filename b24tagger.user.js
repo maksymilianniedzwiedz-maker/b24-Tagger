@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.22.0
+// @version      0.23.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.22.0';
+  const VERSION = '0.23.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3447,6 +3447,12 @@
     }
   }
 
+  var _zTop = 2147483630;
+  function _bringToFront(panel) {
+    _zTop = Math.min(_zTop + 1, 2147483646);
+    panel.style.zIndex = _zTop;
+  }
+
   function setupDragging(panel) {
     const topbar = panel.querySelector('#b24t-topbar');
     let isDragging = false, startX, startY, startLeft, startTop;
@@ -3473,6 +3479,7 @@
       if (e.target.closest('button')) return;
       if (panel.getAttribute('data-ob-locked')) return; // onboarding aktywny
       isDragging = true;
+      _bringToFront(panel);
       panel.classList.add('dragging');
       const rect = panel.getBoundingClientRect();
       startX = e.clientX; startY = e.clientY;
@@ -6525,9 +6532,11 @@ function showOnboarding(onComplete) {
   function _newsDraggable(handle, panel) {
     var dragging = false, ox = 0, oy = 0;
     var isP1 = panel.id === 'b24t-news-p1';
+    var isP2 = panel.id === 'b24t-news-p2';
     handle.addEventListener('mousedown', function(e) {
       if (e.target.tagName === 'BUTTON') return;
       dragging = true;
+      _bringToFront(panel);
       var r = panel.getBoundingClientRect();
       ox = e.clientX - r.left;
       oy = e.clientY - r.top;
@@ -6535,18 +6544,28 @@ function showOnboarding(onComplete) {
     });
     document.addEventListener('mousemove', function(e) {
       if (!dragging) return;
-      var newLeft = e.clientX - ox;
-      var newTop  = e.clientY - oy;
+      var newLeft = Math.max(0, Math.min(window.innerWidth  - panel.offsetWidth,  e.clientX - ox));
+      var newTop  = Math.max(0, Math.min(window.innerHeight - panel.offsetHeight, e.clientY - oy));
       panel.style.left  = newLeft + 'px';
-      panel.style.top   = newTop + 'px';
+      panel.style.top   = newTop  + 'px';
       panel.style.right = 'auto';
-      // If dragging P1 (Lista), keep P2 (Import) attached below it
       if (isP1) {
         requestAnimationFrame(function() { _newsStackPanels(); });
       }
+      // Dragging P2 (Import) also moves P1 (Lista) so they stay together
+      if (isP2) {
+        var p1 = document.getElementById('b24t-news-p1');
+        if (p1) {
+          var p1H = p1.offsetHeight;
+          p1.style.left  = newLeft + 'px';
+          p1.style.top   = Math.max(0, newTop - p1H - 8) + 'px';
+          p1.style.right = 'auto';
+          requestAnimationFrame(_newsPositionLegend);
+        }
+      }
     });
     document.addEventListener('mouseup', function() {
-      if (dragging && isP1) _newsStackPanels();
+      if (dragging && (isP1 || isP2)) _newsStackPanels();
       dragging = false;
     });
   }
@@ -7352,6 +7371,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.0",
+      "date": "2026-04-10",
+      "label": "Fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Panele: mechanizm bring-to-front — aktywny/przesuwany panel zawsze na wierzchu"},
+        {"type": "fix", "text": "News P1+P2: przeciaganie P2 przesuwa tez P1 — zawsze razem"},
+        {"type": "fix", "text": "Wszystkie panele: clamping pozycji do granic okna przegladarki"}
+      ]
+    },
+    {
       "version": "0.22.0",
       "date": "2026-04-10",
       "label": "Fix",
@@ -7442,15 +7472,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "Responsywny UI: panel dostosowuje zawartosc do swojej szerokosci (klasa b24t-compact < 400px)"},
         {"type": "feat", "text": "Wykrywanie malego ekranu (viewport < 1366x800)"},
         {"type": "fix", "text": "minW 300px, maxW capped do 85% viewport width"}
-      ]
-    },
-    {
-      "version": "0.21.7",
-      "date": "2026-04-03",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "stressTestBuildUrlMap: opcjonalne parametry dateFrom/dateTo"}
       ]
     },
   ];
@@ -8940,12 +8961,15 @@ function showOnboarding(onComplete) {
     hdr.addEventListener('mousedown', function(e) {
       if (e.target.id === 'b24t-ann-close') return;
       dragging = true; sx = e.clientX; sy = e.clientY;
+      _bringToFront(panel);
       var r = panel.getBoundingClientRect(); sl = r.left; st = r.top; e.preventDefault();
     });
     document.addEventListener('mousemove', function(e) {
       if (!dragging) return;
-      panel.style.left = (sl + e.clientX - sx) + 'px';
-      panel.style.top  = (st + e.clientY - sy) + 'px';
+      var newLeft = Math.max(0, Math.min(window.innerWidth  - panel.offsetWidth,  sl + e.clientX - sx));
+      var newTop  = Math.max(0, Math.min(window.innerHeight - panel.offsetHeight, st + e.clientY - sy));
+      panel.style.left  = newLeft + 'px';
+      panel.style.top   = newTop  + 'px';
       panel.style.right = 'auto';
     });
     document.addEventListener('mouseup', function() { dragging = false; });

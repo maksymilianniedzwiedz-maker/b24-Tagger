@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.23.4",
+    "date": "2026-04-10",
+    "label": "feat",
+    "labelColor": "#06b6d4",
+    "changes": [
+      {"type": "feat", "text": "News: integracja content scan z importem URL — sliding window 5 workerów, URL-e wpadają do listy na żywo po rozpoznaniu"},
+      {"type": "feat", "text": "News: status contentmatch (◆ cyan) — keyword znaleziony w treści strony; snippet artykułu widoczny pod URL-em w liście"},
+      {"type": "feat", "text": "News: pasek postępu w trybie skanowania (Skanowanie: N/M) vs trybie sesji (handled/workable)"},
+      {"type": "feat", "text": "News: nowa legenda pogrupowana (RELEVANTNE / SESJA / POMINIĘTE) z nowymi statusami scanning i blocked"},
+      {"type": "feat", "text": "News: selektor tagów — collapsible dropdown z summary zaznaczonych tagów; Dodane domyślnie zaznaczone"},
+      {"type": "fix", "text": "News: contentmatch nie jest usuwany przyciskiem 'Usuń irrelevantnych' — tylko nomatch/wrongcountry/blocked"},
+      {"type": "fix", "text": "News: przycisk Następny relevantny obsługuje contentmatch"}
+    ]
+  },
+  {
+    "version": "0.23.3",
+    "date": "2026-04-10",
+    "label": "feat",
+    "labelColor": "#22c55e",
+    "changes": [
+      {"type": "feat", "text": "News: _newsContentScan() — skanowanie treści stron przez GM_xmlhttpRequest z podwójnym timeoutem i guard przed podwójnym resolve"},
+      {"type": "feat", "text": "News: _newsParseContent() — parsowanie HTML przez DOMParser, usuwanie szumu (reklamy/nav/footer/sidebar), punktowanie 5 stref: tytuł, meta desc, h1, pierwszy akapit, kolejne akapity"},
+      {"type": "feat", "text": "News: @connect * w headerze — GM_xmlhttpRequest może sięgać do dowolnych domen newsowych"},
+      {"type": "fix", "text": "News: chipy słów kluczowych nie pokazywały się — _newsGetKeywords zwracał pustą tablicę zamiast defaultów gdy user wcześniej usunął wszystkie chipy"},
+      {"type": "fix", "text": "News: _newsChipsRenderer — chipy odświeżają się przy każdym otwarciu panelu (nie tylko przy pierwszym)"}
+    ]
+  },
+  {
     "version": "0.23.2",
     "date": "2026-04-10",
     "label": "UI",

@@ -1,5 +1,19 @@
 [
   {
+    "version": "0.23.6",
+    "date": "2026-04-11",
+    "label": "feat",
+    "labelColor": "#06b6d4",
+    "changes": [
+      {"type": "feat", "text": "News: tiered content scoring — mention (◆ żółty, score 1–4), contentmatch (◆ cyan, score 5–11), keytopic (◆ zielony, score 12+); każda wzmianka w treści jest relevantna"},
+      {"type": "feat", "text": "News: auto-fill tytułu artykułu (og:title) i fragmentu ze słowem kluczowym do formularza wzmianki po kliknięciu URLa"},
+      {"type": "fix", "text": "News: przycisk boczny News stawał się biały przy aktywacji — CSS active state zmieniony na solid indigo (#6366f1)"},
+      {"type": "fix", "text": "News: przycisk boczny News znikał po zamknięciu paneli — usunięta błędna logika display toggle w click handlerze"},
+      {"type": "fix", "text": "News: dropdown tagów w formularzu wzmianki był pusty — _newsRefillTags() wywoływana przy każdym otwarciu panelu, nie tylko przy pierwszym build"},
+      {"type": "fix", "text": "News: komunikat 'Sprawdzono X wzmianek' nadpisywał wynik skanowania — project check ma teraz osobny element b24t-news-project-info"}
+    ]
+  },
+  {
     "version": "0.23.5",
     "date": "2026-04-11",
     "label": "fix",

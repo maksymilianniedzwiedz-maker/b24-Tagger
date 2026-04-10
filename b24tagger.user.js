@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.1
+// @version      0.23.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.1';
+  const VERSION = '0.23.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1301,6 +1301,7 @@
       state.status = 'done';
       updateStatusUI();
       addLog(`✅ Wszystkie partycje zakończone! ${state.stats.tagged} otagowane.`, 'success');
+      showToast(`✅ ${state.stats.tagged} wzmianek otagowanych!`, 'success', 5000);
 
       // Switch view if configured
       if (state.switchViewOnDone && state.switchViewTagId) {
@@ -1622,6 +1623,25 @@
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+  function showToast(message, type, duration) {
+    type = type || 'info';
+    duration = duration || 3500;
+    var container = document.getElementById('b24t-toast-container');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'b24t-toast-container';
+      document.body.appendChild(container);
+    }
+    var toast = document.createElement('div');
+    toast.className = 'b24t-toast b24t-toast-' + type;
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(function() {
+      toast.classList.add('b24t-toast-out');
+      setTimeout(function() { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 220);
+    }, duration);
+  }
+
   // Simple session timer for Quick Tag / Quick Delete tabs
   function makeTabTimer(displayId) {
     let startTime = null;
@@ -1677,6 +1697,18 @@
     el.textContent = text;
     el.className = `b24t-badge ${cls}`;
 
+    const bar = document.getElementById('b24t-progress-bar');
+    if (bar) bar.classList.toggle('b24t-running', state.status === 'running');
+
+    const lbl = document.getElementById('b24t-progress-label');
+    if (lbl) {
+      if (state.status === 'idle')    { lbl.textContent = 'Gotowy do startu'; lbl.style.color = 'var(--b24t-text-faint)'; }
+      if (state.status === 'done')    { lbl.textContent = '✓ Zakończono';     lbl.style.color = 'var(--b24t-ok)'; }
+      if (state.status === 'error')   {                                         lbl.style.color = 'var(--b24t-err)'; }
+      if (state.status === 'paused')  {                                         lbl.style.color = 'var(--b24t-warn)'; }
+      if (state.status === 'running') {                                         lbl.style.color = 'var(--b24t-text)'; }
+    }
+
     const startBtn = document.getElementById('b24t-btn-start');
     const pauseBtn = document.getElementById('b24t-btn-pause');
     if (startBtn) startBtn.textContent = state.status === 'paused' ? 'Wznów' : 'Start';
@@ -1689,8 +1721,21 @@
       skipped: document.getElementById('b24t-stat-skipped'),
       remaining: document.getElementById('b24t-stat-remaining'),
     };
-    if (els.tagged) els.tagged.textContent = state.stats.tagged;
+    function _pop(el) {
+      if (!el) return;
+      el.classList.remove('b24t-stat-pop');
+      void el.offsetHeight;
+      el.classList.add('b24t-stat-pop');
+      setTimeout(function() { el.classList.remove('b24t-stat-pop'); }, 350);
+    }
+    const prevTagged  = els.tagged  ? (parseInt(els.tagged.textContent)  || 0) : 0;
+    const prevSkipped = els.skipped ? (parseInt(els.skipped.textContent) || 0) : 0;
+
+    if (els.tagged)  els.tagged.textContent  = state.stats.tagged;
     if (els.skipped) els.skipped.textContent = state.stats.skipped + state.stats.noMatch;
+
+    if (state.stats.tagged > prevTagged)                                   _pop(els.tagged);
+    if ((state.stats.skipped + state.stats.noMatch) > prevSkipped)         _pop(els.skipped);
 
     // Remaining = total file rows - tagged - skipped
     const total = state.file?.rows?.length || 0;
@@ -2363,7 +2408,7 @@
         transition: background 0.3s, border-color 0.3s;
       }
       .b24t-token-ok      { color: var(--b24t-ok); font-weight: 600; }
-      .b24t-token-pending { color: var(--b24t-warn); }
+      .b24t-token-pending { color: var(--b24t-warn); animation: b24t-dot-pulse 1.4s ease-in-out infinite; }
       .b24t-token-error   { color: var(--b24t-err); }
       #b24t-session-timer { color: var(--b24t-text-meta); font-size: 11px; font-weight: 500; }
 
@@ -2452,6 +2497,7 @@
         transition: border-color 0.2s, background 0.2s, transform 0.15s;
       }
       .b24t-file-zone:hover { border-color: var(--b24t-primary); background: var(--b24t-primary-bg); transform: translateY(-1px); }
+      .b24t-file-zone.b24t-dragover { border-color: var(--b24t-primary); border-style: solid; background: var(--b24t-primary-bg); transform: scale(1.015); box-shadow: 0 0 0 3px var(--b24t-primary-glow); }
       .b24t-file-icon { font-size: 18px; flex-shrink: 0; }
       .b24t-file-name { font-size: 13px; color: var(--b24t-text); font-weight: 600; }
       .b24t-file-meta { font-size: 12px; color: var(--b24t-text-meta); }
@@ -2538,6 +2584,10 @@
         background: var(--b24t-accent-grad); opacity: 0.4;
       }
       .b24t-stat-card:hover { transform: translateY(-2px); border-color: var(--b24t-border-strong); }
+      .b24t-stat-card:has(.b24t-stat-value.ok)   { background: var(--b24t-ok-bg) !important; border-color: color-mix(in srgb, var(--b24t-ok) 30%, transparent) !important; }
+      .b24t-stat-card:has(.b24t-stat-value.warn) { background: var(--b24t-warn-bg) !important; border-color: color-mix(in srgb, var(--b24t-warn) 30%, transparent) !important; }
+      .b24t-stat-card:has(.b24t-stat-value.ok)::after   { background: var(--b24t-ok); opacity: 0.5; }
+      .b24t-stat-card:has(.b24t-stat-value.warn)::after { background: var(--b24t-warn); opacity: 0.5; }
       .b24t-stat-label { font-size: 11px; color: var(--b24t-text-meta); margin-bottom: 3px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; }
       .b24t-stat-value { font-size: 20px; font-weight: 800; color: var(--b24t-text); }
       .b24t-stat-value.ok   { color: var(--b24t-ok); }
@@ -2553,10 +2603,13 @@
       }
       #b24t-log::-webkit-scrollbar { width: 3px; }
       #b24t-log::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
-      .b24t-log-entry { display: flex; gap: 6px; padding: 1px 0; animation: b24t-fadein 0.15s ease; }
+      .b24t-log-entry { display: flex; gap: 6px; padding: 2px 6px; border-left: 2px solid transparent; animation: b24t-fadein 0.15s ease; }
       .b24t-log-time    { color: var(--b24t-text-faint); flex-shrink: 0; }
       .b24t-log-msg     { color: var(--b24t-text-muted); flex: 1; }
       .b24t-log-elapsed { color: var(--b24t-text-faint); font-size: 10px; flex-shrink: 0; }
+      .b24t-log-success { border-left-color: var(--b24t-ok);  background: var(--b24t-ok-bg); }
+      .b24t-log-error   { border-left-color: var(--b24t-err); background: var(--b24t-err-bg); }
+      .b24t-log-warn    { border-left-color: var(--b24t-warn); background: var(--b24t-warn-bg); }
       .b24t-log-success .b24t-log-msg { color: var(--b24t-ok); font-weight: 500; }
       .b24t-log-error   .b24t-log-msg { color: var(--b24t-err); font-weight: 500; }
       .b24t-log-warn    .b24t-log-msg { color: var(--b24t-warn); }
@@ -2982,6 +3035,63 @@
         letter-spacing: 0.02em;
       }
       #b24t-help-close:hover { background: rgba(25,25,50,0.98); border-color: rgba(108,108,255,0.75); }
+
+      /* ── TAB ENTER ── */
+      @keyframes b24t-tab-enter {
+        from { opacity: 0; transform: translateX(7px); }
+        to   { opacity: 1; transform: translateX(0); }
+      }
+
+      /* ── STAT POP ── */
+      @keyframes b24t-stat-pop {
+        0%   { transform: scale(1); }
+        45%  { transform: scale(1.22); }
+        100% { transform: scale(1); }
+      }
+      .b24t-stat-pop { animation: b24t-stat-pop 0.32s cubic-bezier(0.34,1.56,0.64,1) !important; }
+
+      /* ── PROGRESS BAR PULSE WHEN RUNNING ── */
+      @keyframes b24t-bar-pulse {
+        0%, 100% { filter: brightness(1); }
+        50%       { filter: brightness(1.3); }
+      }
+      #b24t-progress-bar.b24t-running {
+        animation: b24t-bar-pulse 1.3s ease-in-out infinite;
+      }
+
+      /* ── TOKEN DOT PULSE ── */
+      @keyframes b24t-dot-pulse {
+        0%, 100% { opacity: 1; }
+        50%       { opacity: 0.2; }
+      }
+
+      /* ── TOAST NOTIFICATIONS ── */
+      #b24t-toast-container {
+        position: fixed; bottom: 24px; right: 24px;
+        display: flex; flex-direction: column; gap: 8px;
+        z-index: 2147483647; pointer-events: none;
+      }
+      .b24t-toast {
+        font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+        font-size: 13px; padding: 10px 16px;
+        border-radius: 8px; border-left: 3px solid;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.45);
+        animation: b24t-toast-in 0.22s cubic-bezier(0.34,1.56,0.64,1) forwards;
+        pointer-events: all; max-width: 320px; line-height: 1.4;
+      }
+      .b24t-toast.b24t-toast-out { animation: b24t-toast-out 0.2s ease forwards; }
+      .b24t-toast-success { background: rgba(10,22,15,0.97); border-color: #4ade80; color: #d1fae5; }
+      .b24t-toast-error   { background: rgba(25,8,8,0.97);   border-color: #f87171; color: #fee2e2; }
+      .b24t-toast-info    { background: rgba(10,10,22,0.97); border-color: #7c6fff; color: #e8e8ff; }
+      .b24t-toast-warn    { background: rgba(24,18,4,0.97);  border-color: #facc15; color: #fef9c3; }
+      @keyframes b24t-toast-in {
+        from { opacity: 0; transform: translateX(28px) scale(0.93); }
+        to   { opacity: 1; transform: translateX(0)    scale(1); }
+      }
+      @keyframes b24t-toast-out {
+        from { opacity: 1; transform: translateX(0)    scale(1); }
+        to   { opacity: 0; transform: translateX(28px) scale(0.93); }
+      }
     `;
     document.head.appendChild(style);
   }
@@ -2997,7 +3107,7 @@
     panel.innerHTML = `<div id="b24t-panel-inner">
       <!-- TOPBAR -->
       <div id="b24t-topbar">
-        <span class="b24t-logo">B24 Tagger <span style="font-size:10px;opacity:0.8;letter-spacing:0.08em;">BETA</span></span>
+        <span class="b24t-logo">B24 Tagger <span style="font-size:9px;font-weight:700;letter-spacing:0.1em;background:var(--b24t-primary-bg);color:var(--b24t-primary-h);border:1px solid var(--b24t-primary-glow);border-radius:4px;padding:1px 5px;vertical-align:middle;">BETA</span></span>
         <span class="b24t-version">v${VERSION}</span>
         <div id="b24t-topbar-right">
           <span id="b24t-status-badge" class="b24t-badge badge-idle">Idle</span>
@@ -3074,7 +3184,7 @@
                 <div class="b24t-file-meta" id="b24t-file-meta">CSV, JSON lub XLSX</div>
               </div>
             </div>
-            <button id="b24t-btn-clear-file" title="Usuń plik" style="display:none;background:#2a1f1f;border:1px solid #5a2a2a;color:#f87171;border-radius:7px;padding:7px 10px;font-size:13px;cursor:pointer;flex-shrink:0;transition:background 0.15s,border-color 0.15s;">✕</button>
+            <button id="b24t-btn-clear-file" title="Usuń plik" style="display:none;background:var(--b24t-err-bg);border:1px solid color-mix(in srgb,var(--b24t-err) 35%,transparent);color:var(--b24t-err-text);border-radius:7px;padding:7px 10px;font-size:13px;cursor:pointer;flex-shrink:0;transition:background 0.15s,border-color 0.15s;">✕</button>
           </div>
           <input type="file" id="b24t-file-input" accept=".csv,.json,.xlsx" style="display:none">
           <div class="b24t-date-range" id="b24t-date-range" style="display:none">
@@ -3234,15 +3344,13 @@
 
       <!-- ACTION BAR -->
       <div id="b24t-actions" style="flex-direction:column;gap:6px;">
+        <button class="b24t-btn-primary" id="b24t-btn-start" style="width:100%;">▶ Start</button>
         <div style="display:flex;gap:6px;width:100%;">
-          <button class="b24t-btn-primary" id="b24t-btn-start" style="flex:2;">▶ Start</button>
-          <button class="b24t-btn-secondary" id="b24t-btn-preview" title="Match Preview — sprawdź dopasowanie bez tagowania" style="flex:1;font-size:12px;">Match</button>
-          <button class="b24t-btn-secondary" id="b24t-btn-audit" title="Audit Mode — porównaj bez tagowania" style="flex:1;font-size:12px;color:var(--b24t-primary);">Audit</button>
-        </div>
-        <div style="display:flex;gap:6px;width:100%;">
-          <button class="b24t-btn-secondary" id="b24t-btn-pause" disabled style="flex:1;">⏸ Pauza</button>
-          <button class="b24t-btn-danger" id="b24t-btn-stop" style="flex:1;">⏹ Stop</button>
-          <button class="b24t-btn-secondary" id="b24t-btn-export" title="Eksport raportu CSV" style="flex:0 0 36px;">↓</button>
+          <button class="b24t-btn-secondary" id="b24t-btn-preview" title="Match Preview — sprawdź dopasowanie bez tagowania" style="flex:1;font-size:11px;">Match</button>
+          <button class="b24t-btn-secondary" id="b24t-btn-audit" title="Audit Mode — porównaj bez tagowania" style="flex:1;font-size:11px;color:var(--b24t-primary);">Audit</button>
+          <button class="b24t-btn-secondary" id="b24t-btn-pause" disabled style="flex:1;font-size:11px;">⏸ Pauza</button>
+          <button class="b24t-btn-danger" id="b24t-btn-stop" style="flex:1;font-size:11px;">⏹ Stop</button>
+          <button class="b24t-btn-secondary" id="b24t-btn-export" title="Eksport raportu CSV" style="flex:0 0 34px;font-size:12px;">↓</button>
         </div>
       </div>
 
@@ -3579,11 +3687,11 @@
     }
 
     // Drag & drop on file zone
-    fileZone.addEventListener('dragover', (e) => { e.preventDefault(); fileZone.style.borderColor = '#6c6cff'; });
-    fileZone.addEventListener('dragleave', () => { fileZone.style.borderColor = ''; });
+    fileZone.addEventListener('dragover', (e) => { e.preventDefault(); fileZone.classList.add('b24t-dragover'); });
+    fileZone.addEventListener('dragleave', () => { fileZone.classList.remove('b24t-dragover'); });
     fileZone.addEventListener('drop', (e) => {
       e.preventDefault();
-      fileZone.style.borderColor = '';
+      fileZone.classList.remove('b24t-dragover');
       if (e.dataTransfer.files[0]) handleFileUpload(e.dataTransfer.files[0]);
     });
 
@@ -3858,14 +3966,21 @@
       state.currentPartitionIdx = 0;
 
       if (partitions.length > 1) {
-        document.getElementById('b24t-partition-section').style.display = 'block';
+        const ps = document.getElementById('b24t-partition-section');
+        ps.style.display = 'block';
+        ps.style.animation = 'none'; void ps.offsetHeight; ps.style.animation = 'b24t-fadein 0.25s ease';
         document.getElementById('b24t-partition-info').textContent =
           `${partitions.length} partycji · max ${state.partitionLimit} wzmianek/partycja`;
       }
 
       // Show mapping section
-      document.getElementById('b24t-mapping-section').style.display = 'block';
-      document.getElementById('b24t-settings-section').style.display = 'block';
+      ['b24t-mapping-section', 'b24t-settings-section'].forEach(function(id, i) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.style.display = 'block';
+        el.style.animation = 'none'; void el.offsetHeight;
+        el.style.animation = 'b24t-fadein 0.25s ease';
+      });
 
       // Check for saved schema
       const savedSchema = findMatchingSchema(Object.keys(meta.assessments));
@@ -3878,6 +3993,7 @@
       updateStatsUI();
       addLog(`✓ Plik załadowany: ${meta.totalRows} wierszy, ${Object.keys(meta.assessments).length} typów labelek`, 'success');
       addLog(`→ Wykryte kolumny: url="${colMap.url || 'BRAK!'}" | assessment="${colMap.assessment || 'BRAK!'}" | date="${colMap.date || 'BRAK!'}"`, 'info');
+      showToast(`✓ Plik załadowany: ${meta.totalRows} wierszy`, 'success');
 
       // Walidacja krytyczna — blokuje Start jeśli brak URL/dat
       const fileWarnings = validateFile(rows, colMap);
@@ -7370,6 +7486,22 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.2",
+      "date": "2026-04-10",
+      "label": "UI",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "feat", "text": "Toast notifications — auto-dismiss przy wgraniu pliku i zakończeniu sesji"},
+        {"type": "ui", "text": "Animacje: tab enter, stat pop, progress bar pulse, token dot pulse, section reveal"},
+        {"type": "ui", "text": "Progress label: kolory per stan (idle/done/paused/error/running)"},
+        {"type": "ui", "text": "Log entries: border-left + tło per typ (success/error/warn)"},
+        {"type": "ui", "text": "BETA chip: pill badge; file zone drag-over: glow + scale; stat card: tinted :has()"},
+        {"type": "ui", "text": "Action bar: Start full-width na gorze, pozostale przyciski w jednym wierszu"},
+        {"type": "fix", "text": "Quick Delete: hardcoded colors → CSS vars"},
+        {"type": "fix", "text": "Annotator panel: przycisk ↻ inline z datą (Projekt i Tagi tab)"}
+      ]
+    },
+    {
       "version": "0.23.1",
       "date": "2026-04-10",
       "label": "UI",
@@ -7464,16 +7596,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "Topbar: logo shrinkuje zamiast wypychac przyciski poza panel"},
         {"type": "fix", "text": "Topbar-right zawsze widoczny — flex-shrink:0"},
         {"type": "fix", "text": "Annotator tabs: przycisk Odswiez nie wychodzi poza panel"}
-      ]
-    },
-    {
-      "version": "0.21.12",
-      "date": "2026-04-03",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Responsywny UI: annotator panel, news panels — compact mode + overflow guard"},
-        {"type": "fix", "text": "News panels: PANEL_W viewport-aware (min 280, max 360)"}
       ]
     },
   ];
@@ -8843,12 +8965,10 @@ function showOnboarding(onComplete) {
       // Project tab
       '<div id="b24t-ann-tab-project" class="b24t-ann-content" style="display:block;background:var(--b24t-bg);flex:1;overflow-y:auto;min-height:0;">' +
         '<div id="b24t-ann-project-content" style="padding:16px;font-size:14px;color:var(--b24t-text-faint);">↻ Ładowanie...</div>' +
-        '<div style="padding:0 16px 14px;"><button id="b24t-ann-project-refresh" style="width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:7px;padding:9px;font-size:13px;font-family:inherit;cursor:pointer;transition:background 0.15s,transform 0.1s;">↻ Odśwież</button></div>' +
       '</div>' +
       // Tags tab
       '<div id="b24t-ann-tab-tagstats" class="b24t-ann-content" style="display:none;background:var(--b24t-bg);flex:1;overflow-y:auto;min-height:0;">' +
         '<div id="b24t-ann-tagstats-content" style="padding:16px;font-size:14px;color:var(--b24t-text-faint);">↻ Ładowanie...</div>' +
-        '<div style="padding:0 16px 14px;"><button id="b24t-ann-tagstats-refresh" style="width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:7px;padding:9px;font-size:13px;font-family:inherit;cursor:pointer;transition:background 0.15s,transform 0.1s;">↻ Odśwież</button></div>' +
       '</div>' +
       // Groups tab
       '<div id="b24t-ann-tab-groups" class="b24t-ann-content" style="display:none;background:var(--b24t-bg);flex:1;overflow-y:auto;min-height:0;">' +
@@ -8929,29 +9049,12 @@ function showOnboarding(onComplete) {
       });
     });
 
-    // Refresh button hover
-    ['b24t-ann-project-refresh','b24t-ann-tagstats-refresh'].forEach(function(id) {
-      var btn = document.getElementById(id);
-      if (!btn) return;
-      btn.addEventListener('mouseenter', function() { btn.style.transform = 'translateY(-1px)'; });
-      btn.addEventListener('mouseleave', function() { btn.style.transform = ''; });
-    });
-
     // Close
     document.getElementById('b24t-ann-close').addEventListener('click', function() {
       panel.style.display = 'none';
       var t = document.getElementById('b24t-annotator-tab');
       if (t) t.style.display = 'flex';
       // News panels are independent — do NOT close them here
-    });
-
-
-    // Refresh
-    document.getElementById('b24t-ann-project-refresh').addEventListener('click', function() {
-      annotatorData.project = null; loadAnnotatorProject();
-    });
-    document.getElementById('b24t-ann-tagstats-refresh').addEventListener('click', function() {
-      annotatorData.tagstats = null; bgCache.tagstats = null; loadAnnotatorTagStats();
     });
 
     // Drag
@@ -9082,8 +9185,11 @@ function showOnboarding(onComplete) {
   function renderAnnotatorProject(el, d) {
     var pc = d.pct === 100 ? 'var(--b24t-ok)' : 'var(--b24t-primary)';
     el.innerHTML =
-      '<div style="font-size:11px;color:var(--b24t-text-faint);margin-bottom:8px;">' + d.dates.label +
-        (d.dates.daysLeft > 0 ? ' <span style="color:var(--b24t-warn);">· ' + d.dates.daysLeft + ' dni</span>' : '') + '</div>' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">' +
+        '<div style="font-size:11px;color:var(--b24t-text-faint);">' + d.dates.label +
+          (d.dates.daysLeft > 0 ? ' <span style="color:var(--b24t-warn);">· ' + d.dates.daysLeft + ' dni</span>' : '') + '</div>' +
+        '<button id="b24t-ann-project-refresh" title="Odśwież" style="background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer;flex-shrink:0;transition:transform 0.1s,background 0.15s;">&#8635;</button>' +
+      '</div>' +
       '<div style="background:var(--b24t-bg-input);border-radius:99px;height:5px;margin-bottom:12px;overflow:hidden;">' +
         '<div style="height:100%;border-radius:99px;background:var(--b24t-accent-grad);width:' + d.pct + '%;transition:width 0.5s ease;"></div></div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;">' +
@@ -9095,6 +9201,8 @@ function showOnboarding(onComplete) {
         _annTile('TO DELETE', d.toDelete, d.toDelete===0 ? 'var(--b24t-text-faint)' : 'var(--b24t-err)') +
       '</div>' +
       '<div style="margin-top:10px;text-align:center;font-size:12px;font-weight:700;color:' + pc + ';">' + (d.pct===100 ? '✓ Gotowe!' : d.pct+'% otagowane') + '</div>';
+    var rb = el.querySelector('#b24t-ann-project-refresh');
+    if (rb) rb.addEventListener('click', function() { annotatorData.project = null; loadAnnotatorProject(); });
   }
 
   function _annTile(label, value, color) {
@@ -9176,7 +9284,14 @@ function showOnboarding(onComplete) {
     var filtered = (d.results||[]).filter(function(p){ return p.reqVer>0||p.toDelete>0; })
       .sort(function(a,b){ return (b.reqVer+b.toDelete)-(a.reqVer+a.toDelete); });
     if (!filtered.length) {
-      el.innerHTML = '<div style="text-align:center;color:var(--b24t-ok);font-size:13px;padding:12px 0;font-weight:600;">✓ Wszystkie projekty czyste!</div>';
+      el.innerHTML =
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0 8px;">' +
+          '<div style="font-size:11px;color:var(--b24t-text-faint);">' + (d.dates ? d.dates.dateFrom + ' – ' + d.dates.dateTo : '') + '</div>' +
+          '<button id="b24t-ann-tagstats-refresh" title="Odśwież" style="background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer;flex-shrink:0;transition:transform 0.1s,background 0.15s;">&#8635;</button>' +
+        '</div>' +
+        '<div style="text-align:center;color:var(--b24t-ok);font-size:13px;padding:12px 0;font-weight:600;">✓ Wszystkie projekty czyste!</div>';
+      var rb = el.querySelector('#b24t-ann-tagstats-refresh');
+      if (rb) rb.addEventListener('click', function() { annotatorData.tagstats = null; bgCache.tagstats = null; loadAnnotatorTagStats(); });
       return;
     }
     var rows = filtered.map(function(p) {
@@ -9187,7 +9302,10 @@ function showOnboarding(onComplete) {
       '</tr>';
     }).join('');
     el.innerHTML =
-      '<div style="font-size:11px;color:var(--b24t-text-faint);padding:6px 0 8px;">' + d.dates.dateFrom + ' – ' + d.dates.dateTo + '</div>' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0 8px;">' +
+        '<div style="font-size:11px;color:var(--b24t-text-faint);">' + d.dates.dateFrom + ' – ' + d.dates.dateTo + '</div>' +
+        '<button id="b24t-ann-tagstats-refresh" title="Odśwież" style="background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer;flex-shrink:0;transition:transform 0.1s,background 0.15s;">&#8635;</button>' +
+      '</div>' +
       '<table style="width:100%;border-collapse:collapse;">' +
         '<thead><tr>' +
           '<th style="padding:5px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--b24t-text-faint);text-align:left;border-bottom:1px solid var(--b24t-border);">Projekt</th>' +
@@ -9196,6 +9314,8 @@ function showOnboarding(onComplete) {
         '</tr></thead>' +
         '<tbody>' + rows + '</tbody>' +
       '</table>';
+    var rb = el.querySelector('#b24t-ann-tagstats-refresh');
+    if (rb) rb.addEventListener('click', function() { annotatorData.tagstats = null; bgCache.tagstats = null; loadAnnotatorTagStats(); });
   }
 
   // ───────────────────────────────────────────
@@ -10623,10 +10743,10 @@ To jest NIEODWRACALNE.`)) return;
     div.style.display = 'none';
     div.innerHTML = `
       <div class="b24t-section">
-        <div class="b24t-section-label" style="color:#f87171;">Usuń po tagu</div>
+        <div class="b24t-section-label" style="color:var(--b24t-err);">Usuń po tagu</div>
         <div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:10px;line-height:1.5;">
           Usuwa wzmianki z wybranym tagiem w aktualnym zakresie dat.
-          <strong style="color:#f87171;">Operacja nieodwracalna.</strong>
+          <strong style="color:var(--b24t-err);">Operacja nieodwracalna.</strong>
         </div>
 
         <!-- Tag selector -->
@@ -10664,18 +10784,18 @@ To jest NIEODWRACALNE.`)) return;
         <div id="b24t-del-custom-dates" style="display:none;margin-bottom:10px;">
           <div style="display:flex;gap:6px;align-items:center;">
             <input type="date" id="b24t-del-date-from" class="b24t-input" style="flex:1;">
-            <span style="color:#444455;font-size:11px;">→</span>
+            <span style="color:var(--b24t-text-faint);font-size:11px;">→</span>
             <input type="date" id="b24t-del-date-to" class="b24t-input" style="flex:1;">
           </div>
         </div>
 
         <!-- Progress -->
         <div class="b24t-progress-bar-track" style="margin-bottom:6px;">
-          <div id="b24t-del-progress" style="height:100%;background:#f87171;border-radius:99px;width:0%;transition:width 0.3s;"></div>
+          <div id="b24t-del-progress" style="height:100%;background:var(--b24t-err);border-radius:99px;width:0%;transition:width 0.3s;"></div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div id="b24t-del-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;flex:1;"></div>
-          <div id="b24t-del-timer" style="font-size:11px;color:#8888aa;font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
+          <div id="b24t-del-timer" style="font-size:11px;color:var(--b24t-text-faint);font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
         </div>
 
         <!-- Run button -->
@@ -10683,21 +10803,21 @@ To jest NIEODWRACALNE.`)) return;
           🗑 Usuń wzmianki z tagiem
         </button>
 
-        <div style="font-size:9px;color:#666688;text-align:center;margin-top:6px;">
+        <div style="font-size:9px;color:var(--b24t-text-faint);text-align:center;margin-top:6px;">
           Ostrzeżenie pojawi się tylko przy pierwszym użyciu
         </div>
       </div>
 
       <!-- SEPARATOR -->
-      <div style="height:1px;background:#1a1a22;margin:0 12px;"></div>
+      <div style="height:1px;background:var(--b24t-border-sub);margin:0 12px;"></div>
 
       <!-- DELETE CURRENT VIEW -->
       <div class="b24t-section">
-        <div class="b24t-section-label" style="color:#f87171;">Usuń wyświetlane wzmianki</div>
+        <div class="b24t-section-label" style="color:var(--b24t-err);">Usuń wyświetlane wzmianki</div>
         <div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:10px;line-height:1.5;">
           Usuwa wzmianki aktualnie widoczne w panelu Brand24
           (aktywne filtry, zakres dat, tagi itd.).
-          <strong style="color:#f87171;">Operacja nieodwracalna.</strong>
+          <strong style="color:var(--b24t-err);">Operacja nieodwracalna.</strong>
         </div>
 
         <!-- Scope -->
@@ -10719,11 +10839,11 @@ To jest NIEODWRACALNE.`)) return;
 
         <!-- Progress -->
         <div class="b24t-progress-bar-track" style="margin-bottom:6px;">
-          <div id="b24t-delview-progress" style="height:100%;background:#f87171;border-radius:99px;width:0%;transition:width 0.3s;"></div>
+          <div id="b24t-delview-progress" style="height:100%;background:var(--b24t-err);border-radius:99px;width:0%;transition:width 0.3s;"></div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div id="b24t-delview-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;flex:1;"></div>
-          <div id="b24t-delview-timer" style="font-size:11px;color:#8888aa;font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
+          <div id="b24t-delview-timer" style="font-size:11px;color:var(--b24t-text-faint);font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
         </div>
 
         <!-- Run button -->
@@ -10741,7 +10861,7 @@ To jest NIEODWRACALNE.`)) return;
             title="Ile wzmianek usuwać równocześnie (domyślnie ${DEL_BATCH_DEFAULT}, max 1000)"
             style="width:58px;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text);border-radius:4px;padding:3px 6px;font-size:11px;font-family:inherit;text-align:center;">
           <span style="font-size:10px;color:var(--b24t-text-faint);">/ 1000 max</span>
-          <span id="b24t-del-batch-lock" style="font-size:10px;color:#f87171;cursor:pointer;" title="Kliknij by zmienić">🔒 zablokowane</span>
+          <span id="b24t-del-batch-lock" style="font-size:10px;color:var(--b24t-err);cursor:pointer;" title="Kliknij by zmienić">🔒 zablokowane</span>
         </div>
       </div>
     `;
@@ -10865,7 +10985,7 @@ To jest NIEODWRACALNE.`)) return;
       const url = new URL(window.location.href);
       const d1 = url.searchParams.get('d1') || '?';
       const d2 = url.searchParams.get('d2') || '?';
-      el.innerHTML = `<span style="color:#666677;">Zakres:</span> ${d1} → ${d2}`;
+      el.innerHTML = `<span style="color:var(--b24t-text-faint);">Zakres:</span> ${d1} → ${d2}`;
     };
 
     // Scope toggle
@@ -11061,8 +11181,8 @@ Tej operacji nie można cofnąć.`)) {
         const grNames = gr.length
           ? gr.map(id => id === 1 ? 'Untagged' : Object.entries(state.tags).find(([,tid]) => tid === id)?.[0] || `tag:${id}`).join(', ')
           : 'wszystkie';
-        el.innerHTML = `<span style="color:#666677;">Daty:</span> ${view.dateFrom} → ${view.dateTo}<br>` +
-          `<span style="color:#666677;">Filtry tagów:</span> ${grNames}`;
+        el.innerHTML = `<span style="color:var(--b24t-text-faint);">Daty:</span> ${view.dateFrom} → ${view.dateTo}<br>` +
+          `<span style="color:var(--b24t-text-faint);">Filtry tagów:</span> ${grNames}`;
       } else {
         el.textContent = 'Poczekaj chwilę — filtry zostaną wykryte automatycznie.';
       }
@@ -11250,7 +11370,7 @@ Tej operacji nie można cofnąć.`)) {
 
         <!-- Progress bar -->
         <div class="b24t-progress-bar-track" style="margin-bottom:6px;">
-          <div id="b24t-qt-progress" style="height:100%;background:#6c6cff;border-radius:99px;width:0%;transition:width 0.3s;"></div>
+          <div id="b24t-qt-progress" style="height:100%;background:var(--b24t-accent-grad);border-radius:99px;width:0%;transition:width 0.3s;"></div>
         </div>
 
         <!-- Status + timer -->
@@ -11310,10 +11430,10 @@ Tej operacji nie można cofnąć.`)) {
       }).join(', ') : 'wszystkie';
 
       el.innerHTML = `
-        <span style="color:#666677;">Daty:</span> ${d1} → ${d2}<br>
-        <span style="color:#666677;">Filtry tagów:</span> ${grNames}<br>
-        ${sq ? `<span style="color:#666677;">Szukaj:</span> "${sq}"<br>` : ''}
-        <span style="color:#666677;">Aktualna strona:</span> ${p}
+        <span style="color:var(--b24t-text-faint);">Daty:</span> ${d1} → ${d2}<br>
+        <span style="color:var(--b24t-text-faint);">Filtry tagów:</span> ${grNames}<br>
+        ${sq ? `<span style="color:var(--b24t-text-faint);">Szukaj:</span> "${sq}"<br>` : ''}
+        <span style="color:var(--b24t-text-faint);">Aktualna strona:</span> ${p}
       `;
     };
 
@@ -11515,6 +11635,8 @@ Tej operacji nie można cofnąć.`)) {
         if (tabEls.delete)   tabEls.delete.style.display   = tab === 'delete'   ? 'block' : 'none';
         if (tabEls.history)  tabEls.history.style.display  = tab === 'history'  ? 'block' : 'none';
         if (tabEls.actions)  tabEls.actions.style.display  = tab === 'main'     ? 'flex'  : 'none';
+        const activeEl = tabEls[tab];
+        if (activeEl) { activeEl.style.animation = 'none'; void activeEl.offsetHeight; activeEl.style.animation = 'b24t-tab-enter 0.18s ease'; }
       });
     });
 

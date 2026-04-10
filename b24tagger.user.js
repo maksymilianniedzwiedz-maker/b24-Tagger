@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.2
+// @version      0.23.3
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -14,6 +14,7 @@
 // @connect       hooks.slack.com
 // @connect       raw.githubusercontent.com
 // @connect       cdn.jsdelivr.net
+// @connect       *
 // @run-at       document-start
 // ==/UserScript==
 
@@ -112,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.2';
+  const VERSION = '0.23.3';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5984,6 +5985,7 @@ function showOnboarding(onComplete) {
     panelsOpen: false,
     wired: false,
   };
+  var _newsChipsRenderer = null; // set by _wireNewsPanels, called on every panel open
 
   var NEWS_DEFAULT_KEYWORDS = [
     'hm-', '-hm-', '-hm', '/hm/', '/hm',
@@ -6028,7 +6030,8 @@ function showOnboarding(onComplete) {
 
   function _newsGetKeywords(cc) {
     var all = lsGet(LS.NEWS_KEYWORDS, {});
-    return all[cc] || NEWS_DEFAULT_KEYWORDS.slice();
+    var saved = all[cc];
+    return (Array.isArray(saved) && saved.length > 0) ? saved : NEWS_DEFAULT_KEYWORDS.slice();
   }
   function _newsSaveKeywords(cc, chips) {
     var all = lsGet(LS.NEWS_KEYWORDS, {});
@@ -6147,6 +6150,182 @@ function showOnboarding(onComplete) {
     if (nonNeutral.length > 0) return 'wrongcountry';
 
     return 'match';
+  }
+
+  // ── NEWS CONTENT SCANNER ──
+  // Skanuje treść strony pod kątem słów kluczowych gdy URL nie zawiera żadnego dopasowania.
+  // Zwraca Promise<{status:'contentmatch'|'nomatch'|'blocked', score:Number, snippet:String}>
+  //
+  // Progi punktowe:
+  //   keyword w tytule/og:title          → +8  (silny sygnał — autor strony wybrał ten tytuł)
+  //   keyword w og:description/meta desc → +5  (silny sygnał — opis meta)
+  //   keyword w h1                       → +5  (silny sygnał — nagłówek artykułu)
+  //   keyword w pierwszym akapicie       → +4  (umiarkowany — lede artykułu)
+  //   keyword w kolejnych akapitach      → +1 za każdy, maks. +3 łącznie
+  //   próg contentmatch                  → 5 pkt (jeden akapit to za mało, tytuł lub dwa akapity wystarczą)
+
+  var NEWS_CONTENT_SCAN_CONCURRENCY = 5;
+  var NEWS_CONTENT_SCAN_TIMEOUT_MS  = 8000;
+  var NEWS_CONTENT_SCAN_THRESHOLD   = 5;
+
+  var NEWS_NOISE_SELECTORS = [
+    'script','style','noscript','svg','iframe',
+    'aside','footer','nav','header','form',
+    '[class*="ad-"]','[class*="-ad"]','[class*="__ad"]',
+    '[class*="banner"]','[class*="sponsor"]','[class*="widget"]',
+    '[class*="sidebar"]','[class*="promo"]','[class*="popup"]',
+    '[class*="newsletter"]','[class*="cookie"]','[class*="consent"]',
+    '[class*="related"]','[class*="recommended"]',
+    '[id*="banner"]','[id*="sidebar"]','[id*="cookie"]','[id*="popup"]',
+  ];
+
+  function _newsParseContent(html, chips) {
+    var doc;
+    try {
+      doc = (new DOMParser()).parseFromString(html, 'text/html');
+    } catch(e) {
+      return { status: 'nomatch', score: 0, snippet: '' };
+    }
+
+    // Usuń szum — reklamy, nawigację, stopki, popupy
+    NEWS_NOISE_SELECTORS.forEach(function(sel) {
+      try {
+        doc.querySelectorAll(sel).forEach(function(el) { el.remove(); });
+      } catch(e) {}
+    });
+
+    // Wyciągnij tekst z kluczowych stref strony
+    var titleText = '';
+    var titleEl = doc.querySelector('title');
+    if (titleEl) titleText = (titleEl.textContent || '').trim();
+
+    var ogTitle = '';
+    var ogTitleEl = doc.querySelector('meta[property="og:title"]') || doc.querySelector('meta[name="og:title"]');
+    if (ogTitleEl) ogTitle = (ogTitleEl.getAttribute('content') || '').trim();
+
+    var ogDesc = '';
+    var ogDescEl = doc.querySelector('meta[property="og:description"]') || doc.querySelector('meta[name="og:description"]');
+    if (ogDescEl) ogDesc = (ogDescEl.getAttribute('content') || '').trim();
+
+    var metaDesc = '';
+    var metaDescEl = doc.querySelector('meta[name="description"]');
+    if (metaDescEl) metaDesc = (metaDescEl.getAttribute('content') || '').trim();
+
+    var h1Text = '';
+    var h1El = doc.querySelector('h1');
+    if (h1El) h1Text = (h1El.textContent || '').trim();
+
+    // Treść artykułu: preferuj <article>, potem <main>, na końcu <body>
+    var bodyEl = doc.querySelector('article') || doc.querySelector('main') || doc.body;
+    var paragraphs = [];
+    if (bodyEl) {
+      paragraphs = Array.from(bodyEl.querySelectorAll('p'))
+        .map(function(p) { return (p.textContent || '').trim(); })
+        .filter(function(t) { return t.length > 40; }) // pomijaj krótkie fragmenty (np. podpisy, etykiety)
+        .slice(0, 12); // max 12 pierwszych akapitów — lede artykułu, nie ogon
+    }
+
+    var score = 0;
+    var snippet = '';
+
+    chips.forEach(function(chip) {
+      var kw = chip.toLowerCase();
+
+      // Strefa tytułu — najsilniejszy sygnał
+      var inTitle = titleText.toLowerCase().indexOf(kw) !== -1 || ogTitle.toLowerCase().indexOf(kw) !== -1;
+      if (inTitle) {
+        score += 8;
+        if (!snippet) snippet = (ogTitle || titleText).slice(0, 140);
+      }
+
+      // Strefa opisu meta
+      var inMeta = ogDesc.toLowerCase().indexOf(kw) !== -1 || metaDesc.toLowerCase().indexOf(kw) !== -1;
+      if (inMeta) {
+        score += 5;
+        if (!snippet) snippet = (ogDesc || metaDesc).slice(0, 140);
+      }
+
+      // Strefa nagłówka h1
+      if (h1Text.toLowerCase().indexOf(kw) !== -1) {
+        score += 5;
+        if (!snippet) snippet = h1Text.slice(0, 140);
+      }
+
+      // Strefa akapitów — rozróżniamy pierwszy akapit (lede) od reszty
+      var firstPMatch = false;
+      var extraPMatches = 0;
+      paragraphs.forEach(function(p, idx) {
+        if (p.toLowerCase().indexOf(kw) !== -1) {
+          if (idx === 0) { firstPMatch = true; }
+          else { extraPMatches++; }
+          if (!snippet) snippet = p.slice(0, 140);
+        }
+      });
+      if (firstPMatch) score += 4;
+      if (extraPMatches > 0) score += Math.min(extraPMatches, 3); // maks. +3 za wielokrotne wzmianki w treści
+
+    });
+
+    score = Math.min(score, 30); // cap — żeby jeden artykuł pełen keywordów nie zaburzał skali
+
+    return {
+      status:  score >= NEWS_CONTENT_SCAN_THRESHOLD ? 'contentmatch' : 'nomatch',
+      score:   score,
+      snippet: snippet,
+    };
+  }
+
+  // Pobiera stronę przez GM_xmlhttpRequest (pomija CORS) i skanuje jej treść.
+  // Dla URL-i które już mają status 'match' nie wywołuj tej funkcji — jest zbędna.
+  function _newsContentScan(url, chips) {
+    return new Promise(function(resolve) {
+      var resolved = false;
+      function _done(result) {
+        if (!resolved) { resolved = true; resolve(result); }
+      }
+
+      // Zewnętrzny timeout — ochrona gdyby GM_xmlhttpRequest nie wywołał żadnego callbacku
+      var timer = setTimeout(function() {
+        _done({ status: 'blocked', score: 0, snippet: '' });
+      }, NEWS_CONTENT_SCAN_TIMEOUT_MS + 500);
+
+      try {
+        GM_xmlhttpRequest({
+          method:  'GET',
+          url:     url,
+          headers: { 'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8' },
+          timeout: NEWS_CONTENT_SCAN_TIMEOUT_MS,
+          onload: function(resp) {
+            clearTimeout(timer);
+            if (resp.status < 200 || resp.status >= 400) {
+              _done({ status: 'blocked', score: 0, snippet: '' });
+              return;
+            }
+            // Odrzuć non-HTML (PDFy, obrazy, feed XML itp.)
+            var ct = (resp.responseHeaders || '').toLowerCase();
+            var isHtml = ct.indexOf('content-type: text/html') !== -1 ||
+                         ct.indexOf('content-type: application/xhtml') !== -1;
+            // Fallback: jeśli brak nagłówka content-type, sprawdź czy odpowiedź zaczyna się od '<'
+            if (!isHtml && (resp.responseText || '').trimStart().charAt(0) !== '<') {
+              _done({ status: 'nomatch', score: 0, snippet: '' });
+              return;
+            }
+            _done(_newsParseContent(resp.responseText, chips));
+          },
+          onerror: function() {
+            clearTimeout(timer);
+            _done({ status: 'blocked', score: 0, snippet: '' });
+          },
+          ontimeout: function() {
+            clearTimeout(timer);
+            _done({ status: 'blocked', score: 0, snippet: '' });
+          },
+        });
+      } catch(e) {
+        clearTimeout(timer);
+        _done({ status: 'blocked', score: 0, snippet: '' });
+      }
+    });
   }
 
   // ── NEWS URL OPENER (sized window) ──
@@ -6276,8 +6455,11 @@ function showOnboarding(onComplete) {
       });
       newsState.panelsOpen = true;
       if (!newsState.wired) { _wireNewsPanels(); newsState.wired = true; }
-      // Re-stack import below list
-      requestAnimationFrame(function() { _newsStackPanels(); });
+      // Re-stack import below list + odśwież chipy (mogły zniknąć lub kraj się zmienił)
+      requestAnimationFrame(function() {
+        _newsStackPanels();
+        if (_newsChipsRenderer) _newsChipsRenderer();
+      });
       return;
     }
     _buildNewsPanels();
@@ -6776,6 +6958,8 @@ function showOnboarding(onComplete) {
     })();
 
     // ─── CHIPS ───
+    // Eksportuj referencję na poziom modułu — żeby openNewsPanels() mogło wywołać re-render
+    // przy każdym otwarciu panelu (nie tylko przy pierwszym).
     function renderChips() {
       var cc = newsState.detectedCountry || 'DEFAULT';
       var chips = _newsGetKeywords(cc);
@@ -6800,6 +6984,7 @@ function showOnboarding(onComplete) {
         });
       });
     }
+    _newsChipsRenderer = renderChips;
 
     var addChipBtn = document.getElementById('b24t-news-add-chip-btn');
     if (addChipBtn) {
@@ -7485,6 +7670,19 @@ function showOnboarding(onComplete) {
 
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
+    {
+      "version": "0.23.3",
+      "date": "2026-04-10",
+      "label": "feat",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "feat", "text": "News: _newsContentScan() — skanowanie tresci stron przez GM_xmlhttpRequest"},
+        {"type": "feat", "text": "News: _newsParseContent() — DOMParser, usuwanie szumu, punktowanie 5 stref"},
+        {"type": "feat", "text": "News: @connect * — polaczenia z dowolnymi domenami newsowymi"},
+        {"type": "fix", "text": "News: chipy slow kluczowych nie pokazywaly sie — fix _newsGetKeywords (pusta tablica)"},
+        {"type": "fix", "text": "News: _newsChipsRenderer — odswieza chipy przy kazdym otwarciu panelu"}
+      ]
+    },
     {
       "version": "0.23.2",
       "date": "2026-04-10",

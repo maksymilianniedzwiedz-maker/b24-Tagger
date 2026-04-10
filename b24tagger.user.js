@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.0
+// @version      0.23.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.0';
+  const VERSION = '0.23.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2529,8 +2529,9 @@
       .b24t-stat-card {
         background: var(--b24t-section-grad-d); border: 1px solid var(--b24t-border);
         border-radius: 8px; padding: 8px 10px;
-        transition: background 0.3s, border-color 0.3s, transform 0.15s;
+        transition: background 0.3s, border-color 0.3s, transform 0.15s, box-shadow 0.15s;
         position: relative; overflow: hidden;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.10);
       }
       .b24t-stat-card::after {
         content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
@@ -2811,17 +2812,17 @@
       /* ── NEWS SIDE TAB ── */
       #b24t-news-side-tab {
         position: fixed; right: 0; top: calc(50% + 90px); transform: translateY(0);
-        z-index: 2147483639; border-radius: 10px 0 0 10px; border: 1px solid rgba(255,255,255,0.12); border-right: none;
+        z-index: 2147483639; border-radius: 10px 0 0 10px; border: 1px solid var(--b24t-border); border-right: none;
         padding: 14px 10px; cursor: pointer; display: none;
         flex-direction: column; align-items: center; gap: 5px;
         font-family: 'Inter','Segoe UI',system-ui,sans-serif;
         font-size: 11px; font-weight: 700; letter-spacing: 0.05em;
-        color: #c4b5fd; user-select: none;
-        background: #1a1a2e; box-shadow: -3px 0 12px rgba(0,0,0,0.5);
-        transition: transform 0.15s, background 0.15s;
+        color: var(--b24t-primary); user-select: none;
+        background: var(--b24t-bg-elevated); box-shadow: var(--b24t-shadow);
+        transition: transform 0.15s, background 0.15s, border-color 0.3s;
       }
-      #b24t-news-side-tab:hover { background: #25253f; transform: scale(1.06); }
-      #b24t-news-side-tab.active { background: #2d1b69; color: #a78bfa; border-color: rgba(139,92,246,0.4); }
+      #b24t-news-side-tab:hover { background: var(--b24t-bg-section-c); transform: scale(1.06); }
+      #b24t-news-side-tab.active { background: var(--b24t-primary-bg); color: var(--b24t-primary); border-color: color-mix(in srgb, var(--b24t-primary) 40%, transparent); }
       /* ── ANNOTATOR FLOATING PANEL ── */
       #b24t-annotator-tab {
         transition: opacity 0.2s, transform 0.2s;
@@ -2943,19 +2944,19 @@
         position: fixed;
         z-index: 2147483540;
         max-width: 280px;
-        background: #1a1a2e;
-        border: 1px solid rgba(108,108,255,0.4);
+        background: var(--b24t-bg-elevated);
+        border: 1px solid color-mix(in srgb, var(--b24t-primary) 40%, transparent);
         border-radius: 10px;
         padding: 10px 14px;
         font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
         font-size: 11px;
-        color: #b0b0c8;
+        color: var(--b24t-text-muted);
         line-height: 1.6;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+        box-shadow: var(--b24t-shadow-h);
         pointer-events: none;
         animation: b24t-slidein 0.2s cubic-bezier(0.34,1.56,0.64,1);
       }
-      .b24t-help-tip strong { color: #e2e2e8; display: block; margin-bottom: 4px; font-size: 12px; }
+      .b24t-help-tip strong { color: var(--b24t-text); display: block; margin-bottom: 4px; font-size: 12px; }
       #b24t-help-panel-overlay {
         position: fixed;
         border-radius: 14px;
@@ -6172,18 +6173,18 @@ function showOnboarding(onComplete) {
   function _newsThemeVars() {
     var dark = _newsIsDark();
     return {
-      bg:       dark ? '#1a1a26' : '#ffffff',
-      bgDeep:   dark ? '#13131d' : '#f4f5f9',
-      bgInput:  dark ? '#22223a' : '#f0f1f7',
-      border:   dark ? '#2e2e48' : '#d1d5db',
-      borderSub:dark ? '#252538' : '#e5e7eb',
-      text:     dark ? '#e2e8f0' : '#1e2028',
-      textMuted:dark ? '#8b8fa8' : '#6b7280',
-      textFaint:dark ? '#565a72' : '#9ca3af',
-      accent:   '#6366f1',
-      accentAlpha: dark ? 'rgba(99,102,241,0.18)' : 'rgba(99,102,241,0.10)',
-      accentBorder: dark ? 'rgba(99,102,241,0.4)' : 'rgba(99,102,241,0.3)',
-      shadow:   dark ? '0 8px 32px rgba(0,0,0,0.5)' : '0 8px 32px rgba(0,0,0,0.12)',
+      bg:          'var(--b24t-bg)',
+      bgDeep:      'var(--b24t-bg-deep)',
+      bgInput:     'var(--b24t-bg-input)',
+      border:      'var(--b24t-border)',
+      borderSub:   'var(--b24t-border-sub)',
+      text:        'var(--b24t-text)',
+      textMuted:   'var(--b24t-text-muted)',
+      textFaint:   'var(--b24t-text-faint)',
+      accent:      'var(--b24t-primary)',
+      accentAlpha: 'var(--b24t-primary-bg)',
+      accentBorder:'color-mix(in srgb, var(--b24t-primary) 35%, transparent)',
+      shadow:      'var(--b24t-shadow-h)',
       green:    '#22c55e', greenBg: dark ? 'rgba(34,197,94,0.12)' : 'rgba(34,197,94,0.08)',
       red:      '#ef4444', redBg:   dark ? 'rgba(239,68,68,0.12)'  : 'rgba(239,68,68,0.08)',
       yellow:   '#f59e0b', yellowBg:dark ? 'rgba(245,158,11,0.12)' : 'rgba(245,158,11,0.08)',
@@ -6192,7 +6193,6 @@ function showOnboarding(onComplete) {
   }
 
   function _newsPanelBase(id, widthPx, topPx, rightPx, zIdx) {
-    var t = _newsThemeVars();
     var el = document.createElement('div');
     el.id = id;
     el.setAttribute('data-news-panel', '1');
@@ -6206,10 +6206,10 @@ function showOnboarding(onComplete) {
       'display:flex;',
       'flex-direction:column;',
       'border-radius:14px;',
-      'border:1px solid ' + t.border + ';',
-      'background:' + t.bg + ';',
-      'box-shadow:' + t.shadow + ';',
-      'color:' + t.text + ';',
+      'border:1px solid var(--b24t-border);',
+      'background:var(--b24t-bg);',
+      'box-shadow:var(--b24t-shadow-h);',
+      'color:var(--b24t-text);',
       'font-family:Inter,Segoe UI,system-ui,sans-serif;',
       'font-size:13px;',
       'overflow:hidden;',
@@ -6219,9 +6219,8 @@ function showOnboarding(onComplete) {
   }
 
   function _newsPanelHeader(title, onClose, extraHtml) {
-    var t = _newsThemeVars();
     var d = document.createElement('div');
-    d.style.cssText = 'display:flex;align-items:center;padding:10px 14px;background:linear-gradient(135deg,#6366f1,#8b5cf6);flex-shrink:0;cursor:move;user-select:none;';
+    d.style.cssText = 'display:flex;align-items:center;padding:10px 14px;background:var(--b24t-accent-grad);flex-shrink:0;cursor:move;user-select:none;position:relative;overflow:hidden;';
     d.innerHTML = '<span style="font-size:13px;font-weight:700;color:#fff;flex:1;text-shadow:0 1px 3px rgba(0,0,0,0.2);">' + title + '</span>' +
       (extraHtml || '') +
       '<button class="b24t-news-close-all" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:15px;line-height:1;padding:2px 7px;border-radius:5px;flex-shrink:0;">×</button>';
@@ -6257,7 +6256,7 @@ function showOnboarding(onComplete) {
     var p1 = _newsPanelBase('b24t-news-p1', PANEL_W, topList, baseRight, 2147483632);
 
     var hdr1 = _newsPanelHeader('📋 Lista URLi', closeNewsPanels,
-      '<div id="b24t-news-winsize-wrap" style="position:relative;margin-right:6px;"><button id="b24t-news-winsize-btn" title="Rozmiar okna" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;">▢ Okno</button><div id="b24t-news-winsize-menu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:#1e1b3a;border:1px solid rgba(139,92,246,0.4);border-radius:8px;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,0.4);z-index:2147483699;overflow:hidden;"><div class="b24t-wsz" data-sz="900x700" style="padding:7px 14px;font-size:11px;color:#e2e8f0;cursor:pointer;">900×700 (domyślne)</div><div class="b24t-wsz" data-sz="1100x800" style="padding:7px 14px;font-size:11px;color:#e2e8f0;cursor:pointer;">1100×800 (duże)</div><div class="b24t-wsz" data-sz="800x600" style="padding:7px 14px;font-size:11px;color:#e2e8f0;cursor:pointer;">800×600 (kompakt)</div><div class="b24t-wsz" data-sz="half" style="padding:7px 14px;font-size:11px;color:#e2e8f0;cursor:pointer;">½ekranu (dyn.)</div></div></div><button id="b24t-news-langmap-btn" title="Mapa języków" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;margin-right:6px;">⚙ Języki</button>'
+      '<div id="b24t-news-winsize-wrap" style="position:relative;margin-right:6px;"><button id="b24t-news-winsize-btn" title="Rozmiar okna" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;">▢ Okno</button><div id="b24t-news-winsize-menu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:var(--b24t-bg-elevated);border:1px solid color-mix(in srgb,var(--b24t-primary) 40%,transparent);border-radius:8px;min-width:160px;box-shadow:var(--b24t-shadow-h);z-index:2147483699;overflow:hidden;"><div class="b24t-wsz" data-sz="900x700" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">900×700 (domyślne)</div><div class="b24t-wsz" data-sz="1100x800" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">1100×800 (duże)</div><div class="b24t-wsz" data-sz="800x600" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">800×600 (kompakt)</div><div class="b24t-wsz" data-sz="half" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">½ekranu (dyn.)</div></div></div><button id="b24t-news-langmap-btn" title="Mapa języków" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;margin-right:6px;">⚙ Języki</button>'
     );
     _newsDraggable(hdr1, p1);
 
@@ -6271,7 +6270,7 @@ function showOnboarding(onComplete) {
           '<span id="b24t-news-progress-label">0 / 0</span>',
         '</div>',
         '<div style="height:4px;border-radius:2px;background:' + t.bgDeep + ';overflow:hidden;">',
-          '<div id="b24t-news-progress-bar" style="height:4px;background:#6366f1;width:0%;transition:width 0.4s ease;border-radius:2px;"></div>',
+          '<div id="b24t-news-progress-bar" style="height:4px;background:var(--b24t-accent-grad);width:0%;transition:width 0.4s ease;border-radius:2px;"></div>',
         '</div>',
       '</div>',
       // List
@@ -6355,14 +6354,14 @@ function showOnboarding(onComplete) {
           '<span style="font-size:9px;color:' + t.textFaint + ';">jeden na linię</span>',
         '</div>',
         '<textarea id="b24t-news-paste-area" rows="4" placeholder="Wklej URLe z arkusza H&M Manually...\n\nURLe nie zostaną przetworzone dopóki nie klikniesz &quot;Wczytaj URLe&quot; poniżej." style="width:100%;box-sizing:border-box;font-size:10px;padding:7px 9px;border-radius:8px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';resize:vertical;font-family:monospace;min-height:80px;line-height:1.5;"></textarea>',
-        '<button id="b24t-news-import-btn" style="margin-top:6px;width:100%;padding:7px;border-radius:8px;border:none;background:#6366f1;color:#fff;font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em;">▶ Wczytaj URLe</button>',
+        '<button id="b24t-news-import-btn" style="margin-top:6px;width:100%;padding:7px;border-radius:8px;border:none;background:var(--b24t-accent-grad);color:#fff;font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em;box-shadow:inset 0 1px 0 rgba(255,255,255,0.15);">▶ Wczytaj URLe</button>',
         '<div id="b24t-news-import-info" style="display:none;font-size:10px;text-align:center;margin-top:4px;"></div>',
       '</div>',
       // Country detection
       '<div id="b24t-news-country-row" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;">',
         '<div style="display:flex;align-items:center;gap:6px;">',
           '<span style="font-size:10px;color:' + t.textMuted + ';">Wykryty kraj URLi:</span>',
-          '<span id="b24t-news-country-badge" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;background:#6366f1;color:#fff;"></span>',
+          '<span id="b24t-news-country-badge" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;background:var(--b24t-primary);color:#fff;"></span>',
           '<span id="b24t-news-country-proj" style="font-size:10px;color:' + t.textMuted + ';"></span>',
         '</div>',
         '<div id="b24t-news-country-warn" style="display:none;margin-top:5px;font-size:10px;color:#f59e0b;line-height:1.4;"></div>',
@@ -6888,7 +6887,7 @@ function showOnboarding(onComplete) {
         row.style.cssText = [
           'display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:8px;',
           'cursor:' + (isIrrelevant ? 'default' : 'pointer') + ';',
-          'border:1px solid ' + (isActive ? '#6366f1' : t.borderSub) + ';',
+          'border:1px solid ' + (isActive ? 'var(--b24t-primary)' : t.borderSub) + ';',
           'background:' + (isActive ? t.accentAlpha : isIrrelevant ? 'transparent' : t.bgDeep) + ';',
           'opacity:' + (isIrrelevant ? '0.45' : '1') + ';',
           'transition:background 0.1s,border-color 0.1s;',
@@ -7371,6 +7370,20 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.1",
+      "date": "2026-04-10",
+      "label": "UI",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "ui", "text": "Glass highlight na kartach stat (annTile, statsCard, dashTile, stat-card)"},
+        {"type": "ui", "text": "CSS vars w calym systemie news panels — reaktywny light/dark mode"},
+        {"type": "ui", "text": "Panel headers news: var(--b24t-accent-grad) — spojny z glownym panelem"},
+        {"type": "ui", "text": "News side tab + help tip: CSS vars zamiast hardcoded dark"},
+        {"type": "ui", "text": "Overall Stats: karty, tabela, banery domykania miesiaca — CSS vars"},
+        {"type": "ui", "text": "Planned features: usunieto 3 zrealizowane pozycje"}
+      ]
+    },
+    {
       "version": "0.23.0",
       "date": "2026-04-10",
       "label": "Fix",
@@ -7461,17 +7474,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "Responsywny UI: annotator panel, news panels — compact mode + overflow guard"},
         {"type": "fix", "text": "News panels: PANEL_W viewport-aware (min 280, max 360)"}
-      ]
-    },
-    {
-      "version": "0.21.11",
-      "date": "2026-04-03",
-      "label": "New",
-      "labelColor": "#6c6cff",
-      "changes": [
-        {"type": "feat", "text": "Responsywny UI: panel dostosowuje zawartosc do swojej szerokosci (klasa b24t-compact < 400px)"},
-        {"type": "feat", "text": "Wykrywanie malego ekranu (viewport < 1366x800)"},
-        {"type": "fix", "text": "minW 300px, maxW capped do 85% viewport width"}
       ]
     },
   ];
@@ -7660,9 +7662,6 @@ function showOnboarding(onComplete) {
     { priority: 'high', text: 'Panel postępu tagowania — widoczny kafelek z liczbą pozostałych wzmianek, paskiem ukończenia i procentem postępu' },
     { priority: 'high', text: 'Tryb domykania miesiąca — zamknięcie wszystkich projektów jednym kliknięciem z automatycznym oznaczeniem jako ukończone' },
     { priority: 'high', text: 'Czyszczenie tagów plikiem — naprawa funkcji usuwania tagów na podstawie dostarczonego pliku CSV' },
-    { priority: 'high', text: 'Szybsze działanie — równoległe pobieranie danych i optymalizacja komunikacji z API Brand24' },
-    { priority: 'high', text: 'Stabilność sesji — zabezpieczenia przed błędami, żeby pojedynczy problem nie przerywał całej operacji tagowania' },
-    { priority: 'high', text: 'Dynamiczne rozmiary paneli — interfejs dopasowujący się do zawartości i rozdzielczości ekranu' },
   ];
 
   function sendToSlack(payload, onSuccess, onError) {
@@ -8653,7 +8652,7 @@ function showOnboarding(onComplete) {
   }
 
   function _dashTile(label, value, color) {
-    return '<div style="background:#141419;border-radius:8px;padding:8px;text-align:center;">' +
+    return '<div style="background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:8px;padding:8px;text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,0.10);transition:background 0.3s,border-color 0.3s;">' +
       '<div style="font-size:16px;font-weight:700;color:' + color + ';">' + (value ?? '—') + '</div>' +
       '<div style="font-size:9px;color:var(--b24t-text-faint);margin-top:2px;">' + label + '</div>' +
     '</div>';
@@ -9099,7 +9098,7 @@ function showOnboarding(onComplete) {
   }
 
   function _annTile(label, value, color) {
-    return '<div style="background:var(--b24t-section-grad-d);border:1px solid var(--b24t-border-strong);border-radius:8px;padding:10px;text-align:center;transition:background 0.3s,border-color 0.3s;">' +
+    return '<div style="background:var(--b24t-section-grad-d);border:1px solid var(--b24t-border-strong);border-radius:8px;padding:10px;text-align:center;transition:background 0.3s,border-color 0.3s;box-shadow:inset 0 1px 0 rgba(255,255,255,0.10);">' +
       '<div style="font-size:22px;font-weight:800;color:' + color + ';line-height:1.2;">' + (value !== undefined ? value : '—') + '</div>' +
       '<div style="font-size:11px;color:var(--b24t-text-meta);margin-top:4px;text-transform:uppercase;letter-spacing:0.07em;font-weight:600;">' + label + '</div></div>';
   }
@@ -10369,7 +10368,7 @@ To jest NIEODWRACALNE.`)) return;
   }
 
   function _statsCard(label, value, color, bgColor) {
-    return '<div style="background:' + bgColor + ';border-radius:8px;padding:10px;text-align:center;">' +
+    return '<div style="background:' + bgColor + ';border:1px solid var(--b24t-border);border-radius:8px;padding:10px;text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,0.10);transition:background 0.3s,border-color 0.3s;">' +
       '<div style="font-size:11px;color:' + color + ';margin-bottom:4px;font-weight:600;">' + label + '</div>' +
       '<div style="font-size:22px;font-weight:800;color:' + color + ';">' + (value != null ? value : '—') + '</div>' +
     '</div>';
@@ -10406,10 +10405,10 @@ To jest NIEODWRACALNE.`)) return;
         '<div style="margin-bottom:10px;padding:10px 12px;background:var(--b24t-bg-elevated);border-radius:8px;">' +
           '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
             '<span style="font-size:11px;font-weight:600;color:var(--b24t-text-faint);">Postęp ukończenia</span>' +
-            '<span style="font-size:13px;font-weight:800;color:#4f46e5;">' + (pct != null ? pct + '%' : '—') + '</span>' +
+            '<span style="font-size:13px;font-weight:800;color:var(--b24t-primary);">' + (pct != null ? pct + '%' : '—') + '</span>' +
           '</div>' +
           '<div style="background:var(--b24t-bg-deep);border-radius:99px;height:7px;overflow:hidden;">' +
-            '<div style="width:' + pctVal + '%;height:100%;background:linear-gradient(90deg,#6366f1,#4f46e5);border-radius:99px;transition:width 0.5s ease;"></div>' +
+            '<div style="width:' + pctVal + '%;height:100%;background:var(--b24t-accent-grad);border-radius:99px;transition:width 0.5s ease;"></div>' +
           '</div>' +
           '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:4px;text-align:right;">' + (totalRelevant + totalToDelete) + ' / ' + totalAll + ' otagowanych</div>' +
         '</div>';
@@ -10422,22 +10421,22 @@ To jest NIEODWRACALNE.`)) return;
       var _allDone    = results.every(function(r) { return r.error || completedPids.includes(r.pid); }) && _nonPending.length > 0;
       if (_allDone) {
         monthClosingHtml =
-          '<div style="margin-bottom:10px;padding:10px 12px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;display:flex;align-items:center;gap:10px;">' +
+          '<div style="margin-bottom:10px;padding:10px 12px;background:var(--b24t-ok-bg);border:1px solid color-mix(in srgb,var(--b24t-ok) 40%,transparent);border-radius:8px;display:flex;align-items:center;gap:10px;">' +
             '<span style="font-size:20px;">✅</span>' +
             '<div>' +
-              '<div style="font-size:12px;font-weight:700;color:#14532d;">Miesiąc domknięty</div>' +
-              '<div style="font-size:11px;color:#166534;margin-top:1px;">Wszystkie projekty ukończone</div>' +
+              '<div style="font-size:12px;font-weight:700;color:var(--b24t-ok-text);">Miesiąc domknięty</div>' +
+              '<div style="font-size:11px;color:var(--b24t-ok);margin-top:1px;">Wszystkie projekty ukończone</div>' +
             '</div>' +
           '</div>';
       } else {
         monthClosingHtml =
-          '<div style="margin-bottom:10px;padding:10px 12px;background:#fefce8;border:1px solid #fde047;border-radius:8px;display:flex;align-items:center;gap:10px;">' +
+          '<div style="margin-bottom:10px;padding:10px 12px;background:var(--b24t-warn-bg);border:1px solid color-mix(in srgb,var(--b24t-warn) 40%,transparent);border-radius:8px;display:flex;align-items:center;gap:10px;">' +
             '<span style="font-size:20px;">🗓</span>' +
             '<div style="flex:1;">' +
-              '<div style="font-size:12px;font-weight:700;color:#713f12;">Domykanie miesiąca</div>' +
-              '<div style="font-size:11px;color:#854d0e;margin-top:1px;">' + _doneCount + ' z ' + _nonPending.length + ' projektów ukończonych</div>' +
+              '<div style="font-size:12px;font-weight:700;color:var(--b24t-warn-text);">Domykanie miesiąca</div>' +
+              '<div style="font-size:11px;color:var(--b24t-warn);margin-top:1px;">' + _doneCount + ' z ' + _nonPending.length + ' projektów ukończonych</div>' +
             '</div>' +
-            '<button id="b24t-mc-force-close" style="background:#f59e0b;color:#fff;border:none;border-radius:7px;padding:6px 12px;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer;flex-shrink:0;">Zamknij miesiąc</button>' +
+            '<button id="b24t-mc-force-close" style="background:var(--b24t-warn);color:#fff;border:none;border-radius:7px;padding:6px 12px;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer;flex-shrink:0;">Zamknij miesiąc</button>' +
           '</div>';
       }
     }
@@ -10446,49 +10445,49 @@ To jest NIEODWRACALNE.`)) return;
     var cards;
     var colCount;
     if (hasRelevant) {
-      thREL = '<th style="padding:6px 8px;font-size:10px;color:#16a34a;text-align:right;font-weight:600;">REL</th>';
+      thREL = '<th style="padding:6px 8px;font-size:10px;color:var(--b24t-ok);text-align:right;font-weight:600;">REL</th>';
       colCount = 4;
       cards =
         '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px;">' +
           _statsCard('Wszystkie',  totalAll,       'var(--b24t-text-muted)', 'var(--b24t-bg-elevated)') +
-          _statsCard('Relevantne', totalRelevant,  '#16a34a', '#dcfce7') +
-          _statsCard('Pozostało',  totalRemaining, '#4f46e5', '#eef2ff') +
+          _statsCard('Relevantne', totalRelevant,  'var(--b24t-ok)',  'var(--b24t-ok-bg)') +
+          _statsCard('Pozostało',  totalRemaining, 'var(--b24t-primary)', 'var(--b24t-primary-bg)') +
         '</div>' +
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">' +
-          _statsCard('Do weryfikacji', totalReqVer,   '#d97706', '#fef3c7') +
-          _statsCard('Do usunięcia',   totalToDelete, '#dc2626', '#fee2e2') +
+          _statsCard('Do weryfikacji', totalReqVer,   'var(--b24t-warn)', 'var(--b24t-warn-bg)') +
+          _statsCard('Do usunięcia',   totalToDelete, 'var(--b24t-err)',  'var(--b24t-err-bg)') +
         '</div>';
     } else {
       colCount = 3;
       cards =
         '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;">' +
           _statsCard('Wszystkie',      totalAll,      'var(--b24t-text-muted)', 'var(--b24t-bg-elevated)') +
-          _statsCard('Do weryfikacji', totalReqVer,   '#d97706', '#fef3c7') +
-          _statsCard('Do usunięcia',   totalToDelete, '#dc2626', '#fee2e2') +
+          _statsCard('Do weryfikacji', totalReqVer,   'var(--b24t-warn)', 'var(--b24t-warn-bg)') +
+          _statsCard('Do usunięcia',   totalToDelete, 'var(--b24t-err)',  'var(--b24t-err-bg)') +
         '</div>';
     }
     var warnHtml = !hasRelevant
       ? '<div style="margin-bottom:8px;padding:7px 10px;background:var(--b24t-warn-bg);border:1px solid color-mix(in srgb,var(--b24t-warn) 30%,transparent);border-radius:7px;font-size:11px;color:var(--b24t-warn);line-height:1.5;">Ustaw tag Relevantne w ustawieniach (⚙) aby widzieć pełne dane.</div>' : '';
     var tableRows = results.map(function(r) {
       if (isMonthClosing && !r.loading && completedPids.includes(r.pid)) {
-        var relTdC = hasRelevant ? '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#86efac;text-align:right;">' + (r.relevant != null ? r.relevant : '—') + '</td>' : '';
-        return '<tr style="border-top:1px solid var(--b24t-border-sub);background:rgba(22,163,74,0.07);">' +
-          '<td style="padding:6px 8px;font-size:11px;color:#16a34a;text-decoration:line-through;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + r.name + '">✓ ' + r.name + '</td>' +
-          '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#86efac;text-align:right;">' + (r.total != null ? r.total : '—') + '</td>' +
+        var relTdC = hasRelevant ? '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-ok-text);text-align:right;">' + (r.relevant != null ? r.relevant : '—') + '</td>' : '';
+        return '<tr style="border-top:1px solid var(--b24t-border-sub);background:color-mix(in srgb,var(--b24t-ok) 7%,transparent);">' +
+          '<td style="padding:6px 8px;font-size:11px;color:var(--b24t-ok);text-decoration:line-through;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + r.name + '">✓ ' + r.name + '</td>' +
+          '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-ok-text);text-align:right;">' + (r.total != null ? r.total : '—') + '</td>' +
           relTdC +
-          '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#86efac;text-align:right;">' + (r.reqVer != null ? r.reqVer : '—') + '</td>' +
-          '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#86efac;text-align:right;">' + (r.toDelete != null ? r.toDelete : '—') + '</td>' +
+          '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-ok-text);text-align:right;">' + (r.reqVer != null ? r.reqVer : '—') + '</td>' +
+          '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-ok-text);text-align:right;">' + (r.toDelete != null ? r.toDelete : '—') + '</td>' +
         '</tr>';
       }
       if (r.loading) return '<tr style="border-top:1px solid var(--b24t-border-sub);"><td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="' + colCount + '" style="padding:6px 8px;font-size:10px;color:var(--b24t-text-faint);text-align:center;">⏳ ładowanie…</td></tr>';
       if (r.error)   return '<tr style="border-top:1px solid var(--b24t-border-sub);"><td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="' + colCount + '" style="padding:6px 8px;font-size:10px;color:var(--b24t-err);">błąd: ' + r.error + '</td></tr>';
-      var relTd = hasRelevant ? '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#16a34a;text-align:right;">' + (r.relevant != null ? r.relevant : '—') + '</td>' : '';
+      var relTd = hasRelevant ? '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-ok);text-align:right;">' + (r.relevant != null ? r.relevant : '—') + '</td>' : '';
       return '<tr style="border-top:1px solid var(--b24t-border-sub);">' +
         '<td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + r.name + '">' + r.name + '</td>' +
         '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-text-muted);text-align:right;">' + (r.total   != null ? r.total   : '—') + '</td>' +
         relTd +
-        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#d97706;text-align:right;">'  + (r.reqVer  != null ? r.reqVer  : '—') + '</td>' +
-        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#dc2626;text-align:right;">'  + (r.toDelete != null ? r.toDelete : '—') + '</td>' +
+        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-warn);text-align:right;">'  + (r.reqVer  != null ? r.reqVer  : '—') + '</td>' +
+        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-err);text-align:right;">'   + (r.toDelete != null ? r.toDelete : '—') + '</td>' +
       '</tr>';
     }).join('');
     var periodHtml = (dateFrom && dateTo)

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.21.27
+// @version      0.22.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -112,7 +112,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.21.27';
+  const VERSION = '0.22.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2408,7 +2408,10 @@
       #b24t-body::-webkit-scrollbar-track { background: transparent; }
       #b24t-body::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
       /* main-tab fills body; other tabs are display:none so don't participate in flex */
-      #b24t-main-tab { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+      #b24t-main-tab { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+      #b24t-main-tab::-webkit-scrollbar { width: 3px; }
+      #b24t-main-tab::-webkit-scrollbar-track { background: transparent; }
+      #b24t-main-tab::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
       /* LOG section — the ONLY flex-grow element inside main-tab */
       #b24t-log-section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; border-bottom: none; }
       #b24t-log-section .b24t-section-label { flex: 0 0 auto; }
@@ -2541,7 +2544,7 @@
 
       /* ── LOG ── */
       #b24t-log {
-        flex: 1 1 auto; min-height: 0; overflow-y: auto;
+        flex: 1 1 auto; min-height: 80px; overflow-y: auto;
         font-size: 12px; line-height: 1.6;
         background: var(--b24t-bg-section-c);
         transition: background 0.3s;
@@ -7349,6 +7352,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.22.0",
+      "date": "2026-04-10",
+      "label": "Fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Panel glowny: przywrocono scrollowanie zawartosci (overflow-y: auto)"},
+        {"type": "fix", "text": "Log w panelu glownym: min-height 80px — log nie znika przy malym rozmiarze panelu"}
+      ]
+    },
+    {
       "version": "0.21.27",
       "date": "2026-04-09",
       "label": "Fix",
@@ -7438,16 +7451,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "stressTestBuildUrlMap: opcjonalne parametry dateFrom/dateTo"}
-      ]
-    },
-    {
-      "version": "0.21.6",
-      "date": "2026-04-03",
-      "label": "Perf",
-      "labelColor": "#f59e0b",
-      "changes": [
-        {"type": "perf", "text": "buildUrlMap: rownolegле pobieranie stron (MAP_FETCH_CONCURRENCY=3) — 3.3x szybciej"},
-        {"type": "feature", "text": "Debug bridge: stressTestBuildUrlMap() — stress test concurrency 1→2→3→5"}
       ]
     },
   ];

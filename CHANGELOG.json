@@ -1,5 +1,19 @@
 [
   {
+    "version": "0.23.1",
+    "date": "2026-04-10",
+    "label": "UI",
+    "labelColor": "#a78bfa",
+    "changes": [
+      {"type": "ui", "text": "Ujednolicenie stylu — glass highlight (inset box-shadow) na wszystkich kartach stat: stat-card, annTile, statsCard, dashTile"},
+      {"type": "ui", "text": "CSS vars w calym systemie news panels — bg, border, tekst, cien reaktywnie zmieniaja sie z trybem"},
+      {"type": "ui", "text": "Panel headers news: gradient var(--b24t-accent-grad) zamiast hardcoded indigo — spojny z glownym panelem"},
+      {"type": "ui", "text": "News side tab, help tip — hardcoded dark colors zastapione CSS vars (dzialaja w light i dark mode)"},
+      {"type": "ui", "text": "Overall Stats: kolory kart, tabeli i banerów domykania miesiaca przez CSS vars"},
+      {"type": "ui", "text": "PLANNED_FEATURES: usunieto 3 zrealizowane pozycje (szybsze dzialanie, stabilnosc sesji, dynamiczne panele)"}
+    ]
+  },
+  {
     "version": "0.23.0",
     "date": "2026-04-10",
     "changes": [

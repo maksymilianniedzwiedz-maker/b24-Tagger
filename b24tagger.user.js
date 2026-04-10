@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.2
+// @version      0.23.4
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -14,6 +14,7 @@
 // @connect       hooks.slack.com
 // @connect       raw.githubusercontent.com
 // @connect       cdn.jsdelivr.net
+// @connect       *
 // @run-at       document-start
 // ==/UserScript==
 
@@ -112,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.2';
+  const VERSION = '0.23.4';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5983,7 +5984,11 @@ function showOnboarding(onComplete) {
     detectedCountry: null,
     panelsOpen: false,
     wired: false,
+    scanning: false,
+    scanTotal: 0,
+    scanDone: 0,
   };
+  var _newsChipsRenderer = null; // set by _wireNewsPanels, called on every panel open
 
   var NEWS_DEFAULT_KEYWORDS = [
     'hm-', '-hm-', '-hm', '/hm/', '/hm',
@@ -6028,7 +6033,8 @@ function showOnboarding(onComplete) {
 
   function _newsGetKeywords(cc) {
     var all = lsGet(LS.NEWS_KEYWORDS, {});
-    return all[cc] || NEWS_DEFAULT_KEYWORDS.slice();
+    var saved = all[cc];
+    return (Array.isArray(saved) && saved.length > 0) ? saved : NEWS_DEFAULT_KEYWORDS.slice();
   }
   function _newsSaveKeywords(cc, chips) {
     var all = lsGet(LS.NEWS_KEYWORDS, {});
@@ -6147,6 +6153,182 @@ function showOnboarding(onComplete) {
     if (nonNeutral.length > 0) return 'wrongcountry';
 
     return 'match';
+  }
+
+  // ── NEWS CONTENT SCANNER ──
+  // Skanuje treść strony pod kątem słów kluczowych gdy URL nie zawiera żadnego dopasowania.
+  // Zwraca Promise<{status:'contentmatch'|'nomatch'|'blocked', score:Number, snippet:String}>
+  //
+  // Progi punktowe:
+  //   keyword w tytule/og:title          → +8  (silny sygnał — autor strony wybrał ten tytuł)
+  //   keyword w og:description/meta desc → +5  (silny sygnał — opis meta)
+  //   keyword w h1                       → +5  (silny sygnał — nagłówek artykułu)
+  //   keyword w pierwszym akapicie       → +4  (umiarkowany — lede artykułu)
+  //   keyword w kolejnych akapitach      → +1 za każdy, maks. +3 łącznie
+  //   próg contentmatch                  → 5 pkt (jeden akapit to za mało, tytuł lub dwa akapity wystarczą)
+
+  var NEWS_CONTENT_SCAN_CONCURRENCY = 5;
+  var NEWS_CONTENT_SCAN_TIMEOUT_MS  = 8000;
+  var NEWS_CONTENT_SCAN_THRESHOLD   = 5;
+
+  var NEWS_NOISE_SELECTORS = [
+    'script','style','noscript','svg','iframe',
+    'aside','footer','nav','header','form',
+    '[class*="ad-"]','[class*="-ad"]','[class*="__ad"]',
+    '[class*="banner"]','[class*="sponsor"]','[class*="widget"]',
+    '[class*="sidebar"]','[class*="promo"]','[class*="popup"]',
+    '[class*="newsletter"]','[class*="cookie"]','[class*="consent"]',
+    '[class*="related"]','[class*="recommended"]',
+    '[id*="banner"]','[id*="sidebar"]','[id*="cookie"]','[id*="popup"]',
+  ];
+
+  function _newsParseContent(html, chips) {
+    var doc;
+    try {
+      doc = (new DOMParser()).parseFromString(html, 'text/html');
+    } catch(e) {
+      return { status: 'nomatch', score: 0, snippet: '' };
+    }
+
+    // Usuń szum — reklamy, nawigację, stopki, popupy
+    NEWS_NOISE_SELECTORS.forEach(function(sel) {
+      try {
+        doc.querySelectorAll(sel).forEach(function(el) { el.remove(); });
+      } catch(e) {}
+    });
+
+    // Wyciągnij tekst z kluczowych stref strony
+    var titleText = '';
+    var titleEl = doc.querySelector('title');
+    if (titleEl) titleText = (titleEl.textContent || '').trim();
+
+    var ogTitle = '';
+    var ogTitleEl = doc.querySelector('meta[property="og:title"]') || doc.querySelector('meta[name="og:title"]');
+    if (ogTitleEl) ogTitle = (ogTitleEl.getAttribute('content') || '').trim();
+
+    var ogDesc = '';
+    var ogDescEl = doc.querySelector('meta[property="og:description"]') || doc.querySelector('meta[name="og:description"]');
+    if (ogDescEl) ogDesc = (ogDescEl.getAttribute('content') || '').trim();
+
+    var metaDesc = '';
+    var metaDescEl = doc.querySelector('meta[name="description"]');
+    if (metaDescEl) metaDesc = (metaDescEl.getAttribute('content') || '').trim();
+
+    var h1Text = '';
+    var h1El = doc.querySelector('h1');
+    if (h1El) h1Text = (h1El.textContent || '').trim();
+
+    // Treść artykułu: preferuj <article>, potem <main>, na końcu <body>
+    var bodyEl = doc.querySelector('article') || doc.querySelector('main') || doc.body;
+    var paragraphs = [];
+    if (bodyEl) {
+      paragraphs = Array.from(bodyEl.querySelectorAll('p'))
+        .map(function(p) { return (p.textContent || '').trim(); })
+        .filter(function(t) { return t.length > 40; }) // pomijaj krótkie fragmenty (np. podpisy, etykiety)
+        .slice(0, 12); // max 12 pierwszych akapitów — lede artykułu, nie ogon
+    }
+
+    var score = 0;
+    var snippet = '';
+
+    chips.forEach(function(chip) {
+      var kw = chip.toLowerCase();
+
+      // Strefa tytułu — najsilniejszy sygnał
+      var inTitle = titleText.toLowerCase().indexOf(kw) !== -1 || ogTitle.toLowerCase().indexOf(kw) !== -1;
+      if (inTitle) {
+        score += 8;
+        if (!snippet) snippet = (ogTitle || titleText).slice(0, 140);
+      }
+
+      // Strefa opisu meta
+      var inMeta = ogDesc.toLowerCase().indexOf(kw) !== -1 || metaDesc.toLowerCase().indexOf(kw) !== -1;
+      if (inMeta) {
+        score += 5;
+        if (!snippet) snippet = (ogDesc || metaDesc).slice(0, 140);
+      }
+
+      // Strefa nagłówka h1
+      if (h1Text.toLowerCase().indexOf(kw) !== -1) {
+        score += 5;
+        if (!snippet) snippet = h1Text.slice(0, 140);
+      }
+
+      // Strefa akapitów — rozróżniamy pierwszy akapit (lede) od reszty
+      var firstPMatch = false;
+      var extraPMatches = 0;
+      paragraphs.forEach(function(p, idx) {
+        if (p.toLowerCase().indexOf(kw) !== -1) {
+          if (idx === 0) { firstPMatch = true; }
+          else { extraPMatches++; }
+          if (!snippet) snippet = p.slice(0, 140);
+        }
+      });
+      if (firstPMatch) score += 4;
+      if (extraPMatches > 0) score += Math.min(extraPMatches, 3); // maks. +3 za wielokrotne wzmianki w treści
+
+    });
+
+    score = Math.min(score, 30); // cap — żeby jeden artykuł pełen keywordów nie zaburzał skali
+
+    return {
+      status:  score >= NEWS_CONTENT_SCAN_THRESHOLD ? 'contentmatch' : 'nomatch',
+      score:   score,
+      snippet: snippet,
+    };
+  }
+
+  // Pobiera stronę przez GM_xmlhttpRequest (pomija CORS) i skanuje jej treść.
+  // Dla URL-i które już mają status 'match' nie wywołuj tej funkcji — jest zbędna.
+  function _newsContentScan(url, chips) {
+    return new Promise(function(resolve) {
+      var resolved = false;
+      function _done(result) {
+        if (!resolved) { resolved = true; resolve(result); }
+      }
+
+      // Zewnętrzny timeout — ochrona gdyby GM_xmlhttpRequest nie wywołał żadnego callbacku
+      var timer = setTimeout(function() {
+        _done({ status: 'blocked', score: 0, snippet: '' });
+      }, NEWS_CONTENT_SCAN_TIMEOUT_MS + 500);
+
+      try {
+        GM_xmlhttpRequest({
+          method:  'GET',
+          url:     url,
+          headers: { 'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8' },
+          timeout: NEWS_CONTENT_SCAN_TIMEOUT_MS,
+          onload: function(resp) {
+            clearTimeout(timer);
+            if (resp.status < 200 || resp.status >= 400) {
+              _done({ status: 'blocked', score: 0, snippet: '' });
+              return;
+            }
+            // Odrzuć non-HTML (PDFy, obrazy, feed XML itp.)
+            var ct = (resp.responseHeaders || '').toLowerCase();
+            var isHtml = ct.indexOf('content-type: text/html') !== -1 ||
+                         ct.indexOf('content-type: application/xhtml') !== -1;
+            // Fallback: jeśli brak nagłówka content-type, sprawdź czy odpowiedź zaczyna się od '<'
+            if (!isHtml && (resp.responseText || '').trimStart().charAt(0) !== '<') {
+              _done({ status: 'nomatch', score: 0, snippet: '' });
+              return;
+            }
+            _done(_newsParseContent(resp.responseText, chips));
+          },
+          onerror: function() {
+            clearTimeout(timer);
+            _done({ status: 'blocked', score: 0, snippet: '' });
+          },
+          ontimeout: function() {
+            clearTimeout(timer);
+            _done({ status: 'blocked', score: 0, snippet: '' });
+          },
+        });
+      } catch(e) {
+        clearTimeout(timer);
+        _done({ status: 'blocked', score: 0, snippet: '' });
+      }
+    });
   }
 
   // ── NEWS URL OPENER (sized window) ──
@@ -6276,8 +6458,11 @@ function showOnboarding(onComplete) {
       });
       newsState.panelsOpen = true;
       if (!newsState.wired) { _wireNewsPanels(); newsState.wired = true; }
-      // Re-stack import below list
-      requestAnimationFrame(function() { _newsStackPanels(); });
+      // Re-stack import below list + odśwież chipy (mogły zniknąć lub kraj się zmienił)
+      requestAnimationFrame(function() {
+        _newsStackPanels();
+        if (_newsChipsRenderer) _newsChipsRenderer();
+      });
       return;
     }
     _buildNewsPanels();
@@ -6427,20 +6612,42 @@ function showOnboarding(onComplete) {
       'box-shadow:' + t.shadow + ';',
       'min-width:180px;',
     ].join('');
-    var legendItems = [
-      { dot: '●', color: '#22c55e', label: 'Relevantny (keyword)' },
-      { dot: '●', color: '#f97316', label: 'Inny kraj w URL' },
-      { dot: '●', color: '#a78bfa', label: 'Otwarty / weryfikowany' },
-      { dot: '✓', color: '#15803d', label: 'Dodany do Brand24' },
-      { dot: '✗', color: '#ef4444', label: 'Błąd / duplikat' },
-      { dot: '○', color: '#4b5563', label: 'Brak keyword' },
+    var legendGroups = [
+      {
+        title: 'RELEVANTNE',
+        items: [
+          { dot: '●', color: '#22c55e', label: 'Keyword w URL' },
+          { dot: '◆', color: '#06b6d4', label: 'Keyword w treści strony' },
+          { dot: '●', color: '#f97316', label: 'Keyword w URL, inny kraj' },
+        ]
+      },
+      {
+        title: 'SESJA',
+        items: [
+          { dot: '●', color: '#a78bfa', label: 'Otwarty / weryfikowany' },
+          { dot: '✓', color: '#15803d', label: 'Dodany do Brand24' },
+          { dot: '✗', color: '#ef4444', label: 'Błąd / duplikat' },
+        ]
+      },
+      {
+        title: 'POMINIĘTE',
+        items: [
+          { dot: '◌', color: '#818cf8', label: 'Skanowanie...' },
+          { dot: '—', color: '#6b7280', label: 'Niedostępna / paywall' },
+          { dot: '○', color: '#4b5563', label: 'Brak keyword' },
+          { dot: '●', color: '#64748b', label: 'Już w projekcie' },
+        ]
+      },
     ];
-    legend.innerHTML = '<div style="font-size:10px;font-weight:700;color:' + t.textMuted + ';letter-spacing:0.04em;margin-bottom:6px;text-transform:uppercase;">Legenda</div>' +
-      legendItems.map(function(item) {
-        return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">' +
-          '<span style="font-size:12px;font-weight:700;color:' + item.color + ';width:12px;text-align:center;">' + item.dot + '</span>' +
-          '<span style="color:' + t.textMuted + ';">' + item.label + '</span>' +
-        '</div>';
+    legend.innerHTML = '<div style="font-size:10px;font-weight:700;color:' + t.textMuted + ';letter-spacing:0.04em;margin-bottom:7px;text-transform:uppercase;">Legenda</div>' +
+      legendGroups.map(function(grp) {
+        return '<div style="font-size:9px;font-weight:700;color:' + t.textFaint + ';letter-spacing:0.06em;margin:5px 0 3px;text-transform:uppercase;">' + grp.title + '</div>' +
+          grp.items.map(function(item) {
+            return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">' +
+              '<span style="font-size:11px;font-weight:700;color:' + item.color + ';width:12px;text-align:center;flex-shrink:0;">' + item.dot + '</span>' +
+              '<span style="color:' + t.textMuted + ';font-size:10px;">' + item.label + '</span>' +
+            '</div>';
+          }).join('');
       }).join('');
     document.body.appendChild(legend);
 
@@ -6562,9 +6769,15 @@ function showOnboarding(onComplete) {
           '</select>',
         '</div>',
       '</div>',
-      '<div id="b24t-news-tag-row" style="padding:7px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;">' +
-        '<div style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;margin-bottom:6px;">TAGI</div>' +
-        '<div id="b24t-news-tag-list" style="display:flex;flex-wrap:wrap;gap:5px;"></div>' +
+      '<div id="b24t-news-tag-row" style="border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;overflow:hidden;">' +
+        '<div id="b24t-news-tag-toggle" style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;cursor:pointer;user-select:none;" title="Rozwiń/zwiń listę tagów">' +
+          '<span style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">TAGI</span>' +
+          '<div style="display:flex;align-items:center;gap:6px;">' +
+            '<span id="b24t-news-tag-summary" style="font-size:10px;color:' + t.textFaint + ';">Dodane</span>' +
+            '<span id="b24t-news-tag-chevron" style="font-size:10px;color:' + t.textFaint + ';transition:transform 0.2s;">▼</span>' +
+          '</div>' +
+        '</div>' +
+        '<div id="b24t-news-tag-list" style="display:none;flex-wrap:wrap;gap:5px;padding:0 10px 8px;"></div>' +
       '</div>',
       '<button id="b24t-news-submit-btn" style="padding:9px;border-radius:9px;border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:12px;font-weight:700;cursor:pointer;width:100%;letter-spacing:0.03em;transition:opacity 0.15s;">✚ Dodaj wzmiankę do Brand24</button>',
       '<div id="b24t-news-submit-status" style="font-size:10px;text-align:center;min-height:14px;font-weight:500;"></div>',
@@ -6776,6 +6989,8 @@ function showOnboarding(onComplete) {
     })();
 
     // ─── CHIPS ───
+    // Eksportuj referencję na poziom modułu — żeby openNewsPanels() mogło wywołać re-render
+    // przy każdym otwarciu panelu (nie tylko przy pierwszym).
     function renderChips() {
       var cc = newsState.detectedCountry || 'DEFAULT';
       var chips = _newsGetKeywords(cc);
@@ -6800,6 +7015,7 @@ function showOnboarding(onComplete) {
         });
       });
     }
+    _newsChipsRenderer = renderChips;
 
     var addChipBtn = document.getElementById('b24t-news-add-chip-btn');
     if (addChipBtn) {
@@ -6825,17 +7041,20 @@ function showOnboarding(onComplete) {
 
     // ─── URL LIST ───
     function _statusDot(s) {
-      if (s === 'match')        return { dot: '●', color: '#22c55e', label: 'Trafienie keyword — relevantny' };
-      if (s === 'inproject')    return { dot: '●', color: '#64748b', label: 'Już w projekcie (ten miesiąc)' };
-      if (s === 'wrongcountry') return { dot: '●', color: '#f97316', label: 'Keyword pasuje, ale URL wskazuje inny kraj' };
+      if (s === 'match')        return { dot: '●', color: '#22c55e', label: 'Keyword w URL — relevantny' };
+      if (s === 'contentmatch') return { dot: '◆', color: '#06b6d4', label: 'Keyword w treści strony — sprawdź' };
+      if (s === 'wrongcountry') return { dot: '●', color: '#f97316', label: 'Keyword w URL, ale wskazuje inny kraj' };
       if (s === 'opened')       return { dot: '●', color: '#a78bfa', label: 'Otwarty — w trakcie weryfikacji' };
       if (s === 'added')        return { dot: '✓', color: '#15803d', label: 'Dodany do Brand24' };
       if (s === 'error')        return { dot: '✗', color: '#ef4444', label: 'Błąd / duplikat w projekcie' };
-      return { dot: '○', color: '#4b5563', label: 'Brak trafienia keyword' };
+      if (s === 'inproject')    return { dot: '●', color: '#64748b', label: 'Już w projekcie (ten miesiąc)' };
+      if (s === 'scanning')     return { dot: '◌', color: '#818cf8', label: 'Skanowanie treści...' };
+      if (s === 'blocked')      return { dot: '—', color: '#6b7280', label: 'Strona niedostępna / paywall' };
+      return { dot: '○', color: '#4b5563', label: 'Brak keyword w URL ani treści' };
     }
 
     function _newsUrlCounts() {
-      var c = { match: 0, wrongcountry: 0, nomatch: 0, inproject: 0, opened: 0, added: 0, error: 0, total: 0 };
+      var c = { match: 0, contentmatch: 0, wrongcountry: 0, nomatch: 0, inproject: 0, opened: 0, added: 0, error: 0, scanning: 0, blocked: 0, total: 0 };
       newsState.urls.forEach(function(u) { c[u.status] = (c[u.status] || 0) + 1; c.total++; });
       return c;
     }
@@ -6855,16 +7074,16 @@ function showOnboarding(onComplete) {
       if (!bar) return;
       var t = _newsThemeVars();
       var counts = _newsUrlCounts();
-      var nomatchCount = (counts.nomatch || 0) + (counts.wrongcountry || 0);
+      var nomatchCount = (counts.nomatch || 0) + (counts.wrongcountry || 0) + (counts.blocked || 0);
       var handledCount = (counts.added || 0) + (counts.error || 0);
       bar.innerHTML = '';
       if (nomatchCount > 0) {
         var b1 = document.createElement('button');
         b1.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer;white-space:nowrap;';
         b1.textContent = '\u2715 Usu\u0144 ' + nomatchCount + ' irrelevantnych';
-        b1.title = 'Usuwa URLe bez trafienja keyword i URLe z blednym krajem';
+        b1.title = 'Usuwa URLe bez keyword, z b\u0142\u0119dnym krajem i niedost\u0119pne — NIE usuwa contentmatch';
         b1.addEventListener('click', function() {
-          _newsRemoveByStatus(function(u) { return u.status === 'nomatch' || u.status === 'wrongcountry'; });
+          _newsRemoveByStatus(function(u) { return u.status === 'nomatch' || u.status === 'wrongcountry' || u.status === 'blocked'; });
         });
         bar.appendChild(b1);
       }
@@ -6969,6 +7188,7 @@ function showOnboarding(onComplete) {
       var cc = newsState.detectedCountry || 'DEFAULT';
       var chips = _newsGetKeywords(cc);
 
+      // Przelicz tylko statusy 'pending' — nie dotykaj 'scanning' ani gotowych
       newsState.urls.forEach(function(entry) {
         if (entry.status === 'pending') {
           entry.status = _newsUrlRelevant(entry.url, chips, pc);
@@ -6986,51 +7206,81 @@ function showOnboarding(onComplete) {
       if (progressWrap) progressWrap.style.display = '';
 
       var counts = _newsUrlCounts();
-      var handled = (counts.added || 0) + (counts.error || 0);
-      var workable = counts.total - (counts.nomatch || 0) - (counts.wrongcountry || 0) - (counts.inproject || 0);
-      if (progressLbl) progressLbl.textContent = handled + ' / ' + workable + ' relevantnych';
-      if (progressBar) progressBar.style.width = (workable > 0 ? Math.round(handled / workable * 100) : 0) + '%';
+
+      // Pasek postępu: tryb skanowania vs tryb sesji
+      if (newsState.scanning) {
+        var total = newsState.scanTotal || 1;
+        var done  = newsState.scanDone  || 0;
+        if (progressLbl) progressLbl.textContent = 'Skanowanie: ' + done + ' / ' + total;
+        if (progressBar) progressBar.style.width = Math.round(done / total * 100) + '%';
+      } else {
+        var handled = (counts.added || 0) + (counts.error || 0);
+        var workable = (counts.match || 0) + (counts.contentmatch || 0) + (counts.opened || 0) + handled;
+        if (progressLbl) progressLbl.textContent = handled + ' / ' + workable + ' relevantnych';
+        if (progressBar) progressBar.style.width = (workable > 0 ? Math.round(handled / workable * 100) : 0) + '%';
+      }
 
       var t = _newsThemeVars();
 
       newsState.urls.forEach(function(entry, idx) {
-        var isActive = idx === newsState.activeIdx;
-        var sd = _statusDot(entry.status);
-        var isIrrelevant = entry.status === 'nomatch' || entry.status === 'wrongcountry' || entry.status === 'inproject';
+        var isActive    = idx === newsState.activeIdx;
+        var sd          = _statusDot(entry.status);
+        var isScanning  = entry.status === 'scanning';
+        var isIrrelevant = entry.status === 'nomatch' || entry.status === 'wrongcountry' ||
+                           entry.status === 'inproject' || entry.status === 'blocked';
+        var isClickable = !isIrrelevant && !isScanning;
+
         var row = document.createElement('div');
         row.className = 'b24t-news-url-row';
         row.dataset.idx = idx;
         row.style.cssText = [
           'display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:8px;',
-          'cursor:' + (isIrrelevant ? 'default' : 'pointer') + ';',
-          'border:1px solid ' + (isActive ? 'var(--b24t-primary)' : t.borderSub) + ';',
-          'background:' + (isActive ? t.accentAlpha : isIrrelevant ? 'transparent' : t.bgDeep) + ';',
-          'opacity:' + (isIrrelevant ? '0.45' : '1') + ';',
+          'cursor:' + (isClickable ? 'pointer' : 'default') + ';',
+          'border:1px solid ' + (isActive ? 'var(--b24t-primary)' : isScanning ? 'rgba(129,140,248,0.25)' : t.borderSub) + ';',
+          'background:' + (isActive ? t.accentAlpha : (isIrrelevant || isScanning) ? 'transparent' : t.bgDeep) + ';',
+          'opacity:' + (isIrrelevant ? '0.4' : isScanning ? '0.65' : '1') + ';',
           'transition:background 0.1s,border-color 0.1s;',
         ].join('');
+
         var shortUrl = entry.url.replace(/^https?:\/\//, '');
         if (shortUrl.length > 42) shortUrl = shortUrl.substring(0, 42) + '\u2026';
+
+        // Snippet dla contentmatch — widoczny poniżej URL jako mały podpis
+        var snippetHtml = '';
+        if (entry.status === 'contentmatch' && entry.snippet) {
+          snippetHtml = '<div style="font-size:9px;color:' + t.textFaint + ';margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + entry.snippet.replace(/"/g,'&quot;') + '">' + entry.snippet.slice(0,80) + '</div>';
+        }
+
         row.innerHTML =
           '<span style="flex-shrink:0;width:14px;text-align:center;font-size:12px;font-weight:700;color:' + sd.color + ';" title="' + sd.label + '">' + sd.dot + '</span>' +
-          '<span style="flex:1;min-width:0;font-size:10px;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + t.text + ';" title="' + entry.url.replace(/"/g, '&quot;') + '">' + shortUrl + '</span>' +
-          '<button class="b24t-news-del-btn" style="flex-shrink:0;font-size:11px;width:18px;height:18px;line-height:1;border-radius:4px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Usu\u0144 z listy">\u2715</button>';
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-size:10px;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + t.text + ';" title="' + entry.url.replace(/"/g, '&quot;') + '">' + shortUrl + '</div>' +
+            snippetHtml +
+          '</div>' +
+          (isScanning ? '' : '<button class="b24t-news-del-btn" style="flex-shrink:0;font-size:11px;width:18px;height:18px;line-height:1;border-radius:4px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Usu\u0144 z listy">\u2715</button>');
+
         list.appendChild(row);
-        row.addEventListener('click', function(e) {
-          if (e.target.classList.contains('b24t-news-del-btn')) return;
-          if (isIrrelevant) return;
-          activateUrl(idx);
-        });
-        row.querySelector('.b24t-news-del-btn').addEventListener('click', function(e) {
-          e.stopPropagation();
-          var wasActive = newsState.activeIdx === idx;
-          newsState.urls.splice(idx, 1);
-          if (wasActive) {
-            newsState.activeIdx = -1;
-          } else if (newsState.activeIdx > idx) {
-            newsState.activeIdx--;
-          }
-          renderUrlList();
-        });
+
+        if (isClickable) {
+          row.addEventListener('click', function(e) {
+            if (e.target.classList.contains('b24t-news-del-btn')) return;
+            activateUrl(idx);
+          });
+        }
+        var delBtn = row.querySelector('.b24t-news-del-btn');
+        if (delBtn) {
+          delBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var wasActive = newsState.activeIdx === idx;
+            newsState.urls.splice(idx, 1);
+            if (wasActive) {
+              newsState.activeIdx = -1;
+            } else if (newsState.activeIdx > idx) {
+              newsState.activeIdx--;
+            }
+            renderUrlList();
+          });
+        }
       });
     }
 
@@ -7187,23 +7437,32 @@ function showOnboarding(onComplete) {
     var pasteArea = document.getElementById('b24t-news-paste-area');
     var importInfo = document.getElementById('b24t-news-import-info');
 
-    function importUrls() {
+    async function importUrls() {
+      // Blokuj ponowne kliknięcie gdy skanowanie w toku
+      if (newsState.scanning) return;
+
       var raw = pasteArea ? pasteArea.value : '';
       var lines = raw.split('\n').map(function(l) { return l.trim(); }).filter(function(l) { return /^https?:\/\//.test(l); });
       var seen = {};
       var deduped = lines.filter(function(u) { if (seen[u]) return false; seen[u] = true; return true; });
       var dupeCount = lines.length - deduped.length;
-      newsState.urls = deduped.map(function(u) { return { url: u, status: 'pending', opened: false }; });
+      if (deduped.length === 0) return;
+
       newsState.activeIdx = -1;
-      var detected = _newsDetectCountryFromUrls(newsState.urls);
+
+      // Detekcja kraju
+      var tempEntries = deduped.map(function(u) { return { url: u }; });
+      var detected = _newsDetectCountryFromUrls(tempEntries);
       newsState.detectedCountry = detected;
+      var pc = _newsProjectCountry();
+      var cc = detected || 'DEFAULT';
+      var chips = _newsGetKeywords(cc);
 
       // Country badge + warn
       var badgeEl = document.getElementById('b24t-news-country-badge');
       var rowEl   = document.getElementById('b24t-news-country-row');
       var projEl  = document.getElementById('b24t-news-country-proj');
       var warnEl  = document.getElementById('b24t-news-country-warn');
-      var pc = _newsProjectCountry();
       if (rowEl) rowEl.style.display = detected ? '' : 'none';
       if (badgeEl && detected) badgeEl.textContent = detected;
       if (projEl) projEl.textContent = pc ? '(projekt: ' + pc + ')' : '';
@@ -7214,18 +7473,86 @@ function showOnboarding(onComplete) {
         } else { warnEl.style.display = 'none'; }
       }
 
-      // Import info
-      var msg = '✓ Wczytano ' + deduped.length + ' URL' + (deduped.length !== 1 ? 'i' : '');
-      if (dupeCount > 0) msg += ' (usunięto ' + dupeCount + ' duplikat' + (dupeCount === 1 ? '' : dupeCount < 5 ? 'y' : 'ów') + ')';
-      if (importInfo) { importInfo.textContent = msg; importInfo.style.display = ''; importInfo.style.color = '#22c55e'; }
-
       if (pc) {
         var fCountry = document.getElementById('b24t-news-f-country');
         if (fCountry) fCountry.value = pc;
       }
+
+      // Pierwsza klasyfikacja — natychmiastowa (po URL)
+      newsState.urls = deduped.map(function(u) {
+        var urlStatus = _newsUrlRelevant(u, chips, pc);
+        return {
+          url: u,
+          status: urlStatus !== 'nomatch' ? urlStatus : 'scanning',
+          opened: false,
+          score: 0,
+          snippet: '',
+        };
+      });
+
       renderChips();
       renderUrlList();
       if (pasteArea) pasteArea.value = '';
+
+      // Zbierz URLe do skanowania treści
+      var toScan = newsState.urls.filter(function(e) { return e.status === 'scanning'; });
+
+      if (toScan.length === 0) {
+        // Wszystko rozpoznane po URL — nie trzeba skanować
+        var urlMsg = '✓ Wczytano ' + deduped.length + ' URL' + (deduped.length !== 1 ? 'i' : '');
+        if (dupeCount > 0) urlMsg += ' (usunięto ' + dupeCount + ' duplikat' + (dupeCount === 1 ? '' : dupeCount < 5 ? 'y' : 'ów') + ')';
+        if (importInfo) { importInfo.textContent = urlMsg; importInfo.style.display = ''; importInfo.style.color = '#22c55e'; }
+        _newsRunProjectCheck();
+        return;
+      }
+
+      // Skanowanie treści — zablokuj przycisk
+      newsState.scanning  = true;
+      newsState.scanTotal = toScan.length;
+      newsState.scanDone  = 0;
+      if (importBtn) {
+        importBtn.disabled = true;
+        importBtn.textContent = '⟳ Skanowanie ' + toScan.length + ' stron...';
+        importBtn.style.opacity = '0.7';
+      }
+      if (importInfo) { importInfo.textContent = '⟳ Szukam H&M w treści stron...'; importInfo.style.display = ''; importInfo.style.color = '#a78bfa'; }
+
+      // Sliding window — NEWS_CONTENT_SCAN_CONCURRENCY równoległych workerów
+      var nextScanIdx = 0;
+      async function _scanWorker() {
+        while (true) {
+          var i = nextScanIdx++;
+          if (i >= toScan.length) break;
+          var entry = toScan[i];
+          var result = await _newsContentScan(entry.url, chips);
+          entry.status  = result.status;
+          entry.score   = result.score;
+          entry.snippet = result.snippet;
+          newsState.scanDone++;
+          renderUrlList(); // aktualizacja na żywo — wpada do listy w momencie rozpoznania
+        }
+      }
+      await Promise.all(Array.from({ length: NEWS_CONTENT_SCAN_CONCURRENCY }, _scanWorker));
+
+      // Skanowanie zakończone
+      newsState.scanning = false;
+      if (importBtn) {
+        importBtn.disabled = false;
+        importBtn.textContent = '▶ Wczytaj URLe';
+        importBtn.style.opacity = '';
+      }
+
+      var counts = _newsUrlCounts();
+      var matchCount   = counts.match        || 0;
+      var cmCount      = counts.contentmatch || 0;
+      var blockedCount = counts.blocked      || 0;
+      var doneMsg = '✓ ' + deduped.length + ' URL' + (deduped.length !== 1 ? 'i' : '');
+      if (dupeCount > 0) doneMsg += ' (−' + dupeCount + ' dup.)';
+      doneMsg += ' — ' + matchCount + ' URL match, ' + cmCount + ' treść match';
+      if (blockedCount > 0) doneMsg += ', ' + blockedCount + ' niedostępnych';
+      if (importInfo) { importInfo.textContent = doneMsg; importInfo.style.display = ''; importInfo.style.color = '#22c55e'; }
+
+      renderUrlList();
       _newsRunProjectCheck();
     }
 
@@ -7239,7 +7566,7 @@ function showOnboarding(onComplete) {
     if (nextBtn) {
       nextBtn.addEventListener('click', function() {
         // Only navigate to relevant (match/opened) — skip nomatch and wrongcountry
-        function isWorkable(s) { return s === 'match' || s === 'pending' || s === 'opened'; } // inproject celowo pomijany
+        function isWorkable(s) { return s === 'match' || s === 'contentmatch' || s === 'pending' || s === 'opened'; } // inproject/blocked/nomatch celowo pomijane
         var start = newsState.activeIdx + 1;
         for (var i = start; i < newsState.urls.length; i++) {
           if (isWorkable(newsState.urls[i].status)) { activateUrl(i); return; }
@@ -7389,6 +7716,39 @@ function showOnboarding(onComplete) {
       });
     }
 
+    // ─── TAG SELECTOR TOGGLE ───
+    (function() {
+      var toggle  = document.getElementById('b24t-news-tag-toggle');
+      var tagList = document.getElementById('b24t-news-tag-list');
+      var chevron = document.getElementById('b24t-news-tag-chevron');
+      var summary = document.getElementById('b24t-news-tag-summary');
+      if (!toggle || !tagList) return;
+
+      function _updateTagSummary() {
+        if (!summary) return;
+        var checked = Array.from(tagList.querySelectorAll('input[type="checkbox"]:checked'))
+          .map(function(cb) {
+            var lbl = cb.closest('label');
+            return lbl ? (lbl.querySelector('span') || {}).textContent || '' : '';
+          })
+          .filter(Boolean);
+        summary.textContent = checked.length > 0 ? checked.join(', ') : 'brak';
+      }
+
+      toggle.addEventListener('click', function() {
+        var isOpen = tagList.style.display !== 'none';
+        tagList.style.display = isOpen ? 'none' : 'flex';
+        if (chevron) chevron.style.transform = isOpen ? '' : 'rotate(180deg)';
+        if (!isOpen) _updateTagSummary();
+      });
+
+      // Aktualizuj summary przy zmianie checkboxów
+      tagList.addEventListener('change', function() { _updateTagSummary(); });
+
+      // Inicjalny summary po załadowaniu tagów (tagi są już w DOM z _buildNewsPanels)
+      requestAnimationFrame(function() { _updateTagSummary(); });
+    })();
+
     // ─── LANG MAP EDITOR ───
     // Initial render
     renderChips();
@@ -7485,6 +7845,33 @@ function showOnboarding(onComplete) {
 
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
+    {
+      "version": "0.23.4",
+      "date": "2026-04-10",
+      "label": "feat",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "feat", "text": "News: integracja content scan z importem — sliding window 5 workerow, lista na zywo"},
+        {"type": "feat", "text": "News: status contentmatch (◆) — keyword w tresci; snippet pod URL-em w liscie"},
+        {"type": "feat", "text": "News: pasek postepu skanowania vs sesji; nowa legenda z grupami"},
+        {"type": "feat", "text": "News: selektor tagow — collapsible dropdown, Dodane domyslnie zaznaczone"},
+        {"type": "fix", "text": "News: contentmatch nie usuwany przez 'Usun irrelevantnych'"},
+        {"type": "fix", "text": "News: przycisk Nastepny obsluguje contentmatch"}
+      ]
+    },
+    {
+      "version": "0.23.3",
+      "date": "2026-04-10",
+      "label": "feat",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "feat", "text": "News: _newsContentScan() — skanowanie tresci stron przez GM_xmlhttpRequest"},
+        {"type": "feat", "text": "News: _newsParseContent() — DOMParser, usuwanie szumu, punktowanie 5 stref"},
+        {"type": "feat", "text": "News: @connect * — polaczenia z dowolnymi domenami newsowymi"},
+        {"type": "fix", "text": "News: chipy slow kluczowych nie pokazywaly sie — fix _newsGetKeywords (pusta tablica)"},
+        {"type": "fix", "text": "News: _newsChipsRenderer — odswieza chipy przy kazdym otwarciu panelu"}
+      ]
+    },
     {
       "version": "0.23.2",
       "date": "2026-04-10",

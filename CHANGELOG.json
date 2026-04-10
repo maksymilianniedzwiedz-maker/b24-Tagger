@@ -1,5 +1,24 @@
 [
   {
+    "version": "0.23.2",
+    "date": "2026-04-10",
+    "label": "UI",
+    "labelColor": "#a78bfa",
+    "changes": [
+      {"type": "feat", "text": "Toast notifications — auto-dismiss messages przy wgraniu pliku i zakończeniu sesji"},
+      {"type": "ui", "text": "Animacje: tab enter (slide-in), stat pop (scale), progress bar pulse, token dot pulse, section reveal"},
+      {"type": "ui", "text": "Progress label: kolorowanie stanu — szary idle, zielony done (✓ Zakończono), żółty paused, czerwony error"},
+      {"type": "ui", "text": "Log entries: border-left + tło per typ (success/error/warn) — lepsza czytelność"},
+      {"type": "ui", "text": "BETA chip w topbarze: pill badge z primary bg/border/color"},
+      {"type": "ui", "text": "File zone drag-over: CSS class + glow zamiast inline borderColor"},
+      {"type": "ui", "text": "Stat card: tinted backgrounds (CSS :has) — ok=zielony, warn=żółty"},
+      {"type": "ui", "text": "Action bar: Start full-width na górze, Match/Audit/Pause/Stop/Export w jednym wierszu"},
+      {"type": "fix", "text": "Quick Delete: hardcoded #f87171/#8888aa/#666688/#444455/#1a1a22 → CSS vars"},
+      {"type": "fix", "text": "Clear file button, Quick Tag progress bar: CSS vars (były hardcoded)"},
+      {"type": "fix", "text": "Annotator panel: przycisk ↻ Odśwież inline z datą (Projekt i Tagi tab)"}
+    ]
+  },
+  {
     "version": "0.23.1",
     "date": "2026-04-10",
     "label": "UI",

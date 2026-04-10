@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.23.5",
+    "date": "2026-04-11",
+    "label": "fix",
+    "labelColor": "#22c55e",
+    "changes": [
+      {"type": "fix", "text": "News: krytyczny błąd — _newsTheme() nie istnieje; zamieniono na _newsThemeVars() → przywrócono działanie przycisku Wczytaj URLe i event wiringу paneli"},
+      {"type": "fix", "text": "News: chipy słów kluczowych nie renderowały się przy pierwszym otwarciu panelu — renderChips() wywoływana teraz bezpośrednio po przypisaniu _newsChipsRenderer"},
+      {"type": "feat", "text": "News: kropeczka CMS (●) w nagłówku Formularza wzmianki — zielona gdy tag 'dodane' dostępny, czerwona gdy niedostępny"}
+    ]
+  },
+  {
     "version": "0.23.4",
     "date": "2026-04-10",
     "label": "feat",

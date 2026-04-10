@@ -1,5 +1,19 @@
 [
   {
+    "version": "0.22.0",
+    "date": "2026-04-10",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Panel główny: przywrócono scrollowanie zawartości (overflow-y: auto) — zniknęło po zmianach responsywności"
+      },
+      {
+        "type": "fix",
+        "text": "Log w panelu głównym: min-height 80px — log nie znika przy małym rozmiarze panelu"
+      }
+    ]
+  },
+  {
     "version": "0.21.27",
     "date": "2026-04-09",
     "changes": [

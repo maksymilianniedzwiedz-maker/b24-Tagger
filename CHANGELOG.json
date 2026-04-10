@@ -1,5 +1,23 @@
 [
   {
+    "version": "0.23.0",
+    "date": "2026-04-10",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "Panele: mechanizm bring-to-front — aktywny/przesuwany panel zawsze na wierzchu (z-index counter)"
+      },
+      {
+        "type": "fix",
+        "text": "Panele news P1+P2: przeciąganie P2 (Import) przesuwa też P1 (Lista) — zawsze trzymają się razem"
+      },
+      {
+        "type": "fix",
+        "text": "Wszystkie panele (news, annotators): clamping pozycji do granic okna przeglądarki"
+      }
+    ]
+  },
+  {
     "version": "0.22.0",
     "date": "2026-04-10",
     "changes": [

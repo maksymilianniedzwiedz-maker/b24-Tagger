@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.4
+// @version      0.23.5
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.4';
+  const VERSION = '0.23.5';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6711,7 +6711,7 @@ function showOnboarding(onComplete) {
     // ─── PANEL 3: Formularz wzmianki (right column) ───
     var p3 = _newsPanelBase('b24t-news-p3', PANEL_W, topList, baseRight + PANEL_W + GAP, 2147483630);
 
-    var clearBtnHtml = '<button id="b24t-news-clear-btn" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:10px;font-weight:600;padding:2px 8px;border-radius:5px;flex-shrink:0;margin-right:4px;letter-spacing:0.02em;" title="Wyczyść tytuł i treść">✕ Wyczyść</button>';
+    var clearBtnHtml = '<span id="b24t-news-cms-dot" style="font-size:12px;flex-shrink:0;margin-right:6px;cursor:default;color:#6b7280;" title="Sprawdzanie CMS...">●</span><button id="b24t-news-clear-btn" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:10px;font-weight:600;padding:2px 8px;border-radius:5px;flex-shrink:0;margin-right:4px;letter-spacing:0.02em;" title="Wyczyść tytuł i treść">✕ Wyczyść</button>';
     var hdr3 = _newsPanelHeader('✍ Formularz wzmianki', closeNewsPanels, clearBtnHtml);
     _newsDraggable(hdr3, p3);
 
@@ -6802,7 +6802,7 @@ function showOnboarding(onComplete) {
         if (aD !== bD) return aD ? -1 : 1;
         return a[0].localeCompare(b[0]);
       });
-      var t2 = _newsTheme();
+      var t2 = _newsThemeVars();
       tagList.innerHTML = tags.map(function(entry) {
         var name = entry[0], tid = entry[1];
         var isDodane = name.toLowerCase().indexOf('dodane') !== -1;
@@ -6902,6 +6902,7 @@ function showOnboarding(onComplete) {
     var statusEl  = document.getElementById('b24t-news-tag-dodane-status');
     var checkboxEl = document.getElementById('b24t-news-tag-dodane');
     var cmsBanner = document.getElementById('b24t-news-cms-warn');
+    var cmsDot    = document.getElementById('b24t-news-cms-dot');
     // Single source of truth: state.tags loaded from project
     var hasDodane = state.tags && Object.keys(state.tags).some(function(k) {
       return k.toLowerCase().indexOf('dodane') !== -1;
@@ -6910,10 +6911,12 @@ function showOnboarding(onComplete) {
       if (statusEl)  { statusEl.textContent = '✓ dostępny'; statusEl.style.color = '#22c55e'; }
       if (checkboxEl){ checkboxEl.disabled = false; checkboxEl.checked = true; }
       if (cmsBanner) cmsBanner.style.display = 'none';
+      if (cmsDot)    { cmsDot.style.color = '#22c55e'; cmsDot.title = 'CMS aktywny — tag "dodane" dostępny'; }
     } else {
       if (statusEl)  { statusEl.textContent = '⚠ niedostępny — zaloguj się do CMS'; statusEl.style.color = '#f59e0b'; }
       if (checkboxEl){ checkboxEl.checked = false; checkboxEl.disabled = true; }
       if (cmsBanner) cmsBanner.style.display = '';
+      if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.title = 'CMS niedostępny — zaloguj się do Brand24'; }
     }
   }
 
@@ -7016,6 +7019,7 @@ function showOnboarding(onComplete) {
       });
     }
     _newsChipsRenderer = renderChips;
+    renderChips();
 
     var addChipBtn = document.getElementById('b24t-news-add-chip-btn');
     if (addChipBtn) {
@@ -7846,6 +7850,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.5",
+      "date": "2026-04-11",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News: krytyczny blad — _newsTheme() nie istnieje → brak event listenera na przycisku Wczytaj URLe"},
+        {"type": "fix", "text": "News: chipy slow kluczowych nie renderowaly sie przy pierwszym otwarciu panelu"},
+        {"type": "feat", "text": "News: kropeczka CMS (●) w naglowku formularza — zielona/czerwona"}
+      ]
+    },
+    {
       "version": "0.23.4",
       "date": "2026-04-10",
       "label": "feat",
@@ -7950,39 +7965,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "perf", "text": "buildUrlMap: sliding window pool zamiast batch-wait"},
         {"type": "perf", "text": "MAP_FETCH_CONCURRENCY default: 5→8"}
-      ]
-    },
-    {
-      "version": "0.21.15",
-      "date": "2026-04-03",
-      "label": "New",
-      "labelColor": "#6c6cff",
-      "changes": [
-        {"type": "feat", "text": "Quick Delete: pole batch size z modalem ostrzezenia (domyslnie 10, max 1000)"},
-        {"type": "perf", "text": "Delete batch default: 10 (DEL_BATCH_DEFAULT)"}
-      ]
-    },
-    {
-      "version": "0.21.14",
-      "date": "2026-04-03",
-      "label": "Perf",
-      "labelColor": "#f59e0b",
-      "changes": [
-        {"type": "perf", "text": "BG prefetch tagstats i allProjects: rownolegle fetche (BG_CONCURRENCY=5)"},
-        {"type": "perf", "text": "Quick Tag / Quick Untag: QT_CONCURRENCY=2"},
-        {"type": "perf", "text": "runTagging tag batches: TAG_CONCURRENCY=2"},
-        {"type": "perf", "text": "runDeleteByTag: BATCH 5→8"}
-      ]
-    },
-    {
-      "version": "0.21.13",
-      "date": "2026-04-03",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Topbar: logo shrinkuje zamiast wypychac przyciski poza panel"},
-        {"type": "fix", "text": "Topbar-right zawsze widoczny — flex-shrink:0"},
-        {"type": "fix", "text": "Annotator tabs: przycisk Odswiez nie wychodzi poza panel"}
       ]
     },
   ];

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.17
+// @version      0.23.18
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.17';
+  const VERSION = '0.23.18';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7544,6 +7544,7 @@ function showOnboarding(onComplete) {
     }
 
     function renderUrlList() {
+      var t = _newsThemeVars();
       var list = document.getElementById('b24t-news-url-list');
       var empty = document.getElementById('b24t-news-empty');
       var progressWrap = document.getElementById('b24t-news-progress-wrap');
@@ -7621,8 +7622,6 @@ function showOnboarding(onComplete) {
         if (progressLbl) progressLbl.textContent = handled + ' / ' + workable + ' relevantnych';
         if (progressBar) progressBar.style.width = (workable > 0 ? Math.round(handled / workable * 100) : 0) + '%';
       }
-
-      var t = _newsThemeVars();
 
       newsState.urls.forEach(function(entry, idx) {
         // Filtr nie-artykułów — ukryj wiersz (nie usuń z listy)
@@ -8367,6 +8366,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.18",
+      "date": "2026-04-11",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News: krytyczny fix — renderUrlList crashowalo przez t.yellowBg przed zdefiniowaniem t; skan zatymawal sie na 8. URLu"}
+      ]
+    },
+    {
       "version": "0.23.17",
       "date": "2026-04-11",
       "label": "fix",
@@ -8455,18 +8463,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "News: CMS check — 2 stany: niezalogowany (czerwony) vs brak tagu dodane (zolty); sprawdzanie przez GET /searches/add-new-mention/"},
         {"type": "fix", "text": "News: auto-fill Tresc — h1 nie trafia do pola Tresc, tylko do scoringu; Tresc = akapity lub og:description"}
-      ]
-    },
-    {
-      "version": "0.23.8",
-      "date": "2026-04-11",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News: CMS dot (●) odswiezany po zaladowaniu tagow — naprawia brak statusu na panel.brand24.pl"},
-        {"type": "fix", "text": "News: 'Sprawdz ponownie' re-fetchuje tagi z serwera zamiast tylko sprawdzac cache"},
-        {"type": "fix", "text": "News: auto-fill tytul — h1 z article/main > content_title > og:title > <title>"},
-        {"type": "fix", "text": "News: auto-fill tresc — caly akapit (<=600 zn) lub 3 zdania wokol slowa kluczowego"}
       ]
     },
   ];

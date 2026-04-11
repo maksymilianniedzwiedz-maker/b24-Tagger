@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.6
+// @version      0.23.7
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.6';
+  const VERSION = '0.23.7';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6233,29 +6233,34 @@ function showOnboarding(onComplete) {
     }
 
     var score = 0;
-    var snippet = '';
+    var _bodySnippet = '';  // snippet z body (h1, akapity) — preferowany dla pola Treść
+    var _metaSnippet = '';  // snippet z meta/og:description — fallback
+    var matchedChips = [];  // chipy które znaleziono na stronie
 
     chips.forEach(function(chip) {
       var kw = chip.toLowerCase();
+      var chipMatched = false;
 
-      // Strefa tytułu — najsilniejszy sygnał
+      // Strefa tytułu — najsilniejszy sygnał (tylko score, tytuł idzie do osobnego pola)
       var inTitle = titleText.toLowerCase().indexOf(kw) !== -1 || ogTitle.toLowerCase().indexOf(kw) !== -1;
       if (inTitle) {
         score += 8;
-        if (!snippet) snippet = (ogTitle || titleText).slice(0, 140);
+        chipMatched = true;
       }
 
       // Strefa opisu meta
       var inMeta = ogDesc.toLowerCase().indexOf(kw) !== -1 || metaDesc.toLowerCase().indexOf(kw) !== -1;
       if (inMeta) {
         score += 5;
-        if (!snippet) snippet = (ogDesc || metaDesc).slice(0, 140);
+        chipMatched = true;
+        if (!_metaSnippet) _metaSnippet = (ogDesc || metaDesc).slice(0, 140);
       }
 
       // Strefa nagłówka h1
       if (h1Text.toLowerCase().indexOf(kw) !== -1) {
         score += 5;
-        if (!snippet) snippet = h1Text.slice(0, 140);
+        chipMatched = true;
+        if (!_bodySnippet) _bodySnippet = h1Text.slice(0, 140);
       }
 
       // Strefa akapitów — rozróżniamy pierwszy akapit (lede) od reszty
@@ -6265,13 +6270,18 @@ function showOnboarding(onComplete) {
         if (p.toLowerCase().indexOf(kw) !== -1) {
           if (idx === 0) { firstPMatch = true; }
           else { extraPMatches++; }
-          if (!snippet) snippet = p.slice(0, 140);
+          chipMatched = true;
+          if (!_bodySnippet) _bodySnippet = p.slice(0, 140);
         }
       });
       if (firstPMatch) score += 4;
       if (extraPMatches > 0) score += Math.min(extraPMatches, 3); // maks. +3 za wielokrotne wzmianki w treści
 
+      if (chipMatched) matchedChips.push(chip);
     });
+
+    // snippet dla pola Treść: preferuj body (akapity/h1) nad meta — nigdy tytuł
+    var snippet = _bodySnippet || _metaSnippet;
 
     score = Math.min(score, 30); // cap — żeby jeden artykuł pełen keywordów nie zaburzał skali
 
@@ -6287,10 +6297,11 @@ function showOnboarding(onComplete) {
     if (articleTitle.length > 200) articleTitle = articleTitle.slice(0, 200);
 
     return {
-      status:  status,
-      score:   score,
-      snippet: snippet,
-      title:   articleTitle,
+      status:       status,
+      score:        score,
+      snippet:      snippet,
+      title:        articleTitle,
+      matchedChips: matchedChips,
     };
   }
 
@@ -6820,7 +6831,7 @@ function showOnboarding(onComplete) {
             '<span id="b24t-news-tag-chevron" style="font-size:10px;color:' + t.textFaint + ';transition:transform 0.2s;">▼</span>' +
           '</div>' +
         '</div>' +
-        '<div id="b24t-news-tag-list" style="display:none;flex-wrap:wrap;gap:5px;padding:0 10px 8px;"></div>' +
+        '<div id="b24t-news-tag-list" style="display:none;flex-wrap:wrap;gap:5px;padding:0 10px 8px;max-height:200px;overflow-y:auto;"></div>' +
       '</div>',
       '<button id="b24t-news-submit-btn" style="padding:9px;border-radius:9px;border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:12px;font-weight:700;cursor:pointer;width:100%;letter-spacing:0.03em;transition:opacity 0.15s;">✚ Dodaj wzmiankę do Brand24</button>',
       '<div id="b24t-news-submit-status" style="font-size:10px;text-align:center;min-height:14px;font-weight:500;"></div>',
@@ -7281,12 +7292,24 @@ function showOnboarding(onComplete) {
         if (_hasSnippet) {
           snippetHtml = '<div style="font-size:9px;color:' + t.textFaint + ';margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + entry.snippet.replace(/"/g,'&quot;') + '">' + entry.snippet.slice(0,80) + '</div>';
         }
+        // Dopasowane chipy — pokazuj dla wszystkich relevantnych URL-i (URL-match i content scan)
+        var chipsHtml = '';
+        var _chips = entry.matchedChips;
+        if (_chips && _chips.length > 0 && entry.status !== 'nomatch' && entry.status !== 'blocked' && entry.status !== 'wrongcountry' && entry.status !== 'inproject') {
+          chipsHtml = '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px;">' +
+            _chips.map(function(c) {
+              var safe = c.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+              return '<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);color:#a78bfa;font-family:monospace;">' + safe + '</span>';
+            }).join('') +
+          '</div>';
+        }
 
         row.innerHTML =
           '<span style="flex-shrink:0;width:14px;text-align:center;font-size:12px;font-weight:700;color:' + sd.color + ';" title="' + sd.label + '">' + sd.dot + '</span>' +
           '<div style="flex:1;min-width:0;">' +
             '<div style="font-size:10px;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + t.text + ';" title="' + entry.url.replace(/"/g, '&quot;') + '">' + shortUrl + '</div>' +
             snippetHtml +
+            chipsHtml +
           '</div>' +
           (isScanning ? '' : '<button class="b24t-news-del-btn" style="flex-shrink:0;font-size:11px;width:18px;height:18px;line-height:1;border-radius:4px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Usu\u0144 z listy">\u2715</button>');
 
@@ -7528,12 +7551,16 @@ function showOnboarding(onComplete) {
       // Pierwsza klasyfikacja — natychmiastowa (po URL)
       newsState.urls = deduped.map(function(u) {
         var urlStatus = _newsUrlRelevant(u, chips, pc);
+        var urlChips = urlStatus !== 'nomatch'
+          ? chips.filter(function(c) { return u.toLowerCase().indexOf(c.toLowerCase()) !== -1; })
+          : [];
         return {
           url: u,
           status: urlStatus !== 'nomatch' ? urlStatus : 'scanning',
           opened: false,
           score: 0,
           snippet: '',
+          matchedChips: urlChips,
         };
       });
 
@@ -7572,10 +7599,19 @@ function showOnboarding(onComplete) {
           if (i >= toScan.length) break;
           var entry = toScan[i];
           var result = await _newsContentScan(entry.url, chips);
-          entry.status  = result.status;
-          entry.score   = result.score;
-          entry.snippet = result.snippet;
-          entry.title   = result.title || '';
+          // Bug #4: jeśli URL sygnalizuje obcy kraj → nadpisz wynik content scan
+          if (result.status !== 'nomatch' && result.status !== 'blocked' && pc) {
+            var _urlCountries = _newsCountriesInUrl(entry.url);
+            var _urlCountryKeys = Object.keys(_urlCountries);
+            if (_urlCountryKeys.length > 0 && !_urlCountries[pc]) {
+              result.status = 'wrongcountry';
+            }
+          }
+          entry.status       = result.status;
+          entry.score        = result.score;
+          entry.snippet      = result.snippet;
+          entry.title        = result.title || '';
+          entry.matchedChips = result.matchedChips || [];
           newsState.scanDone++;
           renderUrlList(); // aktualizacja na żywo — wpada do listy w momencie rozpoznania
         }
@@ -7899,6 +7935,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.7",
+      "date": "2026-04-11",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News: dropdown tagow — max-height + scroll gdy duzo tagow"},
+        {"type": "fix", "text": "News: auto-fill — pole Tresc dostawalo tytul zamiast tresci artykulu"},
+        {"type": "feat", "text": "News: dopasowane chipy widoczne przy kazdym URL-u w liscie"},
+        {"type": "fix", "text": "News: kod kraju w URL (np. /nl) ma priorytet nad wynikiem content scan"}
+      ]
+    },
+    {
       "version": "0.23.6",
       "date": "2026-04-11",
       "label": "feat",
@@ -8008,16 +8056,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "Delete current view: batch deletowania uzywa _deleteBatch zamiast hardcoded 5 — spojne z pozostalymi funkcjami delete"}
-      ]
-    },
-    {
-      "version": "0.21.26",
-      "date": "2026-04-08",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Quick Delete: batch deletowania uzywa _deleteBatch zamiast hardcoded 5"},
-        {"type": "perf", "text": "DEL_BATCH_DEFAULT: 10→25 — szybsze domyslne usuwanie"}
       ]
     },
   ];

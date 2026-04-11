@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.9
+// @version      0.23.10
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.9';
+  const VERSION = '0.23.10';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6242,10 +6242,37 @@ function showOnboarding(onComplete) {
         .slice(0, 12); // max 12 pierwszych akapitów — lede artykułu, nie ogon
     }
 
+    // Strefy poboczne — podpisy zdjęć, opisy galerii, adresy/lokalizacje
+    // Przeszukiwane po usunięciu szumu; keyword tu punktuje +2 (słabszy sygnał) z oznaczeniem w liście URLi
+    var _secZones = [];
+    if (bodyEl) {
+      var _secSeen = new Set();
+      var _addSec = function(el, hint) {
+        var t = (el.textContent || '').trim();
+        if (t.length < 4 || t.length > 600 || _secSeen.has(t)) return;
+        _secSeen.add(t);
+        _secZones.push({ text: t, hint: hint });
+      };
+      bodyEl.querySelectorAll('figcaption').forEach(function(el) { _addSec(el, 'podpis zdjęcia'); });
+      try { bodyEl.querySelectorAll('[class*="caption"],[id*="caption"]').forEach(function(el) {
+        if (el.matches('figcaption')) return;
+        _addSec(el, 'podpis');
+      }); } catch(e) {}
+      try { bodyEl.querySelectorAll('[class*="address"],[id*="address"],[class*="location"],[id*="location"]').forEach(function(el) {
+        _addSec(el, 'adres/lokalizacja');
+      }); } catch(e) {}
+      try { bodyEl.querySelectorAll(
+        '[class*="slide"] [class*="description"],[class*="carousel"] [class*="description"],' +
+        '[class*="gallery"] [class*="caption"],[class*="gallery"] [class*="description"]'
+      ).forEach(function(el) { _addSec(el, 'opis galerii'); }); } catch(e) {}
+    }
+
     var score = 0;
-    var _bodySnippet = '';  // snippet z body (h1, akapity) — preferowany dla pola Treść
-    var _metaSnippet = '';  // snippet z meta/og:description — fallback
-    var matchedChips = [];  // chipy które znaleziono na stronie
+    var _bodySnippet = '';      // snippet z body (h1, akapity) — preferowany dla pola Treść
+    var _metaSnippet = '';      // snippet z meta/og:description — fallback
+    var matchedChips = [];      // chipy które znaleziono na stronie
+    var _matchedZoneHints = []; // zone hints dla stref pobocznych (podpis, adres itp.)
+    var _secondaryChips = [];   // chipy dopasowane wyłącznie w strefach pobocznych
 
     chips.forEach(function(chip) {
       var kw = chip.toLowerCase();
@@ -6301,6 +6328,20 @@ function showOnboarding(onComplete) {
       if (firstPMatch) score += 4;
       if (extraPMatches > 0) score += Math.min(extraPMatches, 3); // maks. +3 za wielokrotne wzmianki w treści
 
+      // Strefy poboczne — tylko jeśli chip nie trafił w żadną strefę główną
+      if (!chipMatched && _secZones.length > 0) {
+        for (var _szi = 0; _szi < _secZones.length; _szi++) {
+          if (_secZones[_szi].text.toLowerCase().indexOf(kw) !== -1) {
+            score += 2;
+            chipMatched = true;
+            if (!_bodySnippet) _bodySnippet = _secZones[_szi].text.slice(0, 200);
+            if (_matchedZoneHints.indexOf(_secZones[_szi].hint) === -1) _matchedZoneHints.push(_secZones[_szi].hint);
+            _secondaryChips.push(chip);
+            break;
+          }
+        }
+      }
+
       if (chipMatched) matchedChips.push(chip);
     });
 
@@ -6320,12 +6361,15 @@ function showOnboarding(onComplete) {
     // Ogranicz do 200 znaków — <title> może być długi
     if (articleTitle.length > 200) articleTitle = articleTitle.slice(0, 200);
 
+    var secondaryZoneOnly = _secondaryChips.length > 0 && matchedChips.length === _secondaryChips.length;
     return {
-      status:       status,
-      score:        score,
-      snippet:      snippet,
-      title:        articleTitle,
-      matchedChips: matchedChips,
+      status:            status,
+      score:             score,
+      snippet:           snippet,
+      title:             articleTitle,
+      matchedChips:      matchedChips,
+      secondaryZoneOnly: secondaryZoneOnly,
+      zoneHints:         _matchedZoneHints,
     };
   }
 
@@ -6714,7 +6758,7 @@ function showOnboarding(onComplete) {
         title: 'POMINIĘTE',
         items: [
           { dot: '◌', color: '#818cf8', label: 'Skanowanie...' },
-          { dot: '—', color: '#6b7280', label: 'Niedostępna / paywall' },
+          { dot: '—', color: '#6b7280', label: 'Nie przeskanowana — otwórz ręcznie' },
           { dot: '○', color: '#4b5563', label: 'Brak keyword' },
           { dot: '●', color: '#64748b', label: 'Już w projekcie' },
         ]
@@ -7180,7 +7224,7 @@ function showOnboarding(onComplete) {
       if (s === 'error')        return { dot: '✗', color: '#ef4444', label: 'Błąd / duplikat w projekcie' };
       if (s === 'inproject')    return { dot: '●', color: '#64748b', label: 'Już w projekcie (ten miesiąc)' };
       if (s === 'scanning')     return { dot: '◌', color: '#818cf8', label: 'Skanowanie treści...' };
-      if (s === 'blocked')      return { dot: '—', color: '#6b7280', label: 'Strona niedostępna / paywall' };
+      if (s === 'blocked')      return { dot: '—', color: '#6b7280', label: 'Nie przeskanowana — kliknij aby sprawdzić ręcznie' };
       return { dot: '○', color: '#4b5563', label: 'Brak keyword w URL ani treści' };
     }
 
@@ -7205,18 +7249,29 @@ function showOnboarding(onComplete) {
       if (!bar) return;
       var t = _newsThemeVars();
       var counts = _newsUrlCounts();
-      var nomatchCount = (counts.nomatch || 0) + (counts.wrongcountry || 0) + (counts.blocked || 0);
+      var nomatchCount = (counts.nomatch || 0) + (counts.wrongcountry || 0);
+      var blockedCount = counts.blocked || 0; // osobno — blocked można otworzyć ręcznie
       var handledCount = (counts.added || 0) + (counts.error || 0);
       bar.innerHTML = '';
       if (nomatchCount > 0) {
         var b1 = document.createElement('button');
         b1.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer;white-space:nowrap;';
-        b1.textContent = '\u2715 Usu\u0144 ' + nomatchCount + ' irrelevantnych';
-        b1.title = 'Usuwa URLe bez keyword, z b\u0142\u0119dnym krajem i niedost\u0119pne — NIE usuwa contentmatch';
+        b1.textContent = '\u2715 Usu\u0144 ' + nomatchCount + ' bez keyword';
+        b1.title = 'Usuwa URLe bez keyword i z b\u0142\u0119dnym krajem';
         b1.addEventListener('click', function() {
-          _newsRemoveByStatus(function(u) { return u.status === 'nomatch' || u.status === 'wrongcountry' || u.status === 'blocked'; });
+          _newsRemoveByStatus(function(u) { return u.status === 'nomatch' || u.status === 'wrongcountry'; });
         });
         bar.appendChild(b1);
+      }
+      if (blockedCount > 0) {
+        var bblk = document.createElement('button');
+        bblk.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid rgba(107,114,128,0.4);background:rgba(107,114,128,0.1);color:#9ca3af;cursor:pointer;white-space:nowrap;';
+        bblk.textContent = '\u2715 Usu\u0144 nieprzeskanowane (' + blockedCount + ')';
+        bblk.title = 'Usuwa URLe kt\u00f3re wtyczka nie mog\u0142a otworzy\u0107. Mo\u017cesz je sprawdzi\u0107 r\u0119cznie klikaj\u0105c na nie.';
+        bblk.addEventListener('click', function() {
+          _newsRemoveByStatus(function(u) { return u.status === 'blocked'; });
+        });
+        bar.appendChild(bblk);
       }
       if (handledCount > 0) {
         var b2 = document.createElement('button');
@@ -7359,8 +7414,9 @@ function showOnboarding(onComplete) {
         var sd          = _statusDot(entry.status);
         var isScanning  = entry.status === 'scanning';
         var isIrrelevant = entry.status === 'nomatch' || entry.status === 'wrongcountry' ||
-                           entry.status === 'inproject' || entry.status === 'blocked';
-        var isClickable = !isIrrelevant && !isScanning;
+                           entry.status === 'inproject';
+        var isBlocked   = entry.status === 'blocked'; // klikalny — annotator sprawdza ręcznie
+        var isClickable = !isIrrelevant && !isScanning; // blocked jest klikalny
 
         var row = document.createElement('div');
         row.className = 'b24t-news-url-row';
@@ -7368,11 +7424,12 @@ function showOnboarding(onComplete) {
         row.style.cssText = [
           'display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:8px;',
           'cursor:' + (isClickable ? 'pointer' : 'default') + ';',
-          'border:1px solid ' + (isActive ? 'var(--b24t-primary)' : isScanning ? 'rgba(129,140,248,0.25)' : t.borderSub) + ';',
+          'border:1px solid ' + (isActive ? 'var(--b24t-primary)' : isScanning ? 'rgba(129,140,248,0.25)' : isBlocked ? 'rgba(107,114,128,0.35)' : t.borderSub) + ';',
           'background:' + (isActive ? t.accentAlpha : (isIrrelevant || isScanning) ? 'transparent' : t.bgDeep) + ';',
-          'opacity:' + (isIrrelevant ? '0.4' : isScanning ? '0.65' : '1') + ';',
+          'opacity:' + (isIrrelevant ? '0.4' : (isBlocked || isScanning) ? '0.6' : '1') + ';',
           'transition:background 0.1s,border-color 0.1s;',
         ].join('');
+        if (isBlocked) row.title = 'Wtyczka nie mogła przeskanować — kliknij aby sprawdzić ręcznie';
 
         var shortUrl = entry.url.replace(/^https?:\/\//, '');
         if (shortUrl.length > 42) shortUrl = shortUrl.substring(0, 42) + '\u2026';
@@ -7394,6 +7451,18 @@ function showOnboarding(onComplete) {
             }).join('') +
           '</div>';
         }
+        // Zone hint — kiedy keyword znaleziony w strefie pobocznej (podpis zdjęcia, adres itp.)
+        var zoneHintHtml = '';
+        if (entry.zoneHints && entry.zoneHints.length > 0) {
+          var _hintsLabel = entry.zoneHints.join(', ');
+          zoneHintHtml = '<div style="margin-top:2px;"><span style="font-size:8px;padding:1px 5px;border-radius:4px;' +
+            (entry.secondaryZoneOnly
+              ? 'background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);color:#f59e0b;'
+              : 'background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.25);color:#a78bfa;') +
+            '" title="Keyword znaleziony w: ' + _hintsLabel + '">' +
+            (entry.secondaryZoneOnly ? '\u26a0 tylko w: ' : '+ ') + _hintsLabel +
+          '</span></div>';
+        }
 
         row.innerHTML =
           '<span style="flex-shrink:0;width:14px;text-align:center;font-size:12px;font-weight:700;color:' + sd.color + ';" title="' + sd.label + '">' + sd.dot + '</span>' +
@@ -7401,6 +7470,7 @@ function showOnboarding(onComplete) {
             '<div style="font-size:10px;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + t.text + ';" title="' + entry.url.replace(/"/g, '&quot;') + '">' + shortUrl + '</div>' +
             snippetHtml +
             chipsHtml +
+            zoneHintHtml +
           '</div>' +
           (isScanning ? '' : '<button class="b24t-news-del-btn" style="flex-shrink:0;font-size:11px;width:18px;height:18px;line-height:1;border-radius:4px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Usu\u0144 z listy">\u2715</button>');
 
@@ -7698,11 +7768,13 @@ function showOnboarding(onComplete) {
               result.status = 'wrongcountry';
             }
           }
-          entry.status       = result.status;
-          entry.score        = result.score;
-          entry.snippet      = result.snippet;
-          entry.title        = result.title || '';
-          entry.matchedChips = result.matchedChips || [];
+          entry.status             = result.status;
+          entry.score              = result.score;
+          entry.snippet            = result.snippet;
+          entry.title              = result.title || '';
+          entry.matchedChips       = result.matchedChips || [];
+          entry.secondaryZoneOnly  = result.secondaryZoneOnly || false;
+          entry.zoneHints          = result.zoneHints || [];
           newsState.scanDone++;
           renderUrlList(); // aktualizacja na żywo — wpada do listy w momencie rozpoznania
         }
@@ -7729,7 +7801,7 @@ function showOnboarding(onComplete) {
       if (keytopicCount > 0) doneMsg += ', ' + keytopicCount + ' gł. temat';
       if (cmCount > 0)       doneMsg += ', ' + cmCount + ' kontekst';
       if (mentionCount > 0)  doneMsg += ', ' + mentionCount + ' wzmiank' + (mentionCount === 1 ? 'a' : 'i');
-      if (blockedCount > 0)  doneMsg += ', ' + blockedCount + ' niedostępnych';
+      if (blockedCount > 0)  doneMsg += ', ' + blockedCount + ' nieprzeskanowanych';
       if (importInfo) { importInfo.textContent = doneMsg; importInfo.style.display = ''; importInfo.style.color = '#22c55e'; }
 
       renderUrlList();
@@ -8026,6 +8098,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.10",
+      "date": "2026-04-11",
+      "label": "feat",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "feat", "text": "News: rozszerzone strefy skanowania — figcaption, podpisy, galerie, adresy/lokalizacje"},
+        {"type": "feat", "text": "News: badge strefy pobocznej w liscie URLi (zolty gdy tylko tam, fioletowy gdy tez w tresci)"},
+        {"type": "feat", "text": "News: blocked strony klikalne — otwieraja sie manualnie; osobny przycisk bulk do usuniecia"}
+      ]
+    },
+    {
       "version": "0.23.9",
       "date": "2026-04-11",
       "label": "fix",
@@ -8139,17 +8222,6 @@ function showOnboarding(onComplete) {
         {"type": "ui", "text": "News side tab + help tip: CSS vars zamiast hardcoded dark"},
         {"type": "ui", "text": "Overall Stats: karty, tabela, banery domykania miesiaca — CSS vars"},
         {"type": "ui", "text": "Planned features: usunieto 3 zrealizowane pozycje"}
-      ]
-    },
-    {
-      "version": "0.23.0",
-      "date": "2026-04-10",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Panele: mechanizm bring-to-front — aktywny/przesuwany panel zawsze na wierzchu"},
-        {"type": "fix", "text": "News P1+P2: przeciaganie P2 przesuwa tez P1 — zawsze razem"},
-        {"type": "fix", "text": "Wszystkie panele: clamping pozycji do granic okna przegladarki"}
       ]
     },
   ];

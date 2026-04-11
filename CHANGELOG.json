@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.23.13",
+    "date": "2026-04-11",
+    "label": "feat",
+    "changes": [
+      "news: detekcja typu strony — article/uncertain/nonArticle na podstawie og:type, JSON-LD @type, article:published_time, time[datetime], liczby akapitów",
+      "news: badge 'nie-artykuł' (szary) i '? typ niepewny' (amber) w liście URLi dla stron bez cech artykułu",
+      "debug: testUrlScan loguje teraz też pageType i pageTypeSignals"
+    ]
+  },
+  {
     "version": "0.23.12",
     "date": "2026-04-11",
     "label": "debug",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.14
+// @version      0.23.15
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.14';
+  const VERSION = '0.23.15';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8002,15 +8002,11 @@ function showOnboarding(onComplete) {
               result.status = 'wrongcountry';
             }
           }
-          // Język strony vs kraj projektu — dodatkowy sygnał wrongcountry
-          // Angielski jest zawsze akceptowany (międzynarodowe pokrycie); projekty EN nie blokują innych jezyków
+          // Język strony vs kraj projektu — język musi się zgadzać dokładnie
           if (result.status !== 'nomatch' && result.status !== 'blocked' &&
               result.status !== 'wrongcountry' && result.pageLang && pc) {
             var _expLangs = (_NEWS_LANG_MAP[pc.toLowerCase()] || []);
-            var _projIsEn = _expLangs.indexOf('en') !== -1;
-            var _pageIsEn = result.pageLang === 'en';
-            if (_expLangs.length > 0 && !_projIsEn && !_pageIsEn &&
-                _expLangs.indexOf(result.pageLang) === -1) {
+            if (_expLangs.length > 0 && _expLangs.indexOf(result.pageLang) === -1) {
               result.status = 'wrongcountry';
             }
           }
@@ -8356,6 +8352,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.15",
+      "date": "2026-04-11",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News: fix jezyk — angielski nie jest wyjatkiem; jezyk strony musi dokladnie pasowac do jezyka projektu"}
+      ]
+    },
+    {
       "version": "0.23.14",
       "date": "2026-04-11",
       "label": "feat",
@@ -8455,17 +8460,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "News: przycisk boczny znikal po zamknieciu paneli"},
         {"type": "fix", "text": "News: dropdown tagow pusty — _newsRefillTags() przy kazdym otwarciu"},
         {"type": "fix", "text": "News: 'Sprawdzono X wzmianek' nadpisywalo wynik skanu — osobny element"}
-      ]
-    },
-    {
-      "version": "0.23.5",
-      "date": "2026-04-11",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News: krytyczny blad — _newsTheme() nie istnieje → brak event listenera na przycisku Wczytaj URLe"},
-        {"type": "fix", "text": "News: chipy slow kluczowych nie renderowaly sie przy pierwszym otwarciu panelu"},
-        {"type": "feat", "text": "News: kropeczka CMS (●) w naglowku formularza — zielona/czerwona"}
       ]
     },
   ];

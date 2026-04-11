@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.11
+// @version      0.23.12
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.11';
+  const VERSION = '0.23.12';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2052,6 +2052,59 @@
       netMonitorStop: function() {
         state._netMonitor = null;
         addLog('[NET_MONITOR] Wyłączony.', 'info');
+      },
+      // Skanuje URL tak samo jak News moduł — zwraca status, score, matched chips i snippet
+      testUrlScan: function(url, chips) {
+        var kw = chips || [];
+        if (typeof kw === 'string') kw = [kw];
+        if (!kw.length) {
+          console.warn('[B24T] testUrlScan: podaj chips, np. B24Tagger.debug.testUrlScan("https://...", ["słowo"])');
+          return Promise.resolve(null);
+        }
+        console.log('[B24T] Skanuję URL:', url);
+        console.log('[B24T] Szukane chipy:', kw);
+        return _newsContentScan(url, kw).then(function(r) {
+          console.log('[B24T] STATUS:', r.status, '| SCORE:', r.score);
+          console.log('[B24T] Znalezione chipy:', r.matchedChips.length ? r.matchedChips.join(', ') : '(brak)');
+          console.log('[B24T] Tytuł:', r.title || '(brak)');
+          console.log('[B24T] Snippet:', r.snippet || '(brak)');
+          return r;
+        });
+      },
+      // Pobiera surowy HTML i pokazuje co plugin faktycznie widzi (przed parsowaniem)
+      testUrlRaw: function(url) {
+        console.log('[B24T] Pobieram surowy HTML:', url);
+        return new Promise(function(resolve) {
+          GM_xmlhttpRequest({
+            method: 'GET',
+            url: url,
+            headers: { 'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8' },
+            timeout: 15000,
+            onload: function(resp) {
+              var info = { httpStatus: resp.status, htmlLength: (resp.responseText || '').length };
+              try {
+                var doc = (new DOMParser()).parseFromString(resp.responseText, 'text/html');
+                info.title    = ((doc.querySelector('title') || {}).textContent || '').trim();
+                info.h1       = ((doc.querySelector('h1') || {}).textContent || '').trim();
+                info.hasArticle = !!doc.querySelector('article');
+                info.hasMain    = !!doc.querySelector('main');
+                info.cookieEls  = doc.querySelectorAll('[class*="cookie"],[class*="consent"],[id*="cookie"],[id*="consent"]').length;
+                info.pCount     = doc.querySelectorAll('p').length;
+                var bodyEl = doc.querySelector('article') || doc.querySelector('main') || doc.body;
+                info.bodyStart  = bodyEl ? bodyEl.textContent.trim().slice(0, 400) : '';
+              } catch(e) { info.parseError = e.message; }
+              console.log('[B24T] HTTP status:', info.httpStatus, '| Długość HTML:', info.htmlLength, 'znaków');
+              console.log('[B24T] <title>:', info.title);
+              console.log('[B24T] <h1>:', info.h1);
+              console.log('[B24T] <article>:', info.hasArticle, '| <main>:', info.hasMain);
+              console.log('[B24T] <p> na stronie:', info.pCount, '| elementy cookie/consent:', info.cookieEls);
+              console.log('[B24T] Tekst body (pierwsze 400 znaków):', info.bodyStart);
+              resolve(info);
+            },
+            onerror: function() { console.log('[B24T] Raw fetch: BŁĄD SIECI'); resolve({ error: 'network error' }); },
+            ontimeout: function() { console.log('[B24T] Raw fetch: TIMEOUT'); resolve({ error: 'timeout' }); },
+          });
+        });
       },
     },
     exportReport,
@@ -8112,6 +8165,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.12",
+      "date": "2026-04-11",
+      "label": "debug",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "feat", "text": "Debug: testUrlRaw — pokazuje co plugin widzi w surowym HTML (status, title, h1, cookie els)"},
+        {"type": "feat", "text": "Debug: testUrlScan — pelny skan URL z chipami; zwraca status, score, matched chips"}
+      ]
+    },
+    {
       "version": "0.23.11",
       "date": "2026-04-11",
       "label": "fix",
@@ -8217,22 +8280,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "News: @connect * — polaczenia z dowolnymi domenami newsowymi"},
         {"type": "fix", "text": "News: chipy slow kluczowych nie pokazywaly sie — fix _newsGetKeywords (pusta tablica)"},
         {"type": "fix", "text": "News: _newsChipsRenderer — odswieza chipy przy kazdym otwarciu panelu"}
-      ]
-    },
-    {
-      "version": "0.23.2",
-      "date": "2026-04-10",
-      "label": "UI",
-      "labelColor": "#a78bfa",
-      "changes": [
-        {"type": "feat", "text": "Toast notifications — auto-dismiss przy wgraniu pliku i zakończeniu sesji"},
-        {"type": "ui", "text": "Animacje: tab enter, stat pop, progress bar pulse, token dot pulse, section reveal"},
-        {"type": "ui", "text": "Progress label: kolory per stan (idle/done/paused/error/running)"},
-        {"type": "ui", "text": "Log entries: border-left + tło per typ (success/error/warn)"},
-        {"type": "ui", "text": "BETA chip: pill badge; file zone drag-over: glow + scale; stat card: tinted :has()"},
-        {"type": "ui", "text": "Action bar: Start full-width na gorze, pozostale przyciski w jednym wierszu"},
-        {"type": "fix", "text": "Quick Delete: hardcoded colors → CSS vars"},
-        {"type": "fix", "text": "Annotator panel: przycisk ↻ inline z datą (Projekt i Tagi tab)"}
       ]
     },
   ];

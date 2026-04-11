@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.16
+// @version      0.23.17
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.16';
+  const VERSION = '0.23.17';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6876,7 +6876,7 @@ function showOnboarding(onComplete) {
       '</div>',
       // Filter bar — pokazuje się gdy są nie-artykuły w liście
       '<div id="b24t-news-filter-bar" style="display:none;padding:3px 8px;flex-shrink:0;border-bottom:1px solid ' + t.borderSub + ';align-items:center;gap:6px;flex-wrap:wrap;">',
-        '<button id="b24t-news-filter-nonarticle" style="font-size:9px;padding:2px 8px;border-radius:4px;border:1px solid ' + t.borderSub + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;transition:background 0.15s,color 0.15s;">Ukryj nie-artyku\u0142y (0)</button>',
+        '<button id="b24t-news-filter-nonarticle" style="font-size:9px;padding:2px 8px;border-radius:4px;border:1px solid ' + t.border + ';background:rgba(107,114,128,0.08);color:' + t.textMuted + ';cursor:pointer;transition:background 0.15s,color 0.15s,border-color 0.15s;">Ukryj nie-artyku\u0142y (0)</button>',
       '</div>',
       // List
       '<div id="b24t-news-url-list" style="flex:1;overflow-y:auto;padding:8px 6px;display:flex;flex-direction:column;gap:3px;min-height:0;">',
@@ -7573,10 +7573,21 @@ function showOnboarding(onComplete) {
       if (_filterBtn) {
         var _hasNonArticle = _nonArticleCnt > 0;
         _filterBtn.textContent = (newsState.hideNonArticles ? '\u21a9 Poka\u017c wszystkie' : 'Ukryj nie-artyku\u0142y') + ' (' + _nonArticleCnt + ')';
-        _filterBtn.style.background   = newsState.hideNonArticles ? 'rgba(99,102,241,0.15)' : 'transparent';
-        _filterBtn.style.color        = newsState.hideNonArticles ? '#818cf8' : (_hasNonArticle ? '' : 'rgba(156,163,175,0.5)');
-        _filterBtn.style.borderColor  = newsState.hideNonArticles ? 'rgba(99,102,241,0.4)' : '';
-        _filterBtn.style.cursor       = _hasNonArticle ? 'pointer' : 'default';
+        // 3 stany: wciśnięty (indigo), aktywny z nie-artykułami (amber), nieaktywny (szary)
+        if (newsState.hideNonArticles) {
+          _filterBtn.style.background  = 'rgba(99,102,241,0.15)';
+          _filterBtn.style.color       = '#818cf8';
+          _filterBtn.style.borderColor = 'rgba(99,102,241,0.4)';
+        } else if (_hasNonArticle) {
+          _filterBtn.style.background  = t.yellowBg;
+          _filterBtn.style.color       = t.yellow;
+          _filterBtn.style.borderColor = 'rgba(245,158,11,0.35)';
+        } else {
+          _filterBtn.style.background  = 'rgba(107,114,128,0.08)';
+          _filterBtn.style.color       = 'rgba(156,163,175,0.5)';
+          _filterBtn.style.borderColor = '';
+        }
+        _filterBtn.style.cursor = _hasNonArticle ? 'pointer' : 'default';
         if (!_filterBtn.dataset.wired) {
           _filterBtn.dataset.wired = '1';
           _filterBtn.addEventListener('click', function() {
@@ -8356,6 +8367,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.17",
+      "date": "2026-04-11",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News: fix styl przycisku filtra — 3 stany: szary/amber/indigo; light+dark mode"}
+      ]
+    },
+    {
       "version": "0.23.16",
       "date": "2026-04-11",
       "label": "fix",
@@ -8447,18 +8467,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "News: 'Sprawdz ponownie' re-fetchuje tagi z serwera zamiast tylko sprawdzac cache"},
         {"type": "fix", "text": "News: auto-fill tytul — h1 z article/main > content_title > og:title > <title>"},
         {"type": "fix", "text": "News: auto-fill tresc — caly akapit (<=600 zn) lub 3 zdania wokol slowa kluczowego"}
-      ]
-    },
-    {
-      "version": "0.23.7",
-      "date": "2026-04-11",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News: dropdown tagow — max-height + scroll gdy duzo tagow"},
-        {"type": "fix", "text": "News: auto-fill — pole Tresc dostawalo tytul zamiast tresci artykulu"},
-        {"type": "feat", "text": "News: dopasowane chipy widoczne przy kazdym URL-u w liscie"},
-        {"type": "fix", "text": "News: kod kraju w URL (np. /nl) ma priorytet nad wynikiem content scan"}
       ]
     },
   ];

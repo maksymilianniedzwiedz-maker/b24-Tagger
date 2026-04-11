@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.23.14",
+    "date": "2026-04-11",
+    "label": "feat",
+    "changes": [
+      "news: wykrywanie języka strony (<html lang>) — strony w złym języku → wrongcountry; angielski zawsze akceptowany",
+      "news: data publikacji z widoczną datą — badge zielony/amber/czerwony; >60 dni → stale (opacity 0.55)",
+      "news: wykrywanie paywalla — JSON-LD isAccessibleForFree, meta access, CSS klasy, text-ratio; badge 🔒 paywall",
+      "news: filtr 'Ukryj nie-artykuły' — toggle button nad listą URLi; ukrywa wiersze nonArticle"
+    ]
+  },
+  {
     "version": "0.23.13",
     "date": "2026-04-11",
     "label": "feat",

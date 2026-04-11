@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.16",
+    "date": "2026-04-11",
+    "label": "fix",
+    "changes": [
+      "news: fix filtr nie-artykułów — przycisk zawsze widoczny gdy są URLe (szary gdy 0 nie-artykułów, aktywny gdy są)"
+    ]
+  },
+  {
     "version": "0.23.15",
     "date": "2026-04-11",
     "label": "fix",

@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.15",
+    "date": "2026-04-11",
+    "label": "fix",
+    "changes": [
+      "news: fix wykrywanie języka — angielski nie jest już wyjątkiem; język strony musi dokładnie pasować do języka projektu"
+    ]
+  },
+  {
     "version": "0.23.14",
     "date": "2026-04-11",
     "label": "feat",

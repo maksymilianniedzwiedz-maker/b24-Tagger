@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.15
+// @version      0.23.16
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.15';
+  const VERSION = '0.23.16';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7565,19 +7565,23 @@ function showOnboarding(onComplete) {
 
       _newsUpdateBulkBar();
 
-      // Filter bar — pokaż gdy są nie-artykuły; odpina i przypina przycisk raz
+      // Filter bar — widoczny zawsze gdy są URLe na liście
       var _filterBar = document.getElementById('b24t-news-filter-bar');
       var _filterBtn = document.getElementById('b24t-news-filter-nonarticle');
       var _nonArticleCnt = newsState.urls.filter(function(e) { return e.pageType === 'nonArticle'; }).length;
-      if (_filterBar) _filterBar.style.display = _nonArticleCnt > 0 ? 'flex' : 'none';
+      if (_filterBar) _filterBar.style.display = newsState.urls.length > 0 ? 'flex' : 'none';
       if (_filterBtn) {
+        var _hasNonArticle = _nonArticleCnt > 0;
         _filterBtn.textContent = (newsState.hideNonArticles ? '\u21a9 Poka\u017c wszystkie' : 'Ukryj nie-artyku\u0142y') + ' (' + _nonArticleCnt + ')';
         _filterBtn.style.background   = newsState.hideNonArticles ? 'rgba(99,102,241,0.15)' : 'transparent';
-        _filterBtn.style.color        = newsState.hideNonArticles ? '#818cf8' : '';
+        _filterBtn.style.color        = newsState.hideNonArticles ? '#818cf8' : (_hasNonArticle ? '' : 'rgba(156,163,175,0.5)');
         _filterBtn.style.borderColor  = newsState.hideNonArticles ? 'rgba(99,102,241,0.4)' : '';
+        _filterBtn.style.cursor       = _hasNonArticle ? 'pointer' : 'default';
         if (!_filterBtn.dataset.wired) {
           _filterBtn.dataset.wired = '1';
           _filterBtn.addEventListener('click', function() {
+            var _cnt = newsState.urls.filter(function(e) { return e.pageType === 'nonArticle'; }).length;
+            if (_cnt === 0) return;
             newsState.hideNonArticles = !newsState.hideNonArticles;
             renderUrlList();
           });
@@ -8352,6 +8356,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.16",
+      "date": "2026-04-11",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News: fix filtr nie-artykulow — przycisk zawsze widoczny gdy sa URLe; szary/nieaktywny gdy 0 nie-artykulow"}
+      ]
+    },
+    {
       "version": "0.23.15",
       "date": "2026-04-11",
       "label": "fix",
@@ -8446,20 +8459,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "News: auto-fill — pole Tresc dostawalo tytul zamiast tresci artykulu"},
         {"type": "feat", "text": "News: dopasowane chipy widoczne przy kazdym URL-u w liscie"},
         {"type": "fix", "text": "News: kod kraju w URL (np. /nl) ma priorytet nad wynikiem content scan"}
-      ]
-    },
-    {
-      "version": "0.23.6",
-      "date": "2026-04-11",
-      "label": "feat",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "feat", "text": "News: tiered scoring — mention (zolty, 1-4 pkt), contentmatch (cyan, 5-11 pkt), keytopic (zielony, 12+ pkt)"},
-        {"type": "feat", "text": "News: auto-fill tytulu artykulu i fragmentu z keyword do formularza wzmianki"},
-        {"type": "fix", "text": "News: przycisk boczny bialy przy aktywacji — CSS active solid indigo"},
-        {"type": "fix", "text": "News: przycisk boczny znikal po zamknieciu paneli"},
-        {"type": "fix", "text": "News: dropdown tagow pusty — _newsRefillTags() przy kazdym otwarciu"},
-        {"type": "fix", "text": "News: 'Sprawdzono X wzmianek' nadpisywalo wynik skanu — osobny element"}
       ]
     },
   ];

@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.23.7",
+    "date": "2026-04-11",
+    "label": "fix",
+    "labelColor": "#22c55e",
+    "changes": [
+      {"type": "fix", "text": "News: dropdown tagów — dodano max-height: 200px + overflow-y: auto; lista nie wychodzi poza ekran gdy projekt ma dużo tagów"},
+      {"type": "fix", "text": "News: auto-fill formularza — pole Treść dostawało tytuł zamiast treści artykułu; snippet preferuje teraz akapity body/h1 nad tytułem"},
+      {"type": "feat", "text": "News: dopasowane słowa kluczowe (chipy) wyświetlane przy każdym URL-u w liście — zarówno dla dopasowań w URL jak i z content scan"},
+      {"type": "fix", "text": "News: kod kraju w URL (np. /nl, /de) ma teraz priorytet nad wynikiem content scan — wzmianka z obcym kodem kraju dostaje wrongcountry zamiast mention/contentmatch"}
+    ]
+  },
+  {
     "version": "0.23.6",
     "date": "2026-04-11",
     "label": "feat",

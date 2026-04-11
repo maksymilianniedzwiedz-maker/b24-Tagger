@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.12
+// @version      0.23.13
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.12';
+  const VERSION = '0.23.13';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2065,6 +2065,7 @@
         console.log('[B24T] Szukane chipy:', kw);
         return _newsContentScan(url, kw).then(function(r) {
           console.log('[B24T] STATUS:', r.status, '| SCORE:', r.score);
+          console.log('[B24T] Typ strony:', r.pageType, '| Sygnały:', (r.pageTypeSignals || []).join(', ') || '(brak)');
           console.log('[B24T] Znalezione chipy:', r.matchedChips.length ? r.matchedChips.join(', ') : '(brak)');
           console.log('[B24T] Tytuł:', r.title || '(brak)');
           console.log('[B24T] Snippet:', r.snippet || '(brak)');
@@ -6250,6 +6251,40 @@ function showOnboarding(onComplete) {
       return { status: 'nomatch', score: 0, snippet: '' };
     }
 
+    // ── DETEKCJA TYPU STRONY (przed usunięciem szumu — skrypty jeszcze obecne) ──
+    var _articleSignals = [];
+
+    // og:type = "article" / "news_article" itp.
+    var _ogTypeEl = doc.querySelector('meta[property="og:type"]');
+    var _ogType = _ogTypeEl ? (_ogTypeEl.getAttribute('content') || '').toLowerCase() : '';
+    if (_ogType === 'article' || (_ogType.length > 0 && (_ogType.indexOf('article') !== -1 || _ogType.indexOf('news') !== -1))) {
+      _articleSignals.push('og:type');
+    }
+
+    // article:published_time — meta tag obecny głównie w newsach i blogach
+    if (doc.querySelector('meta[property="article:published_time"]') ||
+        doc.querySelector('meta[name="article:published_time"]') ||
+        doc.querySelector('meta[property="og:article:published_time"]')) {
+      _articleSignals.push('published_time');
+    }
+
+    // JSON-LD @type: NewsArticle / Article / BlogPosting (skrypty jeszcze nie usunięte)
+    var _ARTICLE_LD_TYPES = ['NewsArticle','Article','BlogPosting','ReportageNewsArticle','AnalysisNewsArticle','Review'];
+    doc.querySelectorAll('script[type="application/ld+json"]').forEach(function(el) {
+      if (_articleSignals.indexOf('ld+json') !== -1) return;
+      try {
+        var _ld = JSON.parse(el.textContent);
+        var _ldArr = Array.isArray(_ld) ? _ld : [_ld];
+        _ldArr.forEach(function(item) {
+          var _t = item['@type'] || '';
+          if (typeof _t === 'string') _t = [_t];
+          if (Array.isArray(_t) && _t.some(function(x) { return _ARTICLE_LD_TYPES.indexOf(x) !== -1; })) {
+            _articleSignals.push('ld+json');
+          }
+        });
+      } catch(e) {}
+    });
+
     // Usuń szum — reklamy, nawigację, stopki, popupy
     NEWS_NOISE_SELECTORS.forEach(function(sel) {
       try {
@@ -6294,6 +6329,13 @@ function showOnboarding(onComplete) {
         .filter(function(t) { return t.length > 40; }) // pomijaj krótkie fragmenty (np. podpisy, etykiety)
         .slice(0, 12); // max 12 pierwszych akapitów — lede artykułu, nie ogon
     }
+
+    // Detekcja artykułu — sygnały po usunięciu szumu (bodyEl dostępny)
+    if (bodyEl && bodyEl.querySelector('time[datetime]')) _articleSignals.push('time[datetime]');
+    if (paragraphs.length >= 5) _articleSignals.push('5+p');
+    // Klasyfikacja: 2+ sygnałów = artykuł, 1 = niepewny, 0 = nie-artykuł/katalog
+    var _pageType = _articleSignals.length >= 2 ? 'article' :
+                    _articleSignals.length === 1 ? 'uncertain' : 'nonArticle';
 
     // Strefy poboczne — podpisy zdjęć, opisy galerii, adresy/lokalizacje
     // Przeszukiwane po usunięciu szumu; keyword tu punktuje +2 (słabszy sygnał) z oznaczeniem w liście URLi
@@ -6437,6 +6479,8 @@ function showOnboarding(onComplete) {
       matchedChips:      matchedChips,
       secondaryZoneOnly: secondaryZoneOnly,
       zoneHints:         _matchedZoneHints,
+      pageType:          _pageType,
+      pageTypeSignals:   _articleSignals,
     };
   }
 
@@ -7531,6 +7575,16 @@ function showOnboarding(onComplete) {
           '</span></div>';
         }
 
+        // Typ strony — badge dla stron które nie są artykułami (katalogi firm, produkty itp.)
+        var pageTypeBadgeHtml = '';
+        var _pt = entry.pageType;
+        if (_pt === 'nonArticle') {
+          pageTypeBadgeHtml = '<div style="margin-top:2px;"><span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Brak sygnałów że to artykuł/news (og:type, JSON-LD, published_time, &lt;time&gt;, paragraphs)">\u{1f4c4} nie-artykuł</span></div>';
+        } else if (_pt === 'uncertain') {
+          var _sigList = (entry.pageTypeSignals || []).join(', ');
+          pageTypeBadgeHtml = '<div style="margin-top:2px;"><span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);color:#d97706;" title="Tylko 1 sygnał artykułu: ' + _sigList + '">? typ niepewny</span></div>';
+        }
+
         row.innerHTML =
           '<span style="flex-shrink:0;width:14px;text-align:center;font-size:12px;font-weight:700;color:' + sd.color + ';" title="' + sd.label + '">' + sd.dot + '</span>' +
           '<div style="flex:1;min-width:0;">' +
@@ -7538,6 +7592,7 @@ function showOnboarding(onComplete) {
             snippetHtml +
             chipsHtml +
             zoneHintHtml +
+            pageTypeBadgeHtml +
           '</div>' +
           (isScanning ? '' : '<button class="b24t-news-del-btn" style="flex-shrink:0;font-size:11px;width:18px;height:18px;line-height:1;border-radius:4px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Usu\u0144 z listy">\u2715</button>');
 
@@ -7842,6 +7897,8 @@ function showOnboarding(onComplete) {
           entry.matchedChips       = result.matchedChips || [];
           entry.secondaryZoneOnly  = result.secondaryZoneOnly || false;
           entry.zoneHints          = result.zoneHints || [];
+          entry.pageType           = result.pageType || 'unknown';
+          entry.pageTypeSignals    = result.pageTypeSignals || [];
           newsState.scanDone++;
           renderUrlList(); // aktualizacja na żywo — wpada do listy w momencie rozpoznania
         }
@@ -8165,6 +8222,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.13",
+      "date": "2026-04-11",
+      "label": "feat",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "feat", "text": "News: detekcja typu strony — article/uncertain/nonArticle (og:type, JSON-LD, published_time, time[datetime], liczba akapitow)"},
+        {"type": "feat", "text": "News: badge 'nie-artykul' (szary) i '? typ niepewny' (amber) w liscie URLi dla stron bez cech artykulu"}
+      ]
+    },
+    {
       "version": "0.23.12",
       "date": "2026-04-11",
       "label": "debug",
@@ -8267,19 +8334,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "News: selektor tagow — collapsible dropdown, Dodane domyslnie zaznaczone"},
         {"type": "fix", "text": "News: contentmatch nie usuwany przez 'Usun irrelevantnych'"},
         {"type": "fix", "text": "News: przycisk Nastepny obsluguje contentmatch"}
-      ]
-    },
-    {
-      "version": "0.23.3",
-      "date": "2026-04-10",
-      "label": "feat",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "feat", "text": "News: _newsContentScan() — skanowanie tresci stron przez GM_xmlhttpRequest"},
-        {"type": "feat", "text": "News: _newsParseContent() — DOMParser, usuwanie szumu, punktowanie 5 stref"},
-        {"type": "feat", "text": "News: @connect * — polaczenia z dowolnymi domenami newsowymi"},
-        {"type": "fix", "text": "News: chipy slow kluczowych nie pokazywaly sie — fix _newsGetKeywords (pusta tablica)"},
-        {"type": "fix", "text": "News: _newsChipsRenderer — odswieza chipy przy kazdym otwarciu panelu"}
       ]
     },
   ];

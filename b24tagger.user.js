@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.10
+// @version      0.23.11
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.10';
+  const VERSION = '0.23.11';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6267,6 +6267,10 @@ function showOnboarding(onComplete) {
       ).forEach(function(el) { _addSec(el, 'opis galerii'); }); } catch(e) {}
     }
 
+    // Pełny tekst body — fallback dla stron katalogowych (firmy.cz itp.) które nie używają <p>
+    var _genericText = bodyEl ? (bodyEl.textContent || '') : '';
+    var _genericTextLower = _genericText.toLowerCase();
+
     var score = 0;
     var _bodySnippet = '';      // snippet z body (h1, akapity) — preferowany dla pola Treść
     var _metaSnippet = '';      // snippet z meta/og:description — fallback
@@ -6339,6 +6343,16 @@ function showOnboarding(onComplete) {
             _secondaryChips.push(chip);
             break;
           }
+        }
+      }
+
+      // Fallback: pełny tekst body — łapie keyword w <div>, <li>, <dd> itp. (strony katalogowe)
+      if (!chipMatched && _genericTextLower.indexOf(kw) !== -1) {
+        score += 1;
+        chipMatched = true;
+        if (!_bodySnippet) {
+          var _gIdx = _genericTextLower.indexOf(kw);
+          _bodySnippet = _genericText.slice(Math.max(0, _gIdx - 80), _gIdx + 150).trim();
         }
       }
 
@@ -7327,14 +7341,14 @@ function showOnboarding(onComplete) {
         var projectUrls = new Set();
         var page = 1;
         var total = null;
-        var perPage = 100;
         while (true) {
           var res = await getMentions(state.projectId, dateFrom, dateTo, [], page);
           if (!res) break;
           if (total === null) total = res.count || 0;
           var results = res.results || [];
+          if (results.length === 0) break;
           results.forEach(function(m) { if (m.url) projectUrls.add(m.url); });
-          if (results.length < perPage || projectUrls.size >= total) break;
+          if (projectUrls.size >= total) break;
           page++;
           if (page > 50) break; // safety cap
         }
@@ -7350,9 +7364,9 @@ function showOnboarding(onComplete) {
           }
         });
 
-        var infoMsg = '✓ Sprawdzono ' + projectUrls.size + ' wzmianek';
+        var infoMsg = '✓ Projekt: ' + (total || projectUrls.size) + ' wzmianek w tym mies.';
         if (matchedCount > 0) infoMsg += ' — ' + matchedCount + ' URL' + (matchedCount === 1 ? '' : 'i') + ' już w projekcie';
-        else infoMsg += ' — brak duplikatów';
+        else infoMsg += ' — żadna nie pokrywa się z listą';
         if (projectInfo) { projectInfo.textContent = infoMsg; projectInfo.style.color = matchedCount > 0 ? '#f59e0b' : '#22c55e'; }
       } catch(e) {
         if (projectInfo) { projectInfo.textContent = '✗ Błąd sprawdzania: ' + e.message; projectInfo.style.color = '#ef4444'; }
@@ -8098,6 +8112,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.11",
+      "date": "2026-04-11",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News: fix paginacja project-check — pobiera wszystkie strony wzmianek (nie tylko pierwsza)"},
+        {"type": "fix", "text": "News: komunikat pokazuje laczna liczbe wzmianek projektu w tym miesiacu"},
+        {"type": "feat", "text": "News: fallback skanowania — keyword w div/li/dd lapany przez pełny tekst body"}
+      ]
+    },
+    {
       "version": "0.23.10",
       "date": "2026-04-11",
       "label": "feat",
@@ -8208,20 +8233,6 @@ function showOnboarding(onComplete) {
         {"type": "ui", "text": "Action bar: Start full-width na gorze, pozostale przyciski w jednym wierszu"},
         {"type": "fix", "text": "Quick Delete: hardcoded colors → CSS vars"},
         {"type": "fix", "text": "Annotator panel: przycisk ↻ inline z datą (Projekt i Tagi tab)"}
-      ]
-    },
-    {
-      "version": "0.23.1",
-      "date": "2026-04-10",
-      "label": "UI",
-      "labelColor": "#a78bfa",
-      "changes": [
-        {"type": "ui", "text": "Glass highlight na kartach stat (annTile, statsCard, dashTile, stat-card)"},
-        {"type": "ui", "text": "CSS vars w calym systemie news panels — reaktywny light/dark mode"},
-        {"type": "ui", "text": "Panel headers news: var(--b24t-accent-grad) — spojny z glownym panelem"},
-        {"type": "ui", "text": "News side tab + help tip: CSS vars zamiast hardcoded dark"},
-        {"type": "ui", "text": "Overall Stats: karty, tabela, banery domykania miesiaca — CSS vars"},
-        {"type": "ui", "text": "Planned features: usunieto 3 zrealizowane pozycje"}
       ]
     },
   ];

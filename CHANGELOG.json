@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.23.12",
+    "date": "2026-04-11",
+    "label": "debug",
+    "changes": [
+      "debug: testUrlRaw — pokazuje co plugin faktycznie pobiera (HTTP status, title, h1, długość HTML, elementy cookie/consent)",
+      "debug: testUrlScan — uruchamia pełny skan URL z podanymi chipami i zwraca status, score, matched chips"
+    ]
+  },
+  {
     "version": "0.23.11",
     "date": "2026-04-11",
     "label": "fix",

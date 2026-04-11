@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.23.8",
+    "date": "2026-04-11",
+    "label": "fix",
+    "labelColor": "#22c55e",
+    "changes": [
+      {"type": "fix", "text": "News: CMS dot (●) — odświeżany po załadowaniu tagów projektu; naprawia brak aktualizacji na panel.brand24.pl i przy szybkim otwarciu paneli"},
+      {"type": "fix", "text": "News: _newsRefillTags retry po 1.5s gdy tagi jeszcze puste — race condition przy wolnym ładowaniu (np. panel.brand24.pl)"},
+      {"type": "fix", "text": "News: 'Sprawdź ponownie' CMS — re-fetchuje tagi z serwera zamiast tylko sprawdzać cache; przydatne po zalogowaniu do CMS w osobnej zakładce"},
+      {"type": "fix", "text": "News: auto-fill tytuł — nowa kolejność: h1 z article/main (widoczny nagłówek) > content_title (meta custom) > og:title > <title>; eliminuje wklejanie nazwy serwisu"},
+      {"type": "fix", "text": "News: auto-fill treść — cały akapit jeśli ≤600 znaków; dla dłuższych: 3 zdania wokół słowa kluczowego (przed + z kw + po); eliminuje 140-znakowe obcięcie bez kontekstu"}
+    ]
+  },
+  {
     "version": "0.23.7",
     "date": "2026-04-11",
     "label": "fix",

@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.18",
+    "date": "2026-04-11",
+    "label": "fix",
+    "changes": [
+      "news: krytyczny fix — renderUrlList crashował przez t.yellowBg przed zdefiniowaniem t; skan zatrzymywał się na 8. URLu"
+    ]
+  },
+  {
     "version": "0.23.17",
     "date": "2026-04-11",
     "label": "fix",

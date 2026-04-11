@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.8
+// @version      0.23.9
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.8';
+  const VERSION = '0.23.9';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6270,7 +6270,7 @@ function showOnboarding(onComplete) {
       if (h1Text.toLowerCase().indexOf(kw) !== -1) {
         score += 5;
         chipMatched = true;
-        if (!_bodySnippet) _bodySnippet = h1Text;
+        // h1 liczy do scoringu, ale nie do snippetu — tytuł nie trafia do pola Treść
       }
 
       // Strefa akapitów — rozróżniamy pierwszy akapit (lede) od reszty
@@ -6800,9 +6800,8 @@ function showOnboarding(onComplete) {
     var body3 = document.createElement('div');
     body3.style.cssText = 'padding:12px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;flex:1;min-height:0;';
 
-    var cmsStatus = _newsCmsStatus();
     var cmsBannerHtml = '<div id="b24t-news-cms-warn" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.5;">' +
-      '⚠ Tag <strong>dodane</strong> niedostępny — zaloguj się do CMS Brand24 (' + (cmsStatus.domain === 'pl' ? 'panel.brand24.pl' : 'app.brand24.com') + ').' +
+      '<span id="b24t-news-cms-warn-text"></span>' +
       '<button id="b24t-news-cms-recheck" style="display:inline-block;margin-left:8px;font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:' + t.yellow + ';cursor:pointer;">↺ Sprawdź ponownie</button>' +
     '</div>';
 
@@ -6961,25 +6960,76 @@ function showOnboarding(onComplete) {
   }
 
   function _newsCheckTagDodane() {
-    var statusEl  = document.getElementById('b24t-news-tag-dodane-status');
+    var statusEl   = document.getElementById('b24t-news-tag-dodane-status');
     var checkboxEl = document.getElementById('b24t-news-tag-dodane');
-    var cmsBanner = document.getElementById('b24t-news-cms-warn');
-    var cmsDot    = document.getElementById('b24t-news-cms-dot');
-    // Single source of truth: state.tags loaded from project
+    var cmsBanner  = document.getElementById('b24t-news-cms-warn');
+    var cmsDot     = document.getElementById('b24t-news-cms-dot');
+    var warnText   = document.getElementById('b24t-news-cms-warn-text');
+    var domain     = _newsCmsStatus().domain === 'pl' ? 'panel.brand24.pl' : 'app.brand24.com';
+
     var hasDodane = state.tags && Object.keys(state.tags).some(function(k) {
       return k.toLowerCase().indexOf('dodane') !== -1;
     });
+
     if (hasDodane) {
+      // Stan 1: tag dodane istnieje w projekcie — CMS aktywny ✓
       if (statusEl)  { statusEl.textContent = '✓ dostępny'; statusEl.style.color = '#22c55e'; }
       if (checkboxEl){ checkboxEl.disabled = false; checkboxEl.checked = true; }
       if (cmsBanner) cmsBanner.style.display = 'none';
       if (cmsDot)    { cmsDot.style.color = '#22c55e'; cmsDot.title = 'CMS aktywny — tag "dodane" dostępny'; }
-    } else {
-      if (statusEl)  { statusEl.textContent = '⚠ niedostępny — zaloguj się do CMS'; statusEl.style.color = '#f59e0b'; }
-      if (checkboxEl){ checkboxEl.checked = false; checkboxEl.disabled = true; }
-      if (cmsBanner) cmsBanner.style.display = '';
-      if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.title = 'CMS niedostępny — zaloguj się do Brand24'; }
+      return;
     }
+
+    // Brak tagu dodane — sprawdź czy użytkownik jest zalogowany do CMS (async)
+    if (statusEl)  { statusEl.textContent = '⏳ sprawdzanie...'; statusEl.style.color = '#6b7280'; }
+    if (checkboxEl){ checkboxEl.checked = false; checkboxEl.disabled = true; }
+    if (cmsBanner) cmsBanner.style.display = 'none';
+    if (cmsDot)    { cmsDot.style.color = '#6b7280'; cmsDot.title = 'Sprawdzanie CMS...'; }
+
+    var sid = state.projectId || '';
+    if (!sid) {
+      // Brak ID projektu — pokaż ogólny błąd logowania
+      if (statusEl)  { statusEl.textContent = '⚠ brak projektu'; statusEl.style.color = '#f59e0b'; }
+      if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.title = 'CMS niedostępny — brak projektu'; }
+      return;
+    }
+
+    var _b24base = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: _b24base + '/searches/add-new-mention/?sid=' + sid,
+      onload: function(resp) {
+        var m = (resp.responseText || '').match(/name="tknB24"[^>]*value="([a-f0-9]{32})"/);
+        if (!m) m = (resp.responseText || '').match(/value="([a-f0-9]{32})"[^>]*name="tknB24"/);
+        if (m && m[1]) {
+          // Stan 2: zalogowany do CMS, ale brak tagu "dodane" w projekcie
+          state.tknB24 = m[1];
+          if (statusEl)  { statusEl.textContent = '⚠ brak tagu'; statusEl.style.color = '#f59e0b'; }
+          if (cmsDot)    { cmsDot.style.color = '#f59e0b'; cmsDot.title = 'CMS aktywny — brak tagu "dodane" w projekcie'; }
+          if (cmsBanner) {
+            if (warnText) warnText.innerHTML = '⚠ CMS aktywny, ale brak tagu <strong>dodane</strong> w tym projekcie — dodaj go w Brand24 w Ustawieniach tagów.';
+            cmsBanner.style.display = '';
+          }
+        } else {
+          // Stan 3: niezalogowany do CMS
+          if (statusEl)  { statusEl.textContent = '⚠ niezalogowany'; statusEl.style.color = '#f59e0b'; }
+          if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.title = 'CMS niedostępny — zaloguj się do Brand24'; }
+          if (cmsBanner) {
+            if (warnText) warnText.innerHTML = '⚠ Tag <strong>dodane</strong> niedostępny — zaloguj się do CMS Brand24 (' + domain + ').';
+            cmsBanner.style.display = '';
+          }
+        }
+      },
+      onerror: function() {
+        // Błąd sieci — zakładamy brak logowania (bezpieczniejszy fallback)
+        if (statusEl)  { statusEl.textContent = '⚠ błąd sprawdzania'; statusEl.style.color = '#f59e0b'; }
+        if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.title = 'CMS: błąd sieci przy sprawdzaniu'; }
+        if (cmsBanner) {
+          if (warnText) warnText.innerHTML = '⚠ Tag <strong>dodane</strong> niedostępny — zaloguj się do CMS Brand24 (' + domain + ').';
+          cmsBanner.style.display = '';
+        }
+      }
+    });
   }
 
   // ── WIRE LOGIC ──
@@ -7976,6 +8026,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.9",
+      "date": "2026-04-11",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News: CMS check — 2 stany: niezalogowany (czerwony) vs brak tagu dodane (zolty); sprawdzanie przez GET /searches/add-new-mention/"},
+        {"type": "fix", "text": "News: auto-fill Tresc — h1 nie trafia do pola Tresc, tylko do scoringu; Tresc = akapity lub og:description"}
+      ]
+    },
+    {
       "version": "0.23.8",
       "date": "2026-04-11",
       "label": "fix",
@@ -8090,16 +8150,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "Panele: mechanizm bring-to-front — aktywny/przesuwany panel zawsze na wierzchu"},
         {"type": "fix", "text": "News P1+P2: przeciaganie P2 przesuwa tez P1 — zawsze razem"},
         {"type": "fix", "text": "Wszystkie panele: clamping pozycji do granic okna przegladarki"}
-      ]
-    },
-    {
-      "version": "0.22.0",
-      "date": "2026-04-10",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Panel glowny: przywrocono scrollowanie zawartosci (overflow-y: auto)"},
-        {"type": "fix", "text": "Log w panelu glownym: min-height 80px — log nie znika przy malym rozmiarze panelu"}
       ]
     },
   ];

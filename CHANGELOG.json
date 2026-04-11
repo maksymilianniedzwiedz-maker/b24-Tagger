@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.23.11",
+    "date": "2026-04-11",
+    "label": "fix",
+    "changes": [
+      "news: fix paginacja project-check — pobiera wszystkie strony wzmianek (nie tylko pierwszą)",
+      "news: fix wording — komunikat pokazuje łączną liczbę wzmianek projektu w tym miesiącu",
+      "news: rozszerzone skanowanie treści — fallback na pełny tekst body (łapie keyword w <div>, <li>, <dd>)"
+    ]
+  },
+  {
     "version": "0.23.10",
     "date": "2026-04-11",
     "label": "feat",

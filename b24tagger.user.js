@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.7
+// @version      0.23.8
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.7';
+  const VERSION = '0.23.8';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4463,6 +4463,9 @@
       // Update mapping if file already loaded
       if (state.file) renderMappingRows();
 
+      // Jeśli News panele są już otwarte (np. na polskim panelu) — odśwież CMS dot
+      if (document.getElementById('b24t-news-tag-list')) _newsRefillTags();
+
     } catch (e) {
       addLog(`⚠ Nie udało się załadować tagów: ${e.message}`, 'warn');
     }
@@ -6222,8 +6225,15 @@ function showOnboarding(onComplete) {
     var h1El = doc.querySelector('h1');
     if (h1El) h1Text = (h1El.textContent || '').trim();
 
+    var contentTitle = '';
+    var contentTitleEl = doc.querySelector('meta[name="content_title"]') || doc.querySelector('meta[property="content_title"]');
+    if (contentTitleEl) contentTitle = (contentTitleEl.getAttribute('content') || '').trim();
+
     // Treść artykułu: preferuj <article>, potem <main>, na końcu <body>
     var bodyEl = doc.querySelector('article') || doc.querySelector('main') || doc.body;
+    // h1 z wnętrza artykułu — dokładniejszy niż globalny h1 (logo/nawigacja mogą mieć h1)
+    var articleH1El = bodyEl ? bodyEl.querySelector('h1') : null;
+    var articleH1Text = articleH1El ? (articleH1El.textContent || '').trim() : h1Text;
     var paragraphs = [];
     if (bodyEl) {
       paragraphs = Array.from(bodyEl.querySelectorAll('p'))
@@ -6253,14 +6263,14 @@ function showOnboarding(onComplete) {
       if (inMeta) {
         score += 5;
         chipMatched = true;
-        if (!_metaSnippet) _metaSnippet = (ogDesc || metaDesc).slice(0, 140);
+        if (!_metaSnippet) _metaSnippet = (ogDesc || metaDesc).slice(0, 500);
       }
 
       // Strefa nagłówka h1
       if (h1Text.toLowerCase().indexOf(kw) !== -1) {
         score += 5;
         chipMatched = true;
-        if (!_bodySnippet) _bodySnippet = h1Text.slice(0, 140);
+        if (!_bodySnippet) _bodySnippet = h1Text;
       }
 
       // Strefa akapitów — rozróżniamy pierwszy akapit (lede) od reszty
@@ -6271,7 +6281,21 @@ function showOnboarding(onComplete) {
           if (idx === 0) { firstPMatch = true; }
           else { extraPMatches++; }
           chipMatched = true;
-          if (!_bodySnippet) _bodySnippet = p.slice(0, 140);
+          if (!_bodySnippet) {
+            if (p.length <= 600) {
+              _bodySnippet = p;
+            } else {
+              // Akapit zbyt długi — wytnij 3 zdania wokół słowa kluczowego
+              var _sents = p.replace(/([.!?])\s+/g, '$1\x00').split('\x00').filter(Boolean);
+              var _kwI = -1;
+              for (var _si = 0; _si < _sents.length; _si++) {
+                if (_sents[_si].toLowerCase().indexOf(kw) !== -1) { _kwI = _si; break; }
+              }
+              _bodySnippet = _kwI >= 0
+                ? _sents.slice(Math.max(0, _kwI - 1), Math.min(_sents.length, _kwI + 2)).join(' ').trim()
+                : p.slice(0, 500);
+            }
+          }
         }
       });
       if (firstPMatch) score += 4;
@@ -6291,8 +6315,8 @@ function showOnboarding(onComplete) {
     else if (score <= 11) status = 'contentmatch';
     else                  status = 'keytopic';
 
-    // Tytuł artykułu — preferuj og:title (redakcyjny), fallback: <title> (może zawierać serwis)
-    var articleTitle = (ogTitle || titleText).trim();
+    // Tytuł artykułu — h1 z artykułu (widoczny nagłówek) > content_title (custom meta) > og:title > <title>
+    var articleTitle = (articleH1Text || contentTitle || ogTitle || titleText).trim();
     // Ogranicz do 200 znaków — <title> może być długi
     if (articleTitle.length > 200) articleTitle = articleTitle.slice(0, 200);
 
@@ -6485,7 +6509,11 @@ function showOnboarding(onComplete) {
       if (aD !== bD) return aD ? -1 : 1;
       return a[0].localeCompare(b[0]);
     });
-    if (tags.length === 0) return; // projekt jeszcze nie załadowany — spróbuj później
+    if (tags.length === 0) {
+      // Projekt jeszcze nie załadowany — spróbuj za chwilę (race condition przy wolnym ładowaniu, np. panel.brand24.pl)
+      setTimeout(function() { if (Object.keys(state.tags || {}).length > 0) _newsRefillTags(); }, 1500);
+      return;
+    }
     var t2 = _newsThemeVars();
     tagList.innerHTML = tags.map(function(entry) {
       var name = entry[0], tid = entry[1];
@@ -6967,7 +6995,20 @@ function showOnboarding(onComplete) {
     // Use event delegation — button may be re-rendered
     document.addEventListener('click', function(e) {
       if (e.target && e.target.id === 'b24t-news-cms-recheck') {
-        _newsCheckTagDodane();
+        var btn = e.target;
+        btn.textContent = '⏳';
+        btn.disabled = true;
+        getTags().then(function(tags) {
+          state.tags = {};
+          tags.forEach(function(t) { if (!t.isProtected) state.tags[t.title] = t.id; });
+          _newsRefillTags();
+          btn.disabled = false;
+          btn.textContent = '↺ Sprawdź ponownie';
+        }).catch(function() {
+          _newsCheckTagDodane();
+          btn.disabled = false;
+          btn.textContent = '↺ Sprawdź ponownie';
+        });
       }
     });
 
@@ -7935,6 +7976,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.8",
+      "date": "2026-04-11",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News: CMS dot (●) odswiezany po zaladowaniu tagow — naprawia brak statusu na panel.brand24.pl"},
+        {"type": "fix", "text": "News: 'Sprawdz ponownie' re-fetchuje tagi z serwera zamiast tylko sprawdzac cache"},
+        {"type": "fix", "text": "News: auto-fill tytul — h1 z article/main > content_title > og:title > <title>"},
+        {"type": "fix", "text": "News: auto-fill tresc — caly akapit (<=600 zn) lub 3 zdania wokol slowa kluczowego"}
+      ]
+    },
+    {
       "version": "0.23.7",
       "date": "2026-04-11",
       "label": "fix",
@@ -8047,15 +8100,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "Panel glowny: przywrocono scrollowanie zawartosci (overflow-y: auto)"},
         {"type": "fix", "text": "Log w panelu glownym: min-height 80px — log nie znika przy malym rozmiarze panelu"}
-      ]
-    },
-    {
-      "version": "0.21.27",
-      "date": "2026-04-09",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Delete current view: batch deletowania uzywa _deleteBatch zamiast hardcoded 5 — spojne z pozostalymi funkcjami delete"}
       ]
     },
   ];

@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.23.9",
+    "date": "2026-04-11",
+    "label": "fix",
+    "labelColor": "#22c55e",
+    "changes": [
+      {"type": "fix", "text": "News: CMS check — dwa osobne stany: niezalogowany do CMS (czerwony dot) vs zalogowany ale brak tagu dodane (żółty dot + inny komunikat); sprawdzanie przez GET /searches/add-new-mention/"},
+      {"type": "fix", "text": "News: auto-fill Treść — h1 nie trafia do pola Treść (tylko do scoringu); Treść bierze tylko akapity lub og:description"}
+    ]
+  },
+  {
     "version": "0.23.8",
     "date": "2026-04-11",
     "label": "fix",

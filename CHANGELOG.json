@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.23.21",
+    "date": "2026-04-13",
+    "label": "feat",
+    "changes": [
+      "pominięte wiersze: eksport CSV z oryginalnymi danymi pliku + powód pominięcia + szczegółowa diagnostyka",
+      "NO_MATCH: hint per wiersz — domena nieobecna w Brand24, konkretny post nie znaleziony (Instagram/Facebook/Twitter), przykład URL z mapy",
+      "TRUNCATED_URL: hint z dokładną informacją o obcięciu i kandydatem z Brand24",
+      "mapSamplesByDomain: pokrywa teraz wszystkie domeny mapy (poprzednio tylko 30 pierwszych kluczy)",
+      "raport końcowy: sekcja pominiętych wierszy z podziałem na powody + przycisk pobierz CSV"
+    ]
+  },
+  {
     "version": "0.23.20",
     "date": "2026-04-13",
     "label": "feat",

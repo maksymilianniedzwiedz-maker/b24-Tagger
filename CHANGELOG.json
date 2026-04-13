@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.22",
+    "date": "2026-04-13",
+    "label": "fix",
+    "changes": [
+      "NO_MATCH hint: gdy domena jest w mapie i tryb Untagged — wyraźna informacja że wzmianka może być już otagowana (mapa Untagged pomija wzmianki z istniejącym tagiem)"
+    ]
+  },
+  {
     "version": "0.23.21",
     "date": "2026-04-13",
     "label": "feat",

@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.23.19",
+    "date": "2026-04-13",
+    "label": "fix",
+    "changes": [
+      "tagowanie: fallback — wadliwa wzmianka nie crashuje całego tagu; Promise.allSettled + retry 1-po-1 izoluje zły ID i kontynuuje tagowanie",
+      "tagowanie: logi [FALLBACK] pokazują który batch i który ID jest problematyczny; bulkUntagMentions też chroniony try/catch"
+    ]
+  },
+  {
     "version": "0.23.18",
     "date": "2026-04-11",
     "label": "fix",

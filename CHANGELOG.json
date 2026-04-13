@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.23.20",
+    "date": "2026-04-13",
+    "label": "feat",
+    "changes": [
+      "diagnostyka: _errContext kategoryzuje każdy błąd (BRAND24/SIEĆ/AUTORYZACJA/PLIK/PLUGIN) z jasnym komunikatem co zrobić",
+      "raport końcowy: tabela wadliwych wzmianek z ID, tagiem, źródłem błędu i wskazówką; eksport CSV przez przycisk lub B24Tagger.exportFailedMentions()",
+      "gql/gqlRetry/bulkTagMentions/Untag/handleError — rozbudowane logi z kategorią i konkretną wskazówką naprawy"
+    ]
+  },
+  {
     "version": "0.23.19",
     "date": "2026-04-13",
     "label": "fix",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.21
+// @version      0.23.22
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.21';
+  const VERSION = '0.23.22';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1093,15 +1093,18 @@
             }
           } else {
             const _nmSmp = _nmSample[0];
+            const _untaggedNote = state.mapMode === 'untagged'
+              ? ' — lub jest już otagowana (mapa Untagged nie zawiera wzmianek z istniejącym tagiem)'
+              : '';
             // Wykryj specyficzne wzorce
             if (_nmDom === 'instagram.com') {
-              _nmHint = `Instagram: konkretny post/reel nie znaleziony w Brand24. Mapa ma np.: "${_nmSmp}"`;
+              _nmHint = `Instagram: konkretny post/reel nie znaleziony w Brand24${_untaggedNote}. Mapa ma np.: "${_nmSmp}"`;
             } else if (_nmDom === 'facebook.com') {
-              _nmHint = `Facebook: konkretna wzmianka nie znaleziona w Brand24. Mapa ma np.: "${_nmSmp}"`;
+              _nmHint = `Facebook: konkretna wzmianka nie znaleziona w Brand24${_untaggedNote}. Mapa ma np.: "${_nmSmp}"`;
             } else if (_nmDom === 'x.com' || _nmDom === 'twitter.com') {
-              _nmHint = `Twitter/X: konkretny tweet nie znaleziony w Brand24. Mapa ma np.: "${_nmSmp}"`;
+              _nmHint = `Twitter/X: konkretny tweet nie znaleziony w Brand24${_untaggedNote}. Mapa ma np.: "${_nmSmp}"`;
             } else {
-              _nmHint = `URL nie zgadza się z Brand24. Domena obecna, mapa ma np.: "${_nmSmp}"`;
+              _nmHint = `URL nie zgadza się z Brand24${_untaggedNote}. Domena obecna, mapa ma np.: "${_nmSmp}"`;
             }
           }
           skipped.push({ row, reason: 'NO_MATCH', url: urlRaw, normUrl: normalizedUrl, hint: _nmHint });
@@ -8644,6 +8647,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.22",
+      "date": "2026-04-13",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "NO_MATCH hint: gdy domena jest w mapie i tryb Untagged — informuje ze wzmianka moze byc juz otagowana (mapa Untagged pomija wzmianki z istniejacym tagiem)"}
+      ]
+    },
+    {
       "version": "0.23.21",
       "date": "2026-04-13",
       "label": "feat",
@@ -8731,16 +8743,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "feat", "text": "News: detekcja typu strony — article/uncertain/nonArticle (og:type, JSON-LD, published_time, time[datetime], liczba akapitow)"},
         {"type": "feat", "text": "News: badge 'nie-artykul' (szary) i '? typ niepewny' (amber) w liscie URLi dla stron bez cech artykulu"}
-      ]
-    },
-    {
-      "version": "0.23.12",
-      "date": "2026-04-11",
-      "label": "debug",
-      "labelColor": "#f59e0b",
-      "changes": [
-        {"type": "feat", "text": "Debug: testUrlRaw — pokazuje co plugin widzi w surowym HTML (status, title, h1, cookie els)"},
-        {"type": "feat", "text": "Debug: testUrlScan — pelny skan URL z chipami; zwraca status, score, matched chips"}
       ]
     },
   ];

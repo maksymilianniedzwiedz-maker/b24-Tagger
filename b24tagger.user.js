@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.19
+// @version      0.23.20
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.19';
+  const VERSION = '0.23.20';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -179,6 +179,7 @@
     totalPages: 0,
     pageSize: 60,
     stats: { tagged: 0, skipped: 0, noMatch: 0, conflicts: 0 },
+    failedMentions: [],   // wzmianki które nie mogły być otagowane przez fallback
     logs: [],
     sessionStart: null,
     lastActionTime: null,
@@ -408,32 +409,96 @@
   // GRAPHQL HELPERS
   // ───────────────────────────────────────────
 
+  // Kategoryzuje błąd i zwraca { src, hint } — używane w logach i raporcie końcowym
+  // src: 'BRAND24' | 'SIEĆ' | 'AUTORYZACJA' | 'PLIK' | 'PLUGIN'
+  function _errContext(msg) {
+    const m = String(msg || '');
+    const ml = m.toLowerCase();
+    if (m === 'TOKEN_NOT_READY')
+      return { src: 'AUTORYZACJA', hint: 'Token autoryzacji nie jest gotowy — odśwież stronę Brand24 i poczekaj na załadowanie, potem wznów.' };
+    if (m === 'GRAPHQL_AUTH_ERROR' || m.includes('GRAPHQL_HTTP_ERROR_401'))
+      return { src: 'AUTORYZACJA', hint: 'Sesja Brand24 wygasła — zaloguj się ponownie i kliknij Wznów.' };
+    if (m === 'GRAPHQL_PERMISSION_DENIED' || m.includes('GRAPHQL_HTTP_ERROR_403'))
+      return { src: 'AUTORYZACJA', hint: 'Brak uprawnień do tagowania w tym projekcie — sprawdź rolę konta w Brand24.' };
+    if (m.includes('GRAPHQL_HTTP_ERROR_400'))
+      return { src: 'PLUGIN', hint: 'Brand24 odrzucił zapytanie jako nieprawidłowe (400) — prawdopodobny błąd formatu. Wyślij Bug Report przez Feedback.' };
+    if (m.includes('GRAPHQL_HTTP_ERROR_404'))
+      return { src: 'BRAND24', hint: 'Endpoint API nie istnieje (404) — Brand24 mógł zmienić API. Sprawdź aktualizacje wtyczki.' };
+    if (m.includes('GRAPHQL_HTTP_ERROR_429'))
+      return { src: 'BRAND24', hint: 'Zbyt wiele zapytań — Brand24 zablokował ruch (rate limit). Poczekaj ok. minutę i wznów.' };
+    if (m.includes('GRAPHQL_HTTP_ERROR_500'))
+      return { src: 'BRAND24', hint: 'Wewnętrzny błąd serwera Brand24 (500) — spróbuj ponownie za chwilę.' };
+    if (m.includes('GRAPHQL_HTTP_ERROR_502') || m.includes('GRAPHQL_HTTP_ERROR_503') || m.includes('GRAPHQL_HTTP_ERROR_504'))
+      return { src: 'BRAND24', hint: 'Brand24 tymczasowo niedostępny — spróbuj za kilka minut.' };
+    if (m.includes('GRAPHQL_HTTP_ERROR_'))
+      return { src: 'BRAND24', hint: `Nieoczekiwany błąd HTTP Brand24 (${m}) — sprawdź logi powyżej.` };
+    if (m === 'GRAPHQL_ERROR')
+      return { src: 'BRAND24', hint: 'Brand24 API zwróciło błąd GQL — sprawdź logi [BRAND24/GQL] powyżej.' };
+    if (ml.includes('failed to fetch') || ml.includes('networkerror') || ml.includes('network error') || ml.includes('net::'))
+      return { src: 'SIEĆ', hint: 'Brak połączenia z Brand24 — sprawdź internet i wznów sesję.' };
+    if (ml.includes('timeout') || ml.includes('timed out'))
+      return { src: 'SIEĆ', hint: 'Zapytanie przekroczyło limit czasu — sprawdź połączenie i wznów.' };
+    // UserError messages z Brand24 bulkTagMentions / bulkUntagMentions
+    if (ml.includes('not found') || ml.includes('nie znalezion') || ml.includes('does not exist'))
+      return { src: 'BRAND24', hint: 'Wzmianka nie istnieje lub została usunięta z Brand24. Możliwe że pochodzi z innego projektu lub okresu.' };
+    if ((ml.includes('invalid') || ml.includes('nieprawidłow')) && (ml.includes('id') || ml.includes('mention')))
+      return { src: 'PLIK', hint: 'ID wzmianki jest nieprawidłowe — sprawdź czy plik pochodzi z tego samego projektu Brand24.' };
+    if (ml.includes('tag') && (ml.includes('not found') || ml.includes('invalid') || ml.includes('nie znalezion')))
+      return { src: 'BRAND24', hint: 'Tag nie istnieje lub został usunięty w Brand24 — sprawdź mapowanie tagów.' };
+    if (ml.includes('permission') || ml.includes('access denied') || ml.includes('forbidden') || ml.includes('unauthorized'))
+      return { src: 'AUTORYZACJA', hint: 'Brak uprawnień do tej wzmianki lub projektu — sprawdź rolę konta.' };
+    if (ml.includes('quota') || ml.includes('limit exceeded') || ml.includes('too many'))
+      return { src: 'BRAND24', hint: 'Przekroczono limit Brand24 — poczekaj chwilę i wznów.' };
+    return { src: 'BRAND24', hint: 'Nieoczekiwana odpowiedź Brand24 — możliwy tymczasowy błąd lub zmiana API. Spróbuj ponownie.' };
+  }
+
   async function gql(operationName, variables, query, opts) {
-    if (!state.tokenHeaders) throw new Error('TOKEN_NOT_READY');
+    if (!state.tokenHeaders) {
+      addLog(`✕ [AUTORYZACJA] ${operationName} — token autoryzacji nie gotowy. Odśwież stronę Brand24.`, 'error');
+      throw new Error('TOKEN_NOT_READY');
+    }
     const res = await origFetch('/api/graphql', {
       method: 'POST',
       credentials: 'same-origin',
       headers: state.tokenHeaders,
       body: JSON.stringify({ operationName, variables, query }),
     });
-    if (res.status === 401) throw new Error('GRAPHQL_AUTH_ERROR');
+    if (res.status === 401) {
+      addLog(`✕ [AUTORYZACJA] ${operationName} — sesja wygasła (HTTP 401). Zaloguj się ponownie i kliknij Wznów.`, 'error');
+      throw new Error('GRAPHQL_AUTH_ERROR');
+    }
     if (!res.ok) {
-      // Loguj raw body żeby zobaczyć co Brand24 faktycznie zwraca przy błędzie
       let rawBody = '';
       try { rawBody = await res.text(); } catch(e) {}
       const bodySnippet = rawBody.substring(0, 200).replace(/\n/g, ' ');
-      addLog(`⚠ [DIAG/HTTP] ${operationName} HTTP ${res.status}: "${bodySnippet}"`, 'warn');
+      const _statusLabels = {
+        400: '[PLUGIN] Brand24 odrzucił zapytanie jako nieprawidłowe (400) — prawdopodobny błąd formatu. Wyślij Bug Report.',
+        403: '[AUTORYZACJA] Brand24 odmawia dostępu (403) — sprawdź uprawnienia konta do projektu.',
+        404: '[BRAND24] Endpoint API nie istnieje (404) — Brand24 mógł zmienić API. Sprawdź aktualizacje wtyczki.',
+        429: '[BRAND24] Zbyt wiele zapytań (429) — Brand24 zablokował ruch. Poczekaj ok. minutę i wznów.',
+        500: '[BRAND24] Wewnętrzny błąd serwera Brand24 (500) — spróbuj ponownie za chwilę.',
+        502: '[BRAND24] Brand24 niedostępny (502) — spróbuj za kilka minut.',
+        503: '[BRAND24] Brand24 tymczasowo niedostępny (503) — spróbuj za kilka minut.',
+        504: '[BRAND24] Brand24 timeout (504) — spróbuj ponownie.',
+      };
+      const desc = _statusLabels[res.status] || `[BRAND24] Nieoczekiwany błąd HTTP ${res.status}`;
+      addLog(`✕ ${desc}\n  Operacja: ${operationName} | Odpowiedź: "${bodySnippet}"`, 'error');
       throw new Error(`GRAPHQL_HTTP_ERROR_${res.status}`);
     }
     const data = await res.json();
     if (data.errors) {
       const _errCode = data.errors[0]?.extensions?.code;
+      const _errMsg = data.errors[0]?.message || 'GRAPHQL_ERROR';
       if (_errCode === 'PERMISSION_DENIED') {
-        if (!opts?.silent) addLog(`⚠ [DIAG/GQL] ${operationName}: PERMISSION_DENIED`, 'diag');
+        if (!opts?.silent) addLog(`✕ [AUTORYZACJA] ${operationName} — brak uprawnień (PERMISSION_DENIED). Sprawdź rolę konta w Brand24.`, 'error');
         throw new Error('GRAPHQL_PERMISSION_DENIED');
       }
-      addLog(`⚠ [DIAG/GQL] ${operationName} GQL error: ${JSON.stringify(data.errors).substring(0, 200)}`, 'warn');
-      throw new Error(data.errors[0]?.message || 'GRAPHQL_ERROR');
+      if (_errCode === 'UNAUTHENTICATED' || _errMsg.toLowerCase().includes('unauthenticated')) {
+        addLog(`✕ [AUTORYZACJA] ${operationName} — token nieważny (${_errCode || _errMsg}). Zaloguj się ponownie.`, 'error');
+        throw new Error('GRAPHQL_AUTH_ERROR');
+      }
+      addLog(`✕ [BRAND24/GQL] ${operationName} — błąd API: "${_errMsg}" (code: ${_errCode || 'brak'})`, 'error');
+      throw new Error(_errMsg || 'GRAPHQL_ERROR');
     }
     return data.data;
   }
@@ -443,11 +508,16 @@
       try {
         return await gql(operationName, variables, query, opts);
       } catch (e) {
-        if (e.message === 'GRAPHQL_AUTH_ERROR' || e.message === 'GRAPHQL_PERMISSION_DENIED') throw e;
+        if (e.message === 'GRAPHQL_AUTH_ERROR' || e.message === 'GRAPHQL_PERMISSION_DENIED' || e.message === 'TOKEN_NOT_READY') throw e;
         if (i < retries - 1) {
-          addLog(`⚠ Retry ${i + 1}/${retries}: ${e.message}`, 'warn');
+          const ctx = _errContext(e.message);
+          addLog(`⚠ [${ctx.src}] Retry ${i + 1}/${retries - 1} dla ${operationName}: ${e.message}`, 'warn');
           await sleep(RETRY_DELAYS[i]);
-        } else throw e;
+        } else {
+          const ctx = _errContext(e.message);
+          addLog(`✕ [${ctx.src}] ${operationName} — wszystkie retries wyczerpane (${retries}×): ${e.message}\n  → ${ctx.hint}`, 'error');
+          throw e;
+        }
       }
     }
   }
@@ -517,7 +587,12 @@
         ... on UserError { message }
       }
     }`, 5); // 5 retry — Brand24 Internal server error jest losowy
-    if (data.bulkTagMentions?.message) throw new Error(data.bulkTagMentions.message);
+    if (data.bulkTagMentions?.message) {
+      const brandMsg = data.bulkTagMentions.message;
+      const ctx = _errContext(brandMsg);
+      addLog(`✕ [${ctx.src}] bulkTagMentions UserError (${mentionsIds.length} IDs, tagId=${tagId}): "${brandMsg}"\n  → ${ctx.hint}`, 'error');
+      throw new Error(brandMsg);
+    }
     return { success: true };
   }
 
@@ -533,7 +608,12 @@
         ... on UserError { message }
       }
     }`);
-    if (data.bulkUntagMentions?.message) throw new Error(data.bulkUntagMentions.message);
+    if (data.bulkUntagMentions?.message) {
+      const brandMsg = data.bulkUntagMentions.message;
+      const ctx = _errContext(brandMsg);
+      addLog(`✕ [${ctx.src}] bulkUntagMentions UserError (${mentionsIds.length} IDs, tagId=${tagId}): "${brandMsg}"\n  → ${ctx.hint}`, 'error');
+      throw new Error(brandMsg);
+    }
     return { success: true };
   }
 
@@ -1192,10 +1272,19 @@
                 batchSuccessCount++;
               } catch (singleErr) {
                 totalTagFailed++;
+                const ctx = _errContext(singleErr.message);
                 addLog(
-                  `✕ [FALLBACK] ID ${singleId} → "${tagName}" FAILED: ${singleErr.message} — pomijam`,
+                  `✕ [FALLBACK/${ctx.src}] ID ${singleId} → "${tagName}": ${singleErr.message}\n  → ${ctx.hint}`,
                   'error'
                 );
+                state.failedMentions.push({
+                  id: singleId,
+                  tagId: parseInt(tagId),
+                  tagName,
+                  error: singleErr.message,
+                  src: ctx.src,
+                  hint: ctx.hint,
+                });
               }
             }
           }
@@ -1275,6 +1364,7 @@
     state.status = 'running';
     state.sessionStart = Date.now();
     state.stats = { tagged: 0, skipped: 0, noMatch: 0, conflicts: 0 };
+    state.failedMentions = [];
     updateStatusUI();
     startSessionTimer();
     startHealthCheck();
@@ -1431,17 +1521,8 @@
   }
 
   function saveCrashLog(error, lastAction) {
-    const userMessages = {
-      'GRAPHQL_AUTH_ERROR':    'Sesja Brand24 wygasła. Zaloguj się ponownie i kliknij "Wznów".',
-      'TOKEN_NOT_READY':       'Token autoryzacji nie jest gotowy. Odśwież stronę Brand24 i spróbuj ponownie.',
-      'GRAPHQL_HTTP_ERROR_500':'Błąd serwera Brand24 (500). Spróbuj ponownie za chwilę.',
-      'GRAPHQL_HTTP_ERROR_503':'Brand24 tymczasowo niedostępny. Spróbuj za kilka minut.',
-      'NETWORK_ERROR':         'Problem z połączeniem internetowym. Sprawdź sieć i spróbuj ponownie.',
-    };
-    const userMsg = userMessages[error.message] ||
-      (error.message.includes('network') || error.message.includes('fetch')
-        ? 'Problem z połączeniem internetowym. Sprawdź sieć i spróbuj ponownie.'
-        : 'Nieznany błąd. Wyślij Bug Report z poziomu Changelog & Feedback.');
+    const ctx = _errContext(error.message);
+    const userMsg = ctx.hint + (ctx.src === 'PLUGIN' ? ' Wyślij Bug Report przez Feedback.' : '');
 
     // Snapshot logu sesji z momentu crashu (ostatnie 50 wpisów)
     const logSnapshot = (state.logs || []).slice(-50).map(function(l) {
@@ -1517,11 +1598,12 @@
 
   function handleError(error, context) {
     const crash = saveCrashLog(error, context);
+    const ctx = _errContext(error.message);
     stopHealthCheck();
     stopSessionTimer();
     state.status = 'error';
     updateStatusUI();
-    addLog(`✕ Błąd: ${error.message}`, 'error');
+    addLog(`✕ [${ctx.src}] Błąd w: ${context} — ${error.message}\n  → ${ctx.hint}`, 'error');
     showCrashBanner(crash);
   }
 
@@ -1883,15 +1965,55 @@
     const elapsed = state.sessionStart ? Math.floor((Date.now() - state.sessionStart) / 1000) : 0;
     const mins = Math.floor(elapsed / 60);
     const secs = elapsed % 60;
+    const failed = state.failedMentions || [];
+
+    let failedHtml = '';
+    if (failed.length > 0) {
+      const srcColors = { BRAND24: '#f59e0b', SIEĆ: '#6366f1', AUTORYZACJA: '#ef4444', PLIK: '#3b82f6', PLUGIN: '#ec4899' };
+      const rows = failed.map(f => {
+        const color = srcColors[f.src] || '#888';
+        return `<tr style="border-bottom:1px solid rgba(128,128,128,0.15)">
+          <td style="padding:4px 6px;font-family:monospace;font-size:11px;color:#94a3b8">${f.id}</td>
+          <td style="padding:4px 6px;font-size:12px">${f.tagName}</td>
+          <td style="padding:4px 6px"><span style="background:${color};color:#fff;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:600">${f.src}</span></td>
+          <td style="padding:4px 6px;font-size:11px;color:#94a3b8;max-width:200px;word-break:break-word">${f.error}</td>
+          <td style="padding:4px 6px;font-size:11px;color:#cbd5e1;max-width:220px">${f.hint}</td>
+        </tr>`;
+      }).join('');
+      failedHtml = `
+        <div style="margin-top:12px;border:1px solid rgba(239,68,68,0.35);border-radius:6px;overflow:hidden">
+          <div style="background:rgba(239,68,68,0.12);padding:7px 10px;display:flex;align-items:center;justify-content:space-between">
+            <strong style="color:#ef4444;font-size:13px">⚠ ${failed.length} wzmianki nie mogły być otagowane</strong>
+            <button onclick="window.B24Tagger.exportFailedMentions()" style="background:rgba(239,68,68,0.2);color:#ef4444;border:1px solid rgba(239,68,68,0.4);border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">Eksportuj CSV</button>
+          </div>
+          <div style="overflow-x:auto;max-height:220px;overflow-y:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+              <thead><tr style="background:rgba(0,0,0,0.15);text-align:left">
+                <th style="padding:5px 6px;font-size:10px;color:#94a3b8">ID wzmianki</th>
+                <th style="padding:5px 6px;font-size:10px;color:#94a3b8">Tag</th>
+                <th style="padding:5px 6px;font-size:10px;color:#94a3b8">Źródło błędu</th>
+                <th style="padding:5px 6px;font-size:10px;color:#94a3b8">Komunikat Brand24</th>
+                <th style="padding:5px 6px;font-size:10px;color:#94a3b8">Co zrobić</th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>`;
+    }
+
     content.innerHTML = `
       <h3>Raport sesji</h3>
       <div class="b24t-report-row"><span>Otagowano:</span><strong>${state.stats.tagged}</strong></div>
       <div class="b24t-report-row"><span>Pominięto:</span><strong>${state.stats.skipped}</strong></div>
       <div class="b24t-report-row"><span>Brak matcha:</span><strong>${state.stats.noMatch}</strong></div>
       <div class="b24t-report-row"><span>Konflikty:</span><strong>${state.stats.conflicts}</strong></div>
+      ${failed.length > 0 ? `<div class="b24t-report-row"><span>Błędy fallback:</span><strong style="color:#ef4444">${failed.length}</strong></div>` : ''}
       <div class="b24t-report-row"><span>Czas sesji:</span><strong>${mins}m ${secs}s</strong></div>
-      <button onclick="window.B24Tagger.exportReport()" class="b24t-btn-secondary">Eksportuj CSV</button>
-      <button onclick="document.getElementById('b24t-report-modal').style.display='none'" class="b24t-btn-primary">Zamknij</button>
+      ${failedHtml}
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button onclick="window.B24Tagger.exportReport()" class="b24t-btn-secondary" style="flex:1">Eksportuj logi CSV</button>
+        <button onclick="document.getElementById('b24t-report-modal').style.display='none'" class="b24t-btn-primary" style="flex:1">Zamknij</button>
+      </div>
     `;
   }
 
@@ -1943,6 +2065,20 @@
     a.click(); URL.revokeObjectURL(url);
   }
 
+  function exportFailedMentions() {
+    const failed = state.failedMentions || [];
+    if (!failed.length) { addLog('ℹ Brak wadliwych wzmianek do eksportu.', 'info'); return; }
+    const rows = [['id_wzmianki', 'tag', 'tagId', 'zrodlo_bledu', 'komunikat', 'co_zrobic']];
+    failed.forEach(f => rows.push([f.id, f.tagName, f.tagId, f.src, f.error, f.hint]));
+    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `b24tagger_failed_${Date.now()}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    addLog(`✓ Eksport: ${failed.length} wadliwych wzmianek → b24tagger_failed_*.csv`, 'success');
+  }
+
   function exportPartitions() {
     if (!state.partitions.length) return;
     const rows = [['partycja', 'dateFrom', 'dateTo', 'wzmianek', 'status']];
@@ -1962,6 +2098,9 @@
   _win.B24Tagger = window.B24Tagger = {
     state,
     version: VERSION,
+    exportReport,
+    exportFailedMentions,
+    exportPartitions,
     debug: {
       getState: () => JSON.parse(JSON.stringify({ ...state, urlMap: `[${Object.keys(state.urlMap).length} entries]`, logs: `[${state.logs.length} entries]` })),
       sniffUiTag: () => { state._sniffUiTag = true; addLog('[SNIFF] Aktywny — otaguj teraz wzmiankę ręcznie w UI Brand24', 'info'); },
@@ -8404,6 +8543,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.20",
+      "date": "2026-04-13",
+      "label": "feat",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "feat", "text": "Diagnostyka: _errContext kategoryzuje kazdy blad (BRAND24/SIEC/AUTORYZACJA/PLIK/PLUGIN) z jasnym komunikatem co zrobic"},
+        {"type": "feat", "text": "Raport koncowy: lista wadliwych wzmianek z ID, tagiem, zrodlem bledu i wskazowka; eksport CSV"},
+        {"type": "fix", "text": "gql/gqlRetry/bulkTagMentions/Untag — rozbudowane logi z kategoria bledu i konkretna wskazowka naprawy"}
+      ]
+    },
+    {
       "version": "0.23.19",
       "date": "2026-04-13",
       "label": "fix",
@@ -8490,17 +8640,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "News: fix paginacja project-check — pobiera wszystkie strony wzmianek (nie tylko pierwsza)"},
         {"type": "fix", "text": "News: komunikat pokazuje laczna liczbe wzmianek projektu w tym miesiacu"},
         {"type": "feat", "text": "News: fallback skanowania — keyword w div/li/dd lapany przez pełny tekst body"}
-      ]
-    },
-    {
-      "version": "0.23.10",
-      "date": "2026-04-11",
-      "label": "feat",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "feat", "text": "News: rozszerzone strefy skanowania — figcaption, podpisy, galerie, adresy/lokalizacje"},
-        {"type": "feat", "text": "News: badge strefy pobocznej w liscie URLi (zolty gdy tylko tam, fioletowy gdy tez w tresci)"},
-        {"type": "feat", "text": "News: blocked strony klikalne — otwieraja sie manualnie; osobny przycisk bulk do usuniecia"}
       ]
     },
   ];

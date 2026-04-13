@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.18
+// @version      0.23.19
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.18';
+  const VERSION = '0.23.19';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1148,9 +1148,13 @@
       for (let i = 0; i < batch.ids.length; i += MAX_BATCH_SIZE) {
         const slice = batch.ids.slice(i, i + MAX_BATCH_SIZE);
         addLog(`→ Odtagowuję ${slice.length} wzmianek (tag ${batch.oldTagId})`, 'info');
-        await bulkUntagMentions(slice.map(String), batch.oldTagId);
-        if (!batches[batch.newTagId]) batches[batch.newTagId] = [];
-        batches[batch.newTagId].push(...slice);
+        try {
+          await bulkUntagMentions(slice.map(String), batch.oldTagId);
+          if (!batches[batch.newTagId]) batches[batch.newTagId] = [];
+          batches[batch.newTagId].push(...slice);
+        } catch (untagErr) {
+          addLog(`⚠ [FALLBACK] bulkUntag batch FAILED (${slice.length} IDs, tag ${batch.oldTagId}): ${untagErr.message} — pomijam batch, wzmianki nie zostaną przepisane`, 'error');
+        }
         await sleep(200);
       }
     }
@@ -1158,6 +1162,7 @@
     // Execute tag batches — TAG_CONCURRENCY batchów równolegle per tagId
     const tagIds = Object.keys(batches);
     let batchNum = 0;
+    let totalTagFailed = 0;
     for (const tagId of tagIds) {
       const ids = batches[tagId];
       const tagName = Object.entries(state.tags).find(([, id]) => id === parseInt(tagId))?.[0] || tagId;
@@ -1168,15 +1173,48 @@
         batchNum += concSlices.length;
         updateProgress('tag', batchNum, tagIds.length);
         addLog(`→ bulkTag: ${concSlices.reduce((s, sl) => s + sl.length, 0)} → ${tagName} (${concSlices.length}× równolegle)`, 'info');
-        await Promise.all(concSlices.map(slice => bulkTagMentions(slice.map(String), parseInt(tagId))));
-        state.stats.tagged += concSlices.reduce((s, sl) => s + sl.length, 0);
+        const results = await Promise.allSettled(concSlices.map(slice => bulkTagMentions(slice.map(String), parseInt(tagId))));
+        let batchSuccessCount = 0;
+        for (let j = 0; j < results.length; j++) {
+          if (results[j].status === 'fulfilled') {
+            batchSuccessCount += concSlices[j].length;
+          } else {
+            // Fallback: taguj po 1 ID żeby wyizolować wadliwy rekord
+            const errMsg = results[j].reason?.message || 'unknown';
+            addLog(
+              `⚠ [FALLBACK] Batch ${j + 1} FAILED (${concSlices[j].length} IDs → "${tagName}"): ${errMsg}\n` +
+              `  → Próba fallback: tagowanie po 1 ID aby znaleźć wadliwą wzmiankę...`,
+              'warn'
+            );
+            for (const singleId of concSlices[j]) {
+              try {
+                await bulkTagMentions([singleId], parseInt(tagId));
+                batchSuccessCount++;
+              } catch (singleErr) {
+                totalTagFailed++;
+                addLog(
+                  `✕ [FALLBACK] ID ${singleId} → "${tagName}" FAILED: ${singleErr.message} — pomijam`,
+                  'error'
+                );
+              }
+            }
+          }
+        }
+        state.stats.tagged += batchSuccessCount;
         updateStatsUI();
         await sleep(200);
       }
     }
+    if (totalTagFailed > 0) {
+      addLog(
+        `⚠ [PODSUMOWANIE] ${totalTagFailed} wzmianek nie mogło być otagowanych — wadliwe IDs lub błąd Brand24 API.\n` +
+        `  → Sprawdź logi [FALLBACK] wyżej aby zobaczyć które IDs są problematyczne.`,
+        'warn'
+      );
+    }
 
-    state.stats.skipped += skipped.length;
-    addLog(`✓ Partycja zakończona: ${state.stats.tagged} otagowane, ${state.stats.skipped} pominięte`, 'success');
+    state.stats.skipped += skipped.length + totalTagFailed;
+    addLog(`✓ Partycja zakończona: ${state.stats.tagged} otagowane, ${state.stats.skipped} pominięte${totalTagFailed > 0 ? `, ${totalTagFailed} błędy fallback` : ''}`, 'success');
   }
 
   // ───────────────────────────────────────────
@@ -8366,6 +8404,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.19",
+      "date": "2026-04-13",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Tagowanie: fallback — wadliwa wzmianka nie crashuje calego tagu; Promise.allSettled + retry 1-po-1 izoluje zly ID i kontynuuje"},
+        {"type": "fix", "text": "Tagowanie: logi [FALLBACK] pokazuja ktory batch i ktory ID jest problematyczny"}
+      ]
+    },
+    {
       "version": "0.23.18",
       "date": "2026-04-11",
       "label": "fix",
@@ -8453,16 +8501,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "News: rozszerzone strefy skanowania — figcaption, podpisy, galerie, adresy/lokalizacje"},
         {"type": "feat", "text": "News: badge strefy pobocznej w liscie URLi (zolty gdy tylko tam, fioletowy gdy tez w tresci)"},
         {"type": "feat", "text": "News: blocked strony klikalne — otwieraja sie manualnie; osobny przycisk bulk do usuniecia"}
-      ]
-    },
-    {
-      "version": "0.23.9",
-      "date": "2026-04-11",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News: CMS check — 2 stany: niezalogowany (czerwony) vs brak tagu dodane (zolty); sprawdzanie przez GET /searches/add-new-mention/"},
-        {"type": "fix", "text": "News: auto-fill Tresc — h1 nie trafia do pola Tresc, tylko do scoringu; Tresc = akapity lub og:description"}
       ]
     },
   ];

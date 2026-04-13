@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.20
+// @version      0.23.21
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.20';
+  const VERSION = '0.23.21';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -180,6 +180,7 @@
     pageSize: 60,
     stats: { tagged: 0, skipped: 0, noMatch: 0, conflicts: 0 },
     failedMentions: [],   // wzmianki które nie mogły być otagowane przez fallback
+    skippedRows: [],      // wiersze z pliku pominięte (NO_MATCH, TRUNCATED_URL, NO_MAPPING, NO_ASSESSMENT)
     logs: [],
     sessionStart: null,
     lastActionTime: null,
@@ -1032,8 +1033,8 @@
       fileSamplesByDomain: {},
       mapSamplesByDomain: {},
     };
-    // Zbierz próbki domen z mapy
-    Object.keys(state.urlMap).slice(0, 30).forEach(k => {
+    // Zbierz próbki domen z mapy (wszystkie klucze — potrzebne do diagnozy NO_MATCH)
+    Object.keys(state.urlMap).forEach(k => {
       const dom = k.split('/')[0];
       if (!matchDiag.mapSamplesByDomain[dom]) matchDiag.mapSamplesByDomain[dom] = [];
       if (matchDiag.mapSamplesByDomain[dom].length < 2) matchDiag.mapSamplesByDomain[dom].push(k);
@@ -1075,10 +1076,35 @@
       if (!entry) {
         const truncInfo = detectTruncatedUrl(normalizedUrl, _mapKeys);
         if (truncInfo) {
-          skipped.push({ row, reason: 'TRUNCATED_URL', url: urlRaw, truncInfo });
+          const truncHint = `URL obcięty o ${truncInfo.missingChars} znaków w pliku — Brand24 ma: "${truncInfo.candidate.substring(0, 80)}"`;
+          skipped.push({ row, reason: 'TRUNCATED_URL', url: urlRaw, normUrl: normalizedUrl, truncInfo, hint: truncHint });
           matchDiag.truncated++;
         } else {
-          skipped.push({ row, reason: 'NO_MATCH', url: urlRaw, normUrl: normalizedUrl });
+          const _nmDom = normalizedUrl.split('/')[0];
+          const _nmSample = matchDiag.mapSamplesByDomain[_nmDom];
+          let _nmHint;
+          if (!_nmSample || !_nmSample.length) {
+            // Sprawdź alias twitter↔x
+            const _altDom = _nmDom === 'twitter.com' ? 'x.com' : _nmDom === 'x.com' ? 'twitter.com' : null;
+            if (_altDom && matchDiag.mapSamplesByDomain[_altDom]) {
+              _nmHint = `Domena ${_nmDom} znormalizowana do x.com — Brand24 nie ma tej konkretnej wzmianki w projekcie`;
+            } else {
+              _nmHint = `Domena "${_nmDom}" nieobecna w mapie Brand24 — nie monitorowana w tym projekcie lub zakresie dat`;
+            }
+          } else {
+            const _nmSmp = _nmSample[0];
+            // Wykryj specyficzne wzorce
+            if (_nmDom === 'instagram.com') {
+              _nmHint = `Instagram: konkretny post/reel nie znaleziony w Brand24. Mapa ma np.: "${_nmSmp}"`;
+            } else if (_nmDom === 'facebook.com') {
+              _nmHint = `Facebook: konkretna wzmianka nie znaleziona w Brand24. Mapa ma np.: "${_nmSmp}"`;
+            } else if (_nmDom === 'x.com' || _nmDom === 'twitter.com') {
+              _nmHint = `Twitter/X: konkretny tweet nie znaleziony w Brand24. Mapa ma np.: "${_nmSmp}"`;
+            } else {
+              _nmHint = `URL nie zgadza się z Brand24. Domena obecna, mapa ma np.: "${_nmSmp}"`;
+            }
+          }
+          skipped.push({ row, reason: 'NO_MATCH', url: urlRaw, normUrl: normalizedUrl, hint: _nmHint });
           matchDiag.noMatch++;
         }
         state.stats.noMatch++;
@@ -1302,6 +1328,10 @@
       );
     }
 
+    // Persystuj pominięte wiersze do state (NO_MATCH, TRUNCATED_URL, NO_MAPPING, NO_ASSESSMENT)
+    const _exportableReasons = new Set(['NO_MATCH', 'TRUNCATED_URL', 'NO_MAPPING', 'NO_ASSESSMENT']);
+    state.skippedRows.push(...skipped.filter(s => _exportableReasons.has(s.reason)));
+
     state.stats.skipped += skipped.length + totalTagFailed;
     addLog(`✓ Partycja zakończona: ${state.stats.tagged} otagowane, ${state.stats.skipped} pominięte${totalTagFailed > 0 ? `, ${totalTagFailed} błędy fallback` : ''}`, 'success');
   }
@@ -1365,6 +1395,7 @@
     state.sessionStart = Date.now();
     state.stats = { tagged: 0, skipped: 0, noMatch: 0, conflicts: 0 };
     state.failedMentions = [];
+    state.skippedRows = [];
     updateStatusUI();
     startSessionTimer();
     startHealthCheck();
@@ -1966,6 +1997,33 @@
     const mins = Math.floor(elapsed / 60);
     const secs = elapsed % 60;
     const failed = state.failedMentions || [];
+    const skippedRows = state.skippedRows || [];
+
+    // Sekcja pominiętych wierszy z pliku
+    let skippedHtml = '';
+    if (skippedRows.length > 0) {
+      const byReason = {};
+      skippedRows.forEach(s => { byReason[s.reason] = (byReason[s.reason] || 0) + 1; });
+      const reasonLabels = {
+        'NO_MATCH':      'Brak URL w Brand24',
+        'TRUNCATED_URL': 'URL obcięty',
+        'NO_MAPPING':    'Brak mapowania oceny',
+        'NO_ASSESSMENT': 'Brak oceny',
+      };
+      const reasonRows = Object.entries(byReason).map(([r, n]) =>
+        `<span style="margin-right:10px"><strong style="color:#f1f5f9">${n}×</strong> <span style="color:#94a3b8">${reasonLabels[r] || r}</span></span>`
+      ).join('');
+      skippedHtml = `
+        <div style="margin-top:10px;border:1px solid rgba(99,102,241,0.35);border-radius:6px;overflow:hidden">
+          <div style="background:rgba(99,102,241,0.1);padding:7px 10px;display:flex;align-items:center;justify-content:space-between">
+            <div style="font-size:13px">${reasonRows}</div>
+            <button onclick="window.B24Tagger.exportSkippedMentions()" style="background:rgba(99,102,241,0.2);color:#818cf8;border:1px solid rgba(99,102,241,0.4);border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">Pobierz CSV z powodami</button>
+          </div>
+          <div style="padding:6px 10px;font-size:11px;color:#64748b">
+            Plik CSV zawiera oryginalne wiersze z pliku + kolumny: <em>powód_pominięcia</em>, <em>szczegóły</em>, <em>url_znormalizowany</em>
+          </div>
+        </div>`;
+    }
 
     let failedHtml = '';
     if (failed.length > 0) {
@@ -2008,7 +2066,9 @@
       <div class="b24t-report-row"><span>Brak matcha:</span><strong>${state.stats.noMatch}</strong></div>
       <div class="b24t-report-row"><span>Konflikty:</span><strong>${state.stats.conflicts}</strong></div>
       ${failed.length > 0 ? `<div class="b24t-report-row"><span>Błędy fallback:</span><strong style="color:#ef4444">${failed.length}</strong></div>` : ''}
+      ${skippedRows.length > 0 ? `<div class="b24t-report-row"><span>Pominięte wiersze:</span><strong style="color:#818cf8">${skippedRows.length}</strong></div>` : ''}
       <div class="b24t-report-row"><span>Czas sesji:</span><strong>${mins}m ${secs}s</strong></div>
+      ${skippedHtml}
       ${failedHtml}
       <div style="display:flex;gap:8px;margin-top:10px">
         <button onclick="window.B24Tagger.exportReport()" class="b24t-btn-secondary" style="flex:1">Eksportuj logi CSV</button>
@@ -2079,6 +2139,46 @@
     addLog(`✓ Eksport: ${failed.length} wadliwych wzmianek → b24tagger_failed_*.csv`, 'success');
   }
 
+  function exportSkippedMentions() {
+    const skipped = state.skippedRows || [];
+    if (!skipped.length) { addLog('ℹ Brak pominiętych wierszy do eksportu.', 'info'); return; }
+
+    // Zbierz wszystkie kolumny z oryginalnych wierszy pliku
+    const allCols = new Set();
+    skipped.forEach(s => { if (s.row) Object.keys(s.row).forEach(k => allCols.add(k)); });
+    const origCols = [...allCols];
+
+    const reasonLabels = {
+      'NO_MATCH':      'Brak dopasowania URL w Brand24',
+      'TRUNCATED_URL': 'URL obcięty (Excel/XLSX)',
+      'NO_MAPPING':    'Ocena bez przypisanego tagu',
+      'NO_ASSESSMENT': 'Brak oceny w wierszu',
+    };
+
+    const headers = [...origCols, 'powód_pominięcia', 'szczegóły', 'url_znormalizowany'];
+    const rows = skipped.map(s => {
+      const rowData = origCols.map(c => s.row ? (s.row[c] != null ? s.row[c] : '') : '');
+      const reason = reasonLabels[s.reason] || s.reason;
+      let detail = s.hint || '';
+      if (!detail) {
+        if (s.reason === 'NO_MAPPING')    detail = `Ocena "${s.assessment}" nie ma przypisanego tagu — sprawdź mapowanie w wtyczce`;
+        if (s.reason === 'NO_ASSESSMENT') detail = 'Wiersz nie ma wartości w kolumnie oceny — uzupełnij lub usuń wiersz';
+      }
+      const normUrl = s.normUrl || (s.url ? normalizeUrl(s.url) : '');
+      return [...rowData, reason, detail, normUrl];
+    });
+
+    const csv = [headers, ...rows].map(r =>
+      r.map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(',')
+    ).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `b24tagger_skipped_${Date.now()}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    addLog(`✓ Eksport: ${skipped.length} pominiętych wierszy → b24tagger_skipped_*.csv`, 'success');
+  }
+
   function exportPartitions() {
     if (!state.partitions.length) return;
     const rows = [['partycja', 'dateFrom', 'dateTo', 'wzmianek', 'status']];
@@ -2100,6 +2200,7 @@
     version: VERSION,
     exportReport,
     exportFailedMentions,
+    exportSkippedMentions,
     exportPartitions,
     debug: {
       getState: () => JSON.parse(JSON.stringify({ ...state, urlMap: `[${Object.keys(state.urlMap).length} entries]`, logs: `[${state.logs.length} entries]` })),
@@ -8543,6 +8644,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.21",
+      "date": "2026-04-13",
+      "label": "feat",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "feat", "text": "Pominięte wiersze: eksport CSV z oryginalnymi danymi pliku + powód (NO_MATCH/TRUNCATED/NO_MAPPING) + diagnostyka"},
+        {"type": "feat", "text": "NO_MATCH: hint per wiersz — domena nieobecna w Brand24 lub konkretny URL nie znaleziony (z przykładem z mapy)"},
+        {"type": "fix", "text": "mapSamplesByDomain: pokrywa wszystkie domeny mapy (było tylko 30 pierwszych kluczy)"}
+      ]
+    },
+    {
       "version": "0.23.20",
       "date": "2026-04-13",
       "label": "feat",
@@ -8629,17 +8741,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "feat", "text": "Debug: testUrlRaw — pokazuje co plugin widzi w surowym HTML (status, title, h1, cookie els)"},
         {"type": "feat", "text": "Debug: testUrlScan — pelny skan URL z chipami; zwraca status, score, matched chips"}
-      ]
-    },
-    {
-      "version": "0.23.11",
-      "date": "2026-04-11",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News: fix paginacja project-check — pobiera wszystkie strony wzmianek (nie tylko pierwsza)"},
-        {"type": "fix", "text": "News: komunikat pokazuje laczna liczbe wzmianek projektu w tym miesiacu"},
-        {"type": "feat", "text": "News: fallback skanowania — keyword w div/li/dd lapany przez pełny tekst body"}
       ]
     },
   ];

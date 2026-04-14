@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.29
+// @version      0.23.30
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.29';
+  const VERSION = '0.23.30';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6450,6 +6450,22 @@ function showOnboarding(onComplete) {
     scanDone: 0,
     hideNonArticles: false,
   };
+
+  // Ustawienia importu — zapisywane w localStorage
+  var _newsImportOpts = (function() {
+    try {
+      var raw = localStorage.getItem('b24t_news_import_opts');
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch(e) {}
+    return { urlSimpleMode: false };
+  })();
+  function _saveNewsImportOpts() {
+    try { localStorage.setItem('b24t_news_import_opts', JSON.stringify(_newsImportOpts)); } catch(e) {}
+  }
+
   var _newsChipsRenderer = null; // set by _wireNewsPanels, called on every panel open
 
   var NEWS_DEFAULT_KEYWORDS = [
@@ -7501,7 +7517,8 @@ function showOnboarding(onComplete) {
     p2.style.removeProperty('top');
     p2.style.top = topList + 'px'; // temporary, fixed by _newsStackPanels()
 
-    var hdr2 = _newsPanelHeader('📥 Import URLi', closeNewsPanels);
+    var hdr2 = _newsPanelHeader('📥 Import URLi', closeNewsPanels,
+      '<button id="b24t-news-import-settings-btn" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:13px;line-height:1;padding:2px 7px;border-radius:5px;flex-shrink:0;margin-right:4px;" title="Ustawienia importu">⚙</button>');
     _newsDraggable(hdr2, p2);
 
     var body2 = document.createElement('div');
@@ -7517,6 +7534,17 @@ function showOnboarding(onComplete) {
         '<button id="b24t-news-import-btn" style="margin-top:6px;width:100%;padding:7px;border-radius:8px;border:none;background:var(--b24t-accent-grad);color:#fff;font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em;box-shadow:inset 0 1px 0 rgba(255,255,255,0.15);">▶ Wczytaj URLe</button>',
         '<div id="b24t-news-import-info" style="display:none;font-size:10px;text-align:center;margin-top:4px;"></div>' +
         '<div id="b24t-news-project-info" style="display:none;font-size:10px;text-align:center;margin-top:2px;"></div>',
+      '</div>',
+      // Ustawienia importu (collapsible)
+      '<div id="b24t-news-import-settings" style="display:none;padding:10px 12px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;">',
+        '<div style="font-size:10px;font-weight:700;color:' + t.textMuted + ';letter-spacing:0.06em;margin-bottom:8px;">USTAWIENIA SKANOWANIA</div>',
+        '<label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">',
+          '<input type="checkbox" id="b24t-news-opt-urlsimple" style="margin-top:2px;flex-shrink:0;"' + (_newsImportOpts.urlSimpleMode ? ' checked' : '') + '>',
+          '<span>',
+            '<span style="font-weight:600;color:' + t.text + ';">Uproszczone skanowanie (URL)</span>',
+            '<br><span style="font-size:10px;color:' + t.textFaint + ';line-height:1.4;">Klasyfikuje URLe tylko po adresie — szybsze, ale bez tytułu, daty ani oceny trafności. Domyślnie wyłączone.</span>',
+          '</span>',
+        '</label>',
       '</div>',
       // Country detection
       '<div id="b24t-news-country-row" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;">',
@@ -8524,37 +8552,45 @@ function showOnboarding(onComplete) {
         if (fCountry) fCountry.value = pc;
       }
 
-      // Pierwsza klasyfikacja — natychmiastowa (po URL)
+      // Klasyfikacja wstępna — zależna od trybu
+      if (_newsImportOpts.urlSimpleMode) {
+        // Uproszczone skanowanie: tylko URL, bez wchodzenia na strony
+        newsState.urls = deduped.map(function(u) {
+          var urlStatus = _newsUrlRelevant(u, chips, pc);
+          var urlChips = urlStatus !== 'nomatch'
+            ? chips.filter(function(c) { return u.toLowerCase().indexOf(c.toLowerCase()) !== -1; })
+            : [];
+          return {
+            url: u,
+            status: urlStatus !== 'nomatch' ? urlStatus : 'nomatch',
+            opened: false,
+            score: 0,
+            snippet: '',
+            matchedChips: urlChips,
+          };
+        });
+
+        renderChips();
+        renderUrlList();
+        if (pasteArea) pasteArea.value = '';
+
+        var urlMsg = '✓ Wczytano ' + deduped.length + ' URL' + (deduped.length !== 1 ? 'i' : '') + ' (tryb URL)';
+        if (dupeCount > 0) urlMsg += ' (usunięto ' + dupeCount + ' duplikat' + (dupeCount === 1 ? '' : dupeCount < 5 ? 'y' : 'ów') + ')';
+        if (importInfo) { importInfo.textContent = urlMsg; importInfo.style.display = ''; importInfo.style.color = '#22c55e'; }
+        _newsRunProjectCheck();
+        return;
+      }
+
+      // Domyślne skanowanie: wszystkie URLe trafiają do skanowania treści
       newsState.urls = deduped.map(function(u) {
-        var urlStatus = _newsUrlRelevant(u, chips, pc);
-        var urlChips = urlStatus !== 'nomatch'
-          ? chips.filter(function(c) { return u.toLowerCase().indexOf(c.toLowerCase()) !== -1; })
-          : [];
-        return {
-          url: u,
-          status: urlStatus !== 'nomatch' ? urlStatus : 'scanning',
-          opened: false,
-          score: 0,
-          snippet: '',
-          matchedChips: urlChips,
-        };
+        return { url: u, status: 'scanning', opened: false, score: 0, snippet: '', matchedChips: [] };
       });
 
       renderChips();
       renderUrlList();
       if (pasteArea) pasteArea.value = '';
 
-      // Zbierz URLe do skanowania treści
-      var toScan = newsState.urls.filter(function(e) { return e.status === 'scanning'; });
-
-      if (toScan.length === 0) {
-        // Wszystko rozpoznane po URL — nie trzeba skanować
-        var urlMsg = '✓ Wczytano ' + deduped.length + ' URL' + (deduped.length !== 1 ? 'i' : '');
-        if (dupeCount > 0) urlMsg += ' (usunięto ' + dupeCount + ' duplikat' + (dupeCount === 1 ? '' : dupeCount < 5 ? 'y' : 'ów') + ')';
-        if (importInfo) { importInfo.textContent = urlMsg; importInfo.style.display = ''; importInfo.style.color = '#22c55e'; }
-        _newsRunProjectCheck();
-        return;
-      }
+      var toScan = newsState.urls.slice(); // wszystkie do skanowania
 
       // Skanowanie treści — zablokuj przycisk
       newsState.scanning  = true;
@@ -8562,10 +8598,10 @@ function showOnboarding(onComplete) {
       newsState.scanDone  = 0;
       if (importBtn) {
         importBtn.disabled = true;
-        importBtn.textContent = '⟳ Skanowanie ' + toScan.length + ' stron...';
+        importBtn.textContent = '⟳ Skanowanie 0/' + toScan.length + '...';
         importBtn.style.opacity = '0.7';
       }
-      if (importInfo) { importInfo.textContent = '⟳ Szukam H&M w treści stron...'; importInfo.style.display = ''; importInfo.style.color = '#a78bfa'; }
+      if (importInfo) { importInfo.textContent = '⟳ Skanuję strony...'; importInfo.style.display = ''; importInfo.style.color = '#a78bfa'; }
 
       // Sliding window — NEWS_CONTENT_SCAN_CONCURRENCY równoległych workerów
       var nextScanIdx = 0;
@@ -8613,6 +8649,7 @@ function showOnboarding(onComplete) {
           entry.isStale            = _isStale;
           entry.isPaywall          = result.isPaywall || false;
           newsState.scanDone++;
+          if (importBtn) importBtn.textContent = '⟳ Skanowanie ' + newsState.scanDone + '/' + newsState.scanTotal + '...';
           renderUrlList(); // aktualizacja na żywo — wpada do listy w momencie rozpoznania
         }
       }
@@ -8649,6 +8686,27 @@ function showOnboarding(onComplete) {
     if (pasteArea) pasteArea.addEventListener('keydown', function(e) {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); importUrls(); }
     });
+
+    // Gear button — toggle ustawień importu
+    var settingsBtn = document.getElementById('b24t-news-import-settings-btn');
+    var settingsPanel = document.getElementById('b24t-news-import-settings');
+    if (settingsBtn && settingsPanel) {
+      settingsBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var visible = settingsPanel.style.display !== 'none';
+        settingsPanel.style.display = visible ? 'none' : '';
+        settingsBtn.style.background = visible ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.35)';
+      });
+    }
+
+    // Checkbox uproszczonego skanowania
+    var cbUrlSimple = document.getElementById('b24t-news-opt-urlsimple');
+    if (cbUrlSimple) {
+      cbUrlSimple.addEventListener('change', function() {
+        _newsImportOpts.urlSimpleMode = cbUrlSimple.checked;
+        _saveNewsImportOpts();
+      });
+    }
 
     // ─── NEXT BTN ───
     var nextBtn = document.getElementById('b24t-news-next-btn');
@@ -8935,6 +8993,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.30",
+      "date": "2026-04-14",
+      "label": "feat",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "feat", "text": "skanowanie treści stron jako metoda domyślna — każdy URL przechodzi przez content scan (tytuł, data, snippet, score)"},
+        {"type": "feat", "text": "uproszczone skanowanie po URL jako opcja (⚙ w headerze panelu Import URLi), domyślnie wyłączone"},
+        {"type": "feat", "text": "żywy licznik postępu skanowania w przycisku: '⟳ Skanowanie 3/15...' aktualizowany po każdym URL"},
+        {"type": "feat", "text": "ustawienie urlSimpleMode zapisywane w localStorage"}
+      ]
+    },
+    {
       "version": "0.23.29",
       "date": "2026-04-14",
       "label": "fix",
@@ -9031,17 +9101,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "Pominięte wiersze: eksport CSV z oryginalnymi danymi pliku + powód (NO_MATCH/TRUNCATED/NO_MAPPING) + diagnostyka"},
         {"type": "feat", "text": "NO_MATCH: hint per wiersz — domena nieobecna w Brand24 lub konkretny URL nie znaleziony (z przykładem z mapy)"},
         {"type": "fix", "text": "mapSamplesByDomain: pokrywa wszystkie domeny mapy (było tylko 30 pierwszych kluczy)"}
-      ]
-    },
-    {
-      "version": "0.23.20",
-      "date": "2026-04-13",
-      "label": "feat",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "feat", "text": "Diagnostyka: _errContext kategoryzuje kazdy blad (BRAND24/SIEC/AUTORYZACJA/PLIK/PLUGIN) z jasnym komunikatem co zrobic"},
-        {"type": "feat", "text": "Raport koncowy: lista wadliwych wzmianek z ID, tagiem, zrodlem bledu i wskazowka; eksport CSV"},
-        {"type": "fix", "text": "gql/gqlRetry/bulkTagMentions/Untag — rozbudowane logi z kategoria bledu i konkretna wskazowka naprawy"}
       ]
     },
   ];

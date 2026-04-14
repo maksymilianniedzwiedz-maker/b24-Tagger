@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.31
+// @version      0.23.32
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.31';
+  const VERSION = '0.23.32';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1948,7 +1948,7 @@
     const el = document.getElementById('b24t-token-status');
     if (el) {
       el.className = found ? 'b24t-token-ok' : 'b24t-token-pending';
-      el.textContent = found ? '●' : '●';
+      el.textContent = found ? '● Token' : '● Token';
     }
     const sub = document.getElementById('b24t-token-status-sub');
     if (sub) {
@@ -1962,10 +1962,10 @@
     if (!el) return;
     const map = {
       idle: ['Idle', 'badge-idle'],
-      running: ['Running', 'badge-running'],
+      running: ['⟳ Running', 'badge-running'],
       paused: ['Paused', 'badge-paused'],
-      error: ['Error', 'badge-error'],
-      done: ['Done', 'badge-done'],
+      error: ['⚠ Error', 'badge-error'],
+      done: ['✓ Done', 'badge-done'],
     };
     const [text, cls] = map[state.status] || ['Idle', 'badge-idle'];
     el.textContent = text;
@@ -2828,17 +2828,18 @@
 
       /* ── BADGES ── */
       .b24t-badge {
-        font-size: 9px;
-        font-weight: 600;
-        padding: 2px 7px;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 2px 8px;
         border-radius: 99px;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.05em;
         text-transform: uppercase;
+        border: 1px solid rgba(255,255,255,0.08);
       }
       .badge-idle    { background: var(--b24t-badge-idle-bg);  color: var(--b24t-badge-idle-fg); }
-      .badge-running { background: var(--b24t-badge-run-bg);   color: var(--b24t-badge-run-fg); animation: b24t-pulse-ring 1.5s infinite; }
+      .badge-running { background: var(--b24t-badge-run-bg);   color: var(--b24t-badge-run-fg); animation: b24t-pulse-ring 1.5s infinite; border-color: var(--b24t-badge-run-fg); }
       .badge-paused  { background: var(--b24t-badge-pause-bg); color: var(--b24t-badge-pause-fg); }
-      .badge-error   { background: var(--b24t-badge-err-bg);   color: var(--b24t-badge-err-fg); }
+      .badge-error   { background: var(--b24t-badge-err-bg);   color: var(--b24t-badge-err-fg); border-color: var(--b24t-badge-err-fg); animation: b24t-badge-flash 1.1s ease-in-out infinite; }
       .badge-done    { background: var(--b24t-badge-done-bg);  color: var(--b24t-badge-done-fg); }
 
       /* ── ICON BUTTONS (in topbar) ── */
@@ -2862,9 +2863,10 @@
         font-size: 11px;
         transition: background 0.3s, border-color 0.3s;
       }
-      .b24t-token-ok      { color: var(--b24t-ok); font-weight: 600; }
-      .b24t-token-pending { color: var(--b24t-warn); animation: b24t-dot-pulse 1.4s ease-in-out infinite; }
-      .b24t-token-error   { color: var(--b24t-err); }
+      .b24t-token-ok      { color: var(--b24t-ok); font-weight: 700; font-size: 12px; }
+      .b24t-token-pending { color: var(--b24t-warn); font-weight: 700; font-size: 12px; animation: b24t-dot-pulse 1.4s ease-in-out infinite; }
+      .b24t-token-error   { color: var(--b24t-err); font-weight: 700; font-size: 12px; }
+      .b24t-cms-checking  { animation: b24t-dot-pulse 1.4s ease-in-out infinite; }
       #b24t-session-timer { color: var(--b24t-text-meta); font-size: 11px; font-weight: 500; }
 
       /* ── SUBBAR ── */
@@ -3009,7 +3011,7 @@
 
       /* ── PROGRESS ── */
       .b24t-progress-bar-track {
-        height: 5px; background: var(--b24t-bg-input); border-radius: 99px;
+        height: 6px; background: var(--b24t-bg-input); border-radius: 99px;
         overflow: hidden; margin: 8px 0 4px;
         transition: background 0.3s;
         border: 1px solid var(--b24t-border-sub);
@@ -3511,8 +3513,15 @@
         0%, 100% { filter: brightness(1); }
         50%       { filter: brightness(1.3); }
       }
-      #b24t-progress-bar.b24t-running {
+      #b24t-progress-bar.b24t-running,
+      .b24t-bar-active {
         animation: b24t-bar-pulse 1.3s ease-in-out infinite;
+      }
+
+      /* ── BADGE ERROR FLASH ── */
+      @keyframes b24t-badge-flash {
+        0%, 100% { opacity: 1; }
+        50%       { opacity: 0.45; }
       }
 
       /* ── TOKEN DOT PULSE ── */
@@ -7417,8 +7426,8 @@ function showOnboarding(onComplete) {
           '<span>Postęp sesji</span>',
           '<span id="b24t-news-progress-label">0 / 0</span>',
         '</div>',
-        '<div style="height:4px;border-radius:2px;background:' + t.bgDeep + ';overflow:hidden;">',
-          '<div id="b24t-news-progress-bar" style="height:4px;background:var(--b24t-accent-grad);width:0%;transition:width 0.4s ease;border-radius:2px;"></div>',
+        '<div style="height:6px;border-radius:2px;background:' + t.bgDeep + ';overflow:hidden;">',
+          '<div id="b24t-news-progress-bar" style="height:6px;background:var(--b24t-accent-grad);width:0%;transition:width 0.4s ease;border-radius:2px;"></div>',
         '</div>',
       '</div>',
       // Filter bar — pokazuje się gdy są nie-artykuły w liście
@@ -7577,7 +7586,7 @@ function showOnboarding(onComplete) {
     // ─── PANEL 3: Formularz wzmianki (right column) ───
     var p3 = _newsPanelBase('b24t-news-p3', PANEL_W, topList, baseRight + PANEL_W + GAP, 2147483630);
 
-    var clearBtnHtml = '<span id="b24t-news-cms-dot" style="font-size:12px;flex-shrink:0;margin-right:6px;cursor:default;color:#6b7280;" title="Sprawdzanie CMS...">●</span><button id="b24t-news-clear-btn" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:10px;font-weight:600;padding:2px 8px;border-radius:5px;flex-shrink:0;margin-right:4px;letter-spacing:0.02em;" title="Wyczyść tytuł i treść">✕ Wyczyść</button>';
+    var clearBtnHtml = '<span id="b24t-news-cms-dot" class="b24t-cms-checking" style="font-size:11px;font-weight:700;flex-shrink:0;margin-right:6px;cursor:default;color:#6b7280;" title="Sprawdzanie CMS...">● CMS</span><button id="b24t-news-clear-btn" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:10px;font-weight:600;padding:2px 8px;border-radius:5px;flex-shrink:0;margin-right:4px;letter-spacing:0.02em;" title="Wyczyść tytuł i treść">✕ Wyczyść</button>';
     var hdr3 = _newsPanelHeader('✍ Formularz wzmianki', closeNewsPanels, clearBtnHtml);
     _newsDraggable(hdr3, p3);
 
@@ -7761,7 +7770,7 @@ function showOnboarding(onComplete) {
       if (statusEl)  { statusEl.textContent = '✓ dostępny'; statusEl.style.color = '#22c55e'; }
       if (checkboxEl){ checkboxEl.disabled = false; checkboxEl.checked = true; }
       if (cmsBanner) cmsBanner.style.display = 'none';
-      if (cmsDot)    { cmsDot.style.color = '#22c55e'; cmsDot.title = 'CMS aktywny — tag "dodane" dostępny'; }
+      if (cmsDot)    { cmsDot.style.color = '#22c55e'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny — tag "dodane" dostępny'; }
       return;
     }
 
@@ -7769,13 +7778,13 @@ function showOnboarding(onComplete) {
     if (statusEl)  { statusEl.textContent = '⏳ sprawdzanie...'; statusEl.style.color = '#6b7280'; }
     if (checkboxEl){ checkboxEl.checked = false; checkboxEl.disabled = true; }
     if (cmsBanner) cmsBanner.style.display = 'none';
-    if (cmsDot)    { cmsDot.style.color = '#6b7280'; cmsDot.title = 'Sprawdzanie CMS...'; }
+    if (cmsDot)    { cmsDot.style.color = '#6b7280'; cmsDot.classList.add('b24t-cms-checking'); cmsDot.title = 'Sprawdzanie CMS...'; }
 
     var sid = state.projectId || '';
     if (!sid) {
       // Brak ID projektu — pokaż ogólny błąd logowania
       if (statusEl)  { statusEl.textContent = '⚠ brak projektu'; statusEl.style.color = '#f59e0b'; }
-      if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.title = 'CMS niedostępny — brak projektu'; }
+      if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS niedostępny — brak projektu'; }
       return;
     }
 
@@ -7790,7 +7799,7 @@ function showOnboarding(onComplete) {
           // Stan 2: zalogowany do CMS, ale brak tagu "dodane" w projekcie
           state.tknB24 = m[1];
           if (statusEl)  { statusEl.textContent = '⚠ brak tagu'; statusEl.style.color = '#f59e0b'; }
-          if (cmsDot)    { cmsDot.style.color = '#f59e0b'; cmsDot.title = 'CMS aktywny — brak tagu "dodane" w projekcie'; }
+          if (cmsDot)    { cmsDot.style.color = '#f59e0b'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny — brak tagu "dodane" w projekcie'; }
           if (cmsBanner) {
             if (warnText) warnText.innerHTML = '⚠ CMS aktywny, ale brak tagu <strong>dodane</strong> w tym projekcie — dodaj go w Brand24 w Ustawieniach tagów.';
             cmsBanner.style.display = '';
@@ -7798,7 +7807,7 @@ function showOnboarding(onComplete) {
         } else {
           // Stan 3: niezalogowany do CMS
           if (statusEl)  { statusEl.textContent = '⚠ niezalogowany'; statusEl.style.color = '#f59e0b'; }
-          if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.title = 'CMS niedostępny — zaloguj się do Brand24'; }
+          if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS niedostępny — zaloguj się do Brand24'; }
           if (cmsBanner) {
             if (warnText) warnText.innerHTML = '⚠ Tag <strong>dodane</strong> niedostępny — zaloguj się do CMS Brand24 (' + domain + ').';
             cmsBanner.style.display = '';
@@ -7808,7 +7817,7 @@ function showOnboarding(onComplete) {
       onerror: function() {
         // Błąd sieci — zakładamy brak logowania (bezpieczniejszy fallback)
         if (statusEl)  { statusEl.textContent = '⚠ błąd sprawdzania'; statusEl.style.color = '#f59e0b'; }
-        if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.title = 'CMS: błąd sieci przy sprawdzaniu'; }
+        if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS: błąd sieci przy sprawdzaniu'; }
         if (cmsBanner) {
           if (warnText) warnText.innerHTML = '⚠ Tag <strong>dodane</strong> niedostępny — zaloguj się do CMS Brand24 (' + domain + ').';
           cmsBanner.style.display = '';
@@ -8575,6 +8584,8 @@ function showOnboarding(onComplete) {
       newsState.scanning  = true;
       newsState.scanTotal = toScan.length;
       newsState.scanDone  = 0;
+      var _newsBar = document.getElementById('b24t-news-progress-bar');
+      if (_newsBar) _newsBar.classList.add('b24t-bar-active');
       if (importBtn) {
         importBtn.disabled = true;
         importBtn.textContent = '⟳ Skanowanie 0/' + toScan.length + '...';
@@ -8636,6 +8647,7 @@ function showOnboarding(onComplete) {
 
       // Skanowanie zakończone
       newsState.scanning = false;
+      if (_newsBar) _newsBar.classList.remove('b24t-bar-active');
       if (importBtn) {
         importBtn.disabled = false;
         importBtn.textContent = '▶ Wczytaj URLe';
@@ -8972,6 +8984,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.32",
+      "date": "2026-04-14",
+      "label": "ui",
+      "labelColor": "#8b5cf6",
+      "changes": [
+        {"type": "ui", "text": "pulsowanie pasków postępu podczas aktywnych procesów (tagowanie plikiem, skanowanie News, Delete)"},
+        {"type": "ui", "text": "badge statusu: ⟳ Running / ⚠ Error (migający) / ✓ Done — większy font, border"},
+        {"type": "ui", "text": "status tokenu: '● Token' z labelką i pogrubieniem zamiast samej kropki"},
+        {"type": "ui", "text": "CMS dot w formularzu News: '● CMS' z labelką, animacja pulsowania podczas sprawdzania"}
+      ]
+    },
+    {
       "version": "0.23.31",
       "date": "2026-04-14",
       "label": "ui",
@@ -9069,15 +9093,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "validateInputSchema — blokuje tagowanie przy sci notation URL; ostrzega o pustych/zduplikowanych URL-ach"},
         {"type": "feat", "text": "fuzzy matching: ograniczenie do diff ≤5 znaków (FUZZY_SHORT); dluzsze (FUZZY_LONG_SKIPPED) pomijane z logiem"},
         {"type": "feat", "text": "raport koncowy tagowania z podzialem exact/fuzzy/skip/bledy"}
-      ]
-    },
-    {
-      "version": "0.23.22",
-      "date": "2026-04-13",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "NO_MATCH hint: gdy domena jest w mapie i tryb Untagged — informuje ze wzmianka moze byc juz otagowana (mapa Untagged pomija wzmianki z istniejacym tagiem)"}
       ]
     },
   ];
@@ -12536,6 +12551,7 @@ To jest NIEODWRACALNE.`)) return;
       const statusEl = document.getElementById('b24t-del-status');
       const progressEl = document.getElementById('b24t-del-progress');
       if (runBtn) runBtn.disabled = true;
+      if (progressEl) progressEl.classList.add('b24t-bar-active');
       const delTimer = makeTabTimer('b24t-del-timer');
       delTimer.start();
 
@@ -12574,6 +12590,7 @@ To jest NIEODWRACALNE.`)) return;
         addLog(`✕ Quick Delete błąd: ${e.message}`, 'error');
       } finally {
         delTimer.stop();
+        if (progressEl) progressEl.classList.remove('b24t-bar-active');
         if (runBtn) runBtn.disabled = false;
       }
     });
@@ -12597,6 +12614,8 @@ To jest NIEODWRACALNE.`)) return;
       if (!confirmed) return;
 
       if (runBtn) runBtn.disabled = true;
+      const delviewProgressEl = document.getElementById('b24t-delview-progress');
+      if (delviewProgressEl) delviewProgressEl.classList.add('b24t-bar-active');
       const delviewTimer = makeTabTimer('b24t-delview-timer');
       delviewTimer.start();
       setProgress(0, 1);
@@ -12649,6 +12668,7 @@ Tej operacji nie można cofnąć.`)) {
         addLog(`✕ Delete view błąd: ${e.message}`, 'error');
       } finally {
         delviewTimer.stop();
+        if (delviewProgressEl) delviewProgressEl.classList.remove('b24t-bar-active');
         if (runBtn) runBtn.disabled = false;
       }
     });

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.26
+// @version      0.23.27
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.26';
+  const VERSION = '0.23.27';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6848,19 +6848,29 @@ function showOnboarding(onComplete) {
       if (/^\d{4}-\d{2}-\d{2}$/.test(_td)) _articleDate = _td;
     }
 
-    // Paywall fallback — klasy CSS typowych bibliotek (piano, tinypass, itp.)
+    // Paywall — oblicz raz długość tekstu body (używane w kilku sprawdzeniach)
+    var _bodyTextLen = bodyEl ? bodyEl.textContent.trim().length : 0;
+
+    // Paywall — silne sygnały CSS: samo istnienie = twarda blokada (nie zależy od ilości tekstu)
     if (!_isPaywall) {
       try {
         if (doc.querySelectorAll(
-          '[class*="paywall"],[class*="piano-"],[class*="tp-container"],' +
-          '[id*="paywall"],[class*="access-denied"],[class*="subscriber-only"]'
+          '[class*="access-denied"],[class*="subscriber-only"],[class*="premium-only"],' +
+          '[class*="locked-content"],[class*="paywalled"],[class*="subscribe-wall"]'
         ).length > 0) _isPaywall = true;
       } catch(e) {}
     }
-    // Paywall fallback — duży HTML ale bardzo mały tekst body → treść ukryta
-    if (!_isPaywall && html.length > 120000 && bodyEl) {
-      if (bodyEl.textContent.trim().length < 400) _isPaywall = true;
+    // Paywall — słabe sygnały CSS (piano, tinypass, klasa paywall):
+    // flaguj TYLKO gdy treści jest mało — jeśli body ma >1200 znaków, treść jest dostępna mimo popupów
+    if (!_isPaywall && _bodyTextLen < 1200) {
+      try {
+        if (doc.querySelectorAll(
+          '[class*="paywall"],[id*="paywall"],[class*="piano-"],[class*="tp-container"],[class*="tinypass"]'
+        ).length > 0) _isPaywall = true;
+      } catch(e) {}
     }
+    // Paywall fallback — duży HTML ale bardzo mały tekst body → treść ukryta za blokadą
+    if (!_isPaywall && html.length > 80000 && _bodyTextLen < 600) _isPaywall = true;
 
     // Strefy poboczne — podpisy zdjęć, opisy galerii, adresy/lokalizacje
     // Przeszukiwane po usunięciu szumu; keyword tu punktuje +2 (słabszy sygnał) z oznaczeniem w liście URLi
@@ -7558,6 +7568,7 @@ function showOnboarding(onComplete) {
         '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
           '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">KRAJ</label>',
           '<input id="b24t-news-f-country" type="text" readonly style="' + _newsInputCss(t) + 'opacity:0.6;" placeholder="z proj.">',
+          '<span id="b24t-news-proj-lang-hint" style="display:none;font-size:8px;color:' + t.textFaint + ';text-align:center;letter-spacing:0.02em;"></span>',
         '</div>',
         '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
           '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">SENT.</label>',
@@ -8198,6 +8209,12 @@ function showOnboarding(onComplete) {
           dateBadgeHtml = '<div style="margin-top:2px;"><span style="font-size:8px;padding:1px 5px;border-radius:4px;background:' + _db + ';border:1px solid ' + _dbd + ';color:' + _dc + ';" title="Data publikacji' + _staleTitle + '">' + entry.articleDate + '</span></div>';
         }
 
+        // Wykryty język strony
+        var langBadgeHtml = '';
+        if (entry.pageLang) {
+          langBadgeHtml = '<div style="margin-top:2px;"><span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.25);color:#a78bfa;" title="Wykryty j\u0119zyk strony">' + entry.pageLang + '</span></div>';
+        }
+
         // Paywall — strona za blokadą (treść ukryta lub wymaga subskrypcji)
         var paywallBadgeHtml = '';
         if (entry.isPaywall) {
@@ -8221,6 +8238,7 @@ function showOnboarding(onComplete) {
             teaserBadgeHtml +
             pageTypeBadgeHtml +
             dateBadgeHtml +
+            langBadgeHtml +
             paywallBadgeHtml +
           '</div>' +
           (isScanning ? '' : '<button class="b24t-news-del-btn" style="flex-shrink:0;font-size:11px;width:18px;height:18px;line-height:1;border-radius:4px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Usu\u0144 z listy">\u2715</button>');
@@ -8262,6 +8280,16 @@ function showOnboarding(onComplete) {
       var pc = projectCountry || _newsProjectCountry();
       var fCountry = document.getElementById('b24t-news-f-country');
       if (fCountry && pc) fCountry.value = pc;
+      var _langHintEl = document.getElementById('b24t-news-proj-lang-hint');
+      if (_langHintEl) {
+        var _expLangs = pc ? (_newsGetLangMap()[pc] || []) : [];
+        if (_expLangs.length > 0) {
+          _langHintEl.textContent = 'lang: ' + _expLangs.join(', ');
+          _langHintEl.style.display = '';
+        } else {
+          _langHintEl.style.display = 'none';
+        }
+      }
       var langWarn = document.getElementById('b24t-news-lang-warn');
       var forceBtn = document.getElementById('b24t-news-lang-force-open');
       if (langWarn) { langWarn.style.display = 'none'; langWarn.innerHTML = ''; }
@@ -8309,15 +8337,36 @@ function showOnboarding(onComplete) {
             dateIcon.title = 'Data wykryta automatycznie ze strony (' + detectedDate + ') — mozesz ja edytowac';
           }
         }
-        // Title auto-fill — tylko jeśli pole jest puste (nie nadpisuj tego co wkleił użytkownik)
+        // Title + treść — autofill jeśli pola są puste (nie nadpisuj tego co wkleił użytkownik)
         var fTitleEl = document.getElementById('b24t-news-f-title');
-        if (fTitleEl && !fTitleEl.value) {
+        var fContentEl = document.getElementById('b24t-news-f-content');
+        if ((fTitleEl && !fTitleEl.value) || (fContentEl && !fContentEl.value)) {
           try {
             var _doc = (new DOMParser()).parseFromString(html, 'text/html');
-            var _ogTitle = _doc.querySelector('meta[property="og:title"]') || _doc.querySelector('meta[name="og:title"]');
-            var _pageTitle = _ogTitle ? (_ogTitle.getAttribute('content') || '').trim()
-                                      : (_doc.querySelector('title') ? (_doc.querySelector('title').textContent || '').trim() : '');
-            if (_pageTitle) fTitleEl.value = _pageTitle.slice(0, 200);
+            // Tytuł: h1 wewnątrz article/main > meta content_title > og:title > <title>
+            if (fTitleEl && !fTitleEl.value) {
+              var _bz = _doc.querySelector('article') || _doc.querySelector('main') || null;
+              var _h1El = _bz ? _bz.querySelector('h1') : _doc.querySelector('h1');
+              var _h1Txt = _h1El ? (_h1El.textContent || '').trim() : '';
+              var _ctEl = _doc.querySelector('meta[name="content_title"]') || _doc.querySelector('meta[property="content_title"]');
+              var _ctTxt = _ctEl ? (_ctEl.getAttribute('content') || '').trim() : '';
+              var _ogTEl = _doc.querySelector('meta[property="og:title"]') || _doc.querySelector('meta[name="og:title"]');
+              var _ogTxt = _ogTEl ? (_ogTEl.getAttribute('content') || '').trim() : '';
+              var _tlEl = _doc.querySelector('title');
+              var _pt = (_h1Txt.length > 3 ? _h1Txt : '') || _ctTxt || _ogTxt ||
+                        (_tlEl ? (_tlEl.textContent || '').trim() : '');
+              if (_pt) fTitleEl.value = _pt.slice(0, 200);
+            }
+            // Treść: pierwszy akapit z article/main jeśli pole jest puste
+            if (fContentEl && !fContentEl.value) {
+              var _bzC = _doc.querySelector('article') || _doc.querySelector('main') || _doc.body;
+              if (_bzC) {
+                var _ps = Array.from(_bzC.querySelectorAll('p'))
+                  .map(function(p) { return (p.textContent || '').trim(); })
+                  .filter(function(t) { return t.length > 40; });
+                if (_ps.length > 0) fContentEl.value = _ps[0].slice(0, 500);
+              }
+            }
           } catch(e) {}
         }
         // Language check
@@ -8871,6 +8920,19 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.27",
+      "date": "2026-04-14",
+      "label": "feat",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "feat", "text": "paywall: rozróżnienie twardych blokad (access-denied, subscriber-only) od słabych sygnałów (piano, tinypass) — słabe flagują tylko gdy body < 1200 znaków"},
+        {"type": "feat", "text": "autofill tytułu: h1 z article/main > meta content_title > og:title > title"},
+        {"type": "feat", "text": "autofill treści: pierwszy akapit z article/main wypełnia pole Treść gdy jest puste"},
+        {"type": "feat", "text": "badge języka strony w liście URLi po skanowaniu (np. 'pl', 'cs')"},
+        {"type": "feat", "text": "hint języka projektu w formularzu pod polem KRAJ (np. 'lang: cs, sk')"}
+      ]
+    },
+    {
       "version": "0.23.26",
       "date": "2026-04-14",
       "label": "feat",
@@ -8961,15 +9023,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "News: krytyczny fix — renderUrlList crashowalo przez t.yellowBg przed zdefiniowaniem t; skan zatymawal sie na 8. URLu"}
-      ]
-    },
-    {
-      "version": "0.23.17",
-      "date": "2026-04-11",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News: fix styl przycisku filtra — 3 stany: szary/amber/indigo; light+dark mode"}
       ]
     },
   ];

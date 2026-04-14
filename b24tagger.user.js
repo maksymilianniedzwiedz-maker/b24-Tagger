@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.23
+// @version      0.23.24
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.23';
+  const VERSION = '0.23.24';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -186,7 +186,7 @@
     lastActionTime: null,
     testRunMode: false,
     mapMode: 'untagged',     // untagged | full
-    conflictMode: 'ignore',  // ask | ignore | overwrite
+    conflictMode: 'ignore',  // ask | ignore | overwrite | multitag
     switchViewOnDone: false,
     switchViewTagId: null,
     autoPartition: false,
@@ -1106,7 +1106,9 @@
     const _mapKeys = Object.keys(state.urlMap); // cached once — fuzzy match uses this
     rows.forEach(row => {
       const urlRaw = row[state.file.colMap.url] || '';
-      const assessment = (row[state.file.colMap.assessment] || '').trim().toUpperCase();
+      const assessmentRaw = (row[state.file.colMap.assessment] || '').trim().toUpperCase();
+      // Multi-assessment: wartości rozdzielone "|", np. "POSITIVE|RELEVANT"
+      const assessments = assessmentRaw ? assessmentRaw.split('|').map(a => a.trim()).filter(Boolean) : [];
       const normalizedUrl = normalizeUrl(urlRaw);
 
       // Zbierz próbki domen z pliku
@@ -1150,16 +1152,9 @@
       if (matchConfidence === 'EXACT') matchDiag.exactMatch++;
       else if (matchConfidence === 'FUZZY_SHORT') matchDiag.fuzzyShort++;
 
-      if (!assessment) {
+      if (!assessments.length) {
         skipped.push({ row, reason: 'NO_ASSESSMENT' });
         matchDiag.noAssessment++;
-        return;
-      }
-
-      const mapping = state.mapping[assessment];
-      if (!mapping) {
-        skipped.push({ row, reason: 'NO_MAPPING', assessment });
-        matchDiag.noMapping++;
         return;
       }
 
@@ -1204,36 +1199,46 @@
         return;
       }
 
-      // Check conflicts
+      // Przetwórz każdy assessment z wiersza (obsługa multi-assessment przez separator "|")
       const existingTagIds = entry.existingTags.map(t => t.id);
-      const hasConflict = existingTagIds.length > 0 && !existingTagIds.includes(mapping.tagId);
-      const alreadyTagged = existingTagIds.includes(mapping.tagId);
-
-      if (alreadyTagged) {
-        skipped.push({ row, reason: 'ALREADY_TAGGED', tagId: mapping.tagId });
-        return;
-      }
-
-      if (hasConflict) {
-        if (state.conflictMode === 'ignore') {
-          skipped.push({ row, reason: 'CONFLICT_IGNORED', existingTags: entry.existingTags });
-          state.stats.conflicts++;
-          return;
-        } else if (state.conflictMode === 'overwrite') {
-          const oldTagId = existingTagIds[0];
-          const key = `${oldTagId}_${mapping.tagId}`;
-          if (!overwriteBatches[key]) overwriteBatches[key] = { oldTagId, newTagId: mapping.tagId, ids: [] };
-          overwriteBatches[key].ids.push(entry.id);
-          return;
-        } else {
-          // 'ask' mode
-          conflicts.push({ row, entry, mapping });
+      assessments.forEach(assessment => {
+        const mapping = state.mapping[assessment];
+        if (!mapping) {
+          skipped.push({ row, reason: 'NO_MAPPING', assessment });
+          matchDiag.noMapping++;
           return;
         }
-      }
 
-      if (!batches[mapping.tagId]) batches[mapping.tagId] = [];
-      batches[mapping.tagId].push(entry.id);
+        const alreadyTagged = existingTagIds.includes(mapping.tagId);
+        if (alreadyTagged) {
+          skipped.push({ row, reason: 'ALREADY_TAGGED', tagId: mapping.tagId });
+          return;
+        }
+
+        const hasConflict = existingTagIds.length > 0 && !existingTagIds.includes(mapping.tagId);
+
+        if (state.conflictMode === 'multitag') {
+          // Multitag: dodaj tag obok istniejących — brak konfliktu
+          if (!batches[mapping.tagId]) batches[mapping.tagId] = [];
+          batches[mapping.tagId].push(entry.id);
+        } else if (hasConflict) {
+          if (state.conflictMode === 'ignore') {
+            skipped.push({ row, reason: 'CONFLICT_IGNORED', existingTags: entry.existingTags });
+            state.stats.conflicts++;
+          } else if (state.conflictMode === 'overwrite') {
+            const oldTagId = existingTagIds[0];
+            const key = `${oldTagId}_${mapping.tagId}`;
+            if (!overwriteBatches[key]) overwriteBatches[key] = { oldTagId, newTagId: mapping.tagId, ids: [] };
+            overwriteBatches[key].ids.push(entry.id);
+          } else {
+            // 'ask' mode
+            conflicts.push({ row, entry, mapping });
+          }
+        } else {
+          if (!batches[mapping.tagId]) batches[mapping.tagId] = [];
+          batches[mapping.tagId].push(entry.id);
+        }
+      });
     });
 
     // ── DIAG: raport matchowania ────────────────────────────────────────
@@ -3714,6 +3719,7 @@
               <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="ignore" checked> <span>Ignoruj — zachowaj istniejący tag</span></label>
               <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="ask"> <span>Zatrzymaj i zapytaj</span></label>
               <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="overwrite"> <span>Nadpisz — zamień tag</span></label>
+              <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="multitag"> <span>Multitag — dodaj obok istniejących tagów</span></label>
             </div>
           </div>
 
@@ -8758,6 +8764,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.24",
+      "date": "2026-04-14",
+      "label": "feat",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "feat", "text": "multitagowanie: separator | w kolumnie assessment pozwala nadac wzmiance kilka tagow naraz (np. POSITIVE|RELEVANT)"},
+        {"type": "feat", "text": "nowy tryb konfliktu: Multitag — dodaje tagi obok istniejacych bez konfliktu"},
+        {"type": "feat", "text": "kazdy assessment w wierszu przetwarzany niezaleznie: pominiecie jednego nie blokuje pozostalych"}
+      ]
+    },
+    {
       "version": "0.23.23",
       "date": "2026-04-14",
       "label": "feat",
@@ -8844,18 +8861,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "News: fix jezyk — angielski nie jest wyjatkiem; jezyk strony musi dokladnie pasowac do jezyka projektu"}
-      ]
-    },
-    {
-      "version": "0.23.14",
-      "date": "2026-04-11",
-      "label": "feat",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "feat", "text": "News: wykrywanie jezyka strony (<html lang>) — zly jezyk → wrongcountry; angielski zawsze akceptowany"},
-        {"type": "feat", "text": "News: data publikacji — badge zielony/amber/czerwony; >60 dni → stale (opacity 0.55, czerwona data)"},
-        {"type": "feat", "text": "News: wykrywanie paywalla — JSON-LD, meta, CSS klasy, text-ratio; badge paywall"},
-        {"type": "feat", "text": "News: filtr 'Ukryj nie-artykuly' — toggle button nad lista URLi; ukrywa wiersze nonArticle"}
       ]
     },
   ];

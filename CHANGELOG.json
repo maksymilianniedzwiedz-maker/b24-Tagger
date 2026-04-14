@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.23.30",
+    "date": "2026-04-14",
+    "label": "feature",
+    "changes": [
+      "skanowanie treści stron jako metoda domyślna — każdy URL przechodzi przez content scan (tytuł, data, snippet, score)",
+      "uproszczone skanowanie po URL dostępne jako opcja w ustawieniach (⚙ w headerze panelu Import URLi), domyślnie wyłączone",
+      "żywy licznik postępu skanowania w przycisku: '⟳ Skanowanie 3/15...' aktualizowany po każdym URL",
+      "ustawienie urlSimpleMode zapisywane w localStorage (persystuje między sesjami)"
+    ]
+  },
+  {
     "version": "0.23.29",
     "date": "2026-04-14",
     "label": "fix",

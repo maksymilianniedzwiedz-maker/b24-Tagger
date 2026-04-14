@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.34
+// @version      0.23.35
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.34';
+  const VERSION = '0.23.35';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7376,7 +7376,7 @@ function showOnboarding(onComplete) {
     d.style.cssText = 'display:flex;align-items:center;padding:10px 14px;background:var(--b24t-accent-grad);flex-shrink:0;cursor:move;user-select:none;position:relative;overflow:hidden;';
     d.innerHTML = '<span style="font-size:13px;font-weight:700;color:#fff;flex:1;text-shadow:0 1px 3px rgba(0,0,0,0.2);">' + title + '</span>' +
       (extraHtml || '') +
-      '<button class="b24t-news-close-all" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:15px;line-height:1;padding:2px 7px;border-radius:5px;flex-shrink:0;">×</button>';
+      '<button class="b24t-news-close-all" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:15px;line-height:1;padding:2px 7px;border-radius:5px;flex-shrink:0;">×</button>';
     if (onClose) {
       d.querySelector('.b24t-news-close-all').addEventListener('click', onClose);
     }
@@ -7409,7 +7409,7 @@ function showOnboarding(onComplete) {
     var p1 = _newsPanelBase('b24t-news-p1', PANEL_W, topList, baseRight, 2147483632);
 
     var hdr1 = _newsPanelHeader('📋 Lista URLi', closeNewsPanels,
-      '<div id="b24t-news-winsize-wrap" style="position:relative;margin-right:6px;"><button id="b24t-news-winsize-btn" title="Rozmiar okna" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;">▢ Okno</button><div id="b24t-news-winsize-menu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:var(--b24t-bg-elevated);border:1px solid color-mix(in srgb,var(--b24t-primary) 40%,transparent);border-radius:8px;min-width:160px;box-shadow:var(--b24t-shadow-h);z-index:2147483699;overflow:hidden;"><div class="b24t-wsz" data-sz="900x700" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">900×700 (domyślne)</div><div class="b24t-wsz" data-sz="1100x800" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">1100×800 (duże)</div><div class="b24t-wsz" data-sz="800x600" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">800×600 (kompakt)</div><div class="b24t-wsz" data-sz="half" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">½ekranu (dyn.)</div></div></div><button id="b24t-news-langmap-btn" title="Mapa języków" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;margin-right:6px;">⚙ Języki</button>'
+      '<div id="b24t-news-winsize-wrap" style="position:relative;margin-right:6px;"><button id="b24t-news-winsize-btn" title="Rozmiar okna" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;">▢ Okno</button><div id="b24t-news-winsize-menu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:var(--b24t-bg-elevated);border:1px solid color-mix(in srgb,var(--b24t-primary) 40%,transparent);border-radius:8px;min-width:160px;box-shadow:var(--b24t-shadow-h);z-index:2147483699;overflow:hidden;"><div class="b24t-wsz" data-sz="900x700" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">900×700 (domyślne)</div><div class="b24t-wsz" data-sz="1100x800" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">1100×800 (duże)</div><div class="b24t-wsz" data-sz="800x600" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">800×600 (kompakt)</div><div class="b24t-wsz" data-sz="half" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">½ekranu (dyn.)</div></div></div><button id="b24t-news-langmap-btn" title="Mapa języków" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;margin-right:6px;">⚙ Języki</button>'
     );
     _newsDraggable(hdr1, p1);
 
@@ -7523,7 +7523,7 @@ function showOnboarding(onComplete) {
     p2.style.top = topList + 'px'; // temporary, fixed by _newsStackPanels()
 
     var hdr2 = _newsPanelHeader('📥 Import URLi', closeNewsPanels,
-      '<button id="b24t-news-import-settings-btn" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:13px;line-height:1;padding:2px 7px;border-radius:5px;flex-shrink:0;margin-right:4px;" title="Ustawienia importu">⚙</button>');
+      '<button id="b24t-news-import-settings-btn" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:13px;line-height:1;padding:2px 7px;border-radius:5px;flex-shrink:0;margin-right:4px;" title="Ustawienia importu">⚙</button>');
     _newsDraggable(hdr2, p2);
 
     var body2 = document.createElement('div');
@@ -8980,6 +8980,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.35",
+      "date": "2026-04-14",
+      "label": "ui",
+      "labelColor": "#8b5cf6",
+      "changes": [
+        {"type": "ui", "text": "spójny styl przycisków we wszystkich nagłówkach paneli — News, Annotator, Features, Groups, Overall (jaśniejsze tło 0.28, border 0.5, box-shadow)"}
+      ]
+    },
+    {
       "version": "0.23.34",
       "date": "2026-04-14",
       "label": "ui",
@@ -9076,15 +9085,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "teaser detection: keyword tylko w polecanych artykułach → status teasermatch (szary ◇, badge 'w polecanym art.'), redukuje false positive"},
         {"type": "feat", "text": "nowe strefy skanowania: h2/h3 (+3), blockquote (+2), tagi redakcyjne artykułu (+4) — tylko wewnątrz article/main"},
         {"type": "feat", "text": "NEWS_TEASER_SELECTORS: rozszerzone wzorce (related, recommended, more-articles, also-read, suggested itp.)"}
-      ]
-    },
-    {
-      "version": "0.23.25",
-      "date": "2026-04-14",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "fix mapowania labelek: multi-assessment (Influencer|Wspolpraca) liczony osobno w kazdym woreczku zamiast jako jeden label"}
       ]
     },
   ];
@@ -9909,7 +9909,7 @@ function showOnboarding(onComplete) {
             '<div style="font-size:13px;font-weight:700;color:#fff;">Dodatkowe funkcje</div>' +
             '<div style="font-size:10px;color:rgba(255,255,255,0.7);margin-top:2px;">Włącz lub wyłącz opcjonalne funkcje wtyczki</div>' +
           '</div>' +
-          '<button id="b24t-features-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:18px;line-height:1;padding:2px 8px;border-radius:5px;">✕</button>' +
+          '<button id="b24t-features-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:18px;line-height:1;padding:2px 8px;border-radius:5px;">✕</button>' +
         '</div>' +
         '<div style="padding:4px 20px 0;">' + checkboxesHtml + '</div>' +
         '<div style="padding:12px 20px 4px;border-top:1px solid var(--b24t-border-sub);">' +
@@ -10442,7 +10442,7 @@ function showOnboarding(onComplete) {
       '<div id="b24t-ann-header" style="display:flex;align-items:center;padding:12px 16px;background:var(--b24t-accent-grad);cursor:move;user-select:none;position:relative;overflow:hidden;">' +
         '<span style="font-size:15px;font-weight:700;flex:1;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.2);">🛠 Annotators Tab</span>' +
         '' +
-        '<button id="b24t-ann-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:18px;line-height:1;padding:2px 8px;border-radius:5px;transition:background 0.15s;">×</button>' +
+        '<button id="b24t-ann-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:18px;line-height:1;padding:2px 8px;border-radius:5px;transition:background 0.15s;">×</button>' +
       '</div>' +
       // Tabs — liquid glass, identyczny styl jak główny panel
       '<div style="display:flex;align-items:center;gap:5px;padding:6px 10px;background:var(--b24t-bg-deep);border-bottom:1px solid var(--b24t-border-sub);">' +
@@ -11404,7 +11404,7 @@ function showOnboarding(onComplete) {
           '<div style="font-size:12px;font-weight:700;color:#fff;">🌐 Wszystkie projekty</div>' +
           '<div style="font-size:10px;color:rgba(255,255,255,0.75);margin-top:1px;">TO_DELETE we wszystkich projektach</div>' +
         '</div>' +
-        '<button id="b24t-ap-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;border-radius:5px;padding:2px 8px;cursor:pointer;font-size:14px;line-height:1;">×</button>' +
+        '<button id="b24t-ap-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;border-radius:5px;padding:2px 8px;cursor:pointer;font-size:14px;line-height:1;">×</button>' +
       '</div>' +
       // Subheader — wybrany tag
       '<div id="b24t-ap-tag-name" style="padding:8px 14px;background:var(--b24t-bg-elevated);border-bottom:1px solid var(--b24t-border);font-size:11px;font-weight:600;color:var(--b24t-text-muted);flex-shrink:0;">Wybierz tag, aby załadować dane</div>' +
@@ -11715,7 +11715,7 @@ To jest NIEODWRACALNE.`)) return;
       '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:360px;max-height:85vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.25s cubic-bezier(0.34,1.56,0.64,1);">' +
         '<div style="padding:14px 16px;background:var(--b24t-accent-grad);border-radius:14px 14px 0 0;display:flex;align-items:center;gap:10px;">' +
           '<span style="font-size:14px;font-weight:700;color:#fff;flex:1;">' + (isNew ? '+ Nowa grupa' : 'Edytuj grupe') + '</span>' +
-          '<button id="b24t-grped-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;border-radius:5px;padding:2px 8px;font-size:16px;cursor:pointer;">x</button>' +
+          '<button id="b24t-grped-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;border-radius:5px;padding:2px 8px;font-size:16px;cursor:pointer;">x</button>' +
         '</div>' +
         '<div style="overflow-y:auto;flex:1;padding:16px;">' +
           '<div style="margin-bottom:14px;">' +
@@ -12143,7 +12143,7 @@ To jest NIEODWRACALNE.`)) return;
       '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:320px;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.25s cubic-bezier(0.34,1.56,0.64,1);">' +
         '<div style="padding:12px 16px;background:var(--b24t-accent-grad);border-radius:14px 14px 0 0;display:flex;align-items:center;gap:10px;">' +
           '<span style="font-size:14px;font-weight:700;color:#fff;flex:1;">&#9881; Ustawienia: ' + group.name + '</span>' +
-          '<button id="b24t-os-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;border-radius:5px;padding:2px 8px;font-size:16px;cursor:pointer;">x</button>' +
+          '<button id="b24t-os-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;border-radius:5px;padding:2px 8px;font-size:16px;cursor:pointer;">x</button>' +
         '</div>' +
         '<div style="padding:16px;">' +
           '<div style="font-size:12px;color:var(--b24t-text-muted);margin-bottom:6px;">Tag oznaczajacy <strong>Relevantne</strong>:</div>' +

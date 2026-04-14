@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.33",
+    "date": "2026-04-14",
+    "label": "fix",
+    "changes": [
+      "usunięcie zdublowanego statusu tokenu z subbaru — '● Token' widoczny tylko w meta barze"
+    ]
+  },
+  {
     "version": "0.23.32",
     "date": "2026-04-14",
     "label": "ui",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.30
+// @version      0.23.31
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.30';
+  const VERSION = '0.23.31';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8220,82 +8220,61 @@ function showOnboarding(onComplete) {
         if (_hasSnippet) {
           snippetHtml = '<div style="font-size:9px;color:' + t.textFaint + ';margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + entry.snippet.replace(/"/g,'&quot;') + '">' + entry.snippet.slice(0,80) + '</div>';
         }
-        // Dopasowane chipy — pokazuj dla wszystkich relevantnych URL-i (URL-match i content scan)
-        var chipsHtml = '';
+
+        // Wszystkie badże w jednym wierszu — chips, zone, teaser, typ, data, język, paywall
+        var _metaBadges = [];
+
         var _chips = entry.matchedChips;
         if (_chips && _chips.length > 0 && entry.status !== 'nomatch' && entry.status !== 'blocked' && entry.status !== 'wrongcountry' && entry.status !== 'inproject') {
-          chipsHtml = '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px;">' +
-            _chips.map(function(c) {
-              var safe = c.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-              return '<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);color:#a78bfa;font-family:monospace;">' + safe + '</span>';
-            }).join('') +
-          '</div>';
+          _chips.forEach(function(c) {
+            var safe = c.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);color:#a78bfa;font-family:monospace;">' + safe + '</span>');
+          });
         }
-        // Zone hint — kiedy keyword znaleziony w strefie pobocznej (podpis zdjęcia, adres itp.)
-        var zoneHintHtml = '';
         if (entry.zoneHints && entry.zoneHints.length > 0) {
           var _hintsLabel = entry.zoneHints.join(', ');
-          zoneHintHtml = '<div style="margin-top:2px;"><span style="font-size:8px;padding:1px 5px;border-radius:4px;' +
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;' +
             (entry.secondaryZoneOnly
               ? 'background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);color:#f59e0b;'
               : 'background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.25);color:#a78bfa;') +
             '" title="Keyword znaleziony w: ' + _hintsLabel + '">' +
-            (entry.secondaryZoneOnly ? '\u26a0 tylko w: ' : '+ ') + _hintsLabel +
-          '</span></div>';
+            (entry.secondaryZoneOnly ? '\u26a0 tylko w: ' : '+ ') + _hintsLabel + '</span>');
         }
-
-        // Typ strony — badge dla stron które nie są artykułami (katalogi firm, produkty itp.)
-        var pageTypeBadgeHtml = '';
+        if (isTeaserMatch && entry.teaserChips && entry.teaserChips.length > 0) {
+          var _tc = entry.teaserChips.map(function(c) { return c.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }).join(', ');
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Keyword \'' + _tc + '\' wyst\u0105pi\u0142 tylko w sekcji polecanych artyku\u0142\u00f3w \u2014 nie w g\u0142\u00f3wnej tre\u015bci">w polecanym art.</span>');
+        }
         var _pt = entry.pageType;
         if (_pt === 'nonArticle') {
-          pageTypeBadgeHtml = '<div style="margin-top:2px;"><span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Brak sygnałów że to artykuł/news (og:type, JSON-LD, published_time, &lt;time&gt;, paragraphs)">\u{1f4c4} nie-artyku\u0142</span></div>';
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Brak sygnałów że to artykuł/news (og:type, JSON-LD, published_time, &lt;time&gt;, paragraphs)">\u{1f4c4} nie-artyku\u0142</span>');
         } else if (_pt === 'uncertain') {
           var _sigList = (entry.pageTypeSignals || []).join(', ');
-          pageTypeBadgeHtml = '<div style="margin-top:2px;"><span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);color:#d97706;" title="Tylko 1 sygna\u0142 artyku\u0142u: ' + _sigList + '">? typ niepewny</span></div>';
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);color:#d97706;" title="Tylko 1 sygna\u0142 artyku\u0142u: ' + _sigList + '">? typ niepewny</span>');
         }
-
-        // Data publikacji — zielona (świeża), amber (31-60 dni), czerwona (>60 dni / stale)
-        var dateBadgeHtml = '';
         if (entry.articleDate) {
           var _diffD = (Date.now() - new Date(entry.articleDate).getTime()) / 86400000;
           var _dc = _diffD > 60 ? '#f87171' : _diffD > 30 ? '#f59e0b' : '#4ade80';
           var _db = _diffD > 60 ? 'rgba(239,68,68,0.10)' : _diffD > 30 ? 'rgba(245,158,11,0.10)' : 'rgba(34,197,94,0.10)';
           var _dbd = _diffD > 60 ? 'rgba(239,68,68,0.3)' : _diffD > 30 ? 'rgba(245,158,11,0.3)' : 'rgba(34,197,94,0.25)';
           var _staleTitle = _diffD > 60 ? ' — zbyt stary artyku\u0142 (&gt;60 dni)' : '';
-          dateBadgeHtml = '<div style="margin-top:2px;"><span style="font-size:8px;padding:1px 5px;border-radius:4px;background:' + _db + ';border:1px solid ' + _dbd + ';color:' + _dc + ';" title="Data publikacji' + _staleTitle + '">' + entry.articleDate + '</span></div>';
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:' + _db + ';border:1px solid ' + _dbd + ';color:' + _dc + ';" title="Data publikacji' + _staleTitle + '">' + entry.articleDate + '</span>');
         }
-
-        // Wykryty język strony
-        var langBadgeHtml = '';
         if (entry.pageLang) {
-          langBadgeHtml = '<div style="margin-top:2px;"><span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.25);color:#a78bfa;" title="Wykryty j\u0119zyk strony">' + entry.pageLang + '</span></div>';
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.25);color:#a78bfa;" title="Wykryty j\u0119zyk strony">' + entry.pageLang + '</span>');
         }
-
-        // Paywall — strona za blokadą (treść ukryta lub wymaga subskrypcji)
-        var paywallBadgeHtml = '';
         if (entry.isPaywall) {
-          paywallBadgeHtml = '<div style="margin-top:2px;"><span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);color:#f59e0b;" title="Strona za paywallem lub blokad\u0105 — tre\u015b\u0107 mo\u017ce by\u0107 niepe\u0142na">\uD83D\uDD12 paywall</span></div>';
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);color:#f59e0b;" title="Strona za paywallem lub blokad\u0105 — tre\u015b\u0107 mo\u017ce by\u0107 niepe\u0142na">\uD83D\uDD12 paywall</span>');
         }
-
-        // Teasermatch — keyword znaleziony tylko w sekcji polecanych/powiązanych artykułów
-        var teaserBadgeHtml = '';
-        if (isTeaserMatch && entry.teaserChips && entry.teaserChips.length > 0) {
-          var _tc = entry.teaserChips.map(function(c) { return c.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }).join(', ');
-          teaserBadgeHtml = '<div style="margin-top:2px;"><span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Keyword \'' + _tc + '\' wyst\u0105pi\u0142 tylko w sekcji polecanych artyku\u0142\u00f3w \u2014 nie w g\u0142\u00f3wnej tre\u015bci">w polecanym art.</span></div>';
-        }
+        var metaLineHtml = _metaBadges.length > 0
+          ? '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px;">' + _metaBadges.join('') + '</div>'
+          : '';
 
         row.innerHTML =
           '<span style="flex-shrink:0;width:14px;text-align:center;font-size:12px;font-weight:700;color:' + sd.color + ';" title="' + sd.label + '">' + sd.dot + '</span>' +
           '<div style="flex:1;min-width:0;">' +
             '<div style="font-size:10px;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + t.text + ';" title="' + entry.url.replace(/"/g, '&quot;') + '">' + shortUrl + '</div>' +
             snippetHtml +
-            chipsHtml +
-            zoneHintHtml +
-            teaserBadgeHtml +
-            pageTypeBadgeHtml +
-            dateBadgeHtml +
-            langBadgeHtml +
-            paywallBadgeHtml +
+            metaLineHtml +
           '</div>' +
           (isScanning ? '' : '<button class="b24t-news-del-btn" style="flex-shrink:0;font-size:11px;width:18px;height:18px;line-height:1;border-radius:4px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Usu\u0144 z listy">\u2715</button>');
 
@@ -8993,6 +8972,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.31",
+      "date": "2026-04-14",
+      "label": "ui",
+      "labelColor": "#8b5cf6",
+      "changes": [
+        {"type": "ui", "text": "kompaktowy widok listy URL w panelu News — wszystkie badże (słowo kluczowe, data, język, nie-artykuł, paywall) w jednym wierszu zamiast stackowania wertykalnego"}
+      ]
+    },
+    {
       "version": "0.23.30",
       "date": "2026-04-14",
       "label": "feat",
@@ -9090,17 +9078,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "NO_MATCH hint: gdy domena jest w mapie i tryb Untagged — informuje ze wzmianka moze byc juz otagowana (mapa Untagged pomija wzmianki z istniejacym tagiem)"}
-      ]
-    },
-    {
-      "version": "0.23.21",
-      "date": "2026-04-13",
-      "label": "feat",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "feat", "text": "Pominięte wiersze: eksport CSV z oryginalnymi danymi pliku + powód (NO_MATCH/TRUNCATED/NO_MAPPING) + diagnostyka"},
-        {"type": "feat", "text": "NO_MATCH: hint per wiersz — domena nieobecna w Brand24 lub konkretny URL nie znaleziony (z przykładem z mapy)"},
-        {"type": "fix", "text": "mapSamplesByDomain: pokrywa wszystkie domeny mapy (było tylko 30 pierwszych kluczy)"}
       ]
     },
   ];

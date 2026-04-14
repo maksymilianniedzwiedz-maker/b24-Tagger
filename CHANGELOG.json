@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.23.28",
+    "date": "2026-04-14",
+    "label": "fix",
+    "changes": [
+      "lepsze wykrywanie strefy artykułu: CMS fallbacks (WordPress entry-content, post-content; magazyny article__body, story-body; role=article) przed fallbackiem do doc.body",
+      "rozszerzone wzorce dat: itemprop datePublished, publishdate, Dublin Core, data-date, time z apostrofem, dateModified jako ostatnia instancja",
+      "revert: usunięto blind content autofill z fetchPageInfo (wklejał pierwszy akapit bez związku ze słowem kluczowym)"
+    ]
+  },
+  {
     "version": "0.23.27",
     "date": "2026-04-14",
     "label": "feature",

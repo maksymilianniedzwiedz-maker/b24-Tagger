@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.23.27",
+    "date": "2026-04-14",
+    "label": "feature",
+    "changes": [
+      "paywall: rozróżnienie twardych blokad (access-denied, subscriber-only) od słabych sygnałów (piano, tinypass) — słabe flagują tylko gdy body < 1200 znaków",
+      "paywall: próg fallback obniżony do html > 80 KB + body < 600 znaków (poprzednio 120 KB / 400 znaków)",
+      "autofill tytułu: h1 z article/main > meta content_title > og:title > title (poprzednio tylko og:title/title)",
+      "autofill treści: pierwszy akapit z article/main wypełnia pole Treść gdy jest puste",
+      "badge języka strony w liście URLi po skanowaniu (fioletowy, np. 'pl', 'cs')",
+      "hint języka projektu w formularzu pod polem KRAJ (np. 'lang: cs, sk')"
+    ]
+  },
+  {
     "version": "0.23.26",
     "date": "2026-04-14",
     "label": "feature",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.19.17
+// @version      0.23.35
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -14,6 +14,7 @@
 // @connect       hooks.slack.com
 // @connect       raw.githubusercontent.com
 // @connect       cdn.jsdelivr.net
+// @connect       *
 // @run-at       document-start
 // ==/UserScript==
 
@@ -112,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.19.17';
+  const VERSION = '0.23.35';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -136,8 +137,20 @@
     NEWS_SESSION_URLS:'b24tagger_news_session_urls',
     NEWS_LANG_MAP:    'b24tagger_news_lang_map',
     NEWS_WIN_SIZE:    'b24tagger_news_win_size',
+    WELCOME_SHOWN:    'b24tagger_welcome_shown_v0210',
+    UPDATE_CHANNEL:   'b24tagger_update_channel',
+    MONTH_CLOSE_DONE: 'b24tagger_month_close_done',
+    DEL_BATCH:        'b24tagger_del_batch',
+    DEL_BATCH_WARNED: 'b24tagger_del_batch_warned',
   };
-  const MAX_BATCH_SIZE = 50;
+  const MAX_BATCH_SIZE = 500;
+  const DEL_BATCH_DEFAULT = 25; // domyślny batch równoległych deletów (edytowalny w UI)
+  const BASE_PANEL_W = 440; // bazowa szerokość głównego panelu — punkt odniesienia dla zoomu
+  let MAP_FETCH_CONCURRENCY = 8; // równoległość pobierania stron w buildUrlMap (fallback: 3)
+  const STATS_FETCH_CONCURRENCY = 10; // równoległość pobierania projektów w _fetchOverallStats
+  const BG_CONCURRENCY  = 5; // równoległość prefetchu danych annotatorskich w tle
+  const QT_CONCURRENCY  = 2; // równoległość batchów w Quick Tag / Quick Untag
+  const TAG_CONCURRENCY = 2; // równoległość batchów bulkTag w runTagging
   const HEALTH_CHECK_INTERVAL = 30000;
   const ACTION_TIMEOUT_WARN = 10000;
   const RETRY_DELAYS = [2000, 4000, 8000, 12000, 20000]; // 5 prób — Brand24 API czasem losowo failuje
@@ -166,17 +179,24 @@
     totalPages: 0,
     pageSize: 60,
     stats: { tagged: 0, skipped: 0, noMatch: 0, conflicts: 0 },
+    failedMentions: [],   // wzmianki które nie mogły być otagowane przez fallback
+    skippedRows: [],      // wiersze z pliku pominięte (NO_MATCH, TRUNCATED_URL, NO_MAPPING, NO_ASSESSMENT)
     logs: [],
     sessionStart: null,
     lastActionTime: null,
     testRunMode: false,
     mapMode: 'untagged',     // untagged | full
-    conflictMode: 'ignore',  // ask | ignore | overwrite
+    conflictMode: 'ignore',  // ask | ignore | overwrite | multitag
     switchViewOnDone: false,
     switchViewTagId: null,
     autoPartition: false,
     partitionLimit: 1000,
+    _sniffUiTag: false,
+    _netMonitor: null,
   };
+
+  // Batch size dla masowego usuwania — domyślnie DEL_BATCH_DEFAULT, edytowalny przez UI
+  let _deleteBatch = DEL_BATCH_DEFAULT;
 
   // ───────────────────────────────────────────
   // LOCAL STORAGE HELPERS
@@ -337,8 +357,8 @@
         }
       } catch(e) {}
     }
-    // UI TAG SNIFF: przechwytuj KAŻDĄ mutację tagowania wysłaną przez Brand24 UI
-    // (żeby zobaczyć jak UI taguje, skoro bulkTagMentions crashuje)
+    // [DEV TOOL] UI TAG SNIFF: przechwytuje mutacje tagowania UI Brand24
+    // Aktywuj z konsoli: B24Tagger.debug.sniffUiTag() — loguje jeden request i wyłącza się
     if (state._sniffUiTag && url.includes('graphql') && bodyStr.includes('mutation') &&
         (bodyStr.toLowerCase().includes('tag') || bodyStr.toLowerCase().includes('label'))) {
       try {
@@ -354,7 +374,8 @@
     }
     const res = await origFetch.apply(this, args);
 
-    // NET_MONITOR: przechwytuj odpowiedzi getMentions i loguj URL-e których nie ma w mapie
+    // [DEV TOOL] NET_MONITOR: monitoruje odpowiedzi getMentions
+    // Aktywuj z konsoli: b24tagger.netMonitor(shortcodes)
     if (state._netMonitor && url.includes('graphql') && bodyStr.includes('getMentions')) {
       try {
         const clone = res.clone();
@@ -389,41 +410,115 @@
   // GRAPHQL HELPERS
   // ───────────────────────────────────────────
 
-  async function gql(operationName, variables, query) {
-    if (!state.tokenHeaders) throw new Error('TOKEN_NOT_READY');
+  // Kategoryzuje błąd i zwraca { src, hint } — używane w logach i raporcie końcowym
+  // src: 'BRAND24' | 'SIEĆ' | 'AUTORYZACJA' | 'PLIK' | 'PLUGIN'
+  function _errContext(msg) {
+    const m = String(msg || '');
+    const ml = m.toLowerCase();
+    if (m === 'TOKEN_NOT_READY')
+      return { src: 'AUTORYZACJA', hint: 'Token autoryzacji nie jest gotowy — odśwież stronę Brand24 i poczekaj na załadowanie, potem wznów.' };
+    if (m === 'GRAPHQL_AUTH_ERROR' || m.includes('GRAPHQL_HTTP_ERROR_401'))
+      return { src: 'AUTORYZACJA', hint: 'Sesja Brand24 wygasła — zaloguj się ponownie i kliknij Wznów.' };
+    if (m === 'GRAPHQL_PERMISSION_DENIED' || m.includes('GRAPHQL_HTTP_ERROR_403'))
+      return { src: 'AUTORYZACJA', hint: 'Brak uprawnień do tagowania w tym projekcie — sprawdź rolę konta w Brand24.' };
+    if (m.includes('GRAPHQL_HTTP_ERROR_400'))
+      return { src: 'PLUGIN', hint: 'Brand24 odrzucił zapytanie jako nieprawidłowe (400) — prawdopodobny błąd formatu. Wyślij Bug Report przez Feedback.' };
+    if (m.includes('GRAPHQL_HTTP_ERROR_404'))
+      return { src: 'BRAND24', hint: 'Endpoint API nie istnieje (404) — Brand24 mógł zmienić API. Sprawdź aktualizacje wtyczki.' };
+    if (m.includes('GRAPHQL_HTTP_ERROR_429'))
+      return { src: 'BRAND24', hint: 'Zbyt wiele zapytań — Brand24 zablokował ruch (rate limit). Poczekaj ok. minutę i wznów.' };
+    if (m.includes('GRAPHQL_HTTP_ERROR_500'))
+      return { src: 'BRAND24', hint: 'Wewnętrzny błąd serwera Brand24 (500) — spróbuj ponownie za chwilę.' };
+    if (m.includes('GRAPHQL_HTTP_ERROR_502') || m.includes('GRAPHQL_HTTP_ERROR_503') || m.includes('GRAPHQL_HTTP_ERROR_504'))
+      return { src: 'BRAND24', hint: 'Brand24 tymczasowo niedostępny — spróbuj za kilka minut.' };
+    if (m.includes('GRAPHQL_HTTP_ERROR_'))
+      return { src: 'BRAND24', hint: `Nieoczekiwany błąd HTTP Brand24 (${m}) — sprawdź logi powyżej.` };
+    if (m === 'GRAPHQL_ERROR')
+      return { src: 'BRAND24', hint: 'Brand24 API zwróciło błąd GQL — sprawdź logi [BRAND24/GQL] powyżej.' };
+    if (ml.includes('failed to fetch') || ml.includes('networkerror') || ml.includes('network error') || ml.includes('net::'))
+      return { src: 'SIEĆ', hint: 'Brak połączenia z Brand24 — sprawdź internet i wznów sesję.' };
+    if (ml.includes('timeout') || ml.includes('timed out'))
+      return { src: 'SIEĆ', hint: 'Zapytanie przekroczyło limit czasu — sprawdź połączenie i wznów.' };
+    // UserError messages z Brand24 bulkTagMentions / bulkUntagMentions
+    if (ml.includes('not found') || ml.includes('nie znalezion') || ml.includes('does not exist'))
+      return { src: 'BRAND24', hint: 'Wzmianka nie istnieje lub została usunięta z Brand24. Możliwe że pochodzi z innego projektu lub okresu.' };
+    if ((ml.includes('invalid') || ml.includes('nieprawidłow')) && (ml.includes('id') || ml.includes('mention')))
+      return { src: 'PLIK', hint: 'ID wzmianki jest nieprawidłowe — sprawdź czy plik pochodzi z tego samego projektu Brand24.' };
+    if (ml.includes('tag') && (ml.includes('not found') || ml.includes('invalid') || ml.includes('nie znalezion')))
+      return { src: 'BRAND24', hint: 'Tag nie istnieje lub został usunięty w Brand24 — sprawdź mapowanie tagów.' };
+    if (ml.includes('permission') || ml.includes('access denied') || ml.includes('forbidden') || ml.includes('unauthorized'))
+      return { src: 'AUTORYZACJA', hint: 'Brak uprawnień do tej wzmianki lub projektu — sprawdź rolę konta.' };
+    if (ml.includes('quota') || ml.includes('limit exceeded') || ml.includes('too many'))
+      return { src: 'BRAND24', hint: 'Przekroczono limit Brand24 — poczekaj chwilę i wznów.' };
+    return { src: 'BRAND24', hint: 'Nieoczekiwana odpowiedź Brand24 — możliwy tymczasowy błąd lub zmiana API. Spróbuj ponownie.' };
+  }
+
+  async function gql(operationName, variables, query, opts) {
+    if (!state.tokenHeaders) {
+      addLog(`✕ [AUTORYZACJA] ${operationName} — token autoryzacji nie gotowy. Odśwież stronę Brand24.`, 'error');
+      throw new Error('TOKEN_NOT_READY');
+    }
     const res = await origFetch('/api/graphql', {
       method: 'POST',
       credentials: 'same-origin',
       headers: state.tokenHeaders,
       body: JSON.stringify({ operationName, variables, query }),
     });
-    if (res.status === 401) throw new Error('GRAPHQL_AUTH_ERROR');
+    if (res.status === 401) {
+      addLog(`✕ [AUTORYZACJA] ${operationName} — sesja wygasła (HTTP 401). Zaloguj się ponownie i kliknij Wznów.`, 'error');
+      throw new Error('GRAPHQL_AUTH_ERROR');
+    }
     if (!res.ok) {
-      // Loguj raw body żeby zobaczyć co Brand24 faktycznie zwraca przy błędzie
       let rawBody = '';
       try { rawBody = await res.text(); } catch(e) {}
       const bodySnippet = rawBody.substring(0, 200).replace(/\n/g, ' ');
-      addLog(`⚠ [DIAG/HTTP] ${operationName} HTTP ${res.status}: "${bodySnippet}"`, 'warn');
+      const _statusLabels = {
+        400: '[PLUGIN] Brand24 odrzucił zapytanie jako nieprawidłowe (400) — prawdopodobny błąd formatu. Wyślij Bug Report.',
+        403: '[AUTORYZACJA] Brand24 odmawia dostępu (403) — sprawdź uprawnienia konta do projektu.',
+        404: '[BRAND24] Endpoint API nie istnieje (404) — Brand24 mógł zmienić API. Sprawdź aktualizacje wtyczki.',
+        429: '[BRAND24] Zbyt wiele zapytań (429) — Brand24 zablokował ruch. Poczekaj ok. minutę i wznów.',
+        500: '[BRAND24] Wewnętrzny błąd serwera Brand24 (500) — spróbuj ponownie za chwilę.',
+        502: '[BRAND24] Brand24 niedostępny (502) — spróbuj za kilka minut.',
+        503: '[BRAND24] Brand24 tymczasowo niedostępny (503) — spróbuj za kilka minut.',
+        504: '[BRAND24] Brand24 timeout (504) — spróbuj ponownie.',
+      };
+      const desc = _statusLabels[res.status] || `[BRAND24] Nieoczekiwany błąd HTTP ${res.status}`;
+      addLog(`✕ ${desc}\n  Operacja: ${operationName} | Odpowiedź: "${bodySnippet}"`, 'error');
       throw new Error(`GRAPHQL_HTTP_ERROR_${res.status}`);
     }
     const data = await res.json();
     if (data.errors) {
-      addLog(`⚠ [DIAG/GQL] ${operationName} GQL error: ${JSON.stringify(data.errors).substring(0, 200)}`, 'warn');
-      throw new Error(data.errors[0]?.message || 'GRAPHQL_ERROR');
+      const _errCode = data.errors[0]?.extensions?.code;
+      const _errMsg = data.errors[0]?.message || 'GRAPHQL_ERROR';
+      if (_errCode === 'PERMISSION_DENIED') {
+        if (!opts?.silent) addLog(`✕ [AUTORYZACJA] ${operationName} — brak uprawnień (PERMISSION_DENIED). Sprawdź rolę konta w Brand24.`, 'error');
+        throw new Error('GRAPHQL_PERMISSION_DENIED');
+      }
+      if (_errCode === 'UNAUTHENTICATED' || _errMsg.toLowerCase().includes('unauthenticated')) {
+        addLog(`✕ [AUTORYZACJA] ${operationName} — token nieważny (${_errCode || _errMsg}). Zaloguj się ponownie.`, 'error');
+        throw new Error('GRAPHQL_AUTH_ERROR');
+      }
+      addLog(`✕ [BRAND24/GQL] ${operationName} — błąd API: "${_errMsg}" (code: ${_errCode || 'brak'})`, 'error');
+      throw new Error(_errMsg || 'GRAPHQL_ERROR');
     }
     return data.data;
   }
 
-  async function gqlRetry(operationName, variables, query, retries = 3) {
+  async function gqlRetry(operationName, variables, query, retries = 3, opts) {
     for (let i = 0; i < retries; i++) {
       try {
-        return await gql(operationName, variables, query);
+        return await gql(operationName, variables, query, opts);
       } catch (e) {
-        if (e.message === 'GRAPHQL_AUTH_ERROR') throw e;
+        if (e.message === 'GRAPHQL_AUTH_ERROR' || e.message === 'GRAPHQL_PERMISSION_DENIED' || e.message === 'TOKEN_NOT_READY') throw e;
         if (i < retries - 1) {
-          addLog(`⚠ Retry ${i + 1}/${retries}: ${e.message}`, 'warn');
+          const ctx = _errContext(e.message);
+          addLog(`⚠ [${ctx.src}] Retry ${i + 1}/${retries - 1} dla ${operationName}: ${e.message}`, 'warn');
           await sleep(RETRY_DELAYS[i]);
-        } else throw e;
+        } else {
+          const ctx = _errContext(e.message);
+          addLog(`✕ [${ctx.src}] ${operationName} — wszystkie retries wyczerpane (${retries}×): ${e.message}\n  → ${ctx.hint}`, 'error');
+          throw e;
+        }
       }
     }
   }
@@ -448,7 +543,7 @@
     return data.createTag;
   }
 
-  async function getMentions(projectId, dateFrom, dateTo, gr, page) {
+  async function getMentions(projectId, dateFrom, dateTo, gr, page, opts) {
     const variables = {
       projectId,
       dateRange: { from: dateFrom, to: dateTo },
@@ -476,7 +571,7 @@
           tags { id title }
         }
       }
-    }`);
+    }`, 3, opts);
     return data.getMentions;
   }
 
@@ -485,18 +580,7 @@
       addLog(`[TEST] bulkTag: ${mentionsIds.length} IDs → tagId ${tagId}`, 'info');
       return { success: true, testRun: true };
     }
-    // DIAG: pokaż pierwsze 3 ID i typ przed wysłaniem
-    const _diagTagName = Object.entries(state.tags).find(([,id]) => id === tagId)?.[0] || 'NIE ZNALEZIONO W state.tags';
-    const _diagAllTagIds = Object.values(state.tags).join(',');
-    addLog(
-      `[DIAG/BULK] Wysyłam:\n` +
-      `  mentionsIds[0..2]: ${JSON.stringify(mentionsIds.slice(0,3))}\n` +
-      `  types: ${mentionsIds.slice(0,3).map(x=>typeof x).join(',')}\n` +
-      `  tagId: ${tagId} (${typeof tagId}) → nazwa: "${_diagTagName}"\n` +
-      `  wszystkie tagId w state.tags: [${_diagAllTagIds}]\n` +
-      `  projectId: ${state.projectId}`,
-      'info'
-    );
+
     const data = await gqlRetry('bulkTagMentions', { mentionsIds, tagId }, `mutation bulkTagMentions(
       $mentionsIds: [IntString!]!, $tagId: Int!
     ) {
@@ -504,7 +588,12 @@
         ... on UserError { message }
       }
     }`, 5); // 5 retry — Brand24 Internal server error jest losowy
-    if (data.bulkTagMentions?.message) throw new Error(data.bulkTagMentions.message);
+    if (data.bulkTagMentions?.message) {
+      const brandMsg = data.bulkTagMentions.message;
+      const ctx = _errContext(brandMsg);
+      addLog(`✕ [${ctx.src}] bulkTagMentions UserError (${mentionsIds.length} IDs, tagId=${tagId}): "${brandMsg}"\n  → ${ctx.hint}`, 'error');
+      throw new Error(brandMsg);
+    }
     return { success: true };
   }
 
@@ -520,7 +609,12 @@
         ... on UserError { message }
       }
     }`);
-    if (data.bulkUntagMentions?.message) throw new Error(data.bulkUntagMentions.message);
+    if (data.bulkUntagMentions?.message) {
+      const brandMsg = data.bulkUntagMentions.message;
+      const ctx = _errContext(brandMsg);
+      addLog(`✕ [${ctx.src}] bulkUntagMentions UserError (${mentionsIds.length} IDs, tagId=${tagId}): "${brandMsg}"\n  → ${ctx.hint}`, 'error');
+      throw new Error(brandMsg);
+    }
     return { success: true };
   }
 
@@ -562,22 +656,80 @@
   // ───────────────────────────────────────────
 
   function parseCSV(text) {
-    const lines = text.trim().split('\n');
-    if (!lines.length) return [];
-    const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-    return lines.slice(1).map(line => {
-      const vals = line.match(/(".*?"|[^,]+|(?<=,)(?=,)|(?<=,)$|^(?=,))/g) || [];
-      const row = {};
-      headers.forEach((h, i) => {
-        row[h] = (vals[i] || '').trim().replace(/^"|"$/g, '');
-      });
-      return row;
-    });
+    const str = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+    if (!str) return [];
+    // Auto-detect separator
+    const firstLine = str.split('\n')[0];
+    const sep = (firstLine.split(';').length > firstLine.split(',').length) ? ';' : ',';
+
+    // Parser state-machine — obsługuje "" (escaped quote) wewnątrz pól
+    function parseRow(pos) {
+      const row = [];
+      while (pos <= str.length) {
+        if (str[pos] === '"') {
+          pos++;
+          let val = '';
+          while (pos < str.length) {
+            if (str[pos] === '"') {
+              if (str[pos + 1] === '"') { val += '"'; pos += 2; }
+              else { pos++; break; }
+            } else { val += str[pos++]; }
+          }
+          row.push(val);
+        } else {
+          let val = '';
+          while (pos < str.length && str[pos] !== sep && str[pos] !== '\n') val += str[pos++];
+          row.push(val.trim());
+        }
+        if (pos < str.length && str[pos] === sep) pos++;
+        else break;
+      }
+      return { row, pos };
+    }
+
+    let pos = 0, headers = null;
+    const rows = [];
+    while (pos < str.length) {
+      const { row, pos: next } = parseRow(pos);
+      pos = next;
+      if (pos < str.length && str[pos] === '\n') pos++;
+      if (!headers) { headers = row; }
+      else if (row.length > 0 && !(row.length === 1 && row[0] === '')) {
+        const obj = {};
+        headers.forEach((h, i) => { obj[h] = row[i] ?? ''; });
+        rows.push(obj);
+      }
+    }
+    return rows;
   }
 
   function parseJSON(text) {
     const data = JSON.parse(text);
     return Array.isArray(data) ? data : [data];
+  }
+
+  // Post-processing po parsowaniu — tylko loguje podejrzane wartości, nie modyfikuje
+  function sanitizeInputRows(rows) {
+    const SCI_RE = /^-?\d+\.?\d*[eE][+\-]\d+$/;
+    const warnings = [];
+
+    rows.forEach((row, i) => {
+      Object.keys(row).forEach(col => {
+        const val = row[col];
+        if (!val) return;
+        if (SCI_RE.test(String(val).trim())) {
+          warnings.push(`Wiersz ${i + 2}, kolumna "${col}": wartość wygląda jak sci notation: "${val}"`);
+        }
+      });
+    });
+
+    if (warnings.length) {
+      addLog(`[INTEGRITY] ${warnings.length} podejrzanych wartości w pliku wejściowym:`, 'warn');
+      warnings.slice(0, 10).forEach(w => addLog('  ' + w, 'warn'));
+      if (warnings.length > 10) addLog(`  ...i ${warnings.length - 10} więcej`, 'warn');
+    }
+
+    return rows;
   }
 
   function autoDetectColumns(rows) {
@@ -587,7 +739,8 @@
 
     // Assessment column FIRST - detect before date to avoid false matches
     // Krok 1: szukaj po dokładnej nazwie kolumny (najwyższy priorytet)
-    const ASSESSMENT_NAMES = ['assessment', 'label', 'ocena', 'flag', 'classification', 'klasa', 'class'];
+    const ASSESSMENT_NAMES = ['assessment', 'label', 'ocena', 'flag', 'classification', 'klasa', 'class',
+      'verdict', 'relevance', 'decision', 'annotation', 'etykieta'];
     // Kolumny które NIE są assessment — wyklucz je z heurystyki
     const SOURCE_NAMES = ['source', 'platform', 'channel', 'medium', 'site', 'domain', 'network',
       'source_type', 'mention_source', 'type', 'media_type', 'content_type'];
@@ -608,8 +761,8 @@
         const looksLikeDate = /\d{4}-\d{2}-\d{2}/.test(sampleVal);
         const looksLikeId = /^[a-f0-9]{20,}$/.test(sampleVal) || /^\d{15,}$/.test(sampleVal);
         const looksLikeUrl = /^https?:\/\//.test(sampleVal);
-        // Wartości assessment to typowo słowa uppercase (RELEVANT, IRRELEVANT etc.)
-        const looksLikeAssessment = [...vals].some(v => /^[A-Z_]{3,}$/.test(v));
+        // Wartości assessment: uppercase (RELEVANT) lub lowercase słowa (relevant) — nie cyfry/URL/daty
+        const looksLikeAssessment = [...vals].some(v => /^[A-Z_]{3,}$/.test(v) || /^[a-z_]{3,}$/.test(v));
         return isLikelyLabel && !looksLikeDate && !looksLikeId && !looksLikeUrl && looksLikeAssessment;
       });
     }
@@ -625,7 +778,8 @@
     // Date column - exclude assessment column
     const dateCol = headers.find(h => {
       if (h === assessmentCol) return false;
-      if (['created_date', 'date', 'createddate', 'crawled_date', 'creation_date'].includes(h.toLowerCase())) return true;
+      if (['created_date', 'date', 'createddate', 'crawled_date', 'creation_date',
+           'published_at', 'timestamp', 'datetime', 'published_date'].includes(h.toLowerCase())) return true;
       return rows.slice(0, 5).some(r => /\d{4}-\d{2}-\d{2}/.test(String(r[h] || '')));
     });
     if (dateCol) detected.date = dateCol;
@@ -633,7 +787,7 @@
     // URL column - exclude already detected columns
     const urlCol = headers.find(h => {
       if (h === assessmentCol || h === dateCol) return false;
-      if (['url', 'link', 'source_url'].includes(h.toLowerCase())) return true;
+      if (['url', 'link', 'source_url', 'permalink', 'post_url', 'mention_url', 'href', 'uri'].includes(h.toLowerCase())) return true;
       return rows.slice(0, 5).some(r => /^https?:\/\//.test(r[h] || ''));
     });
     if (urlCol) detected.url = urlCol;
@@ -657,9 +811,14 @@
     let minDate = null, maxDate = null;
 
     rows.forEach(row => {
-      const assessment = colMap.assessment ? (row[colMap.assessment] || '').trim() : '';
-      if (!assessment) { noAssessment++; return; }
-      assessments[assessment] = (assessments[assessment] || 0) + 1;
+      const assessmentRaw = colMap.assessment ? (row[colMap.assessment] || '').trim() : '';
+      if (!assessmentRaw) { noAssessment++; return; }
+      // Multi-assessment: split po "|", każda część liczy się osobno
+      const assessmentParts = assessmentRaw.split('|').map(a => a.trim()).filter(Boolean);
+      if (!assessmentParts.length) { noAssessment++; return; }
+      assessmentParts.forEach(a => {
+        assessments[a] = (assessments[a] || 0) + 1;
+      });
 
       const dateStr = colMap.date ? row[colMap.date] : null;
       if (dateStr) {
@@ -679,7 +838,6 @@
   async function buildUrlMap(dateFrom, dateTo, untaggedOnly) {
     const gr = untaggedOnly ? [state.untaggedId] : [];
     const map = {};
-    const CONCURRENCY = 10;
     const diag = {
       step: 'init',
       dateFrom, dateTo, untaggedOnly,
@@ -709,7 +867,7 @@
     // ── KROK 2: walidacja untaggedId ────────────────────────────────────
     diag.step = 'untagged_id';
     if (untaggedOnly) {
-      if (!state.untaggedId || state.untaggedId === 1) {
+      if (!state.untaggedId) {
         addLog(`⚠ [DIAG/UNTAGGED] untaggedId=${state.untaggedId} — wartość domyślna, możliwe że tag "Untagged" nie został poprawnie wykryty.`, 'warn');
       } else {
         addLog(`ℹ [DIAG/UNTAGGED] Filtr Untagged aktywny, gr=[${state.untaggedId}]`, 'info');
@@ -783,60 +941,67 @@
       return map;
     }
 
-    // ── KROK 6: pozostałe strony SEKWENCYJNIE ───────────────────────────
-    // Parallel powoduje niestabilną paginację Brand24 — te same wzmianki pojawiają się
-    // na wielu stronach gdy sortowanie jest niestabilne przy concurrent requests.
+    // ── KROK 6: pozostałe strony — sliding window pool (MAP_FETCH_CONCURRENCY workerów) ──
+    // Każdy worker od razu bierze kolejną stronę po zakończeniu — nie ma "najwolniejszego
+    // w batchu" który blokuje całą rundę. Deduplication przez mentionIdsSeen.
     diag.step = 'build_map_pages';
     let fetched = 1;
     let pageErrors = 0;
+    let allDupeIds = 0;
     const mentionIdsSeen = new Set();
     first.results.forEach(m => { if (m.id) mentionIdsSeen.add(String(m.id)); });
 
-    for (let p = 2; p <= totalPages; p++) {
-      if (state.status !== 'running') break;
-      let result;
-      try {
-        result = await getMentions(state.projectId, dateFrom, dateTo, gr, p);
-      } catch(e) {
-        pageErrors++;
-        addLog(`⚠ [DIAG/API] Błąd strony ${p}: ${e.message}`, 'warn');
-        continue;
-      }
-      if (!result || !result.results) {
-        pageErrors++;
-        addLog(`⚠ [DIAG/API] Strona ${p}: null response`, 'warn');
-        continue;
-      }
-      let pageDupeIds = 0;
-      result.results.forEach(m => {
-        const matchUrl = m.url || m.openUrl;
-        const idStr = String(m.id);
-        if (mentionIdsSeen.has(idStr)) {
-          pageDupeIds++;
-          diag.dupeKeys++;
-          return; // pomiń duplikat — ta wzmianka już jest w mapie
-        }
-        mentionIdsSeen.add(idStr);
-        if (matchUrl) {
-          const key = normalizeUrl(matchUrl);
-          if (map[key]) diag.dupeKeys++; // URL dupe — inny ID, ten sam URL
-          map[key] = { id: String(m.id), existingTags: m.tags || [] };
-        } else {
-          diag.urlFieldEmpty++;
-        }
-      });
-      if (pageDupeIds > 0) {
-        addLog(`⚠ [DIAG/PAGINATION] Strona ${p}: ${pageDupeIds} duplikatów ID — Brand24 niestabilna paginacja`, 'warn');
-      }
-      fetched++;
-      diag.fetchedPages = fetched;
-      updateProgress('map', fetched, totalPages);
-      if (p % 10 === 0 || p === totalPages) {
-        addLog(`→ Mapa: ${fetched}/${totalPages} stron (${Object.keys(map).length} wzmianek)`, 'info');
-      }
-      await sleep(50);
-    }
+    const _mapTStart = Date.now();
+    let _poolNextPage = 2; // shared counter — atomowy w JS (single-threaded)
 
+    const _mapWorker = async () => {
+      while (true) {
+        if (state.status !== 'running') break;
+        const p = _poolNextPage;
+        if (p > totalPages) break;
+        _poolNextPage++;
+        const result = await getMentions(state.projectId, dateFrom, dateTo, gr, p)
+          .catch(e => ({ _err: e.message, _page: p }));
+        if (result && result._err !== undefined) {
+          pageErrors++;
+          addLog(`⚠ [DIAG/API] Błąd strony ${p}: ${result._err}`, 'warn');
+          continue;
+        }
+        if (!result || !result.results) {
+          pageErrors++;
+          addLog(`⚠ [DIAG/API] Strona ${p}: null response`, 'warn');
+          continue;
+        }
+        let pageDupeIds = 0;
+        result.results.forEach(m => {
+          const matchUrl = m.url || m.openUrl;
+          const idStr = String(m.id);
+          if (mentionIdsSeen.has(idStr)) { pageDupeIds++; diag.dupeKeys++; allDupeIds++; return; }
+          mentionIdsSeen.add(idStr);
+          if (matchUrl) {
+            const key = normalizeUrl(matchUrl);
+            if (map[key]) diag.dupeKeys++;
+            map[key] = { id: String(m.id), existingTags: m.tags || [] };
+          } else {
+            diag.urlFieldEmpty++;
+          }
+        });
+        if (pageDupeIds > 0) {
+          addLog(`⚠ [DIAG/PAGINATION] Strona ${p}: ${pageDupeIds} duplikatów ID — Brand24 niestabilna paginacja`, 'warn');
+        }
+        fetched++;
+        diag.fetchedPages = fetched;
+        updateProgress('map', fetched, totalPages);
+        if (fetched % 10 === 0 || fetched >= totalPages) {
+          addLog(`→ Mapa: ${fetched}/${totalPages} stron (${Object.keys(map).length} wzmianek)`, 'info');
+        }
+        await sleep(0); // yield do UI między stronami
+      }
+    };
+    await Promise.all(Array.from({ length: MAP_FETCH_CONCURRENCY }, _mapWorker));
+
+    const _mapElapsed = Date.now() - _mapTStart;
+    addLog(`ℹ [DIAG/PERF] Mapa ${totalPages} stron: ${_mapElapsed}ms | concurrency=${MAP_FETCH_CONCURRENCY} | dupeId=${allDupeIds} (${first.count > 0 ? (allDupeIds / first.count * 100).toFixed(1) : 0}%)`, 'info');
     diag.mentionsInMap = Object.keys(map).length;
 
     // ── KROK 7: weryfikacja kompletności ─────────────────────────────────
@@ -876,11 +1041,49 @@
   // MAIN TAGGING FLOW
   // ───────────────────────────────────────────
 
+  function validateInputSchema(rows, colMap) {
+    const issues = [];
+
+    if (!colMap.url) issues.push('BRAK kolumny URL — matching niemożliwy');
+    if (!colMap.assessment) issues.push('BRAK kolumny assessment — tagowanie niemożliwe');
+
+    if (issues.length) {
+      issues.forEach(i => addLog('[SCHEMA ERROR] ' + i, 'error'));
+      return false;
+    }
+
+    const SCI_RE = /^-?\d+\.?\d*[eE][+\-]\d+$/;
+    let emptyUrls = 0, sciUrls = 0, dupUrls = 0;
+    const urlsSeen = new Set();
+    const urlCol = colMap.url;
+
+    rows.forEach(row => {
+      const url = (row[urlCol] || '').trim();
+      if (!url) { emptyUrls++; return; }
+      if (SCI_RE.test(url)) { sciUrls++; return; }
+      if (urlsSeen.has(url)) { dupUrls++; } else { urlsSeen.add(url); }
+    });
+
+    if (emptyUrls) addLog(`[SCHEMA WARN] ${emptyUrls} pustych URL-i w pliku`, 'warn');
+    if (sciUrls) addLog(`[SCHEMA ERROR] ${sciUrls} URL-i wygląda jak sci notation — prawdopodobnie uszkodzone ID!`, 'error');
+    if (dupUrls) addLog(`[SCHEMA WARN] ${dupUrls} zduplikowanych URL-i w pliku (możliwe duplikaty wzmianek)`, 'warn');
+
+    addLog(`[SCHEMA OK] ${rows.length} rekordów, ${urlsSeen.size} unikalnych URL-i`, 'info');
+    return sciUrls === 0;
+  }
+
   async function runTagging(partition) {
     const { dateFrom, dateTo, rows } = partition;
 
     // Build URL map
     state.urlMap = await buildUrlMap(dateFrom, dateTo, state.mapMode === 'untagged');
+
+    // Walidacja schematu pliku — blokuje tagowanie przy sci notation URL
+    const schemaOk = validateInputSchema(rows, state.file.colMap);
+    if (!schemaOk) {
+      addLog('[TAGGING ABORTED] Schemat pliku wejściowego nie przeszedł walidacji. Napraw plik i spróbuj ponownie.', 'error');
+      return;
+    }
 
     // Build batches
     const batches = {};          // tagId → [snowflakeIds]
@@ -892,21 +1095,25 @@
     const matchDiag = {
       total: rows.length, noAssessment: 0, noMapping: 0,
       noMatch: 0, truncated: 0, alreadyTagged: 0, conflict: 0, willTag: 0,
+      exactMatch: 0, fuzzyShort: 0,
       mapSize: Object.keys(state.urlMap).length,
       // próbki URL-i z pliku vs z mapy (pierwsze 2 każdej domeny)
       fileSamplesByDomain: {},
       mapSamplesByDomain: {},
     };
-    // Zbierz próbki domen z mapy
-    Object.keys(state.urlMap).slice(0, 30).forEach(k => {
+    // Zbierz próbki domen z mapy (wszystkie klucze — potrzebne do diagnozy NO_MATCH)
+    Object.keys(state.urlMap).forEach(k => {
       const dom = k.split('/')[0];
       if (!matchDiag.mapSamplesByDomain[dom]) matchDiag.mapSamplesByDomain[dom] = [];
       if (matchDiag.mapSamplesByDomain[dom].length < 2) matchDiag.mapSamplesByDomain[dom].push(k);
     });
 
+    const _mapKeys = Object.keys(state.urlMap); // cached once — fuzzy match uses this
     rows.forEach(row => {
       const urlRaw = row[state.file.colMap.url] || '';
-      const assessment = (row[state.file.colMap.assessment] || '').trim().toUpperCase();
+      const assessmentRaw = (row[state.file.colMap.assessment] || '').trim().toUpperCase();
+      // Multi-assessment: wartości rozdzielone "|", np. "POSITIVE|RELEVANT"
+      const assessments = assessmentRaw ? assessmentRaw.split('|').map(a => a.trim()).filter(Boolean) : [];
       const normalizedUrl = normalizeUrl(urlRaw);
 
       // Zbierz próbki domen z pliku
@@ -916,71 +1123,127 @@
         matchDiag.fileSamplesByDomain[dom].push(normalizedUrl);
       }
 
-      // Szukaj w mapie: dokładne dopasowanie, potem fuzzy (obcięte ID)
-      let entry = state.urlMap[normalizedUrl];
-      if (!entry) {
-        const keys = Object.keys(state.urlMap);
-        const fuzzyKey = keys.find(k => urlsMatch(normalizedUrl, k));
-        if (fuzzyKey) entry = state.urlMap[fuzzyKey];
+      // Szukaj w mapie: 1) exact, 2) fuzzy bezpieczny (diff ≤5), 3) długi fuzzy → skip
+      let entry = null;
+      let matchConfidence = 'NO_MATCH';
+
+      if (state.urlMap[normalizedUrl]) {
+        entry = state.urlMap[normalizedUrl];
+        matchConfidence = 'EXACT';
       }
 
-      if (!assessment) {
+      if (!entry) {
+        const fuzzyKey = _mapKeys.find(k => {
+          if (!urlsMatch(normalizedUrl, k)) return false;
+          return Math.abs(normalizedUrl.length - k.length) <= 5;
+        });
+        if (fuzzyKey) {
+          entry = state.urlMap[fuzzyKey];
+          matchConfidence = 'FUZZY_SHORT';
+        }
+      }
+
+      if (!entry) {
+        const longFuzzyKey = _mapKeys.find(k => urlsMatch(normalizedUrl, k));
+        if (longFuzzyKey) {
+          addLog(`[MATCH WARN] Długi fuzzy match (>5 znaków diff) — pomijam tagowanie. URL z pliku: "${normalizedUrl.substring(0, 70)}" → mapa: "${longFuzzyKey.substring(0, 70)}"`, 'warn');
+          skipped.push({ row, reason: 'FUZZY_LONG_SKIPPED', url: urlRaw, candidate: longFuzzyKey });
+          matchDiag.noMatch++;
+          state.stats.noMatch++;
+          return;
+        }
+      }
+
+      if (matchConfidence === 'EXACT') matchDiag.exactMatch++;
+      else if (matchConfidence === 'FUZZY_SHORT') matchDiag.fuzzyShort++;
+
+      if (!assessments.length) {
         skipped.push({ row, reason: 'NO_ASSESSMENT' });
         matchDiag.noAssessment++;
         return;
       }
 
-      const mapping = state.mapping[assessment];
-      if (!mapping) {
-        skipped.push({ row, reason: 'NO_MAPPING', assessment });
-        matchDiag.noMapping++;
-        return;
-      }
-
       if (!entry) {
-        const mapKeys = Object.keys(state.urlMap);
-        const truncInfo = detectTruncatedUrl(normalizedUrl, mapKeys);
+        const truncInfo = detectTruncatedUrl(normalizedUrl, _mapKeys);
         if (truncInfo) {
-          skipped.push({ row, reason: 'TRUNCATED_URL', url: urlRaw, truncInfo });
+          const truncHint = `URL obcięty o ${truncInfo.missingChars} znaków w pliku — Brand24 ma: "${truncInfo.candidate.substring(0, 80)}"`;
+          skipped.push({ row, reason: 'TRUNCATED_URL', url: urlRaw, normUrl: normalizedUrl, truncInfo, hint: truncHint });
           matchDiag.truncated++;
         } else {
-          skipped.push({ row, reason: 'NO_MATCH', url: urlRaw, normUrl: normalizedUrl });
+          const _nmDom = normalizedUrl.split('/')[0];
+          const _nmSample = matchDiag.mapSamplesByDomain[_nmDom];
+          let _nmHint;
+          if (!_nmSample || !_nmSample.length) {
+            // Sprawdź alias twitter↔x
+            const _altDom = _nmDom === 'twitter.com' ? 'x.com' : _nmDom === 'x.com' ? 'twitter.com' : null;
+            if (_altDom && matchDiag.mapSamplesByDomain[_altDom]) {
+              _nmHint = `Domena ${_nmDom} znormalizowana do x.com — Brand24 nie ma tej konkretnej wzmianki w projekcie`;
+            } else {
+              _nmHint = `Domena "${_nmDom}" nieobecna w mapie Brand24 — nie monitorowana w tym projekcie lub zakresie dat`;
+            }
+          } else {
+            const _nmSmp = _nmSample[0];
+            const _untaggedNote = state.mapMode === 'untagged'
+              ? ' — lub jest już otagowana (mapa Untagged nie zawiera wzmianek z istniejącym tagiem)'
+              : '';
+            // Wykryj specyficzne wzorce
+            if (_nmDom === 'instagram.com') {
+              _nmHint = `Instagram: konkretny post/reel nie znaleziony w Brand24${_untaggedNote}. Mapa ma np.: "${_nmSmp}"`;
+            } else if (_nmDom === 'facebook.com') {
+              _nmHint = `Facebook: konkretna wzmianka nie znaleziona w Brand24${_untaggedNote}. Mapa ma np.: "${_nmSmp}"`;
+            } else if (_nmDom === 'x.com' || _nmDom === 'twitter.com') {
+              _nmHint = `Twitter/X: konkretny tweet nie znaleziony w Brand24${_untaggedNote}. Mapa ma np.: "${_nmSmp}"`;
+            } else {
+              _nmHint = `URL nie zgadza się z Brand24${_untaggedNote}. Domena obecna, mapa ma np.: "${_nmSmp}"`;
+            }
+          }
+          skipped.push({ row, reason: 'NO_MATCH', url: urlRaw, normUrl: normalizedUrl, hint: _nmHint });
           matchDiag.noMatch++;
         }
         state.stats.noMatch++;
         return;
       }
 
-      // Check conflicts
+      // Przetwórz każdy assessment z wiersza (obsługa multi-assessment przez separator "|")
       const existingTagIds = entry.existingTags.map(t => t.id);
-      const hasConflict = existingTagIds.length > 0 && !existingTagIds.includes(mapping.tagId);
-      const alreadyTagged = existingTagIds.includes(mapping.tagId);
-
-      if (alreadyTagged) {
-        skipped.push({ row, reason: 'ALREADY_TAGGED', tagId: mapping.tagId });
-        return;
-      }
-
-      if (hasConflict) {
-        if (state.conflictMode === 'ignore') {
-          skipped.push({ row, reason: 'CONFLICT_IGNORED', existingTags: entry.existingTags });
-          state.stats.conflicts++;
-          return;
-        } else if (state.conflictMode === 'overwrite') {
-          const oldTagId = existingTagIds[0];
-          const key = `${oldTagId}_${mapping.tagId}`;
-          if (!overwriteBatches[key]) overwriteBatches[key] = { oldTagId, newTagId: mapping.tagId, ids: [] };
-          overwriteBatches[key].ids.push(entry.id);
-          return;
-        } else {
-          // 'ask' mode
-          conflicts.push({ row, entry, mapping });
+      assessments.forEach(assessment => {
+        const mapping = state.mapping[assessment];
+        if (!mapping) {
+          skipped.push({ row, reason: 'NO_MAPPING', assessment });
+          matchDiag.noMapping++;
           return;
         }
-      }
 
-      if (!batches[mapping.tagId]) batches[mapping.tagId] = [];
-      batches[mapping.tagId].push(entry.id);
+        const alreadyTagged = existingTagIds.includes(mapping.tagId);
+        if (alreadyTagged) {
+          skipped.push({ row, reason: 'ALREADY_TAGGED', tagId: mapping.tagId });
+          return;
+        }
+
+        const hasConflict = existingTagIds.length > 0 && !existingTagIds.includes(mapping.tagId);
+
+        if (state.conflictMode === 'multitag') {
+          // Multitag: dodaj tag obok istniejących — brak konfliktu
+          if (!batches[mapping.tagId]) batches[mapping.tagId] = [];
+          batches[mapping.tagId].push(entry.id);
+        } else if (hasConflict) {
+          if (state.conflictMode === 'ignore') {
+            skipped.push({ row, reason: 'CONFLICT_IGNORED', existingTags: entry.existingTags });
+            state.stats.conflicts++;
+          } else if (state.conflictMode === 'overwrite') {
+            const oldTagId = existingTagIds[0];
+            const key = `${oldTagId}_${mapping.tagId}`;
+            if (!overwriteBatches[key]) overwriteBatches[key] = { oldTagId, newTagId: mapping.tagId, ids: [] };
+            overwriteBatches[key].ids.push(entry.id);
+          } else {
+            // 'ask' mode
+            conflicts.push({ row, entry, mapping });
+          }
+        } else {
+          if (!batches[mapping.tagId]) batches[mapping.tagId] = [];
+          batches[mapping.tagId].push(entry.id);
+        }
+      });
     });
 
     // ── DIAG: raport matchowania ────────────────────────────────────────
@@ -989,7 +1252,7 @@
     matchDiag.conflict   = skipped.filter(s => s.reason === 'CONFLICT_IGNORED').length;
 
     addLog(
-      `ℹ [DIAG/MATCH] Wyniki matchowania ${matchDiag.total} wierszy vs ${matchDiag.mapSize} wzmianek w mapie:
+      `ℹ Wyniki matchowania ${matchDiag.total} wierszy vs ${matchDiag.mapSize} wzmianek w mapie:
 ` +
       `  ✓ do otagowania: ${matchDiag.willTag}
 ` +
@@ -1015,7 +1278,7 @@
 
     if (missingInMap.length > 0) {
       addLog(
-        `⚠ [DIAG/DOMAINS] Domeny z pliku NIEOBECNE w mapie: ${missingInMap.join(', ')}
+        `⚠ Domeny z pliku nieobecne w mapie: ${missingInMap.join(', ')}
 ` +
         `  → Brand24 API nie zwraca wzmianek z tych domen dla tego projektu/zakresu`,
         'warn'
@@ -1030,7 +1293,7 @@
         const dom = normVal.split('/')[0];
         const mapSample = matchDiag.mapSamplesByDomain[dom];
         addLog(
-          `⚠ [DIAG/NO_MATCH]
+          `⚠ Brak dopasowania:
 ` +
           `  plik: "${normVal}"
 ` +
@@ -1094,33 +1357,105 @@
       for (let i = 0; i < batch.ids.length; i += MAX_BATCH_SIZE) {
         const slice = batch.ids.slice(i, i + MAX_BATCH_SIZE);
         addLog(`→ Odtagowuję ${slice.length} wzmianek (tag ${batch.oldTagId})`, 'info');
-        await bulkUntagMentions(slice.map(String), batch.oldTagId);
-        if (!batches[batch.newTagId]) batches[batch.newTagId] = [];
-        batches[batch.newTagId].push(...slice);
-        await sleep(1500);
+        try {
+          await bulkUntagMentions(slice.map(String), batch.oldTagId);
+          if (!batches[batch.newTagId]) batches[batch.newTagId] = [];
+          batches[batch.newTagId].push(...slice);
+        } catch (untagErr) {
+          addLog(`⚠ [FALLBACK] bulkUntag batch FAILED (${slice.length} IDs, tag ${batch.oldTagId}): ${untagErr.message} — pomijam batch, wzmianki nie zostaną przepisane`, 'error');
+        }
+        await sleep(200);
       }
     }
 
-    // Execute tag batches
+    // Execute tag batches — TAG_CONCURRENCY batchów równolegle per tagId
     const tagIds = Object.keys(batches);
     let batchNum = 0;
+    let totalTagFailed = 0;
     for (const tagId of tagIds) {
       const ids = batches[tagId];
       const tagName = Object.entries(state.tags).find(([, id]) => id === parseInt(tagId))?.[0] || tagId;
-      for (let i = 0; i < ids.length; i += MAX_BATCH_SIZE) {
-        batchNum++;
-        const slice = ids.slice(i, i + MAX_BATCH_SIZE);
+      const slices = [];
+      for (let i = 0; i < ids.length; i += MAX_BATCH_SIZE) slices.push(ids.slice(i, i + MAX_BATCH_SIZE));
+      for (let i = 0; i < slices.length; i += TAG_CONCURRENCY) {
+        const concSlices = slices.slice(i, i + TAG_CONCURRENCY);
+        batchNum += concSlices.length;
         updateProgress('tag', batchNum, tagIds.length);
-        addLog(`→ bulkTag: ${slice.length} → ${tagName}`, 'info');
-        await bulkTagMentions(slice.map(String), parseInt(tagId));
-        state.stats.tagged += slice.length;
+        addLog(`→ bulkTag: ${concSlices.reduce((s, sl) => s + sl.length, 0)} → ${tagName} (${concSlices.length}× równolegle)`, 'info');
+        const results = await Promise.allSettled(concSlices.map(slice => bulkTagMentions(slice.map(String), parseInt(tagId))));
+        let batchSuccessCount = 0;
+        for (let j = 0; j < results.length; j++) {
+          if (results[j].status === 'fulfilled') {
+            batchSuccessCount += concSlices[j].length;
+          } else {
+            // Fallback: taguj po 1 ID żeby wyizolować wadliwy rekord
+            const errMsg = results[j].reason?.message || 'unknown';
+            addLog(
+              `⚠ [FALLBACK] Batch ${j + 1} FAILED (${concSlices[j].length} IDs → "${tagName}"): ${errMsg}\n` +
+              `  → Próba fallback: tagowanie po 1 ID aby znaleźć wadliwą wzmiankę...`,
+              'warn'
+            );
+            for (const singleId of concSlices[j]) {
+              try {
+                await bulkTagMentions([singleId], parseInt(tagId));
+                batchSuccessCount++;
+              } catch (singleErr) {
+                totalTagFailed++;
+                const ctx = _errContext(singleErr.message);
+                addLog(
+                  `✕ [FALLBACK/${ctx.src}] ID ${singleId} → "${tagName}": ${singleErr.message}\n  → ${ctx.hint}`,
+                  'error'
+                );
+                state.failedMentions.push({
+                  id: singleId,
+                  tagId: parseInt(tagId),
+                  tagName,
+                  error: singleErr.message,
+                  src: ctx.src,
+                  hint: ctx.hint,
+                });
+              }
+            }
+          }
+        }
+        state.stats.tagged += batchSuccessCount;
         updateStatsUI();
-        await sleep(1500);
+        await sleep(200);
       }
     }
+    if (totalTagFailed > 0) {
+      addLog(
+        `⚠ [PODSUMOWANIE] ${totalTagFailed} wzmianek nie mogło być otagowanych — wadliwe IDs lub błąd Brand24 API.\n` +
+        `  → Sprawdź logi [FALLBACK] wyżej aby zobaczyć które IDs są problematyczne.`,
+        'warn'
+      );
+    }
 
-    state.stats.skipped += skipped.length;
-    addLog(`✓ Partycja zakończona: ${state.stats.tagged} otagowane, ${state.stats.skipped} pominięte`, 'success');
+    // Persystuj pominięte wiersze do state (NO_MATCH, TRUNCATED_URL, NO_MAPPING, NO_ASSESSMENT)
+    const _exportableReasons = new Set(['NO_MATCH', 'TRUNCATED_URL', 'NO_MAPPING', 'NO_ASSESSMENT', 'FUZZY_LONG_SKIPPED']);
+    state.skippedRows.push(...skipped.filter(s => _exportableReasons.has(s.reason)));
+
+    state.stats.skipped += skipped.length + totalTagFailed;
+
+    const _fuzzyLongSkipped = skipped.filter(s => s.reason === 'FUZZY_LONG_SKIPPED').length;
+    const _report = [
+      `═══ RAPORT TAGOWANIA ═══`,
+      `Rekordy wejściowe:  ${rows.length}`,
+      `Exact match:        ${matchDiag.exactMatch}`,
+      `Fuzzy match (safe): ${matchDiag.fuzzyShort}`,
+      `Długi fuzzy (skip): ${_fuzzyLongSkipped}`,
+      `Brak assessment:    ${matchDiag.noAssessment}`,
+      `Brak mappingu:      ${matchDiag.noMapping}`,
+      `Brak match:         ${matchDiag.noMatch - _fuzzyLongSkipped}`,
+      `Obcięte URL:        ${matchDiag.truncated}`,
+      `Konflikty:          ${matchDiag.conflict}`,
+      `Już otagowane:      ${matchDiag.alreadyTagged}`,
+      `WYKONANO tagowań:   ${matchDiag.willTag}`,
+      `════════════════════════`,
+    ].join('\n');
+    addLog(_report, 'info');
+
+    addLog(`✓ Partycja zakończona: ${state.stats.tagged} otagowane, ${state.stats.skipped} pominięte${totalTagFailed > 0 ? `, ${totalTagFailed} błędy fallback` : ''}`, 'success');
   }
 
   // ───────────────────────────────────────────
@@ -1181,8 +1516,11 @@
     state.status = 'running';
     state.sessionStart = Date.now();
     state.stats = { tagged: 0, skipped: 0, noMatch: 0, conflicts: 0 };
+    state.failedMentions = [];
+    state.skippedRows = [];
     updateStatusUI();
     startSessionTimer();
+    startHealthCheck();
 
     // Set Brand24 date filter
     const dateFrom = state.file.meta.minDate;
@@ -1192,14 +1530,18 @@
       if (!currentUrl.includes(`d1=${dateFrom}`) || !currentUrl.includes(`d2=${dateTo}`)) {
         addLog(`→ Ustawiam zakres dat: ${dateFrom} → ${dateTo}`, 'info');
         navigateToDateRange(dateFrom, dateTo);
-        await sleep(2000);
+        // Polling zamiast hardkodowanego sleep — czekaj max 4s na zmianę URL
+        for (let _w = 0; _w < 8; _w++) {
+          await sleep(500);
+          if (window.location.href.includes(`d1=${dateFrom}`)) break;
+        }
       }
     }
 
     // Activate Untagged filter
     addLog('→ Aktywuję filtr Untagged', 'info');
     activateUntaggedFilter();
-    await sleep(1500);
+    await sleep(500);
 
     // Process partitions
     for (let idx = state.currentPartitionIdx; idx < state.partitions.length; idx++) {
@@ -1241,6 +1583,7 @@
       state.status = 'done';
       updateStatusUI();
       addLog(`✅ Wszystkie partycje zakończone! ${state.stats.tagged} otagowane.`, 'success');
+      showToast(`✅ ${state.stats.tagged} wzmianek otagowanych!`, 'success', 5000);
 
       // Switch view if configured
       if (state.switchViewOnDone && state.switchViewTagId) {
@@ -1260,6 +1603,8 @@
         }
       }
 
+      stopHealthCheck();
+      stopSessionTimer();
       saveSessionToHistory();
       if (state.soundEnabled) playDoneSound();
       showFinalReport();
@@ -1296,7 +1641,11 @@
   function activateUntaggedFilter() {
     const chips = Array.from(document.querySelectorAll('.MuiChip-root.MuiChip-clickable'));
     const untaggedChip = chips.find(c => c.textContent.trim() === 'Untagged' && !c.classList.contains('Mui-active'));
-    if (untaggedChip) untaggedChip.click();
+    if (untaggedChip) {
+      untaggedChip.click();
+    } else {
+      addLog('⚠ Nie znaleziono chipa Untagged — filtr nie aktywowany. Sprawdź czy Brand24 nie zmienił interfejsu.', 'warn');
+    }
   }
 
   // ───────────────────────────────────────────
@@ -1325,17 +1674,8 @@
   }
 
   function saveCrashLog(error, lastAction) {
-    const userMessages = {
-      'GRAPHQL_AUTH_ERROR':    'Sesja Brand24 wygasła. Zaloguj się ponownie i kliknij "Wznów".',
-      'TOKEN_NOT_READY':       'Token autoryzacji nie jest gotowy. Odśwież stronę Brand24 i spróbuj ponownie.',
-      'GRAPHQL_HTTP_ERROR_500':'Błąd serwera Brand24 (500). Spróbuj ponownie za chwilę.',
-      'GRAPHQL_HTTP_ERROR_503':'Brand24 tymczasowo niedostępny. Spróbuj za kilka minut.',
-      'NETWORK_ERROR':         'Problem z połączeniem internetowym. Sprawdź sieć i spróbuj ponownie.',
-    };
-    const userMsg = userMessages[error.message] ||
-      (error.message.includes('network') || error.message.includes('fetch')
-        ? 'Problem z połączeniem internetowym. Sprawdź sieć i spróbuj ponownie.'
-        : 'Nieznany błąd. Wyślij Bug Report z poziomu Changelog & Feedback.');
+    const ctx = _errContext(error.message);
+    const userMsg = ctx.hint + (ctx.src === 'PLUGIN' ? ' Wyślij Bug Report przez Feedback.' : '');
 
     // Snapshot logu sesji z momentu crashu (ostatnie 50 wpisów)
     const logSnapshot = (state.logs || []).slice(-50).map(function(l) {
@@ -1411,9 +1751,12 @@
 
   function handleError(error, context) {
     const crash = saveCrashLog(error, context);
+    const ctx = _errContext(error.message);
+    stopHealthCheck();
+    stopSessionTimer();
     state.status = 'error';
     updateStatusUI();
-    addLog(`✕ Błąd: ${error.message}`, 'error');
+    addLog(`✕ [${ctx.src}] Błąd w: ${context} — ${error.message}\n  → ${ctx.hint}`, 'error');
     showCrashBanner(crash);
   }
 
@@ -1474,6 +1817,10 @@
     }, 1000);
   }
 
+  function stopSessionTimer() {
+    if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }
+  }
+
   // ───────────────────────────────────────────
   // LOGGING
   // ───────────────────────────────────────────
@@ -1491,17 +1838,7 @@
 
     const div = document.createElement('div');
     div.className = `b24t-log-entry b24t-log-${type}`;
-    // typ 'diag' — prefiks [DIAG] w #f87171, reszta normalnym kolorem error
-    if (type === 'diag') {
-      const diagMatch = message.match(/^(\[DIAG\]\s*)(.*)/s);
-      if (diagMatch) {
-        div.innerHTML = `<span class="b24t-log-time">${time}</span><span class="b24t-log-msg"><span class="b24t-log-diag-prefix">${diagMatch[1]}</span>${diagMatch[2]}</span><span class="b24t-log-elapsed"></span>`;
-      } else {
-        div.innerHTML = `<span class="b24t-log-time">${time}</span><span class="b24t-log-msg"><span class="b24t-log-diag-prefix">[DIAG] </span>${message}</span><span class="b24t-log-elapsed"></span>`;
-      }
-    } else {
-      div.innerHTML = `<span class="b24t-log-time">${time}</span><span class="b24t-log-msg">${message}</span><span class="b24t-log-elapsed"></span>`;
-    }
+    div.innerHTML = `<span class="b24t-log-time">${time}</span><span class="b24t-log-msg">${message}</span><span class="b24t-log-elapsed"></span>`;
     log.appendChild(div);
     log.scrollTop = log.scrollHeight;
 
@@ -1560,6 +1897,25 @@
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+  function showToast(message, type, duration) {
+    type = type || 'info';
+    duration = duration || 3500;
+    var container = document.getElementById('b24t-toast-container');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'b24t-toast-container';
+      document.body.appendChild(container);
+    }
+    var toast = document.createElement('div');
+    toast.className = 'b24t-toast b24t-toast-' + type;
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(function() {
+      toast.classList.add('b24t-toast-out');
+      setTimeout(function() { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 220);
+    }, duration);
+  }
+
   // Simple session timer for Quick Tag / Quick Delete tabs
   function makeTabTimer(displayId) {
     let startTime = null;
@@ -1592,12 +1948,7 @@
     const el = document.getElementById('b24t-token-status');
     if (el) {
       el.className = found ? 'b24t-token-ok' : 'b24t-token-pending';
-      el.textContent = found ? '●' : '●';
-    }
-    const sub = document.getElementById('b24t-token-status-sub');
-    if (sub) {
-      sub.textContent = found ? '● Token: aktywny' : '● Token: oczekuję...';
-      sub.style.color = found ? '#4ade80' : '#facc15';
+      el.textContent = found ? '● Token' : '● Token';
     }
   }
 
@@ -1606,14 +1957,26 @@
     if (!el) return;
     const map = {
       idle: ['Idle', 'badge-idle'],
-      running: ['Running', 'badge-running'],
+      running: ['⟳ Running', 'badge-running'],
       paused: ['Paused', 'badge-paused'],
-      error: ['Error', 'badge-error'],
-      done: ['Done', 'badge-done'],
+      error: ['⚠ Error', 'badge-error'],
+      done: ['✓ Done', 'badge-done'],
     };
     const [text, cls] = map[state.status] || ['Idle', 'badge-idle'];
     el.textContent = text;
     el.className = `b24t-badge ${cls}`;
+
+    const bar = document.getElementById('b24t-progress-bar');
+    if (bar) bar.classList.toggle('b24t-running', state.status === 'running');
+
+    const lbl = document.getElementById('b24t-progress-label');
+    if (lbl) {
+      if (state.status === 'idle')    { lbl.textContent = 'Gotowy do startu'; lbl.style.color = 'var(--b24t-text-faint)'; }
+      if (state.status === 'done')    { lbl.textContent = '✓ Zakończono';     lbl.style.color = 'var(--b24t-ok)'; }
+      if (state.status === 'error')   {                                         lbl.style.color = 'var(--b24t-err)'; }
+      if (state.status === 'paused')  {                                         lbl.style.color = 'var(--b24t-warn)'; }
+      if (state.status === 'running') {                                         lbl.style.color = 'var(--b24t-text)'; }
+    }
 
     const startBtn = document.getElementById('b24t-btn-start');
     const pauseBtn = document.getElementById('b24t-btn-pause');
@@ -1627,8 +1990,21 @@
       skipped: document.getElementById('b24t-stat-skipped'),
       remaining: document.getElementById('b24t-stat-remaining'),
     };
-    if (els.tagged) els.tagged.textContent = state.stats.tagged;
+    function _pop(el) {
+      if (!el) return;
+      el.classList.remove('b24t-stat-pop');
+      void el.offsetHeight;
+      el.classList.add('b24t-stat-pop');
+      setTimeout(function() { el.classList.remove('b24t-stat-pop'); }, 350);
+    }
+    const prevTagged  = els.tagged  ? (parseInt(els.tagged.textContent)  || 0) : 0;
+    const prevSkipped = els.skipped ? (parseInt(els.skipped.textContent) || 0) : 0;
+
+    if (els.tagged)  els.tagged.textContent  = state.stats.tagged;
     if (els.skipped) els.skipped.textContent = state.stats.skipped + state.stats.noMatch;
+
+    if (state.stats.tagged > prevTagged)                                   _pop(els.tagged);
+    if ((state.stats.skipped + state.stats.noMatch) > prevSkipped)         _pop(els.skipped);
 
     // Remaining = total file rows - tagged - skipped
     const total = state.file?.rows?.length || 0;
@@ -1737,15 +2113,84 @@
     const elapsed = state.sessionStart ? Math.floor((Date.now() - state.sessionStart) / 1000) : 0;
     const mins = Math.floor(elapsed / 60);
     const secs = elapsed % 60;
+    const failed = state.failedMentions || [];
+    const skippedRows = state.skippedRows || [];
+
+    // Sekcja pominiętych wierszy z pliku
+    let skippedHtml = '';
+    if (skippedRows.length > 0) {
+      const byReason = {};
+      skippedRows.forEach(s => { byReason[s.reason] = (byReason[s.reason] || 0) + 1; });
+      const reasonLabels = {
+        'NO_MATCH':      'Brak URL w Brand24',
+        'TRUNCATED_URL': 'URL obcięty',
+        'NO_MAPPING':    'Brak mapowania oceny',
+        'NO_ASSESSMENT': 'Brak oceny',
+      };
+      const reasonRows = Object.entries(byReason).map(([r, n]) =>
+        `<span style="margin-right:10px"><strong style="color:#f1f5f9">${n}×</strong> <span style="color:#94a3b8">${reasonLabels[r] || r}</span></span>`
+      ).join('');
+      skippedHtml = `
+        <div style="margin-top:10px;border:1px solid rgba(99,102,241,0.35);border-radius:6px;overflow:hidden">
+          <div style="background:rgba(99,102,241,0.1);padding:7px 10px;display:flex;align-items:center;justify-content:space-between">
+            <div style="font-size:13px">${reasonRows}</div>
+            <button onclick="window.B24Tagger.exportSkippedMentions()" style="background:rgba(99,102,241,0.2);color:#818cf8;border:1px solid rgba(99,102,241,0.4);border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">Pobierz CSV z powodami</button>
+          </div>
+          <div style="padding:6px 10px;font-size:11px;color:#64748b">
+            Plik CSV zawiera oryginalne wiersze z pliku + kolumny: <em>powód_pominięcia</em>, <em>szczegóły</em>, <em>url_znormalizowany</em>
+          </div>
+        </div>`;
+    }
+
+    let failedHtml = '';
+    if (failed.length > 0) {
+      const srcColors = { BRAND24: '#f59e0b', SIEĆ: '#6366f1', AUTORYZACJA: '#ef4444', PLIK: '#3b82f6', PLUGIN: '#ec4899' };
+      const rows = failed.map(f => {
+        const color = srcColors[f.src] || '#888';
+        return `<tr style="border-bottom:1px solid rgba(128,128,128,0.15)">
+          <td style="padding:4px 6px;font-family:monospace;font-size:11px;color:#94a3b8">${f.id}</td>
+          <td style="padding:4px 6px;font-size:12px">${f.tagName}</td>
+          <td style="padding:4px 6px"><span style="background:${color};color:#fff;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:600">${f.src}</span></td>
+          <td style="padding:4px 6px;font-size:11px;color:#94a3b8;max-width:200px;word-break:break-word">${f.error}</td>
+          <td style="padding:4px 6px;font-size:11px;color:#cbd5e1;max-width:220px">${f.hint}</td>
+        </tr>`;
+      }).join('');
+      failedHtml = `
+        <div style="margin-top:12px;border:1px solid rgba(239,68,68,0.35);border-radius:6px;overflow:hidden">
+          <div style="background:rgba(239,68,68,0.12);padding:7px 10px;display:flex;align-items:center;justify-content:space-between">
+            <strong style="color:#ef4444;font-size:13px">⚠ ${failed.length} wzmianki nie mogły być otagowane</strong>
+            <button onclick="window.B24Tagger.exportFailedMentions()" style="background:rgba(239,68,68,0.2);color:#ef4444;border:1px solid rgba(239,68,68,0.4);border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">Eksportuj CSV</button>
+          </div>
+          <div style="overflow-x:auto;max-height:220px;overflow-y:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+              <thead><tr style="background:rgba(0,0,0,0.15);text-align:left">
+                <th style="padding:5px 6px;font-size:10px;color:#94a3b8">ID wzmianki</th>
+                <th style="padding:5px 6px;font-size:10px;color:#94a3b8">Tag</th>
+                <th style="padding:5px 6px;font-size:10px;color:#94a3b8">Źródło błędu</th>
+                <th style="padding:5px 6px;font-size:10px;color:#94a3b8">Komunikat Brand24</th>
+                <th style="padding:5px 6px;font-size:10px;color:#94a3b8">Co zrobić</th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>`;
+    }
+
     content.innerHTML = `
       <h3>Raport sesji</h3>
       <div class="b24t-report-row"><span>Otagowano:</span><strong>${state.stats.tagged}</strong></div>
       <div class="b24t-report-row"><span>Pominięto:</span><strong>${state.stats.skipped}</strong></div>
       <div class="b24t-report-row"><span>Brak matcha:</span><strong>${state.stats.noMatch}</strong></div>
       <div class="b24t-report-row"><span>Konflikty:</span><strong>${state.stats.conflicts}</strong></div>
+      ${failed.length > 0 ? `<div class="b24t-report-row"><span>Błędy fallback:</span><strong style="color:#ef4444">${failed.length}</strong></div>` : ''}
+      ${skippedRows.length > 0 ? `<div class="b24t-report-row"><span>Pominięte wiersze:</span><strong style="color:#818cf8">${skippedRows.length}</strong></div>` : ''}
       <div class="b24t-report-row"><span>Czas sesji:</span><strong>${mins}m ${secs}s</strong></div>
-      <button onclick="window.B24Tagger.exportReport()" class="b24t-btn-secondary">Eksportuj CSV</button>
-      <button onclick="document.getElementById('b24t-report-modal').style.display='none'" class="b24t-btn-primary">Zamknij</button>
+      ${skippedHtml}
+      ${failedHtml}
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button onclick="window.B24Tagger.exportReport()" class="b24t-btn-secondary" style="flex:1">Eksportuj logi CSV</button>
+        <button onclick="document.getElementById('b24t-report-modal').style.display='none'" class="b24t-btn-primary" style="flex:1">Zamknij</button>
+      </div>
     `;
   }
 
@@ -1797,6 +2242,60 @@
     a.click(); URL.revokeObjectURL(url);
   }
 
+  function exportFailedMentions() {
+    const failed = state.failedMentions || [];
+    if (!failed.length) { addLog('ℹ Brak wadliwych wzmianek do eksportu.', 'info'); return; }
+    const rows = [['id_wzmianki', 'tag', 'tagId', 'zrodlo_bledu', 'komunikat', 'co_zrobic']];
+    failed.forEach(f => rows.push([f.id, f.tagName, f.tagId, f.src, f.error, f.hint]));
+    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `b24tagger_failed_${Date.now()}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    addLog(`✓ Eksport: ${failed.length} wadliwych wzmianek → b24tagger_failed_*.csv`, 'success');
+  }
+
+  function exportSkippedMentions() {
+    const skipped = state.skippedRows || [];
+    if (!skipped.length) { addLog('ℹ Brak pominiętych wierszy do eksportu.', 'info'); return; }
+
+    // Zbierz wszystkie kolumny z oryginalnych wierszy pliku
+    const allCols = new Set();
+    skipped.forEach(s => { if (s.row) Object.keys(s.row).forEach(k => allCols.add(k)); });
+    const origCols = [...allCols];
+
+    const reasonLabels = {
+      'NO_MATCH':      'Brak dopasowania URL w Brand24',
+      'TRUNCATED_URL': 'URL obcięty (Excel/XLSX)',
+      'NO_MAPPING':    'Ocena bez przypisanego tagu',
+      'NO_ASSESSMENT': 'Brak oceny w wierszu',
+    };
+
+    const headers = [...origCols, 'powód_pominięcia', 'szczegóły', 'url_znormalizowany'];
+    const rows = skipped.map(s => {
+      const rowData = origCols.map(c => s.row ? (s.row[c] != null ? s.row[c] : '') : '');
+      const reason = reasonLabels[s.reason] || s.reason;
+      let detail = s.hint || '';
+      if (!detail) {
+        if (s.reason === 'NO_MAPPING')    detail = `Ocena "${s.assessment}" nie ma przypisanego tagu — sprawdź mapowanie w wtyczce`;
+        if (s.reason === 'NO_ASSESSMENT') detail = 'Wiersz nie ma wartości w kolumnie oceny — uzupełnij lub usuń wiersz';
+      }
+      const normUrl = s.normUrl || (s.url ? normalizeUrl(s.url) : '');
+      return [...rowData, reason, detail, normUrl];
+    });
+
+    const csv = [headers, ...rows].map(r =>
+      r.map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(',')
+    ).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `b24tagger_skipped_${Date.now()}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    addLog(`✓ Eksport: ${skipped.length} pominiętych wierszy → b24tagger_skipped_*.csv`, 'success');
+  }
+
   function exportPartitions() {
     if (!state.partitions.length) return;
     const rows = [['partycja', 'dateFrom', 'dateTo', 'wzmianek', 'status']];
@@ -1816,6 +2315,10 @@
   _win.B24Tagger = window.B24Tagger = {
     state,
     version: VERSION,
+    exportReport,
+    exportFailedMentions,
+    exportSkippedMentions,
+    exportPartitions,
     debug: {
       getState: () => JSON.parse(JSON.stringify({ ...state, urlMap: `[${Object.keys(state.urlMap).length} entries]`, logs: `[${state.logs.length} entries]` })),
       sniffUiTag: () => { state._sniffUiTag = true; addLog('[SNIFF] Aktywny — otaguj teraz wzmiankę ręcznie w UI Brand24', 'info'); },
@@ -1828,6 +2331,177 @@
       clearCheckpoint: () => { clearCheckpoint(); addLog('🗑 Checkpoint wyczyszczony.', 'info'); },
       getToken: () => state.tokenHeaders,
       checkForUpdate: (manual) => checkForUpdate(manual),
+      stressTestBulk: async function(tagId, dateFrom, dateTo) {
+        // Stress test batch size: [300, 500, 1000, 1500, 2000] z sleep=500ms między parami tag/untag
+        if (!tagId) { addLog('[STRESS/BULK] Użycie: stressTestBulk(tagId, dateFrom?, dateTo?)', 'warn'); return; }
+        const dFrom = dateFrom || getAnnotatorDates().dateFrom;
+        const dTo   = dateTo   || getAnnotatorDates().dateTo;
+        const batchSizes = [300, 500, 1000, 1500, 2000];
+        const results = [];
+        addLog(`[STRESS/BULK] Zbieram ID z projektu ${state.projectId} (${dFrom}→${dTo})...`, 'info');
+        state.status = 'running';
+        const map = await buildUrlMap(dFrom, dTo, false);
+        state.status = 'idle';
+        const allIds = Object.values(map).map(function(v) { return String(v.id); });
+        addLog(`[STRESS/BULK] Zebrano ${allIds.length} ID. Testuję batch sizes: ${batchSizes.join(', ')}`, 'info');
+        for (const bs of batchSizes) {
+          const testIds = allIds.slice(0, Math.min(bs, allIds.length));
+          addLog(`[STRESS/BULK] batch=${testIds.length} — tagowanie...`, 'info');
+          const tTag = Date.now();
+          try {
+            await bulkTagMentions(testIds, tagId);
+            const tagMs = Date.now() - tTag;
+            addLog(`[STRESS/BULK] batch=${testIds.length}: TAG OK ${tagMs}ms`, 'info');
+            await sleep(500);
+            const tUntag = Date.now();
+            await bulkUntagMentions(testIds, tagId);
+            const untagMs = Date.now() - tUntag;
+            addLog(`[STRESS/BULK] batch=${testIds.length}: UNTAG OK ${untagMs}ms`, 'info');
+            results.push({ bs: testIds.length, tagMs, untagMs, ok: true });
+          } catch(e) {
+            addLog(`[STRESS/BULK] batch=${testIds.length}: FAIL — ${e.message}`, 'warn');
+            results.push({ bs: testIds.length, ok: false, error: e.message });
+            try { await bulkUntagMentions(testIds, tagId); } catch(_) {}
+          }
+          if (bs !== batchSizes[batchSizes.length - 1]) await sleep(2000);
+        }
+        addLog('[STRESS/BULK] ═══ WYNIKI BATCH SIZE ═══', 'info');
+        results.forEach(function(r) {
+          if (r.ok) addLog(`  batch=${r.bs}: tag=${r.tagMs}ms | untag=${r.untagMs}ms`, 'info');
+          else addLog(`  batch=${r.bs}: FAIL — ${r.error}`, 'warn');
+        });
+        return results;
+      },
+      stressTestBulkSleep: async function(tagId, batchSize, dateFrom, dateTo) {
+        // Stress test sleep: jak długo trzeba czekać między requestami bulk?
+        // Uruchamia pary tag→untag z różnymi sleep między nimi: 0, 100, 200, 500ms
+        if (!tagId) { addLog('[STRESS/SLEEP] Użycie: stressTestBulkSleep(tagId, batchSize?, dateFrom?, dateTo?)', 'warn'); return; }
+        const bs = batchSize || 200;
+        const dFrom = dateFrom || getAnnotatorDates().dateFrom;
+        const dTo   = dateTo   || getAnnotatorDates().dateTo;
+        const sleepValues = [0, 100, 200, 500];
+        const results = [];
+        addLog(`[STRESS/SLEEP] Zbieram ID z projektu ${state.projectId}...`, 'info');
+        state.status = 'running';
+        const map = await buildUrlMap(dFrom, dTo, false);
+        state.status = 'idle';
+        const allIds = Object.values(map).map(function(v) { return String(v.id); }).slice(0, bs);
+        addLog(`[STRESS/SLEEP] Testuję sleep: ${sleepValues.join(', ')}ms | batch=${allIds.length}`, 'info');
+        for (const sleepMs of sleepValues) {
+          addLog(`[STRESS/SLEEP] sleep=${sleepMs}ms — tag...`, 'info');
+          try {
+            const t0 = Date.now();
+            await bulkTagMentions(allIds, tagId);
+            const tagMs = Date.now() - t0;
+            await sleep(sleepMs);
+            const t1 = Date.now();
+            await bulkUntagMentions(allIds, tagId);
+            const untagMs = Date.now() - t1;
+            addLog(`[STRESS/SLEEP] sleep=${sleepMs}ms: TAG ${tagMs}ms | UNTAG ${untagMs}ms — OK`, 'info');
+            results.push({ sleepMs, tagMs, untagMs, ok: true });
+          } catch(e) {
+            addLog(`[STRESS/SLEEP] sleep=${sleepMs}ms: FAIL — ${e.message}`, 'warn');
+            results.push({ sleepMs, ok: false, error: e.message });
+            try { await bulkUntagMentions(allIds, tagId); } catch(_) {}
+          }
+          if (sleepMs !== sleepValues[sleepValues.length - 1]) await sleep(3000);
+        }
+        addLog('[STRESS/SLEEP] ═══ WYNIKI SLEEP TEST ═══', 'info');
+        results.forEach(function(r) {
+          if (r.ok) addLog(`  sleep=${r.sleepMs}ms: tag=${r.tagMs}ms | untag=${r.untagMs}ms`, 'info');
+          else addLog(`  sleep=${r.sleepMs}ms: FAIL — ${r.error}`, 'warn');
+        });
+        return results;
+      },
+      stressTestBuildUrlMap: async function(dateFrom, dateTo) {
+        const levels = [1, 2, 3, 5];
+        const results = [];
+        addLog('[STRESS] Rozpoczynam stress test buildUrlMap — concurrency: ' + levels.join('→'), 'info');
+        const prevStatus = state.status;
+        for (const c of levels) {
+          MAP_FETCH_CONCURRENCY = c;
+          state.status = 'running';
+          const dates = (dateFrom && dateTo) ? { dateFrom, dateTo } : getAnnotatorDates();
+          addLog(`[STRESS] concurrency=${c} — start (${dates.dateFrom} → ${dates.dateTo})`, 'info');
+          const t0 = Date.now();
+          let mapResult = {};
+          try { mapResult = await buildUrlMap(dates.dateFrom, dates.dateTo, false); } catch(e) { addLog(`[STRESS] concurrency=${c} BŁĄD: ${e.message}`, 'warn'); }
+          state.status = 'idle';
+          const elapsed = Date.now() - t0;
+          const size = Object.keys(mapResult).length;
+          results.push({ concurrency: c, elapsed, size });
+          addLog(`[STRESS] concurrency=${c}: ${elapsed}ms | wzmianek=${size}`, 'info');
+          if (c !== levels[levels.length - 1]) await sleep(3000);
+        }
+        MAP_FETCH_CONCURRENCY = 3;
+        state.status = prevStatus;
+        addLog('[STRESS] ═══ WYNIKI STRESS TEST buildUrlMap ═══', 'info');
+        results.forEach(r => addLog(`  concurrency=${r.concurrency}: ${r.elapsed}ms | ${r.size} wzmianek`, 'info'));
+        return results;
+      },
+      netMonitor: function(shortcodes) {
+        const sc = Array.isArray(shortcodes) ? shortcodes : [shortcodes];
+        state._netMonitor = { targetShortcodes: sc, found: new Set() };
+        addLog('[NET_MONITOR] Aktywny — monitoruję: ' + sc.join(', '), 'info');
+      },
+      netMonitorStop: function() {
+        state._netMonitor = null;
+        addLog('[NET_MONITOR] Wyłączony.', 'info');
+      },
+      // Skanuje URL tak samo jak News moduł — zwraca status, score, matched chips i snippet
+      testUrlScan: function(url, chips) {
+        var kw = chips || [];
+        if (typeof kw === 'string') kw = [kw];
+        if (!kw.length) {
+          console.warn('[B24T] testUrlScan: podaj chips, np. B24Tagger.debug.testUrlScan("https://...", ["słowo"])');
+          return Promise.resolve(null);
+        }
+        console.log('[B24T] Skanuję URL:', url);
+        console.log('[B24T] Szukane chipy:', kw);
+        return _newsContentScan(url, kw).then(function(r) {
+          console.log('[B24T] STATUS:', r.status, '| SCORE:', r.score);
+          console.log('[B24T] Typ strony:', r.pageType, '| Sygnały:', (r.pageTypeSignals || []).join(', ') || '(brak)');
+          console.log('[B24T] Znalezione chipy:', r.matchedChips.length ? r.matchedChips.join(', ') : '(brak)');
+          console.log('[B24T] Tytuł:', r.title || '(brak)');
+          console.log('[B24T] Snippet:', r.snippet || '(brak)');
+          return r;
+        });
+      },
+      // Pobiera surowy HTML i pokazuje co plugin faktycznie widzi (przed parsowaniem)
+      testUrlRaw: function(url) {
+        console.log('[B24T] Pobieram surowy HTML:', url);
+        return new Promise(function(resolve) {
+          GM_xmlhttpRequest({
+            method: 'GET',
+            url: url,
+            headers: { 'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8' },
+            timeout: 15000,
+            onload: function(resp) {
+              var info = { httpStatus: resp.status, htmlLength: (resp.responseText || '').length };
+              try {
+                var doc = (new DOMParser()).parseFromString(resp.responseText, 'text/html');
+                info.title    = ((doc.querySelector('title') || {}).textContent || '').trim();
+                info.h1       = ((doc.querySelector('h1') || {}).textContent || '').trim();
+                info.hasArticle = !!doc.querySelector('article');
+                info.hasMain    = !!doc.querySelector('main');
+                info.cookieEls  = doc.querySelectorAll('[class*="cookie"],[class*="consent"],[id*="cookie"],[id*="consent"]').length;
+                info.pCount     = doc.querySelectorAll('p').length;
+                var bodyEl = doc.querySelector('article') || doc.querySelector('main') || doc.body;
+                info.bodyStart  = bodyEl ? bodyEl.textContent.trim().slice(0, 400) : '';
+              } catch(e) { info.parseError = e.message; }
+              console.log('[B24T] HTTP status:', info.httpStatus, '| Długość HTML:', info.htmlLength, 'znaków');
+              console.log('[B24T] <title>:', info.title);
+              console.log('[B24T] <h1>:', info.h1);
+              console.log('[B24T] <article>:', info.hasArticle, '| <main>:', info.hasMain);
+              console.log('[B24T] <p> na stronie:', info.pCount, '| elementy cookie/consent:', info.cookieEls);
+              console.log('[B24T] Tekst body (pierwsze 400 znaków):', info.bodyStart);
+              resolve(info);
+            },
+            onerror: function() { console.log('[B24T] Raw fetch: BŁĄD SIECI'); resolve({ error: 'network error' }); },
+            ontimeout: function() { console.log('[B24T] Raw fetch: TIMEOUT'); resolve({ error: 'timeout' }); },
+          });
+        });
+      },
     },
     exportReport,
     exportPartitions,
@@ -1846,6 +2520,7 @@
       a.click(); URL.revokeObjectURL(url);
     },
   };
+  _win.b24tagger = _win.B24Tagger; // lowercase alias dla wygody konsoli
 
   // ───────────────────────────────────────────
   // UI - STYLES
@@ -2004,6 +2679,12 @@
         from { transform: rotate(0deg); } to { transform: rotate(360deg); }
       }
 
+      /* LAYOUT CONTRACT: Only #b24t-log has flex-grow inside the panel tree.
+         Do not add flex-grow to any other child of #b24t-panel-inner.
+         Do not set fixed heights (height/min-height) on #b24t-log or #b24t-log-section.
+         Panel overflow is hidden — #b24t-log scrolls internally via overflow-y: auto.
+         Resize JS sets height on #b24t-panel only — nothing else should have explicit height. */
+
       /* ── MAIN PANEL ── */
       #b24t-panel {
         position: fixed;
@@ -2026,13 +2707,54 @@
         /* animation removed — was causing glitch on Plik tab */
       }
       #b24t-panel:hover { box-shadow: var(--b24t-shadow-h); }
+      #b24t-panel-inner {
+        width: 440px; /* musi być zgodne z BASE_PANEL_W w JS; nadpisywane przez JS gdy panel >= 440px */
+        display: flex;
+        flex-direction: column;
+        transform-origin: top left;
+        flex: 1 1 auto; /* rozciąga się do pełnej wysokości #b24t-panel po resize */
+        min-height: 0; /* required: allows flex shrink to work inside #b24t-panel overflow:hidden */
+      }
       #b24t-panel.b24t-resizing { opacity: 0.97; box-shadow: var(--b24t-shadow-drag); transition: none !important; }
       #b24t-panel.b24t-resizing * { pointer-events: none !important; user-select: none !important; }
       #b24t-panel.dragging { opacity: 0.94; box-shadow: var(--b24t-shadow-drag); cursor: grabbing; }
 
+      /* ── OVERFLOW GUARD — elementy flex/grid nie wychodzą poza panel ── */
+      #b24t-body > * { min-width: 0; }
+      .b24t-section { min-width: 0; }
+      .b24t-map-row > * { min-width: 0; overflow: hidden; }
+      #b24t-body { width: 100%; box-sizing: border-box; }
+      #b24t-annotator-panel > * { min-width: 0; }
+      .b24t-ann-content { min-width: 0; width: 100%; box-sizing: border-box; overflow-x: hidden; }
+      .b24t-ann-content > * { max-width: 100%; box-sizing: border-box; }
+      [data-news-panel] > * { min-width: 0; }
+
+      /* ── COMPACT MODE (panel width < 400px lub mały ekran) ── */
+      #b24t-panel.b24t-compact { font-size: 11.5px; }
+      #b24t-panel.b24t-compact #b24t-topbar { padding: 8px 10px; }
+      #b24t-panel.b24t-compact #b24t-meta-bar { padding: 4px 10px; font-size: 10px; }
+      #b24t-panel.b24t-compact .b24t-section { padding: 9px 10px; }
+      #b24t-panel.b24t-compact .b24t-section-label { font-size: 9px; margin-bottom: 7px; }
+      #b24t-panel.b24t-compact .b24t-project-name { font-size: 13px; }
+      #b24t-panel.b24t-compact .b24t-project-meta { font-size: 11px; }
+      #b24t-panel.b24t-compact .b24t-map-row { grid-template-columns: 1fr 80px; }
+      #b24t-panel.b24t-compact .b24t-map-count { display: none; }
+      #b24t-panel.b24t-compact .b24t-toggle-label { font-size: 11.5px; }
+      #b24t-panel.b24t-compact .b24t-radio span { font-size: 11.5px; }
+      #b24t-panel.b24t-compact .b24t-checkbox-row label { font-size: 11.5px; }
+
+      /* ── COMPACT MODE — annotator panel ── */
+      #b24t-annotator-panel.b24t-compact { font-size: 12px !important; }
+      #b24t-annotator-panel.b24t-compact #b24t-ann-header { padding: 8px 12px !important; }
+      #b24t-annotator-panel.b24t-compact .b24t-ann-content { font-size: 12px !important; }
+      #b24t-annotator-panel.b24t-compact .b24t-tab { font-size: 11px !important; padding: 4px 7px !important; }
+
+      /* ── COMPACT MODE — news panels ── */
+      [data-news-panel].b24t-compact { font-size: 11.5px !important; }
 
       /* ── TOPBAR ── */
       #b24t-topbar {
+        flex: 0 0 auto;
         display: flex;
         align-items: center;
         padding: 11px 14px;
@@ -2062,11 +2784,15 @@
         color: #ffffff;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        flex-shrink: 0;
+        flex-shrink: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
         text-shadow: 0 1px 3px rgba(0,0,0,0.2);
       }
-      .b24t-version { font-size: 10px; color: rgba(255,255,255,0.65); margin-left: 4px; }
-      #b24t-topbar-right { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+      .b24t-version { font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.92); margin-left: 4px; flex-shrink: 1; white-space: nowrap; overflow: hidden; text-shadow: 0 1px 3px rgba(0,0,0,0.25); }
+      #b24t-topbar-right { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
 
       /* ── DARK MODE TOGGLE SLIDER ── */
       #b24t-theme-toggle {
@@ -2097,32 +2823,35 @@
 
       /* ── BADGES ── */
       .b24t-badge {
-        font-size: 9px;
-        font-weight: 600;
-        padding: 2px 7px;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 2px 8px;
         border-radius: 99px;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.05em;
         text-transform: uppercase;
+        border: 1px solid rgba(255,255,255,0.08);
       }
       .badge-idle    { background: var(--b24t-badge-idle-bg);  color: var(--b24t-badge-idle-fg); }
-      .badge-running { background: var(--b24t-badge-run-bg);   color: var(--b24t-badge-run-fg); animation: b24t-pulse-ring 1.5s infinite; }
+      .badge-running { background: var(--b24t-badge-run-bg);   color: var(--b24t-badge-run-fg); animation: b24t-pulse-ring 1.5s infinite; border-color: var(--b24t-badge-run-fg); }
       .badge-paused  { background: var(--b24t-badge-pause-bg); color: var(--b24t-badge-pause-fg); }
-      .badge-error   { background: var(--b24t-badge-err-bg);   color: var(--b24t-badge-err-fg); }
+      .badge-error   { background: var(--b24t-badge-err-bg);   color: var(--b24t-badge-err-fg); border-color: var(--b24t-badge-err-fg); animation: b24t-badge-flash 1.1s ease-in-out infinite; }
       .badge-done    { background: var(--b24t-badge-done-bg);  color: var(--b24t-badge-done-fg); }
 
       /* ── ICON BUTTONS (in topbar) ── */
       .b24t-icon-btn {
-        background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.2);
-        color: rgba(255,255,255,0.85);
+        background: rgba(255,255,255,0.28); border: 1px solid rgba(255,255,255,0.5);
+        color: #fff;
         cursor: pointer; padding: 3px 6px; border-radius: 5px;
         font-size: 13px; line-height: 1;
         transition: background 0.15s, color 0.15s, transform 0.1s;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.3);
       }
-      .b24t-icon-btn:hover { background: rgba(255,255,255,0.25); color: #fff; transform: scale(1.05); }
+      .b24t-icon-btn:hover { background: rgba(255,255,255,0.4); color: #fff; transform: scale(1.05); }
       .b24t-icon-btn:active { transform: scale(0.95); }
 
       /* ── TOKEN STATUS BAR ── */
       #b24t-meta-bar {
+        flex: 0 0 auto;
         display: flex; align-items: center; justify-content: space-between;
         padding: 5px 14px;
         background: var(--b24t-bg-deep);
@@ -2130,13 +2859,15 @@
         font-size: 11px;
         transition: background 0.3s, border-color 0.3s;
       }
-      .b24t-token-ok      { color: var(--b24t-ok); font-weight: 600; }
-      .b24t-token-pending { color: var(--b24t-warn); }
-      .b24t-token-error   { color: var(--b24t-err); }
+      .b24t-token-ok      { color: var(--b24t-ok); font-weight: 700; font-size: 12px; }
+      .b24t-token-pending { color: var(--b24t-warn); font-weight: 700; font-size: 12px; animation: b24t-dot-pulse 1.4s ease-in-out infinite; }
+      .b24t-token-error   { color: var(--b24t-err); font-weight: 700; font-size: 12px; }
+      .b24t-cms-checking  { animation: b24t-dot-pulse 1.4s ease-in-out infinite; }
       #b24t-session-timer { color: var(--b24t-text-meta); font-size: 11px; font-weight: 500; }
 
       /* ── SUBBAR ── */
       #b24t-subbar {
+        flex: 0 0 auto;
         background: var(--b24t-bg-deep) !important;
         border-bottom: 1px solid var(--b24t-border-sub) !important;
         transition: background 0.3s, border-color 0.3s;
@@ -2145,6 +2876,7 @@
         background: var(--b24t-primary-bg) !important;
         border: 1px solid color-mix(in srgb, var(--b24t-primary) 30%, transparent) !important;
         color: var(--b24t-primary) !important;
+        box-shadow: none !important;
       }
       #b24t-subbar .b24t-icon-btn:hover { background: var(--b24t-primary-bg) !important; filter: brightness(1.2); }
       /* Fix hardcoded dark colors on subbar buttons */
@@ -2152,11 +2884,36 @@
       #b24t-btn-check-update { color: var(--b24t-text-faint) !important; border-color: var(--b24t-border) !important; }
       #b24t-session-timer-sub { color: var(--b24t-text-faint) !important; }
 
+      /* ── FLEX CONTRACT (panel vertical layout) ───────────────────────────
+         #b24t-panel          flex col, explicit height (set by resize JS)
+           └─ #b24t-panel-inner  flex: 1 1 auto  ← fills panel
+                ├─ #b24t-topbar      flex: 0 0 auto  (fixed)
+                ├─ #b24t-meta-bar    flex: 0 0 auto  (fixed)
+                ├─ #b24t-tabs        flex: 0 0 auto  (fixed)
+                ├─ #b24t-body        flex: 1 1 auto  ← ONLY stretchy child of inner
+                │    └─ #b24t-main-tab   flex: 1 1 auto  ← fills body
+                │         ├─ .b24t-section  flex: 0 0 auto  (Projekt, Plik, Postęp, Stats…)
+                │         └─ #b24t-log-section  flex: 1 1 auto  ← ONLY stretchy section
+                │              ├─ .b24t-section-label  flex: 0 0 auto
+                │              └─ #b24t-log  flex: 1, overflow-y: auto  ← scrolls here
+                └─ #b24t-actions     flex: 0 0 auto  (footer, always pinned bottom)
+         RULE: exactly ONE element with flex-grow > 0 per flex column level.
+         RULE: no height: fixed values on #b24t-log or #b24t-log-section.
+         RULE: no position:absolute hacks on footer.
+      ── */
       /* ── BODY ── */
-      #b24t-body { overflow-y: auto; flex: 1; min-height: 0; max-height: 72vh; background: var(--b24t-panel-grad); transition: background 0.3s; }
+      #b24t-body { display: flex; flex-direction: column; overflow: hidden; flex: 1 1 auto; min-height: 0; background: var(--b24t-panel-grad); transition: background 0.3s; }
       #b24t-body::-webkit-scrollbar { width: 3px; }
       #b24t-body::-webkit-scrollbar-track { background: transparent; }
       #b24t-body::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
+      /* main-tab fills body; other tabs are display:none so don't participate in flex */
+      #b24t-main-tab { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+      #b24t-main-tab::-webkit-scrollbar { width: 3px; }
+      #b24t-main-tab::-webkit-scrollbar-track { background: transparent; }
+      #b24t-main-tab::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
+      /* LOG section — the ONLY flex-grow element inside main-tab */
+      #b24t-log-section { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; border-bottom: none; }
+      #b24t-log-section .b24t-section-label { flex: 0 0 auto; }
 
       /* ── SECTIONS ── */
       .b24t-section {
@@ -2194,6 +2951,7 @@
         transition: border-color 0.2s, background 0.2s, transform 0.15s;
       }
       .b24t-file-zone:hover { border-color: var(--b24t-primary); background: var(--b24t-primary-bg); transform: translateY(-1px); }
+      .b24t-file-zone.b24t-dragover { border-color: var(--b24t-primary); border-style: solid; background: var(--b24t-primary-bg); transform: scale(1.015); box-shadow: 0 0 0 3px var(--b24t-primary-glow); }
       .b24t-file-icon { font-size: 18px; flex-shrink: 0; }
       .b24t-file-name { font-size: 13px; color: var(--b24t-text); font-weight: 600; }
       .b24t-file-meta { font-size: 12px; color: var(--b24t-text-meta); }
@@ -2250,7 +3008,7 @@
 
       /* ── PROGRESS ── */
       .b24t-progress-bar-track {
-        height: 5px; background: var(--b24t-bg-input); border-radius: 99px;
+        height: 6px; background: var(--b24t-bg-input); border-radius: 99px;
         overflow: hidden; margin: 8px 0 4px;
         transition: background 0.3s;
         border: 1px solid var(--b24t-border-sub);
@@ -2271,14 +3029,19 @@
       .b24t-stat-card {
         background: var(--b24t-section-grad-d); border: 1px solid var(--b24t-border);
         border-radius: 8px; padding: 8px 10px;
-        transition: background 0.3s, border-color 0.3s, transform 0.15s;
+        transition: background 0.3s, border-color 0.3s, transform 0.15s, box-shadow 0.15s;
         position: relative; overflow: hidden;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.10);
       }
       .b24t-stat-card::after {
         content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
         background: var(--b24t-accent-grad); opacity: 0.4;
       }
       .b24t-stat-card:hover { transform: translateY(-2px); border-color: var(--b24t-border-strong); }
+      .b24t-stat-card:has(.b24t-stat-value.ok)   { background: var(--b24t-ok-bg) !important; border-color: color-mix(in srgb, var(--b24t-ok) 30%, transparent) !important; }
+      .b24t-stat-card:has(.b24t-stat-value.warn) { background: var(--b24t-warn-bg) !important; border-color: color-mix(in srgb, var(--b24t-warn) 30%, transparent) !important; }
+      .b24t-stat-card:has(.b24t-stat-value.ok)::after   { background: var(--b24t-ok); opacity: 0.5; }
+      .b24t-stat-card:has(.b24t-stat-value.warn)::after { background: var(--b24t-warn); opacity: 0.5; }
       .b24t-stat-label { font-size: 11px; color: var(--b24t-text-meta); margin-bottom: 3px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; }
       .b24t-stat-value { font-size: 20px; font-weight: 800; color: var(--b24t-text); }
       .b24t-stat-value.ok   { color: var(--b24t-ok); }
@@ -2286,7 +3049,7 @@
 
       /* ── LOG ── */
       #b24t-log {
-        height: 120px; overflow-y: auto;
+        flex: 1 1 auto; min-height: 80px; overflow-y: auto;
         font-size: 12px; line-height: 1.6;
         background: var(--b24t-bg-section-c);
         transition: background 0.3s;
@@ -2294,10 +3057,13 @@
       }
       #b24t-log::-webkit-scrollbar { width: 3px; }
       #b24t-log::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
-      .b24t-log-entry { display: flex; gap: 6px; padding: 1px 0; animation: b24t-fadein 0.15s ease; }
+      .b24t-log-entry { display: flex; gap: 6px; padding: 2px 6px; border-left: 2px solid transparent; animation: b24t-fadein 0.15s ease; }
       .b24t-log-time    { color: var(--b24t-text-faint); flex-shrink: 0; }
       .b24t-log-msg     { color: var(--b24t-text-muted); flex: 1; }
       .b24t-log-elapsed { color: var(--b24t-text-faint); font-size: 10px; flex-shrink: 0; }
+      .b24t-log-success { border-left-color: var(--b24t-ok);  background: var(--b24t-ok-bg); }
+      .b24t-log-error   { border-left-color: var(--b24t-err); background: var(--b24t-err-bg); }
+      .b24t-log-warn    { border-left-color: var(--b24t-warn); background: var(--b24t-warn-bg); }
       .b24t-log-success .b24t-log-msg { color: var(--b24t-ok); font-weight: 500; }
       .b24t-log-error   .b24t-log-msg { color: var(--b24t-err); font-weight: 500; }
       .b24t-log-warn    .b24t-log-msg { color: var(--b24t-warn); }
@@ -2311,10 +3077,10 @@
 
       /* ── ACTION BAR ── */
       #b24t-actions {
+        flex: 0 0 auto;
         display: flex; gap: 6px; padding: 10px 14px;
         background: var(--b24t-section-grad-c);
         border-top: 2px solid var(--b24t-border);
-        flex-shrink: 0;
         transition: background 0.3s, border-color 0.3s;
       }
       .b24t-btn-primary {
@@ -2371,6 +3137,7 @@
 
       /* ── TABS — liquid glass pill style ── */
       #b24t-tabs {
+        flex: 0 0 auto;
         display: flex;
         align-items: center;
         gap: 5px;
@@ -2552,17 +3319,18 @@
       /* ── NEWS SIDE TAB ── */
       #b24t-news-side-tab {
         position: fixed; right: 0; top: calc(50% + 90px); transform: translateY(0);
-        z-index: 2147483639; border-radius: 10px 0 0 10px; border: 1px solid rgba(255,255,255,0.12); border-right: none;
+        z-index: 2147483639; border-radius: 10px 0 0 10px; border: 1px solid var(--b24t-border); border-right: none;
         padding: 14px 10px; cursor: pointer; display: none;
         flex-direction: column; align-items: center; gap: 5px;
         font-family: 'Inter','Segoe UI',system-ui,sans-serif;
         font-size: 11px; font-weight: 700; letter-spacing: 0.05em;
-        color: #c4b5fd; user-select: none;
-        background: #1a1a2e; box-shadow: -3px 0 12px rgba(0,0,0,0.5);
-        transition: transform 0.15s, background 0.15s;
+        color: var(--b24t-primary); user-select: none;
+        background: var(--b24t-bg-elevated); box-shadow: var(--b24t-shadow);
+        transition: transform 0.15s, background 0.15s, border-color 0.3s;
       }
-      #b24t-news-side-tab:hover { background: #25253f; transform: scale(1.06); }
-      #b24t-news-side-tab.active { background: #2d1b69; color: #a78bfa; border-color: rgba(139,92,246,0.4); }
+      #b24t-news-side-tab:hover { background: var(--b24t-bg-section-c); transform: scale(1.06); }
+      #b24t-news-side-tab.active { background: #6366f1; color: #fff; border-color: #4f46e5; }
+      #b24t-news-side-tab.active:hover { background: #4f46e5; }
       /* ── ANNOTATOR FLOATING PANEL ── */
       #b24t-annotator-tab {
         transition: opacity 0.2s, transform 0.2s;
@@ -2684,19 +3452,19 @@
         position: fixed;
         z-index: 2147483540;
         max-width: 280px;
-        background: #1a1a2e;
-        border: 1px solid rgba(108,108,255,0.4);
+        background: var(--b24t-bg-elevated);
+        border: 1px solid color-mix(in srgb, var(--b24t-primary) 40%, transparent);
         border-radius: 10px;
         padding: 10px 14px;
         font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
         font-size: 11px;
-        color: #b0b0c8;
+        color: var(--b24t-text-muted);
         line-height: 1.6;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+        box-shadow: var(--b24t-shadow-h);
         pointer-events: none;
         animation: b24t-slidein 0.2s cubic-bezier(0.34,1.56,0.64,1);
       }
-      .b24t-help-tip strong { color: #e2e2e8; display: block; margin-bottom: 4px; font-size: 12px; }
+      .b24t-help-tip strong { color: var(--b24t-text); display: block; margin-bottom: 4px; font-size: 12px; }
       #b24t-help-panel-overlay {
         position: fixed;
         border-radius: 14px;
@@ -2722,6 +3490,70 @@
         letter-spacing: 0.02em;
       }
       #b24t-help-close:hover { background: rgba(25,25,50,0.98); border-color: rgba(108,108,255,0.75); }
+
+      /* ── TAB ENTER ── */
+      @keyframes b24t-tab-enter {
+        from { opacity: 0; transform: translateX(7px); }
+        to   { opacity: 1; transform: translateX(0); }
+      }
+
+      /* ── STAT POP ── */
+      @keyframes b24t-stat-pop {
+        0%   { transform: scale(1); }
+        45%  { transform: scale(1.22); }
+        100% { transform: scale(1); }
+      }
+      .b24t-stat-pop { animation: b24t-stat-pop 0.32s cubic-bezier(0.34,1.56,0.64,1) !important; }
+
+      /* ── PROGRESS BAR PULSE WHEN RUNNING ── */
+      @keyframes b24t-bar-pulse {
+        0%, 100% { filter: brightness(1); }
+        50%       { filter: brightness(1.3); }
+      }
+      #b24t-progress-bar.b24t-running,
+      .b24t-bar-active {
+        animation: b24t-bar-pulse 1.3s ease-in-out infinite;
+      }
+
+      /* ── BADGE ERROR FLASH ── */
+      @keyframes b24t-badge-flash {
+        0%, 100% { opacity: 1; }
+        50%       { opacity: 0.45; }
+      }
+
+      /* ── TOKEN DOT PULSE ── */
+      @keyframes b24t-dot-pulse {
+        0%, 100% { opacity: 1; }
+        50%       { opacity: 0.2; }
+      }
+
+      /* ── TOAST NOTIFICATIONS ── */
+      #b24t-toast-container {
+        position: fixed; bottom: 24px; right: 24px;
+        display: flex; flex-direction: column; gap: 8px;
+        z-index: 2147483647; pointer-events: none;
+      }
+      .b24t-toast {
+        font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+        font-size: 13px; padding: 10px 16px;
+        border-radius: 8px; border-left: 3px solid;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.45);
+        animation: b24t-toast-in 0.22s cubic-bezier(0.34,1.56,0.64,1) forwards;
+        pointer-events: all; max-width: 320px; line-height: 1.4;
+      }
+      .b24t-toast.b24t-toast-out { animation: b24t-toast-out 0.2s ease forwards; }
+      .b24t-toast-success { background: rgba(10,22,15,0.97); border-color: #4ade80; color: #d1fae5; }
+      .b24t-toast-error   { background: rgba(25,8,8,0.97);   border-color: #f87171; color: #fee2e2; }
+      .b24t-toast-info    { background: rgba(10,10,22,0.97); border-color: #7c6fff; color: #e8e8ff; }
+      .b24t-toast-warn    { background: rgba(24,18,4,0.97);  border-color: #facc15; color: #fef9c3; }
+      @keyframes b24t-toast-in {
+        from { opacity: 0; transform: translateX(28px) scale(0.93); }
+        to   { opacity: 1; transform: translateX(0)    scale(1); }
+      }
+      @keyframes b24t-toast-out {
+        from { opacity: 1; transform: translateX(0)    scale(1); }
+        to   { opacity: 0; transform: translateX(28px) scale(0.93); }
+      }
     `;
     document.head.appendChild(style);
   }
@@ -2734,10 +3566,10 @@
     const panel = document.createElement('div');
     panel.id = 'b24t-panel';
 
-    panel.innerHTML = `
+    panel.innerHTML = `<div id="b24t-panel-inner">
       <!-- TOPBAR -->
       <div id="b24t-topbar">
-        <span class="b24t-logo">B24 Tagger <span style="font-size:10px;opacity:0.8;letter-spacing:0.08em;">BETA</span></span>
+        <span class="b24t-logo">B24 Tagger <span style="font-size:9px;font-weight:700;letter-spacing:0.1em;background:var(--b24t-primary-bg);color:var(--b24t-primary-h);border:1px solid var(--b24t-primary-glow);border-radius:4px;padding:1px 5px;vertical-align:middle;">BETA</span></span>
         <span class="b24t-version">v${VERSION}</span>
         <div id="b24t-topbar-right">
           <span id="b24t-status-badge" class="b24t-badge badge-idle">Idle</span>
@@ -2768,7 +3600,6 @@
           <button class="b24t-icon-btn" id="b24t-btn-check-update" title="Sprawdź aktualizacje" style="font-size:11px;color:var(--b24t-text-faint);padding:3px 9px;border:1px solid #2a2a35;border-radius:4px;">↑ Sprawdź aktualizacje</button>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
-          <div id="b24t-token-status-sub" style="font-size:10px;"></div>
           <div id="b24t-session-timer-sub" style="font-size:11px;color:var(--b24t-text-faint);font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;"></div>
         </div>
       </div>
@@ -2814,7 +3645,7 @@
                 <div class="b24t-file-meta" id="b24t-file-meta">CSV, JSON lub XLSX</div>
               </div>
             </div>
-            <button id="b24t-btn-clear-file" title="Usuń plik" style="display:none;background:#2a1f1f;border:1px solid #5a2a2a;color:#f87171;border-radius:7px;padding:7px 10px;font-size:13px;cursor:pointer;flex-shrink:0;transition:background 0.15s,border-color 0.15s;">✕</button>
+            <button id="b24t-btn-clear-file" title="Usuń plik" style="display:none;background:var(--b24t-err-bg);border:1px solid color-mix(in srgb,var(--b24t-err) 35%,transparent);color:var(--b24t-err-text);border-radius:7px;padding:7px 10px;font-size:13px;cursor:pointer;flex-shrink:0;transition:background 0.15s,border-color 0.15s;">✕</button>
           </div>
           <input type="file" id="b24t-file-input" accept=".csv,.json,.xlsx" style="display:none">
           <div class="b24t-date-range" id="b24t-date-range" style="display:none">
@@ -2898,6 +3729,7 @@
               <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="ignore" checked> <span>Ignoruj — zachowaj istniejący tag</span></label>
               <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="ask"> <span>Zatrzymaj i zapytaj</span></label>
               <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="overwrite"> <span>Nadpisz — zamień tag</span></label>
+              <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="multitag"> <span>Multitag — dodaj obok istniejących tagów</span></label>
             </div>
           </div>
 
@@ -2948,7 +3780,7 @@
         </div>
 
         <!-- LOG -->
-        <div class="b24t-section">
+        <div class="b24t-section" id="b24t-log-section">
           <div class="b24t-section-label">
             Log
             <button class="b24t-log-clear" id="b24t-log-clear">wyczyść</button>
@@ -2974,15 +3806,13 @@
 
       <!-- ACTION BAR -->
       <div id="b24t-actions" style="flex-direction:column;gap:6px;">
+        <button class="b24t-btn-primary" id="b24t-btn-start" style="width:100%;">▶ Start</button>
         <div style="display:flex;gap:6px;width:100%;">
-          <button class="b24t-btn-primary" id="b24t-btn-start" style="flex:2;">▶ Start</button>
-          <button class="b24t-btn-secondary" id="b24t-btn-preview" title="Match Preview — sprawdź dopasowanie bez tagowania" style="flex:1;font-size:12px;">Match</button>
-          <button class="b24t-btn-secondary" id="b24t-btn-audit" title="Audit Mode — porównaj bez tagowania" style="flex:1;font-size:12px;color:var(--b24t-primary);">Audit</button>
-        </div>
-        <div style="display:flex;gap:6px;width:100%;">
-          <button class="b24t-btn-secondary" id="b24t-btn-pause" disabled style="flex:1;">⏸ Pauza</button>
-          <button class="b24t-btn-danger" id="b24t-btn-stop" style="flex:1;">⏹ Stop</button>
-          <button class="b24t-btn-secondary" id="b24t-btn-export" title="Eksport raportu CSV" style="flex:0 0 36px;">↓</button>
+          <button class="b24t-btn-secondary" id="b24t-btn-preview" title="Match Preview — sprawdź dopasowanie bez tagowania" style="flex:1;font-size:11px;">Match</button>
+          <button class="b24t-btn-secondary" id="b24t-btn-audit" title="Audit Mode — porównaj bez tagowania" style="flex:1;font-size:11px;color:var(--b24t-primary);">Audit</button>
+          <button class="b24t-btn-secondary" id="b24t-btn-pause" disabled style="flex:1;font-size:11px;">⏸ Pauza</button>
+          <button class="b24t-btn-danger" id="b24t-btn-stop" style="flex:1;font-size:11px;">⏹ Stop</button>
+          <button class="b24t-btn-secondary" id="b24t-btn-export" title="Eksport raportu CSV" style="flex:0 0 34px;font-size:12px;">↓</button>
         </div>
       </div>
 
@@ -2990,7 +3820,7 @@
       <div id="b24t-report-modal">
         <div class="b24t-report-content"></div>
       </div>
-    `;
+    </div>`;
 
     return panel;
   }
@@ -3006,10 +3836,46 @@
 
   const RESIZE_HANDLE_SIZE = 8; // px strefa klikania krawędzi
 
+  // Zwraca 'compact' jeśli ekran jest mały (laptop z małą przekątną)
+  function _getScreenProfile() {
+    return (window.innerWidth < 1366 || window.innerHeight < 800) ? 'compact' : 'normal';
+  }
+
+  // Skaluje zawartość głównego panelu proporcjonalnie do jego szerokości
+  function _applyPanelZoom(panel) {
+    var inner = document.getElementById('b24t-panel-inner');
+    if (!inner || !panel) return;
+    var w = panel.offsetWidth;
+    if (!w) return;
+
+    var newScale = (w >= BASE_PANEL_W) ? 1 : Math.max(0.5, w / BASE_PANEL_W);
+
+    var panelH = panel.offsetHeight;
+    inner.style.zoom = newScale;
+    inner.style.width = (newScale < 1) ? BASE_PANEL_W + 'px' : '100%';
+    // min-height kompensuje zoom: po przeskalowaniu inner wizualnie wypełnia cały panel
+    inner.style.minHeight = (newScale < 1 && panelH) ? Math.ceil(panelH / newScale) + 'px' : '';
+  }
+
+  // Dodaje/usuwa klasę b24t-compact na panelu w zależności od jego szerokości
+  // Dla głównego panelu (#b24t-panel) używa zoom zamiast compact class
+  function _updatePanelClass(panel) {
+    if (panel && panel.id === 'b24t-panel') {
+      _applyPanelZoom(panel);
+      return;
+    }
+    var w = panel.offsetWidth;
+    if (w > 0 && w < 400) {
+      panel.classList.add('b24t-compact');
+    } else {
+      panel.classList.remove('b24t-compact');
+    }
+  }
+
   function setupResize(panel, lsKey, opts) {
     opts = opts || {};
-    var minW = opts.minW || 360;
-    var maxW = opts.maxW || 720;
+    var minW = opts.minW || 300;
+    var maxW = opts.maxW || Math.min(720, Math.round(window.innerWidth * 0.85));
     var minH = opts.minH || 300;
     var maxH = opts.maxH || Math.round(window.innerHeight * 0.92);
 
@@ -3023,6 +3889,7 @@
         panel.style.maxHeight = h + 'px';
       }
     }
+    _updatePanelClass(panel);
 
     // Dodaj CSS cursor na krawędziach przez mousemove
     var isResizing = false;
@@ -3124,7 +3991,7 @@
       } else {
         panel.style.height = newH + 'px';
       }
-
+      _updatePanelClass(panel);
     });
 
     document.addEventListener('mouseup', function() {
@@ -3141,7 +4008,20 @@
 
       // Też zapisz pozycję (bo mogła się zmienić przy resize od lewej/góry)
       lsSet(LS.UI_POS, { left: panel.style.left, top: panel.style.top });
+      _updatePanelClass(panel);
     });
+
+    // ResizeObserver jako fallback — łapie zmiany rozmiaru z każdego źródła
+    if (typeof ResizeObserver !== 'undefined') {
+      var ro = new ResizeObserver(function() { _updatePanelClass(panel); });
+      ro.observe(panel);
+    }
+  }
+
+  var _zTop = 2147483630;
+  function _bringToFront(panel) {
+    _zTop = Math.min(_zTop + 1, 2147483646);
+    panel.style.zIndex = _zTop;
   }
 
   function setupDragging(panel) {
@@ -3170,6 +4050,7 @@
       if (e.target.closest('button')) return;
       if (panel.getAttribute('data-ob-locked')) return; // onboarding aktywny
       isDragging = true;
+      _bringToFront(panel);
       panel.classList.add('dragging');
       const rect = panel.getBoundingClientRect();
       startX = e.clientX; startY = e.clientY;
@@ -3193,6 +4074,22 @@
       isDragging = false;
       panel.classList.remove('dragging');
       lsSet(LS.UI_POS, { left: panel.style.left, top: panel.style.top });
+    });
+
+    // Clampuj pozycję panelu przy zmianie rozmiaru okna
+    window.addEventListener('resize', () => {
+      if (!panel.style.left && !panel.style.top) return;
+      var l = parseInt(panel.style.left) || 0;
+      var tp = parseInt(panel.style.top)  || 0;
+      var nl = Math.max(0, Math.min(window.innerWidth  - (panel.offsetWidth  || 300), l));
+      var nt = Math.max(0, Math.min(window.innerHeight - 60, tp));
+      if (nl !== l || nt !== tp) {
+        panel.style.left   = nl + 'px';
+        panel.style.top    = nt + 'px';
+        panel.style.right  = 'auto';
+        panel.style.bottom = 'auto';
+        lsSet(LS.UI_POS, { left: panel.style.left, top: panel.style.top });
+      }
     });
   }
 
@@ -3252,11 +4149,11 @@
     }
 
     // Drag & drop on file zone
-    fileZone.addEventListener('dragover', (e) => { e.preventDefault(); fileZone.style.borderColor = '#6c6cff'; });
-    fileZone.addEventListener('dragleave', () => { fileZone.style.borderColor = ''; });
+    fileZone.addEventListener('dragover', (e) => { e.preventDefault(); fileZone.classList.add('b24t-dragover'); });
+    fileZone.addEventListener('dragleave', () => { fileZone.classList.remove('b24t-dragover'); });
     fileZone.addEventListener('drop', (e) => {
       e.preventDefault();
-      fileZone.style.borderColor = '';
+      fileZone.classList.remove('b24t-dragover');
       if (e.dataTransfer.files[0]) handleFileUpload(e.dataTransfer.files[0]);
     });
 
@@ -3494,6 +4391,8 @@
 
       if (!rows || !rows.length) throw new Error('Plik jest pusty lub nieprawidłowy.');
 
+      rows = sanitizeInputRows(rows);
+
       const colMap = autoDetectColumns(rows);
       const meta = processFileData(rows, colMap);
 
@@ -3531,14 +4430,21 @@
       state.currentPartitionIdx = 0;
 
       if (partitions.length > 1) {
-        document.getElementById('b24t-partition-section').style.display = 'block';
+        const ps = document.getElementById('b24t-partition-section');
+        ps.style.display = 'block';
+        ps.style.animation = 'none'; void ps.offsetHeight; ps.style.animation = 'b24t-fadein 0.25s ease';
         document.getElementById('b24t-partition-info').textContent =
           `${partitions.length} partycji · max ${state.partitionLimit} wzmianek/partycja`;
       }
 
       // Show mapping section
-      document.getElementById('b24t-mapping-section').style.display = 'block';
-      document.getElementById('b24t-settings-section').style.display = 'block';
+      ['b24t-mapping-section', 'b24t-settings-section'].forEach(function(id, i) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.style.display = 'block';
+        el.style.animation = 'none'; void el.offsetHeight;
+        el.style.animation = 'b24t-fadein 0.25s ease';
+      });
 
       // Check for saved schema
       const savedSchema = findMatchingSchema(Object.keys(meta.assessments));
@@ -3551,6 +4457,7 @@
       updateStatsUI();
       addLog(`✓ Plik załadowany: ${meta.totalRows} wierszy, ${Object.keys(meta.assessments).length} typów labelek`, 'success');
       addLog(`→ Wykryte kolumny: url="${colMap.url || 'BRAK!'}" | assessment="${colMap.assessment || 'BRAK!'}" | date="${colMap.date || 'BRAK!'}"`, 'info');
+      showToast(`✓ Plik załadowany: ${meta.totalRows} wierszy`, 'success');
 
       // Walidacja krytyczna — blokuje Start jeśli brak URL/dat
       const fileWarnings = validateFile(rows, colMap);
@@ -3577,6 +4484,7 @@
     state.currentPartitionIdx = 0;
     state.urlMap = {};
     state.matchPreview = null;
+    state.stats = { tagged: 0, skipped: 0, noMatch: 0, conflicts: 0 };
 
     // Reset file UI
     const fileNameEl = document.getElementById('b24t-file-name');
@@ -3929,8 +4837,6 @@
     state.stats = { tagged: 0, skipped: 0, noMatch: 0, conflicts: 0 };
     state.currentPartitionIdx = 0;
     updateStatusUI();
-    startSessionTimer();
-    startHealthCheck();
 
     addLog(`▶ Start ${state.testRunMode ? '[TEST RUN]' : '[WŁAŚCIWY]'} — projekt ${state.projectName}`, 'success');
 
@@ -4018,6 +4924,9 @@
 
       // Update mapping if file already loaded
       if (state.file) renderMappingRows();
+
+      // Jeśli News panele są już otwarte (np. na polskim panelu) — odśwież CMS dot
+      if (document.getElementById('b24t-news-tag-list')) _newsRefillTags();
 
     } catch (e) {
       addLog(`⚠ Nie udało się załadować tagów: ${e.message}`, 'warn');
@@ -5541,7 +6450,28 @@ function showOnboarding(onComplete) {
     detectedCountry: null,
     panelsOpen: false,
     wired: false,
+    scanning: false,
+    scanTotal: 0,
+    scanDone: 0,
+    hideNonArticles: false,
   };
+
+  // Ustawienia importu — zapisywane w localStorage
+  var _newsImportOpts = (function() {
+    try {
+      var raw = localStorage.getItem('b24t_news_import_opts');
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch(e) {}
+    return { urlSimpleMode: false };
+  })();
+  function _saveNewsImportOpts() {
+    try { localStorage.setItem('b24t_news_import_opts', JSON.stringify(_newsImportOpts)); } catch(e) {}
+  }
+
+  var _newsChipsRenderer = null; // set by _wireNewsPanels, called on every panel open
 
   var NEWS_DEFAULT_KEYWORDS = [
     'hm-', '-hm-', '-hm', '/hm/', '/hm',
@@ -5554,6 +6484,20 @@ function showOnboarding(onComplete) {
     hu:'HU', cz:'CZ', sk:'SK', lt:'LT', lv:'LV', ee:'EE',
     rs:'RS', ge:'GE', ua:'UA', ba:'BA', mk:'MK', al:'AL',
     xk:'XK', kz:'KZ', me:'ME', md:'MD', am:'AM', az:'AZ',
+  };
+
+  // Mapa kraj → oczekiwany język(i) strony (BCP 47 base tag)
+  // Używana do wykrywania stron w złym języku dla projektu
+  var _NEWS_LANG_MAP = {
+    'pl':['pl'], 'cz':['cs'], 'sk':['sk'], 'hu':['hu'], 'ro':['ro'],
+    'bg':['bg'], 'hr':['hr'], 'rs':['sr'], 'lt':['lt'], 'lv':['lv'],
+    'ee':['et'], 'fi':['fi'], 'se':['sv'], 'no':['no','nb'], 'dk':['da'],
+    'de':['de'], 'at':['de'], 'fr':['fr'], 'nl':['nl'], 'it':['it'],
+    'es':['es'], 'pt':['pt'], 'br':['pt'], 'tr':['tr'], 'gr':['el'],
+    'ua':['uk'], 'ru':['ru'], 'ge':['ka'], 'am':['hy'], 'az':['az'],
+    'al':['sq'], 'mk':['mk'], 'ba':['bs'], 'me':['sr'], 'md':['ro'],
+    'xk':['sq'], 'kz':['kk'], 'gb':['en'], 'us':['en'], 'au':['en'],
+    'ie':['en'], 'ca':['en','fr'], 'nz':['en'],
   };
 
   function _newsCountryFromUrl(url) {
@@ -5586,7 +6530,8 @@ function showOnboarding(onComplete) {
 
   function _newsGetKeywords(cc) {
     var all = lsGet(LS.NEWS_KEYWORDS, {});
-    return all[cc] || NEWS_DEFAULT_KEYWORDS.slice();
+    var saved = all[cc];
+    return (Array.isArray(saved) && saved.length > 0) ? saved : NEWS_DEFAULT_KEYWORDS.slice();
   }
   function _newsSaveKeywords(cc, chips) {
     var all = lsGet(LS.NEWS_KEYWORDS, {});
@@ -5707,6 +6652,500 @@ function showOnboarding(onComplete) {
     return 'match';
   }
 
+  // ── NEWS CONTENT SCANNER ──
+  // Skanuje treść strony pod kątem słów kluczowych gdy URL nie zawiera żadnego dopasowania.
+  // Zwraca Promise<{status:'mention'|'contentmatch'|'keytopic'|'teasermatch'|'nomatch'|'blocked', score:Number, snippet:String}>
+  //
+  // Progi punktowe:
+  //   keyword w tytule/og:title          → +8  (silny sygnał — autor strony wybrał ten tytuł)
+  //   keyword w og:description/meta desc → +5  (silny sygnał — opis meta)
+  //   keyword w h1                       → +5  (silny sygnał — nagłówek artykułu)
+  //   keyword w h2/h3 (podrozdziały)     → +3  (wyraźny sygnał — keyword w sekcji artykułu)
+  //   keyword w pierwszym akapicie       → +4  (umiarkowany — lede artykułu)
+  //   keyword w kolejnych akapitach      → +1 za każdy, maks. +3 łącznie
+  //   keyword w blockquote               → +2  (cytat w treści artykułu)
+  //   keyword w tagach artykułu          → +4  (sygnał redakcyjny — tag dodany przez autora)
+  //
+  // Poziomy relevancji:
+  //   mention     → 1–4 pkt   (wzmianka w treści — poboczna, ale relevantna)
+  //   contentmatch→ 5–11 pkt  (keyword w opisie meta lub kilka akapitów)
+  //   keytopic    → 12+ pkt   (keyword w tytule — artykuł o marce)
+  //   teasermatch → 0 pkt     (keyword tylko w sekcji polecanych artykułów, nie w głównej treści)
+
+  var NEWS_CONTENT_SCAN_CONCURRENCY = 5;
+  var NEWS_CONTENT_SCAN_TIMEOUT_MS  = 8000;
+
+  var NEWS_NOISE_SELECTORS = [
+    'script','style','noscript','svg','iframe',
+    'aside','footer','nav','body > header','form',
+    '[class*="ad-"]','[class*="-ad"]','[class*="__ad"]',
+    '[class*="banner"]','[class*="sponsor"]','[class*="widget"]',
+    '[class*="sidebar"]','[class*="promo"]','[class*="popup"]',
+    '[class*="newsletter"]','[class*="cookie"]','[class*="consent"]',
+    '[id*="banner"]','[id*="sidebar"]','[id*="cookie"]','[id*="popup"]',
+  ];
+
+  // Selektory sekcji z polecanymi/powiązanymi artykułami — wycinane PRZED skanowaniem głównej treści.
+  // Tekst z tych sekcji trafia do osobnego bucketu (_teaserTexts) — jeśli keyword trafił TYLKO tu,
+  // status = 'teasermatch' (nie liczy jako relevantny artykuł).
+  var NEWS_TEASER_SELECTORS = [
+    '[class*="related"]','[class*="recommended"]',
+    '[class*="more-articles"]','[class*="more-stories"]','[class*="more-news"]',
+    '[class*="also-read"]','[class*="you-may"]','[class*="you-might"]',
+    '[class*="read-next"]','[class*="next-article"]',
+    '[class*="suggestions"]','[class*="suggested"]',
+    '[data-module*="related"]','[data-type*="related"]','[data-widget*="related"]',
+  ];
+
+  function _newsParseContent(html, chips) {
+    var doc;
+    try {
+      doc = (new DOMParser()).parseFromString(html, 'text/html');
+    } catch(e) {
+      return { status: 'nomatch', score: 0, snippet: '' };
+    }
+
+    // ── DETEKCJA TYPU STRONY (przed usunięciem szumu — skrypty jeszcze obecne) ──
+    var _articleSignals = [];
+
+    // Język strony — <html lang="pl-PL"> → "pl"
+    var _pageLang = (doc.documentElement.getAttribute('lang') || '').toLowerCase();
+    if (_pageLang.indexOf('-') !== -1) _pageLang = _pageLang.split('-')[0];
+
+    // og:type = "article" / "news_article" itp.
+    var _ogTypeEl = doc.querySelector('meta[property="og:type"]');
+    var _ogType = _ogTypeEl ? (_ogTypeEl.getAttribute('content') || '').toLowerCase() : '';
+    if (_ogType === 'article' || (_ogType.length > 0 && (_ogType.indexOf('article') !== -1 || _ogType.indexOf('news') !== -1))) {
+      _articleSignals.push('og:type');
+    }
+
+    // article:published_time — sygnał artykułu + ekstrakcja daty
+    var _articleDate = null;
+    var _pubTimeMeta = doc.querySelector('meta[property="article:published_time"]') ||
+                       doc.querySelector('meta[name="article:published_time"]') ||
+                       doc.querySelector('meta[property="og:article:published_time"]');
+    if (_pubTimeMeta) {
+      _articleSignals.push('published_time');
+      var _rawDate = (_pubTimeMeta.getAttribute('content') || '').slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(_rawDate)) _articleDate = _rawDate;
+    }
+
+    // JSON-LD — jeden przebieg: typ artykułu + data publikacji + paywall
+    var _ARTICLE_LD_TYPES = ['NewsArticle','Article','BlogPosting','ReportageNewsArticle','AnalysisNewsArticle','Review'];
+    var _isPaywall = false;
+    doc.querySelectorAll('script[type="application/ld+json"]').forEach(function(el) {
+      try {
+        var _ld = JSON.parse(el.textContent);
+        var _ldArr = Array.isArray(_ld) ? _ld : [_ld];
+        _ldArr.forEach(function(item) {
+          // @type → artykuł?
+          if (_articleSignals.indexOf('ld+json') === -1) {
+            var _t = item['@type'] || '';
+            if (typeof _t === 'string') _t = [_t];
+            if (Array.isArray(_t) && _t.some(function(x) { return _ARTICLE_LD_TYPES.indexOf(x) !== -1; })) {
+              _articleSignals.push('ld+json');
+            }
+          }
+          // datePublished / dateCreated → data artykułu
+          if (!_articleDate) {
+            var _d = item.datePublished || item.dateCreated || '';
+            if (_d) { var _ds = String(_d).slice(0, 10); if (/^\d{4}-\d{2}-\d{2}$/.test(_ds)) _articleDate = _ds; }
+          }
+          // isAccessibleForFree: false → paywall
+          var _iaf = item.isAccessibleForFree;
+          if (_iaf === false || _iaf === 'False' || _iaf === 'false') _isPaywall = true;
+        });
+      } catch(e) {}
+    });
+
+    // Paywall — meta access/content_tier
+    var _accessMeta = doc.querySelector('meta[name="access"]') ||
+                      doc.querySelector('meta[property="article:content_tier"]');
+    if (_accessMeta) {
+      var _ac = (_accessMeta.getAttribute('content') || '').toLowerCase();
+      if (_ac === 'subscription' || _ac === 'locked' || _ac === 'metered') _isPaywall = true;
+    }
+
+    // ── TEASER EXTRACTION — przed usunięciem szumu, żeby nie stracić tekstu ──
+    // Wytnij sekcje polecanych/powiązanych artykułów do osobnego bucketu.
+    // Jeśli keyword trafia TYLKO tu (nie w głównej treści) → status 'teasermatch'.
+    var _teaserTexts = [];
+    NEWS_TEASER_SELECTORS.forEach(function(sel) {
+      try {
+        doc.querySelectorAll(sel).forEach(function(el) {
+          var t = (el.textContent || '').toLowerCase();
+          if (t.length > 10) _teaserTexts.push(t);
+          el.remove();
+        });
+      } catch(e) {}
+    });
+
+    // ── WCZESNA IDENTYFIKACJA STREFY TREŚCI — przed usunięciem szumu ──
+    // Agresywne selektory noise (np. [class*="widget"]) mogą usunąć kontener artykułu
+    // gdy ma klasę zawierającą "widget" (np. "article-widget__body", "content-widget").
+    // Dlatego bodyEl musi być znaleziony ZANIM usuniemy szum — potem jest chroniony.
+    var _CONTENT_ZONE_SEL =
+      '[role="article"],[class*="article-body"],[class*="article-content"],' +
+      '[class*="article__body"],[class*="article__text"],[class*="article__content"],' +
+      '[class*="post-content"],[class*="post__content"],[class*="entry-content"],' +
+      '[class*="story-body"],[class*="story__content"],[class*="story-content"],' +
+      '[class*="content-body"],[class*="text-content"],[class*="body-copy"],' +
+      '[class*="content__body"],[class*="text-body"],[class*="article__lead"],' +
+      '[id*="article-body"],[id*="articleBody"],[id*="story-body"]';
+    var bodyEl = doc.querySelector('article') ||
+      doc.querySelector('main') ||
+      (function() { try { return doc.querySelector(_CONTENT_ZONE_SEL); } catch(e) { return null; } })() ||
+      doc.body;
+
+    // Usuń szum — reklamy, nawigację, stopki, popupy.
+    // bodyEl i jego przodkowie są chronieni: el !== bodyEl && !el.contains(bodyEl)
+    // zapobiega usunięciu kontenera artykułu lub jego rodzica przez szerokie selektory.
+    NEWS_NOISE_SELECTORS.forEach(function(sel) {
+      try {
+        doc.querySelectorAll(sel).forEach(function(el) {
+          if (el !== bodyEl && !el.contains(bodyEl)) el.remove();
+        });
+      } catch(e) {}
+    });
+
+    // Wyciągnij tekst z kluczowych stref strony
+    var titleText = '';
+    var titleEl = doc.querySelector('title');
+    if (titleEl) titleText = (titleEl.textContent || '').trim();
+
+    var ogTitle = '';
+    var ogTitleEl = doc.querySelector('meta[property="og:title"]') || doc.querySelector('meta[name="og:title"]');
+    if (ogTitleEl) ogTitle = (ogTitleEl.getAttribute('content') || '').trim();
+
+    var ogDesc = '';
+    var ogDescEl = doc.querySelector('meta[property="og:description"]') || doc.querySelector('meta[name="og:description"]');
+    if (ogDescEl) ogDesc = (ogDescEl.getAttribute('content') || '').trim();
+
+    var metaDesc = '';
+    var metaDescEl = doc.querySelector('meta[name="description"]');
+    if (metaDescEl) metaDesc = (metaDescEl.getAttribute('content') || '').trim();
+
+    var h1Text = '';
+    var h1El = doc.querySelector('h1');
+    if (h1El) h1Text = (h1El.textContent || '').trim();
+
+    var contentTitle = '';
+    var contentTitleEl = doc.querySelector('meta[name="content_title"]') || doc.querySelector('meta[property="content_title"]');
+    if (contentTitleEl) contentTitle = (contentTitleEl.getAttribute('content') || '').trim();
+
+    // h1 z wnętrza artykułu — dokładniejszy niż globalny h1 (logo/nawigacja mogą mieć h1)
+    var articleH1El = bodyEl ? bodyEl.querySelector('h1') : null;
+    var articleH1Text = articleH1El ? (articleH1El.textContent || '').trim() : h1Text;
+    var paragraphs = [];
+    if (bodyEl) {
+      paragraphs = Array.from(bodyEl.querySelectorAll('p'))
+        .map(function(p) { return (p.textContent || '').trim(); })
+        .filter(function(t) { return t.length > 40; }) // pomijaj krótkie fragmenty (np. podpisy, etykiety)
+        .slice(0, 12); // max 12 pierwszych akapitów — lede artykułu, nie ogon
+    }
+
+    // h2/h3 podrozdziały — tylko wewnątrz artykułu/main (nie globalne nagłówki nawigacji)
+    var subHeadings = [];
+    if (bodyEl) {
+      subHeadings = Array.from(bodyEl.querySelectorAll('h2,h3'))
+        .map(function(h) { return (h.textContent || '').trim(); })
+        .filter(function(t) { return t.length > 3 && t.length < 200; });
+    }
+
+    // Cytaty blockquote w treści artykułu
+    var blockquotes = [];
+    if (bodyEl) {
+      blockquotes = Array.from(bodyEl.querySelectorAll('blockquote'))
+        .map(function(q) { return (q.textContent || '').trim(); })
+        .filter(function(t) { return t.length > 10; });
+    }
+
+    // Tagi redakcyjne artykułu — bardzo silny sygnał (autor/redakcja oznaczyła temat)
+    var articleTagTexts = [];
+    if (bodyEl) {
+      try {
+        bodyEl.querySelectorAll(
+          '[rel="tag"],[class*="article-tag"],[class*="entry-tag"],[class*="post-tag"],' +
+          '[class*="article__tag"],[class*="tags__item"],[class*="tag-list"] a'
+        ).forEach(function(el) {
+          var t = (el.textContent || '').trim().toLowerCase();
+          if (t.length > 1 && t.length < 60) articleTagTexts.push(t);
+        });
+      } catch(e) {}
+    }
+
+    // Detekcja artykułu — sygnały po usunięciu szumu (bodyEl dostępny)
+    var _timeEl = bodyEl ? bodyEl.querySelector('time[datetime]') : null;
+    if (_timeEl) _articleSignals.push('time[datetime]');
+    if (paragraphs.length >= 5) _articleSignals.push('5+p');
+    // Klasyfikacja: 2+ sygnałów = artykuł, 1 = niepewny, 0 = nie-artykuł/katalog
+    var _pageType = _articleSignals.length >= 2 ? 'article' :
+                    _articleSignals.length === 1 ? 'uncertain' : 'nonArticle';
+
+    // Data — fallback z <time datetime> jeśli nie znaleziono w meta/JSON-LD
+    if (!_articleDate && _timeEl) {
+      var _td = (_timeEl.getAttribute('datetime') || '').slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(_td)) _articleDate = _td;
+    }
+
+    // Paywall — oblicz raz długość tekstu body (używane w kilku sprawdzeniach)
+    var _bodyTextLen = bodyEl ? bodyEl.textContent.trim().length : 0;
+
+    // Paywall — silne sygnały CSS: samo istnienie = twarda blokada (nie zależy od ilości tekstu)
+    if (!_isPaywall) {
+      try {
+        if (doc.querySelectorAll(
+          '[class*="access-denied"],[class*="subscriber-only"],[class*="premium-only"],' +
+          '[class*="locked-content"],[class*="paywalled"],[class*="subscribe-wall"]'
+        ).length > 0) _isPaywall = true;
+      } catch(e) {}
+    }
+    // Paywall — słabe sygnały CSS (piano, tinypass, klasa paywall):
+    // flaguj TYLKO gdy treści jest mało — jeśli body ma >1200 znaków, treść jest dostępna mimo popupów
+    if (!_isPaywall && _bodyTextLen < 1200) {
+      try {
+        if (doc.querySelectorAll(
+          '[class*="paywall"],[id*="paywall"],[class*="piano-"],[class*="tp-container"],[class*="tinypass"]'
+        ).length > 0) _isPaywall = true;
+      } catch(e) {}
+    }
+    // Paywall fallback — duży HTML ale bardzo mały tekst body → treść ukryta za blokadą
+    if (!_isPaywall && html.length > 80000 && _bodyTextLen < 600) _isPaywall = true;
+
+    // Strefy poboczne — podpisy zdjęć, opisy galerii, adresy/lokalizacje
+    // Przeszukiwane po usunięciu szumu; keyword tu punktuje +2 (słabszy sygnał) z oznaczeniem w liście URLi
+    var _secZones = [];
+    if (bodyEl) {
+      var _secSeen = new Set();
+      var _addSec = function(el, hint) {
+        var t = (el.textContent || '').trim();
+        if (t.length < 4 || t.length > 600 || _secSeen.has(t)) return;
+        _secSeen.add(t);
+        _secZones.push({ text: t, hint: hint });
+      };
+      bodyEl.querySelectorAll('figcaption').forEach(function(el) { _addSec(el, 'podpis zdjęcia'); });
+      try { bodyEl.querySelectorAll('[class*="caption"],[id*="caption"]').forEach(function(el) {
+        if (el.matches('figcaption')) return;
+        _addSec(el, 'podpis');
+      }); } catch(e) {}
+      try { bodyEl.querySelectorAll('[class*="address"],[id*="address"],[class*="location"],[id*="location"]').forEach(function(el) {
+        _addSec(el, 'adres/lokalizacja');
+      }); } catch(e) {}
+      try { bodyEl.querySelectorAll(
+        '[class*="slide"] [class*="description"],[class*="carousel"] [class*="description"],' +
+        '[class*="gallery"] [class*="caption"],[class*="gallery"] [class*="description"]'
+      ).forEach(function(el) { _addSec(el, 'opis galerii'); }); } catch(e) {}
+    }
+
+    // Pełny tekst body — fallback dla stron katalogowych (firmy.cz itp.) które nie używają <p>
+    var _genericText = bodyEl ? (bodyEl.textContent || '') : '';
+    var _genericTextLower = _genericText.toLowerCase();
+
+    var score = 0;
+    var _bodySnippet = '';      // snippet z body (h1, akapity) — preferowany dla pola Treść
+    var _metaSnippet = '';      // snippet z meta/og:description — fallback
+    var matchedChips = [];      // chipy które znaleziono na stronie
+    var _matchedZoneHints = []; // zone hints dla stref pobocznych (podpis, adres itp.)
+    var _secondaryChips = [];   // chipy dopasowane wyłącznie w strefach pobocznych
+
+    chips.forEach(function(chip) {
+      var kw = chip.toLowerCase();
+      var chipMatched = false;
+
+      // Strefa tytułu — najsilniejszy sygnał (tylko score, tytuł idzie do osobnego pola)
+      var inTitle = titleText.toLowerCase().indexOf(kw) !== -1 || ogTitle.toLowerCase().indexOf(kw) !== -1;
+      if (inTitle) {
+        score += 8;
+        chipMatched = true;
+      }
+
+      // Strefa opisu meta
+      var inMeta = ogDesc.toLowerCase().indexOf(kw) !== -1 || metaDesc.toLowerCase().indexOf(kw) !== -1;
+      if (inMeta) {
+        score += 5;
+        chipMatched = true;
+        if (!_metaSnippet) _metaSnippet = (ogDesc || metaDesc).slice(0, 500);
+      }
+
+      // Strefa nagłówka h1
+      if (h1Text.toLowerCase().indexOf(kw) !== -1) {
+        score += 5;
+        chipMatched = true;
+        // h1 liczy do scoringu, ale nie do snippetu — tytuł nie trafia do pola Treść
+      }
+
+      // Strefa nagłówków h2/h3 — podrozdziały artykułu (po usunięciu szumu i teaserów, tylko bodyEl)
+      var h2h3Match = false;
+      for (var _hi = 0; _hi < subHeadings.length; _hi++) {
+        if (subHeadings[_hi].toLowerCase().indexOf(kw) !== -1) { h2h3Match = true; break; }
+      }
+      if (h2h3Match) { score += 3; chipMatched = true; }
+
+      // Strefa akapitów — rozróżniamy pierwszy akapit (lede) od reszty
+      var firstPMatch = false;
+      var extraPMatches = 0;
+      paragraphs.forEach(function(p, idx) {
+        if (p.toLowerCase().indexOf(kw) !== -1) {
+          if (idx === 0) { firstPMatch = true; }
+          else { extraPMatches++; }
+          chipMatched = true;
+          if (!_bodySnippet) {
+            if (p.length <= 600) {
+              _bodySnippet = p;
+            } else {
+              // Akapit zbyt długi — wytnij 3 zdania wokół słowa kluczowego
+              var _sents = p.replace(/([.!?])\s+/g, '$1\x00').split('\x00').filter(Boolean);
+              var _kwI = -1;
+              for (var _si = 0; _si < _sents.length; _si++) {
+                if (_sents[_si].toLowerCase().indexOf(kw) !== -1) { _kwI = _si; break; }
+              }
+              _bodySnippet = _kwI >= 0
+                ? _sents.slice(Math.max(0, _kwI - 1), Math.min(_sents.length, _kwI + 2)).join(' ').trim()
+                : p.slice(0, 500);
+            }
+          }
+        }
+      });
+      if (firstPMatch) score += 4;
+      if (extraPMatches > 0) score += Math.min(extraPMatches, 3); // maks. +3 za wielokrotne wzmianki w treści
+
+      // Strefa blockquote — cytaty w treści artykułu
+      var inBlockquote = blockquotes.some(function(q) { return q.toLowerCase().indexOf(kw) !== -1; });
+      if (inBlockquote) { score += 2; chipMatched = true; }
+
+      // Tagi redakcyjne artykułu — bardzo silny sygnał (autor/redakcja oznaczyła temat tagem)
+      var inArticleTags = articleTagTexts.some(function(t) { return t.indexOf(kw) !== -1; });
+      if (inArticleTags) { score += 4; chipMatched = true; }
+
+      // Strefy poboczne — tylko jeśli chip nie trafił w żadną strefę główną
+      if (!chipMatched && _secZones.length > 0) {
+        for (var _szi = 0; _szi < _secZones.length; _szi++) {
+          if (_secZones[_szi].text.toLowerCase().indexOf(kw) !== -1) {
+            score += 2;
+            chipMatched = true;
+            if (!_bodySnippet) _bodySnippet = _secZones[_szi].text.slice(0, 200);
+            if (_matchedZoneHints.indexOf(_secZones[_szi].hint) === -1) _matchedZoneHints.push(_secZones[_szi].hint);
+            _secondaryChips.push(chip);
+            break;
+          }
+        }
+      }
+
+      // Fallback: pełny tekst body — łapie keyword w <div>, <li>, <dd> itp. (strony katalogowe)
+      if (!chipMatched && _genericTextLower.indexOf(kw) !== -1) {
+        score += 1;
+        chipMatched = true;
+        if (!_bodySnippet) {
+          var _gIdx = _genericTextLower.indexOf(kw);
+          _bodySnippet = _genericText.slice(Math.max(0, _gIdx - 80), _gIdx + 150).trim();
+        }
+      }
+
+      if (chipMatched) matchedChips.push(chip);
+    });
+
+    // snippet dla pola Treść: preferuj body (akapity/h1) nad meta — nigdy tytuł
+    var snippet = _bodySnippet || _metaSnippet;
+
+    score = Math.min(score, 30); // cap — żeby jeden artykuł pełen keywordów nie zaburzał skali
+
+    var status;
+    if (score <= 0)       status = 'nomatch';
+    else if (score <= 4)  status = 'mention';
+    else if (score <= 11) status = 'contentmatch';
+    else                  status = 'keytopic';
+
+    // Teasermatch — keyword tylko w sekcji polecanych artykułów, nie w głównej treści.
+    // Sprawdzamy wyłącznie gdy score=0 (główna treść czysta) i są zebrane teasery.
+    var _teaserChips = [];
+    if (score === 0 && _teaserTexts.length > 0) {
+      chips.forEach(function(chip) {
+        var kw = chip.toLowerCase();
+        for (var _ti = 0; _ti < _teaserTexts.length; _ti++) {
+          if (_teaserTexts[_ti].indexOf(kw) !== -1) { _teaserChips.push(chip); break; }
+        }
+      });
+      if (_teaserChips.length > 0) status = 'teasermatch';
+    }
+    var _teaserMatchOnly = status === 'teasermatch';
+
+    // Tytuł artykułu — h1 z artykułu (widoczny nagłówek) > content_title (custom meta) > og:title > <title>
+    var articleTitle = (articleH1Text || contentTitle || ogTitle || titleText).trim();
+    // Ogranicz do 200 znaków — <title> może być długi
+    if (articleTitle.length > 200) articleTitle = articleTitle.slice(0, 200);
+
+    var secondaryZoneOnly = _secondaryChips.length > 0 && matchedChips.length === _secondaryChips.length;
+    return {
+      status:            status,
+      score:             score,
+      snippet:           snippet,
+      title:             articleTitle,
+      matchedChips:      matchedChips,
+      secondaryZoneOnly: secondaryZoneOnly,
+      zoneHints:         _matchedZoneHints,
+      teaserMatchOnly:   _teaserMatchOnly,
+      teaserChips:       _teaserChips,
+      pageType:          _pageType,
+      pageTypeSignals:   _articleSignals,
+      pageLang:          _pageLang,
+      articleDate:       _articleDate,
+      isPaywall:         _isPaywall,
+    };
+  }
+
+  // Pobiera stronę przez GM_xmlhttpRequest (pomija CORS) i skanuje jej treść.
+  // Dla URL-i które już mają status 'match' nie wywołuj tej funkcji — jest zbędna.
+  function _newsContentScan(url, chips) {
+    return new Promise(function(resolve) {
+      var resolved = false;
+      function _done(result) {
+        if (!resolved) { resolved = true; resolve(result); }
+      }
+
+      // Zewnętrzny timeout — ochrona gdyby GM_xmlhttpRequest nie wywołał żadnego callbacku
+      var timer = setTimeout(function() {
+        _done({ status: 'blocked', score: 0, snippet: '' });
+      }, NEWS_CONTENT_SCAN_TIMEOUT_MS + 500);
+
+      try {
+        GM_xmlhttpRequest({
+          method:  'GET',
+          url:     url,
+          headers: { 'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8' },
+          timeout: NEWS_CONTENT_SCAN_TIMEOUT_MS,
+          onload: function(resp) {
+            clearTimeout(timer);
+            if (resp.status < 200 || resp.status >= 400) {
+              _done({ status: 'blocked', score: 0, snippet: '' });
+              return;
+            }
+            // Odrzuć non-HTML (PDFy, obrazy, feed XML itp.)
+            var ct = (resp.responseHeaders || '').toLowerCase();
+            var isHtml = ct.indexOf('content-type: text/html') !== -1 ||
+                         ct.indexOf('content-type: application/xhtml') !== -1;
+            // Fallback: jeśli brak nagłówka content-type, sprawdź czy odpowiedź zaczyna się od '<'
+            if (!isHtml && (resp.responseText || '').trimStart().charAt(0) !== '<') {
+              _done({ status: 'nomatch', score: 0, snippet: '' });
+              return;
+            }
+            _done(_newsParseContent(resp.responseText, chips));
+          },
+          onerror: function() {
+            clearTimeout(timer);
+            _done({ status: 'blocked', score: 0, snippet: '' });
+          },
+          ontimeout: function() {
+            clearTimeout(timer);
+            _done({ status: 'blocked', score: 0, snippet: '' });
+          },
+        });
+      } catch(e) {
+        clearTimeout(timer);
+        _done({ status: 'blocked', score: 0, snippet: '' });
+      }
+    });
+  }
+
   // ── NEWS URL OPENER (sized window) ──
   var NEWS_WIN_SIZES = {
     '900x700':  { w: 900,  h: 700  },
@@ -5744,7 +7183,8 @@ function showOnboarding(onComplete) {
     // 3. GM fetch /searches/add-new-mention/?sid=ID — Django page that always has tknB24 hidden input
     var sid = state.projectId || '';
     if (!sid) { cb(null, '\u26a0 Brak ID projektu. Przejd\u017a na stron\u0119 projektu Brand24.'); return; }
-    var fetchUrl = 'https://app.brand24.com/searches/add-new-mention/?sid=' + sid;
+    var _b24base = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
+    var fetchUrl = _b24base + '/searches/add-new-mention/?sid=' + sid;
     GM_xmlhttpRequest({
       method: 'GET',
       url: fetchUrl,
@@ -5789,10 +7229,19 @@ function showOnboarding(onComplete) {
       /"dateCreated"\s*:\s*"(\d{4}-\d{2}-\d{2})/,
       // pubdate attribute on time
       /<time[^>]+pubdate[^>]*datetime=["'](\d{4}-\d{2}-\d{2})/i,
-      // data-date attributes
-      /data-(?:publish|pub|created|article)-?date=["'](\d{4}-\d{2}-\d{2})/i,
-      // <time datetime="YYYY-MM-DD
-      /<time[^>]+datetime="(\d{4}-\d{2}-\d{2})/i,
+      // data-date attributes (rozszerzone)
+      /data-(?:publish|pub|created|article|date)-?(?:date|time|at)?=["'](\d{4}-\d{2}-\d{2})/i,
+      // itemprop="datePublished" z content= (kolejność atrybutów odwrócona)
+      /content=["'](\d{4}-\d{2}-\d{2})[^"']*["'][^>]+itemprop=["']datePublished["']/i,
+      // meta name="publishdate" / "publish-date" / "article.published"
+      /name=["'](?:publishdate|publish[-_]date|article\.published|cXenseParse:recs:publishtime)["'][^>]+content=["'](\d{4}-\d{2}-\d{2})/i,
+      /content=["'](\d{4}-\d{2}-\d{2})[^"']*["'][^>]+name=["'](?:publishdate|publish[-_]date|article\.published)["']/i,
+      // Dublin Core
+      /name=["']DC\.date[^"']*["'][^>]+content=["'](\d{4}-\d{2}-\d{2})/i,
+      // <time datetime="YYYY-MM-DD (z cudzysłowem pojedynczym też)
+      /<time[^>]+datetime=["'](\d{4}-\d{2}-\d{2})/i,
+      // JSON-LD dateModified jako ostatnia deska ratunku
+      /"dateModified"\s*:\s*"(\d{4}-\d{2}-\d{2})/,
       // Common date patterns in content — celowo pominięte (zbyt szerokie, łapie daty z footerów itp.)
     ];
     for (var i = 0; i < patterns.length; i++) {
@@ -5824,6 +7273,33 @@ function showOnboarding(onComplete) {
   }
 
   // ── BUILD & OPEN NEWS PANELS ──
+  function _newsRefillTags() {
+    var tagList = document.getElementById('b24t-news-tag-list');
+    if (!tagList) return;
+    var tags = Object.entries(state.tags || {}).sort(function(a, b) {
+      var aD = a[0].toLowerCase().indexOf('dodane') !== -1;
+      var bD = b[0].toLowerCase().indexOf('dodane') !== -1;
+      if (aD !== bD) return aD ? -1 : 1;
+      return a[0].localeCompare(b[0]);
+    });
+    if (tags.length === 0) {
+      // Projekt jeszcze nie załadowany — spróbuj za chwilę (race condition przy wolnym ładowaniu, np. panel.brand24.pl)
+      setTimeout(function() { if (Object.keys(state.tags || {}).length > 0) _newsRefillTags(); }, 1500);
+      return;
+    }
+    var t2 = _newsThemeVars();
+    tagList.innerHTML = tags.map(function(entry) {
+      var name = entry[0], tid = entry[1];
+      var isDodane = name.toLowerCase().indexOf('dodane') !== -1;
+      return '<label style="display:flex;align-items:center;gap:3px;cursor:pointer;padding:3px 7px;border-radius:6px;background:' + (isDodane ? 'rgba(99,102,241,0.15)' : t2.bgInput) + ';border:1px solid ' + (isDodane ? 'rgba(99,102,241,0.35)' : t2.borderSub) + ';">' +
+        '<input type="checkbox" data-tag-id="' + tid + '"' + (isDodane ? ' id="b24t-news-tag-dodane" checked' : '') + ' style="cursor:pointer;accent-color:#6366f1;width:11px;height:11px;">' +
+        '<span style="font-size:10px;font-weight:' + (isDodane ? '700' : '500') + ';color:' + t2.text + ';">' + name + '</span>' +
+        (isDodane ? '<span id="b24t-news-tag-dodane-status" style="font-size:9px;color:' + t2.textFaint + ';">(sprawdzanie...)</span>' : '') +
+      '</label>';
+    }).join('');
+    _newsCheckTagDodane();
+  }
+
   function openNewsPanels() {
     // If already open — just show
     if (document.getElementById('b24t-news-p1')) {
@@ -5833,8 +7309,12 @@ function showOnboarding(onComplete) {
       });
       newsState.panelsOpen = true;
       if (!newsState.wired) { _wireNewsPanels(); newsState.wired = true; }
-      // Re-stack import below list
-      requestAnimationFrame(function() { _newsStackPanels(); });
+      // Re-stack import below list + odśwież chipy (mogły zniknąć lub kraj się zmienił)
+      requestAnimationFrame(function() {
+        _newsStackPanels();
+        if (_newsChipsRenderer) _newsChipsRenderer();
+        _newsRefillTags(); // odśwież tagi — projekt mógł się załadować po pierwszym buildie
+      });
       return;
     }
     _buildNewsPanels();
@@ -5846,18 +7326,18 @@ function showOnboarding(onComplete) {
   function _newsThemeVars() {
     var dark = _newsIsDark();
     return {
-      bg:       dark ? '#1a1a26' : '#ffffff',
-      bgDeep:   dark ? '#13131d' : '#f4f5f9',
-      bgInput:  dark ? '#22223a' : '#f0f1f7',
-      border:   dark ? '#2e2e48' : '#d1d5db',
-      borderSub:dark ? '#252538' : '#e5e7eb',
-      text:     dark ? '#e2e8f0' : '#1e2028',
-      textMuted:dark ? '#8b8fa8' : '#6b7280',
-      textFaint:dark ? '#565a72' : '#9ca3af',
-      accent:   '#6366f1',
-      accentAlpha: dark ? 'rgba(99,102,241,0.18)' : 'rgba(99,102,241,0.10)',
-      accentBorder: dark ? 'rgba(99,102,241,0.4)' : 'rgba(99,102,241,0.3)',
-      shadow:   dark ? '0 8px 32px rgba(0,0,0,0.5)' : '0 8px 32px rgba(0,0,0,0.12)',
+      bg:          'var(--b24t-bg)',
+      bgDeep:      'var(--b24t-bg-deep)',
+      bgInput:     'var(--b24t-bg-input)',
+      border:      'var(--b24t-border)',
+      borderSub:   'var(--b24t-border-sub)',
+      text:        'var(--b24t-text)',
+      textMuted:   'var(--b24t-text-muted)',
+      textFaint:   'var(--b24t-text-faint)',
+      accent:      'var(--b24t-primary)',
+      accentAlpha: 'var(--b24t-primary-bg)',
+      accentBorder:'color-mix(in srgb, var(--b24t-primary) 35%, transparent)',
+      shadow:      'var(--b24t-shadow-h)',
       green:    '#22c55e', greenBg: dark ? 'rgba(34,197,94,0.12)' : 'rgba(34,197,94,0.08)',
       red:      '#ef4444', redBg:   dark ? 'rgba(239,68,68,0.12)'  : 'rgba(239,68,68,0.08)',
       yellow:   '#f59e0b', yellowBg:dark ? 'rgba(245,158,11,0.12)' : 'rgba(245,158,11,0.08)',
@@ -5866,7 +7346,6 @@ function showOnboarding(onComplete) {
   }
 
   function _newsPanelBase(id, widthPx, topPx, rightPx, zIdx) {
-    var t = _newsThemeVars();
     var el = document.createElement('div');
     el.id = id;
     el.setAttribute('data-news-panel', '1');
@@ -5880,10 +7359,10 @@ function showOnboarding(onComplete) {
       'display:flex;',
       'flex-direction:column;',
       'border-radius:14px;',
-      'border:1px solid ' + t.border + ';',
-      'background:' + t.bg + ';',
-      'box-shadow:' + t.shadow + ';',
-      'color:' + t.text + ';',
+      'border:1px solid var(--b24t-border);',
+      'background:var(--b24t-bg);',
+      'box-shadow:var(--b24t-shadow-h);',
+      'color:var(--b24t-text);',
       'font-family:Inter,Segoe UI,system-ui,sans-serif;',
       'font-size:13px;',
       'overflow:hidden;',
@@ -5893,12 +7372,11 @@ function showOnboarding(onComplete) {
   }
 
   function _newsPanelHeader(title, onClose, extraHtml) {
-    var t = _newsThemeVars();
     var d = document.createElement('div');
-    d.style.cssText = 'display:flex;align-items:center;padding:10px 14px;background:linear-gradient(135deg,#6366f1,#8b5cf6);flex-shrink:0;cursor:move;user-select:none;';
+    d.style.cssText = 'display:flex;align-items:center;padding:10px 14px;background:var(--b24t-accent-grad);flex-shrink:0;cursor:move;user-select:none;position:relative;overflow:hidden;';
     d.innerHTML = '<span style="font-size:13px;font-weight:700;color:#fff;flex:1;text-shadow:0 1px 3px rgba(0,0,0,0.2);">' + title + '</span>' +
       (extraHtml || '') +
-      '<button class="b24t-news-close-all" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:15px;line-height:1;padding:2px 7px;border-radius:5px;flex-shrink:0;">×</button>';
+      '<button class="b24t-news-close-all" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:15px;line-height:1;padding:2px 7px;border-radius:5px;flex-shrink:0;">×</button>';
     if (onClose) {
       d.querySelector('.b24t-news-close-all').addEventListener('click', onClose);
     }
@@ -5922,7 +7400,7 @@ function showOnboarding(onComplete) {
     var annTab = document.getElementById('b24t-annotator-tab');
     var annTabW = annTab ? annTab.getBoundingClientRect().width : 40;
     var baseRight = annTabW + 10;
-    var PANEL_W = 360;
+    var PANEL_W = Math.min(360, Math.max(280, Math.round(window.innerWidth * 0.30)));
     var GAP = 10;
     var topList   = 80;
     var topImport = null; // will be set after list renders — use estimate
@@ -5931,7 +7409,7 @@ function showOnboarding(onComplete) {
     var p1 = _newsPanelBase('b24t-news-p1', PANEL_W, topList, baseRight, 2147483632);
 
     var hdr1 = _newsPanelHeader('📋 Lista URLi', closeNewsPanels,
-      '<div id="b24t-news-winsize-wrap" style="position:relative;margin-right:6px;"><button id="b24t-news-winsize-btn" title="Rozmiar okna" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;">▢ Okno</button><div id="b24t-news-winsize-menu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:#1e1b3a;border:1px solid rgba(139,92,246,0.4);border-radius:8px;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,0.4);z-index:2147483699;overflow:hidden;"><div class="b24t-wsz" data-sz="900x700" style="padding:7px 14px;font-size:11px;color:#e2e8f0;cursor:pointer;">900×700 (domyślne)</div><div class="b24t-wsz" data-sz="1100x800" style="padding:7px 14px;font-size:11px;color:#e2e8f0;cursor:pointer;">1100×800 (duże)</div><div class="b24t-wsz" data-sz="800x600" style="padding:7px 14px;font-size:11px;color:#e2e8f0;cursor:pointer;">800×600 (kompakt)</div><div class="b24t-wsz" data-sz="half" style="padding:7px 14px;font-size:11px;color:#e2e8f0;cursor:pointer;">½ekranu (dyn.)</div></div></div><button id="b24t-news-langmap-btn" title="Mapa języków" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;margin-right:6px;">⚙ Języki</button>'
+      '<div id="b24t-news-winsize-wrap" style="position:relative;margin-right:6px;"><button id="b24t-news-winsize-btn" title="Rozmiar okna" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;">▢ Okno</button><div id="b24t-news-winsize-menu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:var(--b24t-bg-elevated);border:1px solid color-mix(in srgb,var(--b24t-primary) 40%,transparent);border-radius:8px;min-width:160px;box-shadow:var(--b24t-shadow-h);z-index:2147483699;overflow:hidden;"><div class="b24t-wsz" data-sz="900x700" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">900×700 (domyślne)</div><div class="b24t-wsz" data-sz="1100x800" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">1100×800 (duże)</div><div class="b24t-wsz" data-sz="800x600" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">800×600 (kompakt)</div><div class="b24t-wsz" data-sz="half" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">½ekranu (dyn.)</div></div></div><button id="b24t-news-langmap-btn" title="Mapa języków" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;margin-right:6px;">⚙ Języki</button>'
     );
     _newsDraggable(hdr1, p1);
 
@@ -5944,9 +7422,13 @@ function showOnboarding(onComplete) {
           '<span>Postęp sesji</span>',
           '<span id="b24t-news-progress-label">0 / 0</span>',
         '</div>',
-        '<div style="height:4px;border-radius:2px;background:' + t.bgDeep + ';overflow:hidden;">',
-          '<div id="b24t-news-progress-bar" style="height:4px;background:#6366f1;width:0%;transition:width 0.4s ease;border-radius:2px;"></div>',
+        '<div style="height:6px;border-radius:2px;background:' + t.bgDeep + ';overflow:hidden;">',
+          '<div id="b24t-news-progress-bar" style="height:6px;background:var(--b24t-accent-grad);width:0%;transition:width 0.4s ease;border-radius:2px;"></div>',
         '</div>',
+      '</div>',
+      // Filter bar — pokazuje się gdy są nie-artykuły w liście
+      '<div id="b24t-news-filter-bar" style="display:none;padding:3px 8px;flex-shrink:0;border-bottom:1px solid ' + t.borderSub + ';align-items:center;gap:6px;flex-wrap:wrap;">',
+        '<button id="b24t-news-filter-nonarticle" style="font-size:9px;padding:2px 8px;border-radius:4px;border:1px solid ' + t.border + ';background:rgba(107,114,128,0.08);color:' + t.textMuted + ';cursor:pointer;transition:background 0.15s,color 0.15s,border-color 0.15s;">Ukryj nie-artyku\u0142y (0)</button>',
       '</div>',
       // List
       '<div id="b24t-news-url-list" style="flex:1;overflow-y:auto;padding:8px 6px;display:flex;flex-direction:column;gap:3px;min-height:0;">',
@@ -5967,6 +7449,7 @@ function showOnboarding(onComplete) {
     p1.appendChild(hdr1);
     p1.appendChild(body1);
     document.body.appendChild(p1);
+    _updatePanelClass(p1);
 
     // ─── LEGEND PANEL (small, attached top-right of P1) ───
     var legend = document.createElement('div');
@@ -5985,20 +7468,44 @@ function showOnboarding(onComplete) {
       'box-shadow:' + t.shadow + ';',
       'min-width:180px;',
     ].join('');
-    var legendItems = [
-      { dot: '●', color: '#22c55e', label: 'Relevantny (keyword)' },
-      { dot: '●', color: '#f97316', label: 'Inny kraj w URL' },
-      { dot: '●', color: '#a78bfa', label: 'Otwarty / weryfikowany' },
-      { dot: '✓', color: '#15803d', label: 'Dodany do Brand24' },
-      { dot: '✗', color: '#ef4444', label: 'Błąd / duplikat' },
-      { dot: '○', color: '#4b5563', label: 'Brak keyword' },
+    var legendGroups = [
+      {
+        title: 'RELEVANTNE',
+        items: [
+          { dot: '●', color: '#22c55e', label: 'Keyword w URL' },
+          { dot: '◆', color: '#4ade80', label: 'Główny temat (score 12+)' },
+          { dot: '◆', color: '#06b6d4', label: 'Kontekst (score 5–11)' },
+          { dot: '◆', color: '#facc15', label: 'Wzmianka (score 1–4)' },
+          { dot: '●', color: '#f97316', label: 'Keyword w URL, inny kraj' },
+        ]
+      },
+      {
+        title: 'SESJA',
+        items: [
+          { dot: '●', color: '#a78bfa', label: 'Otwarty / weryfikowany' },
+          { dot: '✓', color: '#15803d', label: 'Dodany do Brand24' },
+          { dot: '✗', color: '#ef4444', label: 'Błąd / duplikat' },
+        ]
+      },
+      {
+        title: 'POMINIĘTE',
+        items: [
+          { dot: '◌', color: '#818cf8', label: 'Skanowanie...' },
+          { dot: '—', color: '#6b7280', label: 'Nie przeskanowana — otwórz ręcznie' },
+          { dot: '○', color: '#4b5563', label: 'Brak keyword' },
+          { dot: '●', color: '#64748b', label: 'Już w projekcie' },
+        ]
+      },
     ];
-    legend.innerHTML = '<div style="font-size:10px;font-weight:700;color:' + t.textMuted + ';letter-spacing:0.04em;margin-bottom:6px;text-transform:uppercase;">Legenda</div>' +
-      legendItems.map(function(item) {
-        return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">' +
-          '<span style="font-size:12px;font-weight:700;color:' + item.color + ';width:12px;text-align:center;">' + item.dot + '</span>' +
-          '<span style="color:' + t.textMuted + ';">' + item.label + '</span>' +
-        '</div>';
+    legend.innerHTML = '<div style="font-size:10px;font-weight:700;color:' + t.textMuted + ';letter-spacing:0.04em;margin-bottom:7px;text-transform:uppercase;">Legenda</div>' +
+      legendGroups.map(function(grp) {
+        return '<div style="font-size:9px;font-weight:700;color:' + t.textFaint + ';letter-spacing:0.06em;margin:5px 0 3px;text-transform:uppercase;">' + grp.title + '</div>' +
+          grp.items.map(function(item) {
+            return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">' +
+              '<span style="font-size:11px;font-weight:700;color:' + item.color + ';width:12px;text-align:center;flex-shrink:0;">' + item.dot + '</span>' +
+              '<span style="color:' + t.textMuted + ';font-size:10px;">' + item.label + '</span>' +
+            '</div>';
+          }).join('');
       }).join('');
     document.body.appendChild(legend);
 
@@ -6015,7 +7522,8 @@ function showOnboarding(onComplete) {
     p2.style.removeProperty('top');
     p2.style.top = topList + 'px'; // temporary, fixed by _newsStackPanels()
 
-    var hdr2 = _newsPanelHeader('📥 Import URLi', closeNewsPanels);
+    var hdr2 = _newsPanelHeader('📥 Import URLi', closeNewsPanels,
+      '<button id="b24t-news-import-settings-btn" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:13px;line-height:1;padding:2px 7px;border-radius:5px;flex-shrink:0;margin-right:4px;" title="Ustawienia importu">⚙</button>');
     _newsDraggable(hdr2, p2);
 
     var body2 = document.createElement('div');
@@ -6028,14 +7536,26 @@ function showOnboarding(onComplete) {
           '<span style="font-size:9px;color:' + t.textFaint + ';">jeden na linię</span>',
         '</div>',
         '<textarea id="b24t-news-paste-area" rows="4" placeholder="Wklej URLe z arkusza H&M Manually...\n\nURLe nie zostaną przetworzone dopóki nie klikniesz &quot;Wczytaj URLe&quot; poniżej." style="width:100%;box-sizing:border-box;font-size:10px;padding:7px 9px;border-radius:8px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';resize:vertical;font-family:monospace;min-height:80px;line-height:1.5;"></textarea>',
-        '<button id="b24t-news-import-btn" style="margin-top:6px;width:100%;padding:7px;border-radius:8px;border:none;background:#6366f1;color:#fff;font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em;">▶ Wczytaj URLe</button>',
-        '<div id="b24t-news-import-info" style="display:none;font-size:10px;text-align:center;margin-top:4px;"></div>',
+        '<button id="b24t-news-import-btn" style="margin-top:6px;width:100%;padding:7px;border-radius:8px;border:none;background:var(--b24t-accent-grad);color:#fff;font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em;box-shadow:inset 0 1px 0 rgba(255,255,255,0.15);">▶ Wczytaj URLe</button>',
+        '<div id="b24t-news-import-info" style="display:none;font-size:10px;text-align:center;margin-top:4px;"></div>' +
+        '<div id="b24t-news-project-info" style="display:none;font-size:10px;text-align:center;margin-top:2px;"></div>',
+      '</div>',
+      // Ustawienia importu (collapsible)
+      '<div id="b24t-news-import-settings" style="display:none;padding:10px 12px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;">',
+        '<div style="font-size:10px;font-weight:700;color:' + t.textMuted + ';letter-spacing:0.06em;margin-bottom:8px;">USTAWIENIA SKANOWANIA</div>',
+        '<label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">',
+          '<input type="checkbox" id="b24t-news-opt-urlsimple" style="margin-top:2px;flex-shrink:0;"' + (_newsImportOpts.urlSimpleMode ? ' checked' : '') + '>',
+          '<span>',
+            '<span style="font-weight:600;color:' + t.text + ';">Uproszczone skanowanie (URL)</span>',
+            '<br><span style="font-size:10px;color:' + t.textFaint + ';line-height:1.4;">Klasyfikuje URLe tylko po adresie — szybsze, ale bez tytułu, daty ani oceny trafności. Domyślnie wyłączone.</span>',
+          '</span>',
+        '</label>',
       '</div>',
       // Country detection
       '<div id="b24t-news-country-row" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;">',
         '<div style="display:flex;align-items:center;gap:6px;">',
           '<span style="font-size:10px;color:' + t.textMuted + ';">Wykryty kraj URLi:</span>',
-          '<span id="b24t-news-country-badge" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;background:#6366f1;color:#fff;"></span>',
+          '<span id="b24t-news-country-badge" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;background:var(--b24t-primary);color:#fff;"></span>',
           '<span id="b24t-news-country-proj" style="font-size:10px;color:' + t.textMuted + ';"></span>',
         '</div>',
         '<div id="b24t-news-country-warn" style="display:none;margin-top:5px;font-size:10px;color:#f59e0b;line-height:1.4;"></div>',
@@ -6057,20 +7577,20 @@ function showOnboarding(onComplete) {
     p2.appendChild(hdr2);
     p2.appendChild(body2);
     document.body.appendChild(p2);
+    _updatePanelClass(p2);
 
     // ─── PANEL 3: Formularz wzmianki (right column) ───
     var p3 = _newsPanelBase('b24t-news-p3', PANEL_W, topList, baseRight + PANEL_W + GAP, 2147483630);
 
-    var clearBtnHtml = '<button id="b24t-news-clear-btn" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:10px;font-weight:600;padding:2px 8px;border-radius:5px;flex-shrink:0;margin-right:4px;letter-spacing:0.02em;" title="Wyczyść tytuł i treść">✕ Wyczyść</button>';
+    var clearBtnHtml = '<span id="b24t-news-cms-dot" class="b24t-cms-checking" style="font-size:11px;font-weight:700;flex-shrink:0;margin-right:6px;cursor:default;color:#6b7280;" title="Sprawdzanie CMS...">● CMS</span><button id="b24t-news-clear-btn" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:10px;font-weight:600;padding:2px 8px;border-radius:5px;flex-shrink:0;margin-right:4px;letter-spacing:0.02em;" title="Wyczyść tytuł i treść">✕ Wyczyść</button>';
     var hdr3 = _newsPanelHeader('✍ Formularz wzmianki', closeNewsPanels, clearBtnHtml);
     _newsDraggable(hdr3, p3);
 
     var body3 = document.createElement('div');
     body3.style.cssText = 'padding:12px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;flex:1;min-height:0;';
 
-    var cmsStatus = _newsCmsStatus();
     var cmsBannerHtml = '<div id="b24t-news-cms-warn" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.5;">' +
-      '⚠ Tag <strong>dodane</strong> niedostępny — zaloguj się do CMS Brand24 (' + (cmsStatus.domain === 'pl' ? 'panel.brand24.pl' : 'app.brand24.com') + ').' +
+      '<span id="b24t-news-cms-warn-text"></span>' +
       '<button id="b24t-news-cms-recheck" style="display:inline-block;margin-left:8px;font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:' + t.yellow + ';cursor:pointer;">↺ Sprawdź ponownie</button>' +
     '</div>';
 
@@ -6109,6 +7629,7 @@ function showOnboarding(onComplete) {
         '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
           '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">KRAJ</label>',
           '<input id="b24t-news-f-country" type="text" readonly style="' + _newsInputCss(t) + 'opacity:0.6;" placeholder="z proj.">',
+          '<span id="b24t-news-proj-lang-hint" style="display:none;font-size:8px;color:' + t.textFaint + ';text-align:center;letter-spacing:0.02em;"></span>',
         '</div>',
         '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
           '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">SENT.</label>',
@@ -6119,13 +7640,15 @@ function showOnboarding(onComplete) {
           '</select>',
         '</div>',
       '</div>',
-      '<div id="b24t-news-tag-row" style="padding:7px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;display:flex;align-items:center;gap:8px;">',
-        '<span style="color:' + t.textMuted + ';font-size:10px;">Tag:</span>',
-        '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;">',
-          '<input type="checkbox" id="b24t-news-tag-dodane" checked style="cursor:pointer;accent-color:#6366f1;">',
-          '<span style="font-size:11px;font-weight:600;color:' + t.text + ';">dodane</span>',
-          '<span id="b24t-news-tag-dodane-status" style="font-size:9px;color:' + t.textFaint + ';">(sprawdzanie...)</span>',
-        '</label>',
+      '<div id="b24t-news-tag-row" style="border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;overflow:hidden;">' +
+        '<div id="b24t-news-tag-toggle" style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;cursor:pointer;user-select:none;" title="Rozwiń/zwiń listę tagów">' +
+          '<span style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">TAGI</span>' +
+          '<div style="display:flex;align-items:center;gap:6px;">' +
+            '<span id="b24t-news-tag-summary" style="font-size:10px;color:' + t.textFaint + ';">Dodane</span>' +
+            '<span id="b24t-news-tag-chevron" style="font-size:10px;color:' + t.textFaint + ';transition:transform 0.2s;">▼</span>' +
+          '</div>' +
+        '</div>' +
+        '<div id="b24t-news-tag-list" style="display:none;flex-wrap:wrap;gap:5px;padding:0 10px 8px;max-height:200px;overflow-y:auto;"></div>' +
       '</div>',
       '<button id="b24t-news-submit-btn" style="padding:9px;border-radius:9px;border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:12px;font-weight:700;cursor:pointer;width:100%;letter-spacing:0.03em;transition:opacity 0.15s;">✚ Dodaj wzmiankę do Brand24</button>',
       '<div id="b24t-news-submit-status" style="font-size:10px;text-align:center;min-height:14px;font-weight:500;"></div>',
@@ -6140,7 +7663,8 @@ function showOnboarding(onComplete) {
       _newsStackPanels();
     });
 
-    _newsCheckTagDodane();
+    // Wypełnij listę tagów — wywoływane też przy każdym otwarciu panelu
+    _newsRefillTags();
   }
 
   // Keep Import panel flush below Lista panel (left column)
@@ -6187,9 +7711,11 @@ function showOnboarding(onComplete) {
   function _newsDraggable(handle, panel) {
     var dragging = false, ox = 0, oy = 0;
     var isP1 = panel.id === 'b24t-news-p1';
+    var isP2 = panel.id === 'b24t-news-p2';
     handle.addEventListener('mousedown', function(e) {
       if (e.target.tagName === 'BUTTON') return;
       dragging = true;
+      _bringToFront(panel);
       var r = panel.getBoundingClientRect();
       ox = e.clientX - r.left;
       oy = e.clientY - r.top;
@@ -6197,39 +7723,103 @@ function showOnboarding(onComplete) {
     });
     document.addEventListener('mousemove', function(e) {
       if (!dragging) return;
-      var newLeft = e.clientX - ox;
-      var newTop  = e.clientY - oy;
+      var newLeft = Math.max(0, Math.min(window.innerWidth  - panel.offsetWidth,  e.clientX - ox));
+      var newTop  = Math.max(0, Math.min(window.innerHeight - panel.offsetHeight, e.clientY - oy));
       panel.style.left  = newLeft + 'px';
-      panel.style.top   = newTop + 'px';
+      panel.style.top   = newTop  + 'px';
       panel.style.right = 'auto';
-      // If dragging P1 (Lista), keep P2 (Import) attached below it
       if (isP1) {
         requestAnimationFrame(function() { _newsStackPanels(); });
       }
+      // Dragging P2 (Import) also moves P1 (Lista) so they stay together
+      if (isP2) {
+        var p1 = document.getElementById('b24t-news-p1');
+        if (p1) {
+          var p1H = p1.offsetHeight;
+          p1.style.left  = newLeft + 'px';
+          p1.style.top   = Math.max(0, newTop - p1H - 8) + 'px';
+          p1.style.right = 'auto';
+          requestAnimationFrame(_newsPositionLegend);
+        }
+      }
     });
     document.addEventListener('mouseup', function() {
-      if (dragging && isP1) _newsStackPanels();
+      if (dragging && (isP1 || isP2)) _newsStackPanels();
       dragging = false;
     });
   }
 
   function _newsCheckTagDodane() {
-    var statusEl  = document.getElementById('b24t-news-tag-dodane-status');
+    var statusEl   = document.getElementById('b24t-news-tag-dodane-status');
     var checkboxEl = document.getElementById('b24t-news-tag-dodane');
-    var cmsBanner = document.getElementById('b24t-news-cms-warn');
-    // Single source of truth: state.tags loaded from project
+    var cmsBanner  = document.getElementById('b24t-news-cms-warn');
+    var cmsDot     = document.getElementById('b24t-news-cms-dot');
+    var warnText   = document.getElementById('b24t-news-cms-warn-text');
+    var domain     = _newsCmsStatus().domain === 'pl' ? 'panel.brand24.pl' : 'app.brand24.com';
+
     var hasDodane = state.tags && Object.keys(state.tags).some(function(k) {
       return k.toLowerCase().indexOf('dodane') !== -1;
     });
+
     if (hasDodane) {
+      // Stan 1: tag dodane istnieje w projekcie — CMS aktywny ✓
       if (statusEl)  { statusEl.textContent = '✓ dostępny'; statusEl.style.color = '#22c55e'; }
       if (checkboxEl){ checkboxEl.disabled = false; checkboxEl.checked = true; }
       if (cmsBanner) cmsBanner.style.display = 'none';
-    } else {
-      if (statusEl)  { statusEl.textContent = '⚠ niedostępny — zaloguj się do CMS'; statusEl.style.color = '#f59e0b'; }
-      if (checkboxEl){ checkboxEl.checked = false; checkboxEl.disabled = true; }
-      if (cmsBanner) cmsBanner.style.display = '';
+      if (cmsDot)    { cmsDot.style.color = '#22c55e'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny — tag "dodane" dostępny'; }
+      return;
     }
+
+    // Brak tagu dodane — sprawdź czy użytkownik jest zalogowany do CMS (async)
+    if (statusEl)  { statusEl.textContent = '⏳ sprawdzanie...'; statusEl.style.color = '#6b7280'; }
+    if (checkboxEl){ checkboxEl.checked = false; checkboxEl.disabled = true; }
+    if (cmsBanner) cmsBanner.style.display = 'none';
+    if (cmsDot)    { cmsDot.style.color = '#6b7280'; cmsDot.classList.add('b24t-cms-checking'); cmsDot.title = 'Sprawdzanie CMS...'; }
+
+    var sid = state.projectId || '';
+    if (!sid) {
+      // Brak ID projektu — pokaż ogólny błąd logowania
+      if (statusEl)  { statusEl.textContent = '⚠ brak projektu'; statusEl.style.color = '#f59e0b'; }
+      if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS niedostępny — brak projektu'; }
+      return;
+    }
+
+    var _b24base = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: _b24base + '/searches/add-new-mention/?sid=' + sid,
+      onload: function(resp) {
+        var m = (resp.responseText || '').match(/name="tknB24"[^>]*value="([a-f0-9]{32})"/);
+        if (!m) m = (resp.responseText || '').match(/value="([a-f0-9]{32})"[^>]*name="tknB24"/);
+        if (m && m[1]) {
+          // Stan 2: zalogowany do CMS, ale brak tagu "dodane" w projekcie
+          state.tknB24 = m[1];
+          if (statusEl)  { statusEl.textContent = '⚠ brak tagu'; statusEl.style.color = '#f59e0b'; }
+          if (cmsDot)    { cmsDot.style.color = '#f59e0b'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny — brak tagu "dodane" w projekcie'; }
+          if (cmsBanner) {
+            if (warnText) warnText.innerHTML = '⚠ CMS aktywny, ale brak tagu <strong>dodane</strong> w tym projekcie — dodaj go w Brand24 w Ustawieniach tagów.';
+            cmsBanner.style.display = '';
+          }
+        } else {
+          // Stan 3: niezalogowany do CMS
+          if (statusEl)  { statusEl.textContent = '⚠ niezalogowany'; statusEl.style.color = '#f59e0b'; }
+          if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS niedostępny — zaloguj się do Brand24'; }
+          if (cmsBanner) {
+            if (warnText) warnText.innerHTML = '⚠ Tag <strong>dodane</strong> niedostępny — zaloguj się do CMS Brand24 (' + domain + ').';
+            cmsBanner.style.display = '';
+          }
+        }
+      },
+      onerror: function() {
+        // Błąd sieci — zakładamy brak logowania (bezpieczniejszy fallback)
+        if (statusEl)  { statusEl.textContent = '⚠ błąd sprawdzania'; statusEl.style.color = '#f59e0b'; }
+        if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS: błąd sieci przy sprawdzaniu'; }
+        if (cmsBanner) {
+          if (warnText) warnText.innerHTML = '⚠ Tag <strong>dodane</strong> niedostępny — zaloguj się do CMS Brand24 (' + domain + ').';
+          cmsBanner.style.display = '';
+        }
+      }
+    });
   }
 
   // ── WIRE LOGIC ──
@@ -6245,7 +7835,20 @@ function showOnboarding(onComplete) {
     // Use event delegation — button may be re-rendered
     document.addEventListener('click', function(e) {
       if (e.target && e.target.id === 'b24t-news-cms-recheck') {
-        _newsCheckTagDodane();
+        var btn = e.target;
+        btn.textContent = '⏳';
+        btn.disabled = true;
+        getTags().then(function(tags) {
+          state.tags = {};
+          tags.forEach(function(t) { if (!t.isProtected) state.tags[t.title] = t.id; });
+          _newsRefillTags();
+          btn.disabled = false;
+          btn.textContent = '↺ Sprawdź ponownie';
+        }).catch(function() {
+          _newsCheckTagDodane();
+          btn.disabled = false;
+          btn.textContent = '↺ Sprawdź ponownie';
+        });
       }
     });
 
@@ -6304,6 +7907,8 @@ function showOnboarding(onComplete) {
     })();
 
     // ─── CHIPS ───
+    // Eksportuj referencję na poziom modułu — żeby openNewsPanels() mogło wywołać re-render
+    // przy każdym otwarciu panelu (nie tylko przy pierwszym).
     function renderChips() {
       var cc = newsState.detectedCountry || 'DEFAULT';
       var chips = _newsGetKeywords(cc);
@@ -6328,6 +7933,8 @@ function showOnboarding(onComplete) {
         });
       });
     }
+    _newsChipsRenderer = renderChips;
+    renderChips();
 
     var addChipBtn = document.getElementById('b24t-news-add-chip-btn');
     if (addChipBtn) {
@@ -6353,17 +7960,23 @@ function showOnboarding(onComplete) {
 
     // ─── URL LIST ───
     function _statusDot(s) {
-      if (s === 'match')        return { dot: '●', color: '#22c55e', label: 'Trafienie keyword — relevantny' };
-      if (s === 'inproject')    return { dot: '●', color: '#64748b', label: 'Już w projekcie (ten miesiąc)' };
-      if (s === 'wrongcountry') return { dot: '●', color: '#f97316', label: 'Keyword pasuje, ale URL wskazuje inny kraj' };
+      if (s === 'match')        return { dot: '●', color: '#22c55e', label: 'Keyword w URL — relevantny' };
+      if (s === 'keytopic')     return { dot: '◆', color: '#4ade80', label: 'Główny temat artykułu (score 12+)' };
+      if (s === 'contentmatch') return { dot: '◆', color: '#06b6d4', label: 'Keyword w treści — kilkukrotnie (score 5–11)' };
+      if (s === 'mention')      return { dot: '◆', color: '#facc15', label: 'Wzmianka w treści — poboczna (score 1–4)' };
+      if (s === 'teasermatch')  return { dot: '◇', color: '#9ca3af', label: 'Keyword tylko w polecanych artykułach — nie w treści głównej' };
+      if (s === 'wrongcountry') return { dot: '●', color: '#f97316', label: 'Keyword w URL, ale wskazuje inny kraj' };
       if (s === 'opened')       return { dot: '●', color: '#a78bfa', label: 'Otwarty — w trakcie weryfikacji' };
       if (s === 'added')        return { dot: '✓', color: '#15803d', label: 'Dodany do Brand24' };
       if (s === 'error')        return { dot: '✗', color: '#ef4444', label: 'Błąd / duplikat w projekcie' };
-      return { dot: '○', color: '#4b5563', label: 'Brak trafienia keyword' };
+      if (s === 'inproject')    return { dot: '●', color: '#64748b', label: 'Już w projekcie (ten miesiąc)' };
+      if (s === 'scanning')     return { dot: '◌', color: '#818cf8', label: 'Skanowanie treści...' };
+      if (s === 'blocked')      return { dot: '—', color: '#6b7280', label: 'Nie przeskanowana — kliknij aby sprawdzić ręcznie' };
+      return { dot: '○', color: '#4b5563', label: 'Brak keyword w URL ani treści' };
     }
 
     function _newsUrlCounts() {
-      var c = { match: 0, wrongcountry: 0, nomatch: 0, inproject: 0, opened: 0, added: 0, error: 0, total: 0 };
+      var c = { match: 0, keytopic: 0, contentmatch: 0, mention: 0, teasermatch: 0, wrongcountry: 0, nomatch: 0, inproject: 0, opened: 0, added: 0, error: 0, scanning: 0, blocked: 0, total: 0 };
       newsState.urls.forEach(function(u) { c[u.status] = (c[u.status] || 0) + 1; c.total++; });
       return c;
     }
@@ -6383,18 +7996,29 @@ function showOnboarding(onComplete) {
       if (!bar) return;
       var t = _newsThemeVars();
       var counts = _newsUrlCounts();
-      var nomatchCount = (counts.nomatch || 0) + (counts.wrongcountry || 0);
+      var nomatchCount = (counts.nomatch || 0) + (counts.wrongcountry || 0) + (counts.teasermatch || 0);
+      var blockedCount = counts.blocked || 0; // osobno — blocked można otworzyć ręcznie
       var handledCount = (counts.added || 0) + (counts.error || 0);
       bar.innerHTML = '';
       if (nomatchCount > 0) {
         var b1 = document.createElement('button');
         b1.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer;white-space:nowrap;';
-        b1.textContent = '\u2715 Usu\u0144 ' + nomatchCount + ' irrelevantnych';
-        b1.title = 'Usuwa URLe bez trafienja keyword i URLe z blednym krajem';
+        b1.textContent = '\u2715 Usu\u0144 ' + nomatchCount + ' bez keyword';
+        b1.title = 'Usuwa URLe bez keyword, z b\u0142\u0119dnym krajem i z keyword tylko w polecanych artyku\u0142ach';
         b1.addEventListener('click', function() {
-          _newsRemoveByStatus(function(u) { return u.status === 'nomatch' || u.status === 'wrongcountry'; });
+          _newsRemoveByStatus(function(u) { return u.status === 'nomatch' || u.status === 'wrongcountry' || u.status === 'teasermatch'; });
         });
         bar.appendChild(b1);
+      }
+      if (blockedCount > 0) {
+        var bblk = document.createElement('button');
+        bblk.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid rgba(107,114,128,0.4);background:rgba(107,114,128,0.1);color:#9ca3af;cursor:pointer;white-space:nowrap;';
+        bblk.textContent = '\u2715 Usu\u0144 nieprzeskanowane (' + blockedCount + ')';
+        bblk.title = 'Usuwa URLe kt\u00f3re wtyczka nie mog\u0142a otworzy\u0107. Mo\u017cesz je sprawdzi\u0107 r\u0119cznie klikaj\u0105c na nie.';
+        bblk.addEventListener('click', function() {
+          _newsRemoveByStatus(function(u) { return u.status === 'blocked'; });
+        });
+        bar.appendChild(bblk);
       }
       if (handledCount > 0) {
         var b2 = document.createElement('button');
@@ -6438,9 +8062,10 @@ function showOnboarding(onComplete) {
     async function _newsRunProjectCheck() {
       if (!state.projectId) return;
       var recheckBtn = document.getElementById('b24t-news-recheck-btn');
+      var projectInfo = document.getElementById('b24t-news-project-info');
       var origLabel = recheckBtn ? recheckBtn.textContent : '';
       if (recheckBtn) { recheckBtn.disabled = true; recheckBtn.textContent = '⟳ Pobieranie…'; }
-      if (importInfo) { importInfo.textContent = '⟳ Sprawdzam wzmianki w projekcie…'; importInfo.style.display = ''; importInfo.style.color = '#a78bfa'; }
+      if (projectInfo) { projectInfo.textContent = '⟳ Sprawdzam wzmianki w projekcie…'; projectInfo.style.display = ''; projectInfo.style.color = '#a78bfa'; }
 
       try {
         var now = new Date();
@@ -6449,14 +8074,14 @@ function showOnboarding(onComplete) {
         var projectUrls = new Set();
         var page = 1;
         var total = null;
-        var perPage = 100;
         while (true) {
           var res = await getMentions(state.projectId, dateFrom, dateTo, [], page);
           if (!res) break;
           if (total === null) total = res.count || 0;
           var results = res.results || [];
+          if (results.length === 0) break;
           results.forEach(function(m) { if (m.url) projectUrls.add(m.url); });
-          if (results.length < perPage || projectUrls.size >= total) break;
+          if (projectUrls.size >= total) break;
           page++;
           if (page > 50) break; // safety cap
         }
@@ -6472,12 +8097,12 @@ function showOnboarding(onComplete) {
           }
         });
 
-        var infoMsg = '✓ Sprawdzono ' + projectUrls.size + ' wzmianek';
+        var infoMsg = '✓ Projekt: ' + (total || projectUrls.size) + ' wzmianek w tym mies.';
         if (matchedCount > 0) infoMsg += ' — ' + matchedCount + ' URL' + (matchedCount === 1 ? '' : 'i') + ' już w projekcie';
-        else infoMsg += ' — brak duplikatów';
-        if (importInfo) { importInfo.textContent = infoMsg; importInfo.style.color = matchedCount > 0 ? '#f59e0b' : '#22c55e'; }
+        else infoMsg += ' — żadna nie pokrywa się z listą';
+        if (projectInfo) { projectInfo.textContent = infoMsg; projectInfo.style.color = matchedCount > 0 ? '#f59e0b' : '#22c55e'; }
       } catch(e) {
-        if (importInfo) { importInfo.textContent = '✗ Błąd sprawdzania: ' + e.message; importInfo.style.color = '#ef4444'; }
+        if (projectInfo) { projectInfo.textContent = '✗ Błąd sprawdzania: ' + e.message; projectInfo.style.color = '#ef4444'; }
       }
 
       if (recheckBtn) { recheckBtn.disabled = false; recheckBtn.textContent = origLabel; }
@@ -6485,6 +8110,7 @@ function showOnboarding(onComplete) {
     }
 
     function renderUrlList() {
+      var t = _newsThemeVars();
       var list = document.getElementById('b24t-news-url-list');
       var empty = document.getElementById('b24t-news-empty');
       var progressWrap = document.getElementById('b24t-news-progress-wrap');
@@ -6497,6 +8123,7 @@ function showOnboarding(onComplete) {
       var cc = newsState.detectedCountry || 'DEFAULT';
       var chips = _newsGetKeywords(cc);
 
+      // Przelicz tylko statusy 'pending' — nie dotykaj 'scanning' ani gotowych
       newsState.urls.forEach(function(entry) {
         if (entry.status === 'pending') {
           entry.status = _newsUrlRelevant(entry.url, chips, pc);
@@ -6504,6 +8131,40 @@ function showOnboarding(onComplete) {
       });
 
       _newsUpdateBulkBar();
+
+      // Filter bar — widoczny zawsze gdy są URLe na liście
+      var _filterBar = document.getElementById('b24t-news-filter-bar');
+      var _filterBtn = document.getElementById('b24t-news-filter-nonarticle');
+      var _nonArticleCnt = newsState.urls.filter(function(e) { return e.pageType === 'nonArticle'; }).length;
+      if (_filterBar) _filterBar.style.display = newsState.urls.length > 0 ? 'flex' : 'none';
+      if (_filterBtn) {
+        var _hasNonArticle = _nonArticleCnt > 0;
+        _filterBtn.textContent = (newsState.hideNonArticles ? '\u21a9 Poka\u017c wszystkie' : 'Ukryj nie-artyku\u0142y') + ' (' + _nonArticleCnt + ')';
+        // 3 stany: wciśnięty (indigo), aktywny z nie-artykułami (amber), nieaktywny (szary)
+        if (newsState.hideNonArticles) {
+          _filterBtn.style.background  = 'rgba(99,102,241,0.15)';
+          _filterBtn.style.color       = '#818cf8';
+          _filterBtn.style.borderColor = 'rgba(99,102,241,0.4)';
+        } else if (_hasNonArticle) {
+          _filterBtn.style.background  = t.yellowBg;
+          _filterBtn.style.color       = t.yellow;
+          _filterBtn.style.borderColor = 'rgba(245,158,11,0.35)';
+        } else {
+          _filterBtn.style.background  = 'rgba(107,114,128,0.08)';
+          _filterBtn.style.color       = 'rgba(156,163,175,0.5)';
+          _filterBtn.style.borderColor = '';
+        }
+        _filterBtn.style.cursor = _hasNonArticle ? 'pointer' : 'default';
+        if (!_filterBtn.dataset.wired) {
+          _filterBtn.dataset.wired = '1';
+          _filterBtn.addEventListener('click', function() {
+            var _cnt = newsState.urls.filter(function(e) { return e.pageType === 'nonArticle'; }).length;
+            if (_cnt === 0) return;
+            newsState.hideNonArticles = !newsState.hideNonArticles;
+            renderUrlList();
+          });
+        }
+      }
 
       if (newsState.urls.length === 0) {
         if (empty) empty.style.display = '';
@@ -6514,51 +8175,136 @@ function showOnboarding(onComplete) {
       if (progressWrap) progressWrap.style.display = '';
 
       var counts = _newsUrlCounts();
-      var handled = (counts.added || 0) + (counts.error || 0);
-      var workable = counts.total - (counts.nomatch || 0) - (counts.wrongcountry || 0) - (counts.inproject || 0);
-      if (progressLbl) progressLbl.textContent = handled + ' / ' + workable + ' relevantnych';
-      if (progressBar) progressBar.style.width = (workable > 0 ? Math.round(handled / workable * 100) : 0) + '%';
 
-      var t = _newsThemeVars();
+      // Pasek postępu: tryb skanowania vs tryb sesji
+      if (newsState.scanning) {
+        var total = newsState.scanTotal || 1;
+        var done  = newsState.scanDone  || 0;
+        if (progressLbl) progressLbl.textContent = 'Skanowanie: ' + done + ' / ' + total;
+        if (progressBar) progressBar.style.width = Math.round(done / total * 100) + '%';
+      } else {
+        var handled = (counts.added || 0) + (counts.error || 0);
+        var workable = (counts.match || 0) + (counts.keytopic || 0) + (counts.contentmatch || 0) + (counts.mention || 0) + (counts.opened || 0) + handled;
+        if (progressLbl) progressLbl.textContent = handled + ' / ' + workable + ' relevantnych';
+        if (progressBar) progressBar.style.width = (workable > 0 ? Math.round(handled / workable * 100) : 0) + '%';
+      }
 
       newsState.urls.forEach(function(entry, idx) {
-        var isActive = idx === newsState.activeIdx;
-        var sd = _statusDot(entry.status);
-        var isIrrelevant = entry.status === 'nomatch' || entry.status === 'wrongcountry' || entry.status === 'inproject';
+        // Filtr nie-artykułów — ukryj wiersz (nie usuń z listy)
+        if (newsState.hideNonArticles && entry.pageType === 'nonArticle') return;
+
+        var isActive    = idx === newsState.activeIdx;
+        var sd          = _statusDot(entry.status);
+        var isScanning  = entry.status === 'scanning';
+        var isIrrelevant = entry.status === 'nomatch' || entry.status === 'wrongcountry' ||
+                           entry.status === 'inproject';
+        var isTeaserMatch = entry.status === 'teasermatch';
+        var isBlocked   = entry.status === 'blocked'; // klikalny — annotator sprawdza ręcznie
+        var isStale     = entry.isStale && !isIrrelevant && !isScanning && !isTeaserMatch;
+        var isClickable = !isIrrelevant && !isScanning; // teasermatch i blocked są klikalne
+
         var row = document.createElement('div');
         row.className = 'b24t-news-url-row';
         row.dataset.idx = idx;
         row.style.cssText = [
           'display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:8px;',
-          'cursor:' + (isIrrelevant ? 'default' : 'pointer') + ';',
-          'border:1px solid ' + (isActive ? '#6366f1' : t.borderSub) + ';',
-          'background:' + (isActive ? t.accentAlpha : isIrrelevant ? 'transparent' : t.bgDeep) + ';',
-          'opacity:' + (isIrrelevant ? '0.45' : '1') + ';',
+          'cursor:' + (isClickable ? 'pointer' : 'default') + ';',
+          'border:1px solid ' + (isActive ? 'var(--b24t-primary)' : isScanning ? 'rgba(129,140,248,0.25)' : isBlocked ? 'rgba(107,114,128,0.35)' : t.borderSub) + ';',
+          'background:' + (isActive ? t.accentAlpha : (isIrrelevant || isScanning) ? 'transparent' : t.bgDeep) + ';',
+          'opacity:' + (isIrrelevant ? '0.4' : isTeaserMatch ? '0.5' : isStale ? '0.55' : (isBlocked || isScanning) ? '0.6' : '1') + ';',
           'transition:background 0.1s,border-color 0.1s;',
         ].join('');
+        if (isBlocked) row.title = 'Wtyczka nie mogła przeskanować — kliknij aby sprawdzić ręcznie';
+
         var shortUrl = entry.url.replace(/^https?:\/\//, '');
         if (shortUrl.length > 42) shortUrl = shortUrl.substring(0, 42) + '\u2026';
+
+        // Snippet dla wyników content scan — widoczny poniżej URL jako mały podpis
+        var snippetHtml = '';
+        var _hasSnippet = (entry.status === 'contentmatch' || entry.status === 'mention' || entry.status === 'keytopic') && entry.snippet;
+        if (_hasSnippet) {
+          snippetHtml = '<div style="font-size:9px;color:' + t.textFaint + ';margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + entry.snippet.replace(/"/g,'&quot;') + '">' + entry.snippet.slice(0,80) + '</div>';
+        }
+
+        // Wszystkie badże w jednym wierszu — chips, zone, teaser, typ, data, język, paywall
+        var _metaBadges = [];
+
+        var _chips = entry.matchedChips;
+        if (_chips && _chips.length > 0 && entry.status !== 'nomatch' && entry.status !== 'blocked' && entry.status !== 'wrongcountry' && entry.status !== 'inproject') {
+          _chips.forEach(function(c) {
+            var safe = c.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);color:#a78bfa;font-family:monospace;">' + safe + '</span>');
+          });
+        }
+        if (entry.zoneHints && entry.zoneHints.length > 0) {
+          var _hintsLabel = entry.zoneHints.join(', ');
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;' +
+            (entry.secondaryZoneOnly
+              ? 'background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);color:#f59e0b;'
+              : 'background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.25);color:#a78bfa;') +
+            '" title="Keyword znaleziony w: ' + _hintsLabel + '">' +
+            (entry.secondaryZoneOnly ? '\u26a0 tylko w: ' : '+ ') + _hintsLabel + '</span>');
+        }
+        if (isTeaserMatch && entry.teaserChips && entry.teaserChips.length > 0) {
+          var _tc = entry.teaserChips.map(function(c) { return c.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }).join(', ');
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Keyword \'' + _tc + '\' wyst\u0105pi\u0142 tylko w sekcji polecanych artyku\u0142\u00f3w \u2014 nie w g\u0142\u00f3wnej tre\u015bci">w polecanym art.</span>');
+        }
+        var _pt = entry.pageType;
+        if (_pt === 'nonArticle') {
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Brak sygnałów że to artykuł/news (og:type, JSON-LD, published_time, &lt;time&gt;, paragraphs)">\u{1f4c4} nie-artyku\u0142</span>');
+        } else if (_pt === 'uncertain') {
+          var _sigList = (entry.pageTypeSignals || []).join(', ');
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);color:#d97706;" title="Tylko 1 sygna\u0142 artyku\u0142u: ' + _sigList + '">? typ niepewny</span>');
+        }
+        if (entry.articleDate) {
+          var _diffD = (Date.now() - new Date(entry.articleDate).getTime()) / 86400000;
+          var _dc = _diffD > 60 ? '#f87171' : _diffD > 30 ? '#f59e0b' : '#4ade80';
+          var _db = _diffD > 60 ? 'rgba(239,68,68,0.10)' : _diffD > 30 ? 'rgba(245,158,11,0.10)' : 'rgba(34,197,94,0.10)';
+          var _dbd = _diffD > 60 ? 'rgba(239,68,68,0.3)' : _diffD > 30 ? 'rgba(245,158,11,0.3)' : 'rgba(34,197,94,0.25)';
+          var _staleTitle = _diffD > 60 ? ' — zbyt stary artyku\u0142 (&gt;60 dni)' : '';
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:' + _db + ';border:1px solid ' + _dbd + ';color:' + _dc + ';" title="Data publikacji' + _staleTitle + '">' + entry.articleDate + '</span>');
+        }
+        if (entry.pageLang) {
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.25);color:#a78bfa;" title="Wykryty j\u0119zyk strony">' + entry.pageLang + '</span>');
+        }
+        if (entry.isPaywall) {
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);color:#f59e0b;" title="Strona za paywallem lub blokad\u0105 — tre\u015b\u0107 mo\u017ce by\u0107 niepe\u0142na">\uD83D\uDD12 paywall</span>');
+        }
+        var metaLineHtml = _metaBadges.length > 0
+          ? '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px;">' + _metaBadges.join('') + '</div>'
+          : '';
+
         row.innerHTML =
           '<span style="flex-shrink:0;width:14px;text-align:center;font-size:12px;font-weight:700;color:' + sd.color + ';" title="' + sd.label + '">' + sd.dot + '</span>' +
-          '<span style="flex:1;min-width:0;font-size:10px;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + t.text + ';" title="' + entry.url.replace(/"/g, '&quot;') + '">' + shortUrl + '</span>' +
-          '<button class="b24t-news-del-btn" style="flex-shrink:0;font-size:11px;width:18px;height:18px;line-height:1;border-radius:4px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Usu\u0144 z listy">\u2715</button>';
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-size:10px;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + t.text + ';" title="' + entry.url.replace(/"/g, '&quot;') + '">' + shortUrl + '</div>' +
+            snippetHtml +
+            metaLineHtml +
+          '</div>' +
+          (isScanning ? '' : '<button class="b24t-news-del-btn" style="flex-shrink:0;font-size:11px;width:18px;height:18px;line-height:1;border-radius:4px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Usu\u0144 z listy">\u2715</button>');
+
         list.appendChild(row);
-        row.addEventListener('click', function(e) {
-          if (e.target.classList.contains('b24t-news-del-btn')) return;
-          if (isIrrelevant) return;
-          activateUrl(idx);
-        });
-        row.querySelector('.b24t-news-del-btn').addEventListener('click', function(e) {
-          e.stopPropagation();
-          var wasActive = newsState.activeIdx === idx;
-          newsState.urls.splice(idx, 1);
-          if (wasActive) {
-            newsState.activeIdx = -1;
-          } else if (newsState.activeIdx > idx) {
-            newsState.activeIdx--;
-          }
-          renderUrlList();
-        });
+
+        if (isClickable) {
+          row.addEventListener('click', function(e) {
+            if (e.target.classList.contains('b24t-news-del-btn')) return;
+            activateUrl(idx);
+          });
+        }
+        var delBtn = row.querySelector('.b24t-news-del-btn');
+        if (delBtn) {
+          delBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var wasActive = newsState.activeIdx === idx;
+            newsState.urls.splice(idx, 1);
+            if (wasActive) {
+              newsState.activeIdx = -1;
+            } else if (newsState.activeIdx > idx) {
+              newsState.activeIdx--;
+            }
+            renderUrlList();
+          });
+        }
       });
     }
 
@@ -6574,6 +8320,16 @@ function showOnboarding(onComplete) {
       var pc = projectCountry || _newsProjectCountry();
       var fCountry = document.getElementById('b24t-news-f-country');
       if (fCountry && pc) fCountry.value = pc;
+      var _langHintEl = document.getElementById('b24t-news-proj-lang-hint');
+      if (_langHintEl) {
+        var _expLangs = pc ? (_newsGetLangMap()[pc] || []) : [];
+        if (_expLangs.length > 0) {
+          _langHintEl.textContent = 'lang: ' + _expLangs.join(', ');
+          _langHintEl.style.display = '';
+        } else {
+          _langHintEl.style.display = 'none';
+        }
+      }
       var langWarn = document.getElementById('b24t-news-lang-warn');
       var forceBtn = document.getElementById('b24t-news-lang-force-open');
       if (langWarn) { langWarn.style.display = 'none'; langWarn.innerHTML = ''; }
@@ -6592,7 +8348,12 @@ function showOnboarding(onComplete) {
         try { _dateElPre.focus(); _dateElPre.setSelectionRange(_dateElPre.value.length, _dateElPre.value.length); } catch(e) {}
       }
       if (_dateIconPre) { _dateIconPre.style.display = 'none'; }
-      // Otwórz okno natychmiast — fetch page info asynchronicznie (nadpisze prefill daty jeśli znajdzie)
+      // Pre-fill tytułu i snippetu ze skanowania treści (jeśli dostępne)
+      var fTitle = document.getElementById('b24t-news-f-title');
+      var fContent = document.getElementById('b24t-news-f-content');
+      if (fTitle) fTitle.value = entry.title || '';
+      if (fContent) fContent.value = entry.snippet || '';
+      // Otwórz okno natychmiast — fetch page info asynchronicznie (nadpisze prefill daty i tytułu jeśli znajdzie)
       _newsOpenUrl(entry.url);
       _newsFetchPageInfo(entry.url);
     }
@@ -6615,6 +8376,25 @@ function showOnboarding(onComplete) {
             dateIcon.style.display = 'inline';
             dateIcon.title = 'Data wykryta automatycznie ze strony (' + detectedDate + ') — mozesz ja edytowac';
           }
+        }
+        // Title — autofill jeśli pole jest puste (nie nadpisuj tego co wkleił użytkownik)
+        var fTitleEl = document.getElementById('b24t-news-f-title');
+        if (fTitleEl && !fTitleEl.value) {
+          try {
+            var _doc = (new DOMParser()).parseFromString(html, 'text/html');
+            // Tytuł: h1 wewnątrz article/main > meta content_title > og:title > <title>
+            var _bz = _doc.querySelector('article') || _doc.querySelector('main') || null;
+            var _h1El = _bz ? _bz.querySelector('h1') : _doc.querySelector('h1');
+            var _h1Txt = _h1El ? (_h1El.textContent || '').trim() : '';
+            var _ctEl = _doc.querySelector('meta[name="content_title"]') || _doc.querySelector('meta[property="content_title"]');
+            var _ctTxt = _ctEl ? (_ctEl.getAttribute('content') || '').trim() : '';
+            var _ogTEl = _doc.querySelector('meta[property="og:title"]') || _doc.querySelector('meta[name="og:title"]');
+            var _ogTxt = _ogTEl ? (_ogTEl.getAttribute('content') || '').trim() : '';
+            var _tlEl = _doc.querySelector('title');
+            var _pt = (_h1Txt.length > 3 ? _h1Txt : '') || _ctTxt || _ogTxt ||
+                      (_tlEl ? (_tlEl.textContent || '').trim() : '');
+            if (_pt) fTitleEl.value = _pt.slice(0, 200);
+          } catch(e) {}
         }
         // Language check
         var detectedLang = _newsDetectLangFromResponse(html, url);
@@ -6715,23 +8495,32 @@ function showOnboarding(onComplete) {
     var pasteArea = document.getElementById('b24t-news-paste-area');
     var importInfo = document.getElementById('b24t-news-import-info');
 
-    function importUrls() {
+    async function importUrls() {
+      // Blokuj ponowne kliknięcie gdy skanowanie w toku
+      if (newsState.scanning) return;
+
       var raw = pasteArea ? pasteArea.value : '';
       var lines = raw.split('\n').map(function(l) { return l.trim(); }).filter(function(l) { return /^https?:\/\//.test(l); });
       var seen = {};
       var deduped = lines.filter(function(u) { if (seen[u]) return false; seen[u] = true; return true; });
       var dupeCount = lines.length - deduped.length;
-      newsState.urls = deduped.map(function(u) { return { url: u, status: 'pending', opened: false }; });
+      if (deduped.length === 0) return;
+
       newsState.activeIdx = -1;
-      var detected = _newsDetectCountryFromUrls(newsState.urls);
+
+      // Detekcja kraju
+      var tempEntries = deduped.map(function(u) { return { url: u }; });
+      var detected = _newsDetectCountryFromUrls(tempEntries);
       newsState.detectedCountry = detected;
+      var pc = _newsProjectCountry();
+      var cc = detected || 'DEFAULT';
+      var chips = _newsGetKeywords(cc);
 
       // Country badge + warn
       var badgeEl = document.getElementById('b24t-news-country-badge');
       var rowEl   = document.getElementById('b24t-news-country-row');
       var projEl  = document.getElementById('b24t-news-country-proj');
       var warnEl  = document.getElementById('b24t-news-country-warn');
-      var pc = _newsProjectCountry();
       if (rowEl) rowEl.style.display = detected ? '' : 'none';
       if (badgeEl && detected) badgeEl.textContent = detected;
       if (projEl) projEl.textContent = pc ? '(projekt: ' + pc + ')' : '';
@@ -6742,18 +8531,141 @@ function showOnboarding(onComplete) {
         } else { warnEl.style.display = 'none'; }
       }
 
-      // Import info
-      var msg = '✓ Wczytano ' + deduped.length + ' URL' + (deduped.length !== 1 ? 'i' : '');
-      if (dupeCount > 0) msg += ' (usunięto ' + dupeCount + ' duplikat' + (dupeCount === 1 ? '' : dupeCount < 5 ? 'y' : 'ów') + ')';
-      if (importInfo) { importInfo.textContent = msg; importInfo.style.display = ''; importInfo.style.color = '#22c55e'; }
-
       if (pc) {
         var fCountry = document.getElementById('b24t-news-f-country');
         if (fCountry) fCountry.value = pc;
       }
+
+      // Klasyfikacja wstępna — zależna od trybu
+      if (_newsImportOpts.urlSimpleMode) {
+        // Uproszczone skanowanie: tylko URL, bez wchodzenia na strony
+        newsState.urls = deduped.map(function(u) {
+          var urlStatus = _newsUrlRelevant(u, chips, pc);
+          var urlChips = urlStatus !== 'nomatch'
+            ? chips.filter(function(c) { return u.toLowerCase().indexOf(c.toLowerCase()) !== -1; })
+            : [];
+          return {
+            url: u,
+            status: urlStatus !== 'nomatch' ? urlStatus : 'nomatch',
+            opened: false,
+            score: 0,
+            snippet: '',
+            matchedChips: urlChips,
+          };
+        });
+
+        renderChips();
+        renderUrlList();
+        if (pasteArea) pasteArea.value = '';
+
+        var urlMsg = '✓ Wczytano ' + deduped.length + ' URL' + (deduped.length !== 1 ? 'i' : '') + ' (tryb URL)';
+        if (dupeCount > 0) urlMsg += ' (usunięto ' + dupeCount + ' duplikat' + (dupeCount === 1 ? '' : dupeCount < 5 ? 'y' : 'ów') + ')';
+        if (importInfo) { importInfo.textContent = urlMsg; importInfo.style.display = ''; importInfo.style.color = '#22c55e'; }
+        _newsRunProjectCheck();
+        return;
+      }
+
+      // Domyślne skanowanie: wszystkie URLe trafiają do skanowania treści
+      newsState.urls = deduped.map(function(u) {
+        return { url: u, status: 'scanning', opened: false, score: 0, snippet: '', matchedChips: [] };
+      });
+
       renderChips();
       renderUrlList();
       if (pasteArea) pasteArea.value = '';
+
+      var toScan = newsState.urls.slice(); // wszystkie do skanowania
+
+      // Skanowanie treści — zablokuj przycisk
+      newsState.scanning  = true;
+      newsState.scanTotal = toScan.length;
+      newsState.scanDone  = 0;
+      var _newsBar = document.getElementById('b24t-news-progress-bar');
+      if (_newsBar) _newsBar.classList.add('b24t-bar-active');
+      if (importBtn) {
+        importBtn.disabled = true;
+        importBtn.textContent = '⟳ Skanowanie 0/' + toScan.length + '...';
+        importBtn.style.opacity = '0.7';
+      }
+      if (importInfo) { importInfo.textContent = '⟳ Skanuję strony...'; importInfo.style.display = ''; importInfo.style.color = '#a78bfa'; }
+
+      // Sliding window — NEWS_CONTENT_SCAN_CONCURRENCY równoległych workerów
+      var nextScanIdx = 0;
+      async function _scanWorker() {
+        while (true) {
+          var i = nextScanIdx++;
+          if (i >= toScan.length) break;
+          var entry = toScan[i];
+          var result = await _newsContentScan(entry.url, chips);
+          // Bug #4: jeśli URL sygnalizuje obcy kraj → nadpisz wynik content scan
+          if (result.status !== 'nomatch' && result.status !== 'blocked' && pc) {
+            var _urlCountries = _newsCountriesInUrl(entry.url);
+            var _urlCountryKeys = Object.keys(_urlCountries);
+            if (_urlCountryKeys.length > 0 && !_urlCountries[pc]) {
+              result.status = 'wrongcountry';
+            }
+          }
+          // Język strony vs kraj projektu — język musi się zgadzać dokładnie
+          if (result.status !== 'nomatch' && result.status !== 'blocked' &&
+              result.status !== 'wrongcountry' && result.pageLang && pc) {
+            var _expLangs = (_NEWS_LANG_MAP[pc.toLowerCase()] || []);
+            if (_expLangs.length > 0 && _expLangs.indexOf(result.pageLang) === -1) {
+              result.status = 'wrongcountry';
+            }
+          }
+          // Staleness — data publikacji vs dziś (próg: 60 dni)
+          var _isStale = false;
+          if (result.articleDate) {
+            var _diffDays = (Date.now() - new Date(result.articleDate).getTime()) / 86400000;
+            _isStale = _diffDays > 60;
+          }
+          entry.status             = result.status;
+          entry.score              = result.score;
+          entry.snippet            = result.snippet;
+          entry.title              = result.title || '';
+          entry.matchedChips       = result.matchedChips || [];
+          entry.secondaryZoneOnly  = result.secondaryZoneOnly || false;
+          entry.zoneHints          = result.zoneHints || [];
+          entry.teaserMatchOnly    = result.teaserMatchOnly || false;
+          entry.teaserChips        = result.teaserChips || [];
+          entry.pageType           = result.pageType || 'unknown';
+          entry.pageTypeSignals    = result.pageTypeSignals || [];
+          entry.pageLang           = result.pageLang || '';
+          entry.articleDate        = result.articleDate || null;
+          entry.isStale            = _isStale;
+          entry.isPaywall          = result.isPaywall || false;
+          newsState.scanDone++;
+          if (importBtn) importBtn.textContent = '⟳ Skanowanie ' + newsState.scanDone + '/' + newsState.scanTotal + '...';
+          renderUrlList(); // aktualizacja na żywo — wpada do listy w momencie rozpoznania
+        }
+      }
+      await Promise.all(Array.from({ length: NEWS_CONTENT_SCAN_CONCURRENCY }, _scanWorker));
+
+      // Skanowanie zakończone
+      newsState.scanning = false;
+      if (_newsBar) _newsBar.classList.remove('b24t-bar-active');
+      if (importBtn) {
+        importBtn.disabled = false;
+        importBtn.textContent = '▶ Wczytaj URLe';
+        importBtn.style.opacity = '';
+      }
+
+      var counts = _newsUrlCounts();
+      var matchCount    = counts.match        || 0;
+      var keytopicCount = counts.keytopic     || 0;
+      var cmCount       = counts.contentmatch || 0;
+      var mentionCount  = counts.mention      || 0;
+      var blockedCount  = counts.blocked      || 0;
+      var doneMsg = '✓ ' + deduped.length + ' URL' + (deduped.length !== 1 ? 'i' : '');
+      if (dupeCount > 0) doneMsg += ' (−' + dupeCount + ' dup.)';
+      doneMsg += ' — ' + matchCount + ' URL match';
+      if (keytopicCount > 0) doneMsg += ', ' + keytopicCount + ' gł. temat';
+      if (cmCount > 0)       doneMsg += ', ' + cmCount + ' kontekst';
+      if (mentionCount > 0)  doneMsg += ', ' + mentionCount + ' wzmiank' + (mentionCount === 1 ? 'a' : 'i');
+      if (blockedCount > 0)  doneMsg += ', ' + blockedCount + ' nieprzeskanowanych';
+      if (importInfo) { importInfo.textContent = doneMsg; importInfo.style.display = ''; importInfo.style.color = '#22c55e'; }
+
+      renderUrlList();
       _newsRunProjectCheck();
     }
 
@@ -6762,12 +8674,33 @@ function showOnboarding(onComplete) {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); importUrls(); }
     });
 
+    // Gear button — toggle ustawień importu
+    var settingsBtn = document.getElementById('b24t-news-import-settings-btn');
+    var settingsPanel = document.getElementById('b24t-news-import-settings');
+    if (settingsBtn && settingsPanel) {
+      settingsBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var visible = settingsPanel.style.display !== 'none';
+        settingsPanel.style.display = visible ? 'none' : '';
+        settingsBtn.style.background = visible ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.35)';
+      });
+    }
+
+    // Checkbox uproszczonego skanowania
+    var cbUrlSimple = document.getElementById('b24t-news-opt-urlsimple');
+    if (cbUrlSimple) {
+      cbUrlSimple.addEventListener('change', function() {
+        _newsImportOpts.urlSimpleMode = cbUrlSimple.checked;
+        _saveNewsImportOpts();
+      });
+    }
+
     // ─── NEXT BTN ───
     var nextBtn = document.getElementById('b24t-news-next-btn');
     if (nextBtn) {
       nextBtn.addEventListener('click', function() {
         // Only navigate to relevant (match/opened) — skip nomatch and wrongcountry
-        function isWorkable(s) { return s === 'match' || s === 'pending' || s === 'opened'; } // inproject celowo pomijany
+        function isWorkable(s) { return s === 'match' || s === 'contentmatch' || s === 'pending' || s === 'opened'; } // inproject/blocked/nomatch celowo pomijane
         var start = newsState.activeIdx + 1;
         for (var i = start; i < newsState.urls.length; i++) {
           if (isWorkable(newsState.urls[i].status)) { activateUrl(i); return; }
@@ -6807,7 +8740,6 @@ function showOnboarding(onComplete) {
         var fMinute  = (document.getElementById('b24t-news-f-minute')   || {}).value || '00';
         var fSent    = (document.getElementById('b24t-news-f-sentiment')|| {}).value || '0';
         var fCountry = (document.getElementById('b24t-news-f-country')  || {}).value || '';
-        var useDodane= document.getElementById('b24t-news-tag-dodane');
         var formErr  = document.getElementById('b24t-news-form-err');
         var subStatus= document.getElementById('b24t-news-submit-status');
 
@@ -6840,12 +8772,12 @@ function showOnboarding(onComplete) {
             return;
           }
 
-        // Find "dodane" tag ID
-        var dodaneTagId = null;
-        if (useDodane && useDodane.checked && !useDodane.disabled && state.tags) {
-          var dodaneKey = Object.keys(state.tags).find(function(k) { return k.toLowerCase().indexOf('dodane') !== -1; });
-          if (dodaneKey) dodaneTagId = state.tags[dodaneKey];
-        }
+        // Zbierz zaznaczone tagi z listy
+        var selectedTagIds = [];
+        document.querySelectorAll('#b24t-news-tag-list input[type="checkbox"]:checked:not([disabled])').forEach(function(cb) {
+          var tid = parseInt(cb.dataset.tagId);
+          if (tid) selectedTagIds.push(tid);
+        });
 
         var bodyParts = [
           'tknB24=' + encodeURIComponent(tkn),
@@ -6861,7 +8793,7 @@ function showOnboarding(onComplete) {
           'mention_created_date_hour=' + encodeURIComponent(fHour),
           'mention_created_date_minute=' + encodeURIComponent(fMinute),
         ];
-        if (dodaneTagId) bodyParts.push('tag[]=' + encodeURIComponent(dodaneTagId));
+        selectedTagIds.forEach(function(tid) { bodyParts.push('tag[]=' + encodeURIComponent(tid)); });
         var body = bodyParts.join('&');
 
         submitBtn.disabled = true;
@@ -6870,7 +8802,7 @@ function showOnboarding(onComplete) {
 
         GM_xmlhttpRequest({
           method: 'POST',
-          url: 'https://app.brand24.com/searches/add-new-mention/?sid=' + sid,
+          url: (window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com') + '/searches/add-new-mention/?sid=' + sid,
           headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
           data: body,
           onload: function(resp) {
@@ -6917,6 +8849,39 @@ function showOnboarding(onComplete) {
         }); // closes _newsGetTknB24 callback
       });
     }
+
+    // ─── TAG SELECTOR TOGGLE ───
+    (function() {
+      var toggle  = document.getElementById('b24t-news-tag-toggle');
+      var tagList = document.getElementById('b24t-news-tag-list');
+      var chevron = document.getElementById('b24t-news-tag-chevron');
+      var summary = document.getElementById('b24t-news-tag-summary');
+      if (!toggle || !tagList) return;
+
+      function _updateTagSummary() {
+        if (!summary) return;
+        var checked = Array.from(tagList.querySelectorAll('input[type="checkbox"]:checked'))
+          .map(function(cb) {
+            var lbl = cb.closest('label');
+            return lbl ? (lbl.querySelector('span') || {}).textContent || '' : '';
+          })
+          .filter(Boolean);
+        summary.textContent = checked.length > 0 ? checked.join(', ') : 'brak';
+      }
+
+      toggle.addEventListener('click', function() {
+        var isOpen = tagList.style.display !== 'none';
+        tagList.style.display = isOpen ? 'none' : 'flex';
+        if (chevron) chevron.style.transform = isOpen ? '' : 'rotate(180deg)';
+        if (!isOpen) _updateTagSummary();
+      });
+
+      // Aktualizuj summary przy zmianie checkboxów
+      tagList.addEventListener('change', function() { _updateTagSummary(); });
+
+      // Inicjalny summary po załadowaniu tagów (tagi są już w DOM z _buildNewsPanels)
+      requestAnimationFrame(function() { _updateTagSummary(); });
+    })();
 
     // ─── LANG MAP EDITOR ───
     // Initial render
@@ -7015,114 +8980,122 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
-      "version": "0.17.4",
-      "date": "2026-03-28",
-      "label": "Fix",
+      "version": "0.23.35",
+      "date": "2026-04-14",
+      "label": "ui",
+      "labelColor": "#8b5cf6",
+      "changes": [
+        {"type": "ui", "text": "spójny styl przycisków we wszystkich nagłówkach paneli — News, Annotator, Features, Groups, Overall (jaśniejsze tło 0.28, border 0.5, box-shadow)"}
+      ]
+    },
+    {
+      "version": "0.23.34",
+      "date": "2026-04-14",
+      "label": "ui",
+      "labelColor": "#8b5cf6",
+      "changes": [
+        {"type": "ui", "text": "bardziej widoczne przyciski w topbarze — jaśniejsze tło (0.28), wyraźny border (0.5), box-shadow odcinający od gradientu"},
+        {"type": "ui", "text": "wersja w topbarze: 10px → 12px, bold, opacity 0.65 → 0.92"}
+      ]
+    },
+    {
+      "version": "0.23.33",
+      "date": "2026-04-14",
+      "label": "fix",
       "labelColor": "#22c55e",
       "changes": [
-        {"type": "fix", "text": "News: komunikat duplikatu wskazuje na feedback Brand24"}
+        {"type": "fix", "text": "usunięcie zdublowanego statusu tokenu z subbaru — '● Token' widoczny tylko w meta barze"}
       ]
     },
     {
-      "version": "0.17.3",
-      "date": "2026-03-28",
-      "label": "Fix",
+      "version": "0.23.32",
+      "date": "2026-04-14",
+      "label": "ui",
+      "labelColor": "#8b5cf6",
+      "changes": [
+        {"type": "ui", "text": "pulsowanie pasków postępu podczas aktywnych procesów (tagowanie plikiem, skanowanie News, Delete)"},
+        {"type": "ui", "text": "badge statusu: ⟳ Running / ⚠ Error (migający) / ✓ Done — większy font, border"},
+        {"type": "ui", "text": "status tokenu: '● Token' z labelką i pogrubieniem zamiast samej kropki"},
+        {"type": "ui", "text": "CMS dot w formularzu News: '● CMS' z labelką, animacja pulsowania podczas sprawdzania"}
+      ]
+    },
+    {
+      "version": "0.23.31",
+      "date": "2026-04-14",
+      "label": "ui",
+      "labelColor": "#8b5cf6",
+      "changes": [
+        {"type": "ui", "text": "kompaktowy widok listy URL w panelu News — wszystkie badże (słowo kluczowe, data, język, nie-artykuł, paywall) w jednym wierszu zamiast stackowania wertykalnego"}
+      ]
+    },
+    {
+      "version": "0.23.30",
+      "date": "2026-04-14",
+      "label": "feat",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "feat", "text": "skanowanie treści stron jako metoda domyślna — każdy URL przechodzi przez content scan (tytuł, data, snippet, score)"},
+        {"type": "feat", "text": "uproszczone skanowanie po URL jako opcja (⚙ w headerze panelu Import URLi), domyślnie wyłączone"},
+        {"type": "feat", "text": "żywy licznik postępu skanowania w przycisku: '⟳ Skanowanie 3/15...' aktualizowany po każdym URL"},
+        {"type": "feat", "text": "ustawienie urlSimpleMode zapisywane w localStorage"}
+      ]
+    },
+    {
+      "version": "0.23.29",
+      "date": "2026-04-14",
+      "label": "fix",
       "labelColor": "#22c55e",
       "changes": [
-        {"type": "fix", "text": "News: GM fetch z trailing slash, redirect:follow"},
-        {"type": "fix", "text": "News: uproszczona logika fetchowania i wykrywania daty"}
+        {"type": "fix", "text": "fix skanowania treści: bodyEl identyfikowany przed usunięciem szumu — chroni kontener artykułu z klasą zawierającą 'widget', 'promo' itp."},
+        {"type": "fix", "text": "guard noise removal: el !== bodyEl && !el.contains(bodyEl) — przodkowie bodyEl też chronieni"},
+        {"type": "fix", "text": "header noise selector: 'header' → 'body > header' — nie usuwa <header> wewnątrz artykułu"},
+        {"type": "fix", "text": "nowe wzorce CMS w _CONTENT_ZONE_SEL: content__body, text-body, article__lead"}
       ]
     },
     {
-      "version": "0.17.2",
-      "date": "2026-03-28",
-      "label": "Fix",
+      "version": "0.23.28",
+      "date": "2026-04-14",
+      "label": "fix",
       "labelColor": "#22c55e",
       "changes": [
-        {"type": "fix", "text": "News: prefill daty natychmiast przy aktywacji URL"},
-        {"type": "fix", "text": "News: wykrywanie daty niezalezne od blokad GM fetch"}
+        {"type": "fix", "text": "lepsze wykrywanie strefy artykułu: CMS fallbacks (entry-content, post-content, article__body, story-body, role=article) przed fallbackiem do doc.body"},
+        {"type": "fix", "text": "rozszerzone wzorce dat: itemprop datePublished, publishdate, DC.date, data-date, time z apostrofem, dateModified jako ostatnia instancja"},
+        {"type": "fix", "text": "revert blind content autofill — fetchPageInfo nie wklejał już pierwszego akapitu bez związku ze słowem kluczowym"}
       ]
     },
     {
-      "version": "0.17.1",
-      "date": "2026-03-28",
-      "label": "New",
-      "labelColor": "#6c6cff",
+      "version": "0.23.27",
+      "date": "2026-04-14",
+      "label": "feat",
+      "labelColor": "#06b6d4",
       "changes": [
-        {"type": "new", "text": "News: data prefill rok+miesiac z biezacej daty"},
-        {"type": "new", "text": "News: auto-wykrywanie daty artykulu przez GM fetch"}
+        {"type": "feat", "text": "paywall: rozróżnienie twardych blokad (access-denied, subscriber-only) od słabych sygnałów (piano, tinypass) — słabe flagują tylko gdy body < 1200 znaków"},
+        {"type": "feat", "text": "autofill tytułu: h1 z article/main > meta content_title > og:title > title"},
+        {"type": "feat", "text": "autofill treści: pierwszy akapit z article/main wypełnia pole Treść gdy jest puste"},
+        {"type": "feat", "text": "badge języka strony w liście URLi po skanowaniu (np. 'pl', 'cs')"},
+        {"type": "feat", "text": "hint języka projektu w formularzu pod polem KRAJ (np. 'lang: cs, sk')"}
       ]
     },
     {
-      "version": "0.17.0",
-      "date": "2026-03-28",
-      "label": "New",
-      "labelColor": "#6c6cff",
+      "version": "0.23.26",
+      "date": "2026-04-14",
+      "label": "feat",
+      "labelColor": "#06b6d4",
       "changes": [
-        {"type": "new", "text": "News: przycisk Wyczysc czysci tytul i tresc w P3"},
-        {"type": "fix", "text": "News: auto-clear tytul/tresc po sukcesie i duplikacie"},
-        {"type": "fix", "text": "News: kolejne URL otwieraja sie w tym samym oknie"}
+        {"type": "feat", "text": "teaser detection: keyword tylko w polecanych artykułach → status teasermatch (szary ◇, badge 'w polecanym art.'), redukuje false positive"},
+        {"type": "feat", "text": "nowe strefy skanowania: h2/h3 (+3), blockquote (+2), tagi redakcyjne artykułu (+4) — tylko wewnątrz article/main"},
+        {"type": "feat", "text": "NEWS_TEASER_SELECTORS: rozszerzone wzorce (related, recommended, more-articles, also-read, suggested itp.)"}
       ]
     },
-    {
-      "version": "0.16.11",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News side tab: nie otwiera Annotators Tab"},
-        {"type": "fix", "text": "News side tab: znika gdy News otwarte, wraca po zamknieciu"},
-        {"type": "fix", "text": "News panele: pozycjonowanie niezalezne od Annotators Panel"}
-      ]
-    },
-    {
-      "version": "0.16.10",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News: panele niezalezne — zamkniecie Annotators nie zamyka News"},
-        {"type": "fix", "text": "Annotators Tab: usuniety przycisk News (jest osobny side tab)"}
-      ]
-    },
-    {
-      "version": "0.16.9",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Side tab: konflikt ID z zakladka Plik naprawiony"}
-      ]
-    },
-    {
-      "version": "0.16.8",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Side tab B24 Tagger: panel wraca po kliknieciu"},
-        {"type": "fix", "text": "Plik tab: usunieta animacja powodujaca glitch"},
-        {"type": "fix", "text": "News: panele niezalezne od Annotators Tab"}
-      ]
-    },
-    {
-      "version": "0.16.7",
-      "date": "2026-03-28",
-      "label": "Fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Side tabs: poprawiona logika widocznosci przy starcie"}
-      ]
-    },
-  ];;;;;;;;;;;
+  ];
 
   function _fetchChangelog(onDone) {
-    const CACHE_KEY = 'b24tagger_cl_cache';
+    const CACHE_KEY = 'b24tagger_cl_cache_' + lsGet(LS.UPDATE_CHANNEL, 'stable');
     const cached = (() => { try { return JSON.parse(sessionStorage.getItem(CACHE_KEY)); } catch(e) { return null; } })();
     if (cached) { onDone(cached); return; }
     GM_xmlhttpRequest({
       method: 'GET',
-      url: 'https://raw.githubusercontent.com/i24dev/i24_analytics/I24-maks-czyszczenie/Tagger/CHANGELOG.json',
+      url: getChangelogUrl(),
       headers: { 'Cache-Control': 'no-cache' },
       onload(r) {
         try {
@@ -7140,6 +9113,125 @@ function showOnboarding(onComplete) {
   // WHAT'S NEW - modal i przycisk
   // ───────────────────────────────────────────
 
+  function showWelcomePanel() {
+    if (lsGet(LS.WELCOME_SHOWN, false)) return;
+
+    const prioMeta = {
+      ai:     { color: '#a855f7', label: 'AI' },
+      high:   { color: '#f87171', label: 'Krytyczne' },
+      medium: { color: '#facc15', label: 'Ważne' },
+      low:    { color: '#4ade80', label: 'Nice to have' },
+    };
+
+    let plannedHtml =
+      '<div style="font-size:13px;font-weight:600;color:#c0c0e0;margin-bottom:12px;line-height:1.6;">Roadmap — v1.0.0 i nowsze</div>';
+    PLANNED_FEATURES.forEach(function(f) {
+      var pm = prioMeta[f.priority] || { color: '#6060aa' };
+      plannedHtml +=
+        '<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid #1a1a22;">' +
+          '<span style="flex-shrink:0;width:8px;height:8px;border-radius:50%;background:' + pm.color + ';margin-top:5px;"></span>' +
+          '<span style="font-size:13px;color:#a0a0cc;line-height:1.6;flex:1;">' + f.text + '</span>' +
+        '</div>';
+    });
+    plannedHtml +=
+      '<div style="padding:10px 0 4px;font-size:12px;color:#4a4a66;line-height:1.6;font-style:italic;">' +
+        '...i inne funkcje zgłaszane przez użytkowników — masz pomysł lub coś nie działa? Daj znać przez formularz feedbacku.' +
+      '</div>' +
+      '<div style="margin-top:14px;padding:14px;background:#1a0d2e;border-radius:8px;border:1px solid #3d1a6e;">' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+          '<span style="font-size:14px;">✨</span>' +
+          '<span style="font-size:11px;font-weight:600;color:#a855f7;letter-spacing:0.06em;">W PLANACH</span>' +
+        '</div>' +
+        '<div style="font-size:13px;color:#9060cc;line-height:1.6;">Automatyczna klasyfikacja AI — tłumaczenie wzmianek na bieżąco, automatyczna ocena sentymentu i klasyfikacja za pomocą modeli AI.</div>' +
+      '</div>';
+
+    var modal = document.createElement('div');
+    modal.id = 'b24t-welcome-modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;';
+
+    modal.innerHTML =
+      '<div style="background:#0f0f13;border:1px solid #2a2a35;border-radius:14px;width:500px;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.9);">' +
+        // Header
+        '<div style="padding:20px 24px 0;flex-shrink:0;border-bottom:1px solid #1e1e28;">' +
+          '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">' +
+            '<div style="width:38px;height:38px;background:#6c6cff22;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;">🛠️</div>' +
+            '<div style="flex:1;">' +
+              '<div style="font-size:16px;font-weight:700;color:#e2e2e8;letter-spacing:-0.01em;">B24 Tagger <span style="font-size:11px;color:#6c6cff;letter-spacing:0.08em;font-weight:600;">BETA</span></div>' +
+              '<div style="font-size:12px;color:#3a3a55;margin-top:3px;">v' + VERSION + ' · ostatnia wersja przed stable</div>' +
+            '</div>' +
+          '</div>' +
+          '<div style="display:flex;gap:2px;margin-bottom:0;">' +
+            '<button class="b24t-wp-tab" data-tab="welcome" style="flex:1;background:none;border:none;border-bottom:2px solid #6c6cff;color:#6c6cff;font-size:11px;font-weight:600;padding:8px 4px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:5px;">👋 Witaj</button>' +
+            '<button class="b24t-wp-tab" data-tab="planned" style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:#4a4a66;font-size:11px;padding:8px 4px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:5px;">🗓 Planowane</button>' +
+          '</div>' +
+        '</div>' +
+        // Body
+        '<div style="overflow-y:auto;flex:1;min-height:0;">' +
+          // Tab: Witaj
+          '<div id="b24t-wp-welcome" style="padding:24px;">' +
+            '<p style="font-size:14px;color:#c0c0e0;line-height:1.8;margin:0 0 14px 0;">' +
+              'Wersja <strong style="color:#e2e2e8;">0.21.0</strong> to ostatnia oficjalna wersja przed wydaniem wersji <strong style="color:#6c6cff;">1.0.0 stable</strong>.' +
+            '</p>' +
+            '<p style="font-size:14px;color:#c0c0e0;line-height:1.8;margin:0 0 14px 0;">' +
+              'Od poprzedniej wersji naprawiono kilka błędów związanych z tagowaniem za pomocą pliku.' +
+            '</p>' +
+            '<p style="font-size:13px;color:#4a4a66;line-height:1.7;margin:0;">' +
+              'To okienko pojawi się tylko raz. Co jest planowane na wersję 1.0.0 i nowsze — znajdziesz w zakładce <strong style="color:#6060aa;">Planowane</strong>.' +
+            '</p>' +
+          '</div>' +
+          // Tab: Planowane
+          '<div id="b24t-wp-planned" style="display:none;padding:20px 24px;">' + plannedHtml + '</div>' +
+        '</div>' +
+        // Footer z checkboxem
+        '<div style="padding:14px 24px;border-top:1px solid #1a1a22;flex-shrink:0;">' +
+          '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:12px;">' +
+            '<input type="checkbox" id="b24t-wp-checkbox" style="width:16px;height:16px;cursor:pointer;accent-color:#6c6cff;">' +
+            '<span style="font-size:13px;color:#6060aa;">Przeczytałem/am</span>' +
+          '</label>' +
+          '<button id="b24t-wp-close" disabled style="width:100%;background:#2a2a3a;color:#4a4a66;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:not-allowed;font-family:inherit;transition:background 0.2s,color 0.2s;">Zamknij</button>' +
+        '</div>' +
+      '</div>';
+
+    document.body.appendChild(modal);
+
+    // Tab switching
+    modal.querySelectorAll('.b24t-wp-tab').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        modal.querySelectorAll('.b24t-wp-tab').forEach(function(b) {
+          b.style.borderBottomColor = 'transparent';
+          b.style.color = '#4a4a66';
+          b.style.fontWeight = 'normal';
+        });
+        btn.style.borderBottomColor = '#6c6cff';
+        btn.style.color = '#6c6cff';
+        btn.style.fontWeight = '600';
+        document.getElementById('b24t-wp-welcome').style.display = btn.dataset.tab === 'welcome' ? 'block' : 'none';
+        document.getElementById('b24t-wp-planned').style.display = btn.dataset.tab === 'planned' ? 'block' : 'none';
+      });
+    });
+
+    // Checkbox enables close button
+    document.getElementById('b24t-wp-checkbox').addEventListener('change', function() {
+      var btn = document.getElementById('b24t-wp-close');
+      if (this.checked) {
+        btn.disabled = false;
+        btn.style.background = '#6c6cff';
+        btn.style.color = '#fff';
+        btn.style.cursor = 'pointer';
+      } else {
+        btn.disabled = true;
+        btn.style.background = '#2a2a3a';
+        btn.style.color = '#4a4a66';
+        btn.style.cursor = 'not-allowed';
+      }
+    });
+
+    document.getElementById('b24t-wp-close').addEventListener('click', function() {
+      if (!document.getElementById('b24t-wp-checkbox').checked) return;
+      lsSet(LS.WELCOME_SHOWN, true);
+      modal.remove();
+    });
+  }
 
   // ───────────────────────────────────────────
   // FEEDBACK & PLANNED FEATURES
@@ -7151,7 +9243,12 @@ function showOnboarding(onComplete) {
   // Slack Webhook URL — przechowywany w localStorage (klucz: b24tagger_slack_webhook)
   // Ustaw raz w konsoli: localStorage.setItem('b24tagger_slack_webhook', 'https://hooks.slack.com/...')
   const SLACK_WEBHOOK_URL = localStorage.getItem('b24tagger_slack_webhook') || '';
-  const RAW_URL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/b24tagger.user.js';
+  const RAW_URL_STABLE       = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/b24tagger.user.js';
+  const RAW_URL_EXPERIMENTAL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/experimental/b24tagger.user.js';
+  const CHANGELOG_URL_STABLE       = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/CHANGELOG.json';
+  const CHANGELOG_URL_EXPERIMENTAL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/experimental/CHANGELOG.json';
+  function getRawUrl() { return lsGet(LS.UPDATE_CHANNEL, 'stable') === 'experimental' ? RAW_URL_EXPERIMENTAL : RAW_URL_STABLE; }
+  function getChangelogUrl() { return lsGet(LS.UPDATE_CHANNEL, 'stable') === 'experimental' ? CHANGELOG_URL_EXPERIMENTAL : CHANGELOG_URL_STABLE; }
 
   // Google Forms — bug report i feedback
   const BUG_FORM_BASE = 'https://docs.google.com/forms/d/e/1FAIpQLSdfddWBtp-0ZiMP5u51vaQmNvIg423MyjOzQdMZb6BEyCe0GA/viewform';
@@ -7173,11 +9270,9 @@ function showOnboarding(onComplete) {
 
   // Planned features list
   const PLANNED_FEATURES = [
-    { priority: 'ai',     text: 'Dostęp do AI API — tłumaczenie wzmianek na bieżąco, automatyczna klasyfikacja, tryb tworzenia customowych klasyfikatorów (do automatycznej klasyfikacji) i inne...', next: false },
-    { priority: 'high',   text: 'Podgląd wzmianki on-hover — najedź na URL w logu żeby zobaczyć treść i autora', next: false },
-    { priority: 'medium', text: 'Integracja z Newsami — przeglądanie i operacje na wzmiankach z sekcji News bezpośrednio z poziomu wtyczki', next: false },
-    { priority: 'medium', text: 'Bulk rename tagów — masowa zmiana nazwy tagu w projekcie', next: false },
-    { priority: 'medium', text: 'System diagnostyczny: rozszerzenie DIAG_CHECKS o kolejne patterny — zbieranie przykładów i przypadków brzegowych', next: false },
+    { priority: 'high', text: 'Panel postępu tagowania — widoczny kafelek z liczbą pozostałych wzmianek, paskiem ukończenia i procentem postępu' },
+    { priority: 'high', text: 'Tryb domykania miesiąca — zamknięcie wszystkich projektów jednym kliknięciem z automatycznym oznaczeniem jako ukończone' },
+    { priority: 'high', text: 'Czyszczenie tagów plikiem — naprawa funkcji usuwania tagów na podstawie dostarczonego pliku CSV' },
   ];
 
   function sendToSlack(payload, onSuccess, onError) {
@@ -7343,25 +9438,26 @@ function showOnboarding(onComplete) {
       low:    { color: '#4ade80', label: 'Niski',  desc: 'priorytet niski' },
     };
     let plannedHtml =
-      '<div style="font-size:12px;color:#4a4a66;margin-bottom:12px;line-height:1.6;">Lista funkcji planowanych w przyszłych wersjach. Masz pomysł? Skorzystaj z zakładki Feedback!</div>' +
-      // Legenda priorytetów
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;padding:8px 10px;background:#0d0d16;border-radius:7px;border:1px solid #1e1e2e;">' +
-        Object.entries(prioMeta).map(function(e) {
-          return '<span style="display:flex;align-items:center;gap:4px;font-size:11px;color:#8080aa;">' +
-            '<span style="width:8px;height:8px;border-radius:50%;background:' + e[1].color + ';flex-shrink:0;"></span>' +
-            e[1].label +
-          '</span>';
-        }).join('') +
-      '</div>';
+      '<div style="font-size:13px;font-weight:600;color:#c0c0e0;margin-bottom:12px;line-height:1.6;">Roadmap — v1.0.0 i nowsze</div>';
     PLANNED_FEATURES.forEach(function(f) {
       const pm = prioMeta[f.priority] || { color: '#6060aa' };
       plannedHtml +=
         '<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid #1a1a22;">' +
           '<span style="flex-shrink:0;width:8px;height:8px;border-radius:50%;background:' + pm.color + ';margin-top:5px;"></span>' +
           '<span style="font-size:13px;color:#a0a0cc;line-height:1.6;flex:1;">' + f.text + '</span>' +
-          (f.next ? '<span style="flex-shrink:0;font-size:11px;background:#6c6cff22;color:#6c6cff;padding:2px 8px;border-radius:99px;white-space:nowrap;">następna wersja</span>' : '') +
         '</div>';
     });
+    plannedHtml +=
+      '<div style="padding:10px 0 4px;font-size:12px;color:#4a4a66;line-height:1.6;font-style:italic;">' +
+        '...i inne funkcje zgłaszane przez użytkowników — masz pomysł lub coś nie działa? Daj znać przez formularz feedbacku.' +
+      '</div>' +
+      '<div style="margin-top:14px;padding:14px;background:#1a0d2e;border-radius:8px;border:1px solid #3d1a6e;">' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+          '<span style="font-size:14px;">✨</span>' +
+          '<span style="font-size:11px;font-weight:600;color:#a855f7;letter-spacing:0.06em;">W PLANACH</span>' +
+        '</div>' +
+        '<div style="font-size:13px;color:#9060cc;line-height:1.6;">Automatyczna klasyfikacja AI — tłumaczenie wzmianek na bieżąco, automatyczna ocena sentymentu i klasyfikacja za pomocą modeli AI.</div>' +
+      '</div>';
 
     const modal = document.createElement('div');
     modal.id = 'b24t-whats-new-modal';
@@ -7387,7 +9483,7 @@ function showOnboarding(onComplete) {
             '<button class="b24t-wnm-tab" data-tab="news" ' +
               'style="flex:1;background:none;border:none;border-bottom:2px solid #6c6cff;color:#6c6cff;' +
               'font-size:11px;font-weight:600;padding:8px 4px;cursor:pointer;font-family:inherit;' +
-              'display:flex;align-items:center;justify-content:center;gap:5px;">📰 Co nowego</button>' +
+              'display:flex;align-items:center;justify-content:center;gap:5px;">📋 Historia zmian</button>' +
             '<button class="b24t-wnm-tab" data-tab="planned" ' +
               'style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:#4a4a66;' +
               'font-size:11px;padding:8px 4px;cursor:pointer;font-family:inherit;' +
@@ -7490,6 +9586,7 @@ function showOnboarding(onComplete) {
     });
 
     // Tab switching
+    const legend = document.getElementById('b24t-wnm-legend');
     modal.querySelectorAll('.b24t-wnm-tab').forEach(function(btn) {
       btn.addEventListener('click', function() {
         modal.querySelectorAll('.b24t-wnm-tab').forEach(function(b) {
@@ -7582,7 +9679,8 @@ function showOnboarding(onComplete) {
   }
 
   function checkForUpdate(manual) {
-    if (!RAW_URL) return;
+    const _rawUrl = getRawUrl();
+    if (!_rawUrl) return;
     addLog('→ Sprawdzam aktualizacje... (GM: ' + (typeof GM_xmlhttpRequest !== 'undefined' ? 'tak' : 'nie') + ')', 'info');
 
     function handleResponse(text) {
@@ -7605,7 +9703,7 @@ function showOnboarding(onComplete) {
     if (typeof GM_xmlhttpRequest !== 'undefined') {
       GM_xmlhttpRequest({
         method: 'GET',
-        url: RAW_URL + '?_=' + Date.now(),
+        url: _rawUrl + '?_=' + Date.now(),
         headers: {
           'Cache-Control': 'no-cache, no-store',
           'Pragma': 'no-cache',
@@ -7620,7 +9718,7 @@ function showOnboarding(onComplete) {
       });
     } else {
       // Fallback: fetch (może być blokowany przez CSP)
-      fetch(RAW_URL + '?_=' + Date.now())
+      fetch(_rawUrl + '?_=' + Date.now())
         .then(function(r) { return r.text(); })
         .then(handleResponse)
         .catch(function() {
@@ -7710,7 +9808,7 @@ function showOnboarding(onComplete) {
 
     document.getElementById('b24t-update-install').addEventListener('click', function() {
       // Otwarcie raw .user.js URL — Tampermonkey automatycznie wykrywa i pokazuje ekran aktualizacji
-      window.open(RAW_URL, '_blank');
+      window.open(getRawUrl(), '_blank');
       dismiss();
     });
     document.getElementById('b24t-update-dismiss').addEventListener('click', dismiss);
@@ -7772,6 +9870,25 @@ function showOnboarding(onComplete) {
     modal.id = 'b24t-features-modal';
     modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;backdrop-filter:blur(4px);animation:b24t-fadein 0.2s ease;';
 
+    const _currentChannel = lsGet(LS.UPDATE_CHANNEL, 'stable');
+    const channelHtml =
+      '<div style="display:flex;gap:8px;">' +
+        ['stable', 'experimental'].map(function(ch) {
+          const active = _currentChannel === ch;
+          const label = ch === 'stable' ? '🔒 Stabilny' : '🔬 Eksperymentalny';
+          const desc  = ch === 'stable' ? 'Rekomendowany &mdash; przetestowane wersje' : 'Najnowsze zmiany, może być niestabilny';
+          return '<label data-channel="' + ch + '" style="display:flex;flex:1;gap:8px;align-items:flex-start;padding:8px 10px;border:1px solid ' +
+            (active ? 'var(--b24t-primary)' : 'var(--b24t-border-sub)') +
+            ';border-radius:7px;background:' + (active ? 'var(--b24t-primary)18' : 'transparent') + ';cursor:pointer;">' +
+            '<input type="radio" name="b24t-channel" value="' + ch + '" ' + (active ? 'checked' : '') +
+              ' style="accent-color:var(--b24t-primary);flex-shrink:0;margin-top:2px;">' +
+            '<div>' +
+              '<div style="font-size:12px;font-weight:600;color:var(--b24t-text);">' + label + '</div>' +
+              '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:2px;line-height:1.4;">' + desc + '</div>' +
+            '</div>' +
+          '</label>';
+        }).join('') +
+      '</div>';
     let checkboxesHtml = OPTIONAL_FEATURES.map(function(f) {
       const checked = features[f.id] ? 'checked' : '';
       return '<label style="display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-bottom:1px solid var(--b24t-border-sub);cursor:pointer;">' +
@@ -7792,9 +9909,13 @@ function showOnboarding(onComplete) {
             '<div style="font-size:13px;font-weight:700;color:#fff;">Dodatkowe funkcje</div>' +
             '<div style="font-size:10px;color:rgba(255,255,255,0.7);margin-top:2px;">Włącz lub wyłącz opcjonalne funkcje wtyczki</div>' +
           '</div>' +
-          '<button id="b24t-features-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:18px;line-height:1;padding:2px 8px;border-radius:5px;">✕</button>' +
+          '<button id="b24t-features-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:18px;line-height:1;padding:2px 8px;border-radius:5px;">✕</button>' +
         '</div>' +
         '<div style="padding:4px 20px 0;">' + checkboxesHtml + '</div>' +
+        '<div style="padding:12px 20px 4px;border-top:1px solid var(--b24t-border-sub);">' +
+          '<div style="font-size:11px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Kanał aktualizacji</div>' +
+          channelHtml +
+        '</div>' +
         '<div style="padding:14px 20px;border-top:1px solid var(--b24t-border-sub);text-align:right;">' +
           '<button id="b24t-features-save" style="background:var(--b24t-accent-grad);color:#fff;border:none;border-radius:8px;padding:9px 24px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px var(--b24t-primary-glow);transition:opacity 0.15s;">Zapisz</button>' +
         '</div>' +
@@ -7813,9 +9934,11 @@ function showOnboarding(onComplete) {
         newFeatures[cb.dataset.feature] = cb.checked;
       });
       saveFeatures(newFeatures);
+      const selectedChannel = (modal.querySelector('input[name="b24t-channel"]:checked') || {}).value || 'stable';
+      lsSet(LS.UPDATE_CHANNEL, selectedChannel);
       applyFeatures();
       close();
-      addLog('✓ Ustawienia funkcji zapisane', 'success');
+      addLog('\u2713 Ustawienia zapisane (kanał: ' + selectedChannel + ')', 'success');
     });
   }
 
@@ -8140,7 +10263,7 @@ function showOnboarding(onComplete) {
   }
 
   function _dashTile(label, value, color) {
-    return '<div style="background:#141419;border-radius:8px;padding:8px;text-align:center;">' +
+    return '<div style="background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:8px;padding:8px;text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,0.10);transition:background 0.3s,border-color 0.3s;">' +
       '<div style="font-size:16px;font-weight:700;color:' + color + ';">' + (value ?? '—') + '</div>' +
       '<div style="font-size:9px;color:var(--b24t-text-faint);margin-top:2px;">' + label + '</div>' +
     '</div>';
@@ -8191,17 +10314,21 @@ function showOnboarding(onComplete) {
     addLog('📅 Zakres: ' + dates.label + ' (' + dates.dateFrom + ' → ' + dates.dateTo + ')', 'info');
     addLog('⟳ [BG] prefetch tagstats (' + projects.length + ' projektów)...', 'info');
     var results = [];
-    for (var i = 0; i < projects.length; i++) {
-      var p = projects[i];
-      try {
-        var reqPage = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.reqVerId],   1);
-        var delPage = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.toDeleteId], 1);
-        var reqVer   = reqPage.count  || 0;
-        var toDelete = delPage.count  || 0;
-        if (reqVer > 0 || toDelete > 0) {
-          results.push({ name: p.name, id: p.id, reqVer: reqVer, toDelete: toDelete });
-        }
-      } catch(e) {}
+    for (var i = 0; i < projects.length; i += BG_CONCURRENCY) {
+      var chunk = projects.slice(i, i + BG_CONCURRENCY);
+      var chunkResults = await Promise.all(chunk.map(async function(p) {
+        try {
+          var reqPage = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.reqVerId],   1, { silent: true });
+          var delPage = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.toDeleteId], 1, { silent: true });
+          var reqVer   = reqPage.count  || 0;
+          var toDelete = delPage.count  || 0;
+          if (reqVer > 0 || toDelete > 0) {
+            return { name: p.name, id: p.id, reqVer: reqVer, toDelete: toDelete };
+          }
+        } catch(e) {}
+        return null;
+      }));
+      results.push.apply(results, chunkResults.filter(Boolean));
     }
     bgCache.tagstats = { results: results, dates: dates, ts: Date.now() };
     // Jeśli annotatorData.tagstats jest null (panel nie był otwarty) — wypełnij też go
@@ -8221,21 +10348,22 @@ function showOnboarding(onComplete) {
     var tagName = Object.entries(state.tags || {}).find(function(e){ return e[1] === tagId; })?.[0] || String(tagId);
     addLog('⟳ [BG] prefetch allProjects[' + tagName + '] (' + projects.length + ' projektów)...', 'info');
     var results = [];
-    for (var i = 0; i < projects.length; i++) {
-      var p = projects[i];
-      try {
-        var page  = await getMentions(p.id, dateFrom, dateTo, [tagId], 1);
-        var count = page.count || 0;
-        p._tagCount = count;
-        p._dateFrom = dateFrom;
-        p._dateTo   = dateTo;
-        if (count > 0) {
-          results.push({ p: p, count: count });
+    for (var i = 0; i < projects.length; i += BG_CONCURRENCY) {
+      var chunk = projects.slice(i, i + BG_CONCURRENCY);
+      var chunkResults = await Promise.all(chunk.map(async function(p) {
+        try {
+          var page  = await getMentions(p.id, dateFrom, dateTo, [tagId], 1);
+          var count = page.count || 0;
+          p._tagCount = count;
+          p._dateFrom = dateFrom;
+          p._dateTo   = dateTo;
+          return count > 0 ? { p: p, count: count } : null;
+        } catch(e) {
+          addLog('✕ [DIAG] getMentions(' + p.id + '/' + tagName + '): ' + e.message, 'diag');
+          return { p: p, count: -1, error: e.message };
         }
-      } catch(e) {
-        results.push({ p: p, count: -1, error: e.message });
-        addLog('✕ [DIAG] getMentions(' + p.id + '/' + tagName + '): ' + e.message, 'diag');
-      }
+      }));
+      results.push.apply(results, chunkResults.filter(Boolean));
     }
     bgCache.allProjects[tagId] = { results: results, ts: Date.now() };
     var withData = results.filter(function(r){ return r.count > 0; });
@@ -8307,14 +10435,14 @@ function showOnboarding(onComplete) {
     var panel = document.createElement('div');
     panel.id = 'b24t-annotator-panel';
     panel.setAttribute('data-b24t-theme', currentTheme);
-    panel.style.cssText = 'position:fixed;right:12px;top:80px;width:420px;z-index:2147483641;border-radius:14px;display:none;flex-direction:column;overflow:hidden;animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;font-size:15px;';
+    panel.style.cssText = 'position:fixed;right:12px;top:80px;width:420px;height:auto;max-height:calc(100vh - 100px);z-index:2147483641;border-radius:14px;display:none;flex-direction:column;overflow:hidden;animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;font-size:15px;';
 
     panel.innerHTML =
       // Header with gradient
       '<div id="b24t-ann-header" style="display:flex;align-items:center;padding:12px 16px;background:var(--b24t-accent-grad);cursor:move;user-select:none;position:relative;overflow:hidden;">' +
         '<span style="font-size:15px;font-weight:700;flex:1;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.2);">🛠 Annotators Tab</span>' +
         '' +
-        '<button id="b24t-ann-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:18px;line-height:1;padding:2px 8px;border-radius:5px;transition:background 0.15s;">×</button>' +
+        '<button id="b24t-ann-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:18px;line-height:1;padding:2px 8px;border-radius:5px;transition:background 0.15s;">×</button>' +
       '</div>' +
       // Tabs — liquid glass, identyczny styl jak główny panel
       '<div style="display:flex;align-items:center;gap:5px;padding:6px 10px;background:var(--b24t-bg-deep);border-bottom:1px solid var(--b24t-border-sub);">' +
@@ -8326,12 +10454,10 @@ function showOnboarding(onComplete) {
       // Project tab
       '<div id="b24t-ann-tab-project" class="b24t-ann-content" style="display:block;background:var(--b24t-bg);flex:1;overflow-y:auto;min-height:0;">' +
         '<div id="b24t-ann-project-content" style="padding:16px;font-size:14px;color:var(--b24t-text-faint);">↻ Ładowanie...</div>' +
-        '<div style="padding:0 16px 14px;"><button id="b24t-ann-project-refresh" style="width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:7px;padding:9px;font-size:13px;font-family:inherit;cursor:pointer;transition:background 0.15s,transform 0.1s;">↻ Odśwież</button></div>' +
       '</div>' +
       // Tags tab
       '<div id="b24t-ann-tab-tagstats" class="b24t-ann-content" style="display:none;background:var(--b24t-bg);flex:1;overflow-y:auto;min-height:0;">' +
         '<div id="b24t-ann-tagstats-content" style="padding:16px;font-size:14px;color:var(--b24t-text-faint);">↻ Ładowanie...</div>' +
-        '<div style="padding:0 16px 14px;"><button id="b24t-ann-tagstats-refresh" style="width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:7px;padding:9px;font-size:13px;font-family:inherit;cursor:pointer;transition:background 0.15s,transform 0.1s;">↻ Odśwież</button></div>' +
       '</div>' +
       // Groups tab
       '<div id="b24t-ann-tab-groups" class="b24t-ann-content" style="display:none;background:var(--b24t-bg);flex:1;overflow-y:auto;min-height:0;">' +
@@ -8350,9 +10476,15 @@ function showOnboarding(onComplete) {
 
     document.body.appendChild(panel);
 
+    // Dopasuj startowy rozmiar annotator panelu do ekranu (jeśli brak zapisanego)
+    if (!lsGet(LS.UI_ANN_SIZE)) {
+      if (_getScreenProfile() === 'compact') {
+        panel.style.width = Math.min(380, Math.round(window.innerWidth * 0.50)) + 'px';
+      }
+    }
     // Resize annotator panel — wszystkie krawędzie
     setupResize(panel, LS.UI_ANN_SIZE, {
-      minW: 320, maxW: 640,
+      minW: 300, maxW: Math.min(640, Math.round(window.innerWidth * 0.80)),
       minH: 240, maxH: Math.round(window.innerHeight * 0.85),
       useMaxHeight: false
     });
@@ -8406,14 +10538,6 @@ function showOnboarding(onComplete) {
       });
     });
 
-    // Refresh button hover
-    ['b24t-ann-project-refresh','b24t-ann-tagstats-refresh'].forEach(function(id) {
-      var btn = document.getElementById(id);
-      if (!btn) return;
-      btn.addEventListener('mouseenter', function() { btn.style.transform = 'translateY(-1px)'; });
-      btn.addEventListener('mouseleave', function() { btn.style.transform = ''; });
-    });
-
     // Close
     document.getElementById('b24t-ann-close').addEventListener('click', function() {
       panel.style.display = 'none';
@@ -8422,27 +10546,21 @@ function showOnboarding(onComplete) {
       // News panels are independent — do NOT close them here
     });
 
-
-    // Refresh
-    document.getElementById('b24t-ann-project-refresh').addEventListener('click', function() {
-      annotatorData.project = null; loadAnnotatorProject();
-    });
-    document.getElementById('b24t-ann-tagstats-refresh').addEventListener('click', function() {
-      annotatorData.tagstats = null; bgCache.tagstats = null; loadAnnotatorTagStats();
-    });
-
     // Drag
     var hdr = document.getElementById('b24t-ann-header');
     var dragging = false, sx, sy, sl, st;
     hdr.addEventListener('mousedown', function(e) {
       if (e.target.id === 'b24t-ann-close') return;
       dragging = true; sx = e.clientX; sy = e.clientY;
+      _bringToFront(panel);
       var r = panel.getBoundingClientRect(); sl = r.left; st = r.top; e.preventDefault();
     });
     document.addEventListener('mousemove', function(e) {
       if (!dragging) return;
-      panel.style.left = (sl + e.clientX - sx) + 'px';
-      panel.style.top  = (st + e.clientY - sy) + 'px';
+      var newLeft = Math.max(0, Math.min(window.innerWidth  - panel.offsetWidth,  sl + e.clientX - sx));
+      var newTop  = Math.max(0, Math.min(window.innerHeight - panel.offsetHeight, st + e.clientY - sy));
+      panel.style.left  = newLeft + 'px';
+      panel.style.top   = newTop  + 'px';
       panel.style.right = 'auto';
     });
     document.addEventListener('mouseup', function() { dragging = false; });
@@ -8456,6 +10574,8 @@ function showOnboarding(onComplete) {
     panel.style.animation = 'none';
     panel.offsetHeight; // reflow
     panel.style.animation = 'b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1)';
+    panel.style.height = 'auto';
+    panel.style.maxHeight = 'calc(100vh - 100px)';
     panel.style.display = 'flex';
     if (tab) tab.style.display = 'none';
     if (!annotatorData.project)  loadAnnotatorProject();
@@ -8554,8 +10674,11 @@ function showOnboarding(onComplete) {
   function renderAnnotatorProject(el, d) {
     var pc = d.pct === 100 ? 'var(--b24t-ok)' : 'var(--b24t-primary)';
     el.innerHTML =
-      '<div style="font-size:11px;color:var(--b24t-text-faint);margin-bottom:8px;">' + d.dates.label +
-        (d.dates.daysLeft > 0 ? ' <span style="color:var(--b24t-warn);">· ' + d.dates.daysLeft + ' dni</span>' : '') + '</div>' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">' +
+        '<div style="font-size:11px;color:var(--b24t-text-faint);">' + d.dates.label +
+          (d.dates.daysLeft > 0 ? ' <span style="color:var(--b24t-warn);">· ' + d.dates.daysLeft + ' dni</span>' : '') + '</div>' +
+        '<button id="b24t-ann-project-refresh" title="Odśwież" style="background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer;flex-shrink:0;transition:transform 0.1s,background 0.15s;">&#8635;</button>' +
+      '</div>' +
       '<div style="background:var(--b24t-bg-input);border-radius:99px;height:5px;margin-bottom:12px;overflow:hidden;">' +
         '<div style="height:100%;border-radius:99px;background:var(--b24t-accent-grad);width:' + d.pct + '%;transition:width 0.5s ease;"></div></div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;">' +
@@ -8567,10 +10690,12 @@ function showOnboarding(onComplete) {
         _annTile('TO DELETE', d.toDelete, d.toDelete===0 ? 'var(--b24t-text-faint)' : 'var(--b24t-err)') +
       '</div>' +
       '<div style="margin-top:10px;text-align:center;font-size:12px;font-weight:700;color:' + pc + ';">' + (d.pct===100 ? '✓ Gotowe!' : d.pct+'% otagowane') + '</div>';
+    var rb = el.querySelector('#b24t-ann-project-refresh');
+    if (rb) rb.addEventListener('click', function() { annotatorData.project = null; loadAnnotatorProject(); });
   }
 
   function _annTile(label, value, color) {
-    return '<div style="background:var(--b24t-section-grad-d);border:1px solid var(--b24t-border-strong);border-radius:8px;padding:10px;text-align:center;transition:background 0.3s,border-color 0.3s;">' +
+    return '<div style="background:var(--b24t-section-grad-d);border:1px solid var(--b24t-border-strong);border-radius:8px;padding:10px;text-align:center;transition:background 0.3s,border-color 0.3s;box-shadow:inset 0 1px 0 rgba(255,255,255,0.10);">' +
       '<div style="font-size:22px;font-weight:800;color:' + color + ';line-height:1.2;">' + (value !== undefined ? value : '—') + '</div>' +
       '<div style="font-size:11px;color:var(--b24t-text-meta);margin-top:4px;text-transform:uppercase;letter-spacing:0.07em;font-weight:600;">' + label + '</div></div>';
   }
@@ -8621,20 +10746,22 @@ function showOnboarding(onComplete) {
     }
 
     var results = [];
-    for (var i = 0; i < projects.length; i++) {
-      var p = projects[i];
-      var counter = document.getElementById('b24t-ann-ts-counter');
-      if (counter) counter.textContent = (i + 1) + ' / ' + projects.length;
-      try {
-        var reqPage  = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.reqVerId],   1);
-        var delPage  = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.toDeleteId], 1);
-        var reqVer   = reqPage.count  || 0;
-        var toDelete = delPage.count  || 0;
+    var done = 0;
+    await Promise.all(projects.map(function(p) {
+      return Promise.all([
+        getMentions(p.id, dates.dateFrom, dates.dateTo, [p.reqVerId],   1).catch(function(){ return { count: 0 }; }),
+        getMentions(p.id, dates.dateFrom, dates.dateTo, [p.toDeleteId], 1).catch(function(){ return { count: 0 }; }),
+      ]).then(function(pages) {
+        done++;
+        var counter = document.getElementById('b24t-ann-ts-counter');
+        if (counter) counter.textContent = done + ' / ' + projects.length;
+        var reqVer   = (pages[0].count) || 0;
+        var toDelete = (pages[1].count) || 0;
         if (reqVer > 0 || toDelete > 0) {
           results.push({ name: p.name, id: p.id, reqVer: reqVer, toDelete: toDelete });
         }
-      } catch(e) {}
-    }
+      });
+    }));
 
     bgCache.tagstats = { results: results, dates: dates, ts: Date.now() };
     annotatorData.tagstats = bgCache.tagstats;
@@ -8646,7 +10773,14 @@ function showOnboarding(onComplete) {
     var filtered = (d.results||[]).filter(function(p){ return p.reqVer>0||p.toDelete>0; })
       .sort(function(a,b){ return (b.reqVer+b.toDelete)-(a.reqVer+a.toDelete); });
     if (!filtered.length) {
-      el.innerHTML = '<div style="text-align:center;color:var(--b24t-ok);font-size:13px;padding:12px 0;font-weight:600;">✓ Wszystkie projekty czyste!</div>';
+      el.innerHTML =
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0 8px;">' +
+          '<div style="font-size:11px;color:var(--b24t-text-faint);">' + (d.dates ? d.dates.dateFrom + ' – ' + d.dates.dateTo : '') + '</div>' +
+          '<button id="b24t-ann-tagstats-refresh" title="Odśwież" style="background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer;flex-shrink:0;transition:transform 0.1s,background 0.15s;">&#8635;</button>' +
+        '</div>' +
+        '<div style="text-align:center;color:var(--b24t-ok);font-size:13px;padding:12px 0;font-weight:600;">✓ Wszystkie projekty czyste!</div>';
+      var rb = el.querySelector('#b24t-ann-tagstats-refresh');
+      if (rb) rb.addEventListener('click', function() { annotatorData.tagstats = null; bgCache.tagstats = null; loadAnnotatorTagStats(); });
       return;
     }
     var rows = filtered.map(function(p) {
@@ -8657,7 +10791,10 @@ function showOnboarding(onComplete) {
       '</tr>';
     }).join('');
     el.innerHTML =
-      '<div style="font-size:11px;color:var(--b24t-text-faint);padding:6px 0 8px;">' + d.dates.dateFrom + ' – ' + d.dates.dateTo + '</div>' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0 8px;">' +
+        '<div style="font-size:11px;color:var(--b24t-text-faint);">' + d.dates.dateFrom + ' – ' + d.dates.dateTo + '</div>' +
+        '<button id="b24t-ann-tagstats-refresh" title="Odśwież" style="background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer;flex-shrink:0;transition:transform 0.1s,background 0.15s;">&#8635;</button>' +
+      '</div>' +
       '<table style="width:100%;border-collapse:collapse;">' +
         '<thead><tr>' +
           '<th style="padding:5px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--b24t-text-faint);text-align:left;border-bottom:1px solid var(--b24t-border);">Projekt</th>' +
@@ -8666,6 +10803,8 @@ function showOnboarding(onComplete) {
         '</tr></thead>' +
         '<tbody>' + rows + '</tbody>' +
       '</table>';
+    var rb = el.querySelector('#b24t-ann-tagstats-refresh');
+    if (rb) rb.addEventListener('click', function() { annotatorData.tagstats = null; bgCache.tagstats = null; loadAnnotatorTagStats(); });
   }
 
   // ───────────────────────────────────────────
@@ -8714,9 +10853,9 @@ function showOnboarding(onComplete) {
       return 0;
     }
 
-    addLog(`→ Usuwam ${allIds.length} wzmianek z tagiem "${tagName}"...`, 'warn');
+    addLog(`→ Usuwam ${allIds.length} wzmianek z tagiem "${tagName}"... (batch=${_deleteBatch})`, 'warn');
     let deleted = 0;
-    const BATCH = 5;
+    const BATCH = _deleteBatch;
     for (let i = 0; i < allIds.length; i += BATCH) {
       if (state.status === 'paused' || state.status === 'idle') break;
       const chunk = allIds.slice(i, i + BATCH);
@@ -8844,6 +10983,49 @@ function showOnboarding(onComplete) {
     });
   }
 
+  // Modal ostrzeżenia przed zmianą batch size delete — pokazuje się tylko raz
+  function _showDeleteBatchWarning() {
+    return new Promise(function(resolve) {
+      var modal = document.createElement('div');
+      modal.className = 'b24t-modal-overlay';
+      modal.innerHTML = `
+        <div class="b24t-modal" style="width:380px;">
+          <div class="b24t-modal-title" style="color:#f87171;">⚠ Zaawansowane ustawienie — przeczytaj</div>
+          <div class="b24t-modal-text" style="line-height:1.7;">
+            <strong style="color:#f87171;">Zwiększenie batch size przyspiesza usuwanie</strong>,
+            ale proporcjonalnie zwiększa ryzyko pomyłki.<br><br>
+            Przy batch = 10 usuwanych jest 10 wzmianek na raz.
+            Przy batch = 100 — już 100. Błąd ludzki (zły tag, zły zakres dat)
+            przy większym batchu oznacza <strong>więcej nieodwracalnie usuniętych wzmianek</strong>
+            zanim zdążysz zatrzymać operację.<br><br>
+            <strong>Twórca wtyczki nie ponosi odpowiedzialności</strong>
+            za skutki działań użytkownika z niestandardowymi ustawieniami.<br><br>
+            <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.3);border-radius:7px;padding:10px;">
+              <input type="checkbox" id="b24t-delbatch-cb" style="margin-top:2px;flex-shrink:0;accent-color:#f87171;">
+              <span style="font-size:12px;">Rozumiem ryzyko i biorę pełną odpowiedzialność za swoje działania</span>
+            </label>
+          </div>
+          <div class="b24t-modal-actions">
+            <button data-action="cancel" class="b24t-btn-secondary">Anuluj</button>
+            <button data-action="confirm" class="b24t-btn-danger" id="b24t-delbatch-confirm" disabled style="flex:1.5;">
+              Rozumiem — odblokuj
+            </button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      var cb  = modal.querySelector('#b24t-delbatch-cb');
+      var btn = modal.querySelector('#b24t-delbatch-confirm');
+      cb.addEventListener('change', function() { btn.disabled = !cb.checked; });
+      modal.querySelectorAll('button').forEach(function(b) {
+        b.addEventListener('click', function() {
+          document.body.removeChild(modal);
+          resolve(b.dataset.action === 'confirm' && cb.checked);
+        });
+      });
+    });
+  }
+
   // Build auto-delete key for localStorage (per project + tag)
   function buildAutoDeleteKey(projectId, tagId) {
     return `${projectId}_${tagId}`;
@@ -8867,8 +11049,8 @@ function showOnboarding(onComplete) {
 
     addLog(`→ Znaleziono ${allIds.length} wzmianek do usunięcia`, 'warn');
 
-    // Delete in parallel batches of 5 (safe concurrency for Brand24 API)
-    const BATCH = 5;
+    // Delete in parallel batches (_deleteBatch, domyślnie DEL_BATCH_DEFAULT)
+    const BATCH = _deleteBatch;
     let deleted = 0;
     for (let i = 0; i < allIds.length; i += BATCH) {
       if (state.status === 'paused' || state.status === 'idle') break;
@@ -8926,19 +11108,9 @@ function showOnboarding(onComplete) {
   function _appendLogPanelEntry(panel, entry) {
     var body = document.getElementById('b24t-logp-body');
     if (!body) return;
-    var colors = { info: '#9ca3af', success: '#4ade80', warn: '#fbbf24', error: '#f87171', diag: '#f87171' };
+    var colors = { info: '#9ca3af', success: '#4ade80', warn: '#fbbf24', error: '#f87171' };
     var msgColor = colors[entry.type] || '#9ca3af';
-    var msgHtml;
-    if (entry.type === 'diag') {
-      var dm = entry.message.match(/^(\[DIAG\]\s*)(.*)/s);
-      if (dm) {
-        msgHtml = '<span style="color:#f87171;font-weight:700;">' + dm[1] + '</span>' + dm[2];
-      } else {
-        msgHtml = '<span style="color:#f87171;font-weight:700;">[DIAG] </span>' + entry.message;
-      }
-    } else {
-      msgHtml = entry.message;
-    }
+    var msgHtml = entry.message;
     var row = document.createElement('div');
     row.dataset.logType = entry.type;
     row.style.cssText = 'display:flex;gap:8px;padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px;line-height:1.5;';
@@ -9232,7 +11404,7 @@ function showOnboarding(onComplete) {
           '<div style="font-size:12px;font-weight:700;color:#fff;">🌐 Wszystkie projekty</div>' +
           '<div style="font-size:10px;color:rgba(255,255,255,0.75);margin-top:1px;">TO_DELETE we wszystkich projektach</div>' +
         '</div>' +
-        '<button id="b24t-ap-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;border-radius:5px;padding:2px 8px;cursor:pointer;font-size:14px;line-height:1;">×</button>' +
+        '<button id="b24t-ap-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;border-radius:5px;padding:2px 8px;cursor:pointer;font-size:14px;line-height:1;">×</button>' +
       '</div>' +
       // Subheader — wybrany tag
       '<div id="b24t-ap-tag-name" style="padding:8px 14px;background:var(--b24t-bg-elevated);border-bottom:1px solid var(--b24t-border);font-size:11px;font-weight:600;color:var(--b24t-text-muted);flex-shrink:0;">Wybierz tag, aby załadować dane</div>' +
@@ -9543,7 +11715,7 @@ To jest NIEODWRACALNE.`)) return;
       '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:360px;max-height:85vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.25s cubic-bezier(0.34,1.56,0.64,1);">' +
         '<div style="padding:14px 16px;background:var(--b24t-accent-grad);border-radius:14px 14px 0 0;display:flex;align-items:center;gap:10px;">' +
           '<span style="font-size:14px;font-weight:700;color:#fff;flex:1;">' + (isNew ? '+ Nowa grupa' : 'Edytuj grupe') + '</span>' +
-          '<button id="b24t-grped-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;border-radius:5px;padding:2px 8px;font-size:16px;cursor:pointer;">x</button>' +
+          '<button id="b24t-grped-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;border-radius:5px;padding:2px 8px;font-size:16px;cursor:pointer;">x</button>' +
         '</div>' +
         '<div style="overflow-y:auto;flex:1;padding:16px;">' +
           '<div style="margin-bottom:14px;">' +
@@ -9603,6 +11775,16 @@ To jest NIEODWRACALNE.`)) return;
     });
   }
 
+  function getMcCompletedPids(monthKey, groupId) {
+    var done = lsGet(LS.MONTH_CLOSE_DONE, {});
+    return done[monthKey + '|' + groupId] || [];
+  }
+  function setMcCompletedPids(monthKey, groupId, pids) {
+    var done = lsGet(LS.MONTH_CLOSE_DONE, {});
+    done[monthKey + '|' + groupId] = pids;
+    lsSet(LS.MONTH_CLOSE_DONE, done);
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // OVERALL STATS (v0.10.0)
   // ─────────────────────────────────────────────────────────────────────────────
@@ -9616,53 +11798,55 @@ To jest NIEODWRACALNE.`)) return;
     if (g) { g.relevantTagId = tagId; saveGroups(groups); }
   }
 
-  async function _fetchOverallStats(group) {
+  async function _fetchOverallStats(group, onProgress) {
     var projects = lsGet(LS.PROJECTS, {});
     // Użyj tej samej logiki dat co zakładka Projekt — current month, wyjątek dla 1-2 dnia
     var dates = getAnnotatorDates();
     var dateFrom = dates.dateFrom;
     var dateTo   = dates.dateTo;
-    addLog('→ [Overall] ' + group.name + ': pobieranie ' + group.projectIds.length + ' projektów (' + dateFrom + ' → ' + dateTo + ')...', 'info');
     var results = [];
-    for (var i = 0; i < group.projectIds.length; i++) {
-      var pid = group.projectIds[i];
-      var pData = projects[pid];
-      if (!pData) {
-        addLog('[DIAG] _fetchOverallStats: projekt ID:' + pid + ' nieznany w LS.PROJECTS', 'diag');
-        results.push({ pid: pid, name: 'ID:' + pid, error: 'projekt nieznany' }); continue;
-      }
-      var name = _pnResolve(pid);
-      var tagIds   = pData.tagIds || {};
-      // Szukamy reqVer i toDel w tagIds map
-      var reqVerId = null, toDelId = null;
-      Object.entries(tagIds).forEach(function(e) {
-        if (e[0] === 'REQUIRES_VERIFICATION') reqVerId = e[1];
-        if (e[0] === 'TO_DELETE') toDelId = e[1];
-      });
-      // Fallback do znanych ID
-      if (!reqVerId) reqVerId = 1154586;
-      if (!toDelId)  toDelId  = 1154757;
-      var relTagId = group.relevantTagId || null;
-      try {
+    if (onProgress) {
+      onProgress(group.projectIds.map(function(pid) {
+        return { pid: pid, name: _pnResolve(pid) || ('ID:' + pid), loading: true };
+      }), dateFrom, dateTo, dates.label);
+    }
+    // Pobieranie projektów batchami (STATS_FETCH_CONCURRENCY równocześnie)
+    for (var bi = 0; bi < group.projectIds.length; bi += STATS_FETCH_CONCURRENCY) {
+      var batchPids = group.projectIds.slice(bi, bi + STATS_FETCH_CONCURRENCY);
+      var batchResults = await Promise.all(batchPids.map(function(pid) {
+        var pData = projects[pid];
+        if (!pData) {
+          addLog('[DIAG] _fetchOverallStats: projekt ID:' + pid + ' nieznany w LS.PROJECTS', 'diag');
+          return Promise.resolve({ pid: pid, name: 'ID:' + pid, error: 'projekt nieznany' });
+        }
+        var name = _pnResolve(pid);
+        var tagIds = pData.tagIds || {};
+        var reqVerId = null, toDelId = null;
+        Object.entries(tagIds).forEach(function(e) {
+          if (e[0] === 'REQUIRES_VERIFICATION') reqVerId = e[1];
+          if (e[0] === 'TO_DELETE') toDelId = e[1];
+        });
+        if (!reqVerId) reqVerId = 1154586;
+        if (!toDelId)  toDelId  = 1154757;
+        var relTagId = group.relevantTagId || null;
         var queries = [
-          getMentions(pid, dateFrom, dateTo, [], 1),   // total — bez filtra tagu
+          getMentions(pid, dateFrom, dateTo, [], 1),
           relTagId ? getMentions(pid, dateFrom, dateTo, [relTagId], 1) : Promise.resolve({ count: null }),
           getMentions(pid, dateFrom, dateTo, [reqVerId], 1),
-          getMentions(pid, dateFrom, dateTo, [toDelId],  1),
+          getMentions(pid, dateFrom, dateTo, [toDelId], 1),
         ];
-        var counts = await Promise.all(queries);
-        results.push({
-          pid: pid, name: name,
-          total:    counts[0].count,
-          relevant: counts[1].count,
-          reqVer:   counts[2].count,
-          toDelete: counts[3].count,
-          dateFrom: dateFrom, dateTo: dateTo,
+        return Promise.all(queries).then(function(counts) {
+          return { pid: pid, name: name, total: counts[0].count, relevant: counts[1].count, reqVer: counts[2].count, toDelete: counts[3].count, dateFrom: dateFrom, dateTo: dateTo };
+        }).catch(function(e) {
+          addLog('✕ [DIAG] getMentions(' + pid + '): ' + e.message, 'diag');
+          return { pid: pid, name: name, error: e.message };
         });
-        addLog('✓ [Overall] ' + name + ': ALL:' + counts[0].count + ' REQ:' + counts[2].count + ' DEL:' + counts[3].count, 'success');
-      } catch(e) {
-        addLog('✕ [DIAG] getMentions(' + pid + '): ' + e.message, 'diag');
-        results.push({ pid: pid, name: name, error: e.message });
+      }));
+      results.push.apply(results, batchResults);
+      if (onProgress) {
+        onProgress(results.concat(group.projectIds.slice(bi + STATS_FETCH_CONCURRENCY).map(function(p) {
+          return { pid: p, name: _pnResolve(p) || ('ID:' + p), loading: true };
+        })), dateFrom, dateTo, dates.label);
       }
     }
     return { results: results, dateFrom: dateFrom, dateTo: dateTo, label: dates.label };
@@ -9707,6 +11891,16 @@ To jest NIEODWRACALNE.`)) return;
       ? '<div id="b24t-overall-data" style="padding:12px;"></div>'
       : '<div style="padding:24px 16px;text-align:center;"><div style="font-size:24px;margin-bottom:8px;">&#128070;</div><div style="font-size:12px;color:var(--b24t-text-faint);line-height:1.6;">Wybierz grupe projektow<br>aby zobaczyc statystyki.</div></div>';
     el.innerHTML = selectorHtml + bodyHtml;
+    if (selectedGroup) {
+      var _initDataEl = el.querySelector('#b24t-overall-data');
+      if (_initDataEl) {
+        var _cacheHot = _bgCacheFresh(bgCache.overallStats) && bgCache.overallStats.groupId === selectedGroup.id;
+        var _initResults = _cacheHot
+          ? bgCache.overallStats.results
+          : selectedGroup.projectIds.map(function(pid) { return { pid: pid, name: _pnResolve(pid) || ('ID:' + pid), loading: true }; });
+        renderOverallStatsData(_initDataEl, _initResults, selectedGroup, _cacheHot ? bgCache.overallStats : {});
+      }
+    }
     var selEl = el.querySelector('#b24t-overall-group-sel');
     selEl.addEventListener('change', function() {
       var gid = selEl.value;
@@ -9742,22 +11936,48 @@ To jest NIEODWRACALNE.`)) return;
       addLog('[CACHE] overallStats: gorący (' + ageStr + ' temu), renderuję od razu', 'info');
       renderOverallStatsData(dataEl, bgCache.overallStats.results, group, bgCache.overallStats);
       _bgFetchOverallStats(group).then(function(fresh) {
-        if (fresh && dataEl.isConnected) renderOverallStatsData(dataEl, fresh.results, group, fresh);
+        var _c = document.getElementById('b24t-ann-tab-overall-content');
+        var _e = _c && _c.querySelector('#b24t-overall-data');
+        if (fresh && _e) renderOverallStatsData(_e, fresh.results, group, fresh);
       }).catch(function(e){ addLog('[BG] overallStats refresh error: ' + e.message, 'warn'); });
       return;
     }
     _overallStatsInFlight = true;
-    dataEl.innerHTML = '<div style="padding:20px 0;text-align:center;"><div style="font-size:22px;animation:b24t-spin 1s linear infinite;display:inline-block;">&#8635;</div><div style="font-size:11px;color:var(--b24t-text-faint);margin-top:8px;">Pobieram statystyki...</div></div>';
+    addLog('📊 [Overall] Pobieranie: ' + group.name + ' (' + group.projectIds.length + ' proj.)', 'info');
     try {
-      var fresh = await _bgFetchOverallStats(group);
-      if (fresh && dataEl.isConnected) renderOverallStatsData(dataEl, fresh.results, group, fresh);
+      var fresh = await _fetchOverallStats(group, function(partial, dFrom, dTo, lbl) {
+        var _c = document.getElementById('b24t-ann-tab-overall-content');
+        var _e = _c && _c.querySelector('#b24t-overall-data');
+        if (_e) renderOverallStatsData(_e, partial, group, { dateFrom: dFrom, dateTo: dTo, label: lbl, ts: Date.now() });
+      });
+      // Auto-domykanie: projekty z Pozostało = 0 w trybie domykania miesiąca
+      if (fresh.dateFrom && group.relevantTagId) {
+        var _dm = fresh.dateFrom.slice(0, 7);
+        var _cm = _localDateStr(new Date()).slice(0, 7);
+        if (_cm > _dm) {
+          var _mcPids = getMcCompletedPids(_dm, group.id).slice();
+          var _mcChanged = false;
+          fresh.results.forEach(function(r) {
+            if (!r.error && !r.loading && r.total != null && !_mcPids.includes(r.pid)) {
+              if (Math.max(0, (r.total || 0) - (r.relevant || 0) - (r.toDelete || 0)) === 0) {
+                _mcPids.push(r.pid); _mcChanged = true;
+              }
+            }
+          });
+          if (_mcChanged) setMcCompletedPids(_dm, group.id, _mcPids);
+        }
+      }
+      bgCache.overallStats = { groupId: group.id, results: fresh.results, dateFrom: fresh.dateFrom, dateTo: fresh.dateTo, label: fresh.label, ts: Date.now() };
+      var _c = document.getElementById('b24t-ann-tab-overall-content');
+      var _e = _c && _c.querySelector('#b24t-overall-data');
+      if (_e) renderOverallStatsData(_e, fresh.results, group, bgCache.overallStats);
     } finally {
       _overallStatsInFlight = false;
     }
   }
 
   function _statsCard(label, value, color, bgColor) {
-    return '<div style="background:' + bgColor + ';border-radius:8px;padding:10px;text-align:center;">' +
+    return '<div style="background:' + bgColor + ';border:1px solid var(--b24t-border);border-radius:8px;padding:10px;text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,0.10);transition:background 0.3s,border-color 0.3s;">' +
       '<div style="font-size:11px;color:' + color + ';margin-bottom:4px;font-weight:600;">' + label + '</div>' +
       '<div style="font-size:22px;font-weight:800;color:' + color + ';">' + (value != null ? value : '—') + '</div>' +
     '</div>';
@@ -9766,47 +11986,126 @@ To jest NIEODWRACALNE.`)) return;
   function renderOverallStatsData(el, results, group, cached) {
     if (!el) return;
     var hasRelevant = group.relevantTagId != null;
-    var totalAll = 0, totalRelevant = 0, totalReqVer = 0, totalToDelete = 0;
-    results.forEach(function(r) {
-      if (!r.error) {
-        if (r.total    != null) totalAll       += r.total;
-        if (r.relevant != null) totalRelevant  += r.relevant;
-        if (r.reqVer   != null) totalReqVer    += r.reqVer;
-        if (r.toDelete != null) totalToDelete  += r.toDelete;
-      }
-    });
-    // Kafelki — zawsze: Total + opcjonalnie Relevantne + zawsze REQ + DEL
-    var cards = _statsCard('Wszystkie', totalAll, 'var(--b24t-text-muted)', 'var(--b24t-bg-elevated)');
-    if (hasRelevant) cards += _statsCard('Relevantne', totalRelevant, '#16a34a', '#dcfce7');
-    cards += _statsCard('Do weryfikacji', totalReqVer, '#d97706', '#fef3c7');
-    cards += _statsCard('Do usunięcia', totalToDelete, '#dc2626', '#fee2e2');
-    var colCount = hasRelevant ? 4 : 3;
-    var warnHtml = !hasRelevant
-      ? '<div style="margin-bottom:8px;padding:7px 10px;background:var(--b24t-warn-bg);border:1px solid color-mix(in srgb,var(--b24t-warn) 30%,transparent);border-radius:7px;font-size:11px;color:var(--b24t-warn);line-height:1.5;">Ustaw tag Relevantne w ustawieniach (⚙) aby widzieć pełne dane.</div>' : '';
-    var thREL = hasRelevant ? '<th style="padding:6px 8px;font-size:10px;color:#16a34a;text-align:right;font-weight:600;">REL</th>' : '';
-    var tableRows = results.map(function(r) {
-      if (r.error) return '<tr><td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="' + colCount + '" style="padding:6px 8px;font-size:10px;color:var(--b24t-err);">błąd: ' + r.error + '</td></tr>';
-      var relTd = hasRelevant ? '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#16a34a;text-align:right;">' + (r.relevant != null ? r.relevant : '—') + '</td>' : '';
-      return '<tr style="border-top:1px solid var(--b24t-border-sub);">' +
-        '<td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + r.name + '">' + r.name + '</td>' +
-        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-text-muted);text-align:right;">' + (r.total != null ? r.total : '—') + '</td>' +
-        relTd +
-        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#d97706;text-align:right;">' + (r.reqVer  != null ? r.reqVer  : '—') + '</td>' +
-        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:#dc2626;text-align:right;">' + (r.toDelete != null ? r.toDelete : '—') + '</td>' +
-      '</tr>';
-    }).join('');
-    // Informacja o okresie — z cached lub z pierwszego wyniku
+    // Okres i tryb domykania miesiąca
     var dateFrom = (cached && cached.dateFrom) || (results[0] && results[0].dateFrom) || '';
     var dateTo   = (cached && cached.dateTo)   || (results[0] && results[0].dateTo)   || '';
     var label    = (cached && cached.label)    || '';
+    var dataMonth = dateFrom ? dateFrom.slice(0, 7) : '';
+    var curMonth  = _localDateStr(new Date()).slice(0, 7);
+    var isMonthClosing = !!(dataMonth && curMonth > dataMonth);
+    var completedPids = isMonthClosing ? getMcCompletedPids(dataMonth, group.id) : [];
+    // Sumy
+    var totalAll = 0, totalRelevant = 0, totalReqVer = 0, totalToDelete = 0;
+    results.forEach(function(r) {
+      if (!r.error && !r.loading) {
+        if (r.total    != null) totalAll      += r.total;
+        if (r.relevant != null) totalRelevant += r.relevant;
+        if (r.reqVer   != null) totalReqVer   += r.reqVer;
+        if (r.toDelete != null) totalToDelete += r.toDelete;
+      }
+    });
+    var totalRemaining = hasRelevant ? Math.max(0, totalAll - totalRelevant - totalToDelete) : null;
+    var pct = (hasRelevant && totalAll > 0) ? Math.round((totalRelevant + totalToDelete) / totalAll * 100) : null;
+    // Pasek postępu
+    var progressHtml = '';
+    if (hasRelevant) {
+      var pctVal = pct != null ? pct : 0;
+      progressHtml =
+        '<div style="margin-bottom:10px;padding:10px 12px;background:var(--b24t-bg-elevated);border-radius:8px;">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+            '<span style="font-size:11px;font-weight:600;color:var(--b24t-text-faint);">Postęp ukończenia</span>' +
+            '<span style="font-size:13px;font-weight:800;color:var(--b24t-primary);">' + (pct != null ? pct + '%' : '—') + '</span>' +
+          '</div>' +
+          '<div style="background:var(--b24t-bg-deep);border-radius:99px;height:7px;overflow:hidden;">' +
+            '<div style="width:' + pctVal + '%;height:100%;background:var(--b24t-accent-grad);border-radius:99px;transition:width 0.5s ease;"></div>' +
+          '</div>' +
+          '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:4px;text-align:right;">' + (totalRelevant + totalToDelete) + ' / ' + totalAll + ' otagowanych</div>' +
+        '</div>';
+    }
+    // Baner domykania miesiąca
+    var monthClosingHtml = '';
+    if (isMonthClosing) {
+      var _nonPending = results.filter(function(r) { return !r.loading && !r.error; });
+      var _doneCount  = _nonPending.filter(function(r) { return completedPids.includes(r.pid); }).length;
+      var _allDone    = results.every(function(r) { return r.error || completedPids.includes(r.pid); }) && _nonPending.length > 0;
+      if (_allDone) {
+        monthClosingHtml =
+          '<div style="margin-bottom:10px;padding:10px 12px;background:var(--b24t-ok-bg);border:1px solid color-mix(in srgb,var(--b24t-ok) 40%,transparent);border-radius:8px;display:flex;align-items:center;gap:10px;">' +
+            '<span style="font-size:20px;">✅</span>' +
+            '<div>' +
+              '<div style="font-size:12px;font-weight:700;color:var(--b24t-ok-text);">Miesiąc domknięty</div>' +
+              '<div style="font-size:11px;color:var(--b24t-ok);margin-top:1px;">Wszystkie projekty ukończone</div>' +
+            '</div>' +
+          '</div>';
+      } else {
+        monthClosingHtml =
+          '<div style="margin-bottom:10px;padding:10px 12px;background:var(--b24t-warn-bg);border:1px solid color-mix(in srgb,var(--b24t-warn) 40%,transparent);border-radius:8px;display:flex;align-items:center;gap:10px;">' +
+            '<span style="font-size:20px;">🗓</span>' +
+            '<div style="flex:1;">' +
+              '<div style="font-size:12px;font-weight:700;color:var(--b24t-warn-text);">Domykanie miesiąca</div>' +
+              '<div style="font-size:11px;color:var(--b24t-warn);margin-top:1px;">' + _doneCount + ' z ' + _nonPending.length + ' projektów ukończonych</div>' +
+            '</div>' +
+            '<button id="b24t-mc-force-close" style="background:var(--b24t-warn);color:#fff;border:none;border-radius:7px;padding:6px 12px;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer;flex-shrink:0;">Zamknij miesiąc</button>' +
+          '</div>';
+      }
+    }
+    // Kafelki
+    var thREL = '';
+    var cards;
+    var colCount;
+    if (hasRelevant) {
+      thREL = '<th style="padding:6px 8px;font-size:10px;color:var(--b24t-ok);text-align:right;font-weight:600;">REL</th>';
+      colCount = 4;
+      cards =
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px;">' +
+          _statsCard('Wszystkie',  totalAll,       'var(--b24t-text-muted)', 'var(--b24t-bg-elevated)') +
+          _statsCard('Relevantne', totalRelevant,  'var(--b24t-ok)',  'var(--b24t-ok-bg)') +
+          _statsCard('Pozostało',  totalRemaining, 'var(--b24t-primary)', 'var(--b24t-primary-bg)') +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">' +
+          _statsCard('Do weryfikacji', totalReqVer,   'var(--b24t-warn)', 'var(--b24t-warn-bg)') +
+          _statsCard('Do usunięcia',   totalToDelete, 'var(--b24t-err)',  'var(--b24t-err-bg)') +
+        '</div>';
+    } else {
+      colCount = 3;
+      cards =
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;">' +
+          _statsCard('Wszystkie',      totalAll,      'var(--b24t-text-muted)', 'var(--b24t-bg-elevated)') +
+          _statsCard('Do weryfikacji', totalReqVer,   'var(--b24t-warn)', 'var(--b24t-warn-bg)') +
+          _statsCard('Do usunięcia',   totalToDelete, 'var(--b24t-err)',  'var(--b24t-err-bg)') +
+        '</div>';
+    }
+    var warnHtml = !hasRelevant
+      ? '<div style="margin-bottom:8px;padding:7px 10px;background:var(--b24t-warn-bg);border:1px solid color-mix(in srgb,var(--b24t-warn) 30%,transparent);border-radius:7px;font-size:11px;color:var(--b24t-warn);line-height:1.5;">Ustaw tag Relevantne w ustawieniach (⚙) aby widzieć pełne dane.</div>' : '';
+    var tableRows = results.map(function(r) {
+      if (isMonthClosing && !r.loading && completedPids.includes(r.pid)) {
+        var relTdC = hasRelevant ? '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-ok-text);text-align:right;">' + (r.relevant != null ? r.relevant : '—') + '</td>' : '';
+        return '<tr style="border-top:1px solid var(--b24t-border-sub);background:color-mix(in srgb,var(--b24t-ok) 7%,transparent);">' +
+          '<td style="padding:6px 8px;font-size:11px;color:var(--b24t-ok);text-decoration:line-through;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + r.name + '">✓ ' + r.name + '</td>' +
+          '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-ok-text);text-align:right;">' + (r.total != null ? r.total : '—') + '</td>' +
+          relTdC +
+          '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-ok-text);text-align:right;">' + (r.reqVer != null ? r.reqVer : '—') + '</td>' +
+          '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-ok-text);text-align:right;">' + (r.toDelete != null ? r.toDelete : '—') + '</td>' +
+        '</tr>';
+      }
+      if (r.loading) return '<tr style="border-top:1px solid var(--b24t-border-sub);"><td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="' + colCount + '" style="padding:6px 8px;font-size:10px;color:var(--b24t-text-faint);text-align:center;">⏳ ładowanie…</td></tr>';
+      if (r.error)   return '<tr style="border-top:1px solid var(--b24t-border-sub);"><td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="' + colCount + '" style="padding:6px 8px;font-size:10px;color:var(--b24t-err);">błąd: ' + r.error + '</td></tr>';
+      var relTd = hasRelevant ? '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-ok);text-align:right;">' + (r.relevant != null ? r.relevant : '—') + '</td>' : '';
+      return '<tr style="border-top:1px solid var(--b24t-border-sub);">' +
+        '<td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + r.name + '">' + r.name + '</td>' +
+        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-text-muted);text-align:right;">' + (r.total   != null ? r.total   : '—') + '</td>' +
+        relTd +
+        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-warn);text-align:right;">'  + (r.reqVer  != null ? r.reqVer  : '—') + '</td>' +
+        '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-err);text-align:right;">'   + (r.toDelete != null ? r.toDelete : '—') + '</td>' +
+      '</tr>';
+    }).join('');
     var periodHtml = (dateFrom && dateTo)
       ? '<div style="display:flex;align-items:center;gap:6px;padding:6px 0;margin-bottom:8px;border-bottom:1px solid var(--b24t-border-sub);">' +
           '<span style="font-size:11px;color:var(--b24t-text-faint);">📅 Okres:</span>' +
           '<span style="font-size:11px;font-weight:600;color:var(--b24t-text-muted);">' + (label ? label + ' ' : '') + '(' + dateFrom + ' → ' + dateTo + ')</span>' +
         '</div>'
       : '';
-    el.innerHTML = periodHtml + warnHtml +
-      '<div style="display:grid;grid-template-columns:' + (hasRelevant ? '1fr 1fr 1fr 1fr' : '1fr 1fr 1fr') + ';gap:6px;margin-bottom:10px;">' + cards + '</div>' +
+    el.innerHTML = periodHtml + progressHtml + monthClosingHtml + warnHtml + cards +
       '<div style="border:1px solid var(--b24t-border);border-radius:8px;overflow:hidden;">' +
         '<table style="width:100%;border-collapse:collapse;">' +
           '<tr style="background:var(--b24t-bg-deep);">' +
@@ -9820,6 +12119,17 @@ To jest NIEODWRACALNE.`)) return;
         '</table>' +
       '</div>' +
       '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:6px;text-align:right;">' + group.name + ' · ' + results.length + ' projektów</div>';
+    // Przycisk "Zamknij miesiąc"
+    var _mcBtn = el.querySelector('#b24t-mc-force-close');
+    if (_mcBtn) {
+      _mcBtn.addEventListener('click', function() {
+        var allPids = results.filter(function(r) { return !r.error; }).map(function(r) { return r.pid; });
+        setMcCompletedPids(dataMonth, group.id, allPids);
+        var _c = document.getElementById('b24t-ann-tab-overall-content');
+        var _e = _c && _c.querySelector('#b24t-overall-data');
+        if (_e) renderOverallStatsData(_e, results, group, cached);
+      });
+    }
   }
 
   function showOverallStatsSettings(group) {
@@ -9833,7 +12143,7 @@ To jest NIEODWRACALNE.`)) return;
       '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:320px;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.25s cubic-bezier(0.34,1.56,0.64,1);">' +
         '<div style="padding:12px 16px;background:var(--b24t-accent-grad);border-radius:14px 14px 0 0;display:flex;align-items:center;gap:10px;">' +
           '<span style="font-size:14px;font-weight:700;color:#fff;flex:1;">&#9881; Ustawienia: ' + group.name + '</span>' +
-          '<button id="b24t-os-close" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:#fff;border-radius:5px;padding:2px 8px;font-size:16px;cursor:pointer;">x</button>' +
+          '<button id="b24t-os-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;border-radius:5px;padding:2px 8px;font-size:16px;cursor:pointer;">x</button>' +
         '</div>' +
         '<div style="padding:16px;">' +
           '<div style="font-size:12px;color:var(--b24t-text-muted);margin-bottom:6px;">Tag oznaczajacy <strong>Relevantne</strong>:</div>' +
@@ -9922,10 +12232,10 @@ To jest NIEODWRACALNE.`)) return;
     div.style.display = 'none';
     div.innerHTML = `
       <div class="b24t-section">
-        <div class="b24t-section-label" style="color:#f87171;">Usuń po tagu</div>
+        <div class="b24t-section-label" style="color:var(--b24t-err);">Usuń po tagu</div>
         <div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:10px;line-height:1.5;">
           Usuwa wzmianki z wybranym tagiem w aktualnym zakresie dat.
-          <strong style="color:#f87171;">Operacja nieodwracalna.</strong>
+          <strong style="color:var(--b24t-err);">Operacja nieodwracalna.</strong>
         </div>
 
         <!-- Tag selector -->
@@ -9963,18 +12273,18 @@ To jest NIEODWRACALNE.`)) return;
         <div id="b24t-del-custom-dates" style="display:none;margin-bottom:10px;">
           <div style="display:flex;gap:6px;align-items:center;">
             <input type="date" id="b24t-del-date-from" class="b24t-input" style="flex:1;">
-            <span style="color:#444455;font-size:11px;">→</span>
+            <span style="color:var(--b24t-text-faint);font-size:11px;">→</span>
             <input type="date" id="b24t-del-date-to" class="b24t-input" style="flex:1;">
           </div>
         </div>
 
         <!-- Progress -->
         <div class="b24t-progress-bar-track" style="margin-bottom:6px;">
-          <div id="b24t-del-progress" style="height:100%;background:#f87171;border-radius:99px;width:0%;transition:width 0.3s;"></div>
+          <div id="b24t-del-progress" style="height:100%;background:var(--b24t-err);border-radius:99px;width:0%;transition:width 0.3s;"></div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div id="b24t-del-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;flex:1;"></div>
-          <div id="b24t-del-timer" style="font-size:11px;color:#8888aa;font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
+          <div id="b24t-del-timer" style="font-size:11px;color:var(--b24t-text-faint);font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
         </div>
 
         <!-- Run button -->
@@ -9982,21 +12292,21 @@ To jest NIEODWRACALNE.`)) return;
           🗑 Usuń wzmianki z tagiem
         </button>
 
-        <div style="font-size:9px;color:#666688;text-align:center;margin-top:6px;">
+        <div style="font-size:9px;color:var(--b24t-text-faint);text-align:center;margin-top:6px;">
           Ostrzeżenie pojawi się tylko przy pierwszym użyciu
         </div>
       </div>
 
       <!-- SEPARATOR -->
-      <div style="height:1px;background:#1a1a22;margin:0 12px;"></div>
+      <div style="height:1px;background:var(--b24t-border-sub);margin:0 12px;"></div>
 
       <!-- DELETE CURRENT VIEW -->
       <div class="b24t-section">
-        <div class="b24t-section-label" style="color:#f87171;">Usuń wyświetlane wzmianki</div>
+        <div class="b24t-section-label" style="color:var(--b24t-err);">Usuń wyświetlane wzmianki</div>
         <div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:10px;line-height:1.5;">
           Usuwa wzmianki aktualnie widoczne w panelu Brand24
           (aktywne filtry, zakres dat, tagi itd.).
-          <strong style="color:#f87171;">Operacja nieodwracalna.</strong>
+          <strong style="color:var(--b24t-err);">Operacja nieodwracalna.</strong>
         </div>
 
         <!-- Scope -->
@@ -10018,17 +12328,30 @@ To jest NIEODWRACALNE.`)) return;
 
         <!-- Progress -->
         <div class="b24t-progress-bar-track" style="margin-bottom:6px;">
-          <div id="b24t-delview-progress" style="height:100%;background:#f87171;border-radius:99px;width:0%;transition:width 0.3s;"></div>
+          <div id="b24t-delview-progress" style="height:100%;background:var(--b24t-err);border-radius:99px;width:0%;transition:width 0.3s;"></div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div id="b24t-delview-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;flex:1;"></div>
-          <div id="b24t-delview-timer" style="font-size:11px;color:#8888aa;font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
+          <div id="b24t-delview-timer" style="font-size:11px;color:var(--b24t-text-faint);font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
         </div>
 
         <!-- Run button -->
         <button class="b24t-btn-danger" id="b24t-delview-run" style="width:100%;padding:8px;">
           🗑 Usuń wyświetlane wzmianki
         </button>
+      </div>
+
+      <!-- BATCH SIZE -->
+      <div class="b24t-section" style="padding:8px 14px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-size:10px;color:var(--b24t-text-faint);">Równoległy batch delete:</span>
+          <input type="number" id="b24t-del-batch-input" min="1" max="1000"
+            value="${DEL_BATCH_DEFAULT}"
+            title="Ile wzmianek usuwać równocześnie (domyślnie ${DEL_BATCH_DEFAULT}, max 1000)"
+            style="width:58px;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text);border-radius:4px;padding:3px 6px;font-size:11px;font-family:inherit;text-align:center;">
+          <span style="font-size:10px;color:var(--b24t-text-faint);">/ 1000 max</span>
+          <span id="b24t-del-batch-lock" style="font-size:10px;color:var(--b24t-err);cursor:pointer;" title="Kliknij by zmienić">🔒 zablokowane</span>
+        </div>
       </div>
     `;
     return div;
@@ -10099,6 +12422,40 @@ To jest NIEODWRACALNE.`)) return;
     const delTab = panel.querySelector('#b24t-delete-tab');
     if (!delTab) return;
 
+    // Batch size input — wiring
+    const batchInput = delTab.querySelector('#b24t-del-batch-input');
+    const batchLock  = delTab.querySelector('#b24t-del-batch-lock');
+    if (batchInput && batchLock) {
+      const savedBatch = lsGet(LS.DEL_BATCH);
+      const alreadyWarned = lsGet(LS.DEL_BATCH_WARNED);
+      if (savedBatch) { _deleteBatch = savedBatch; batchInput.value = savedBatch; }
+      // Start locked unless user already accepted warning
+      batchInput.readOnly = !alreadyWarned;
+      batchInput.style.opacity = alreadyWarned ? '1' : '0.45';
+      batchLock.style.display = alreadyWarned ? 'none' : '';
+
+      // Click lock icon OR focus on locked input → show warning
+      async function tryUnlock() {
+        if (lsGet(LS.DEL_BATCH_WARNED)) { batchInput.readOnly = false; batchInput.style.opacity = '1'; batchLock.style.display = 'none'; return; }
+        const accepted = await _showDeleteBatchWarning();
+        if (accepted) {
+          lsSet(LS.DEL_BATCH_WARNED, true);
+          batchInput.readOnly = false;
+          batchInput.style.opacity = '1';
+          batchLock.style.display = 'none';
+          batchInput.focus();
+        }
+      }
+      batchLock.addEventListener('click', tryUnlock);
+      batchInput.addEventListener('focus', function() { if (batchInput.readOnly) { batchInput.blur(); tryUnlock(); } });
+      batchInput.addEventListener('change', function() {
+        const val = Math.max(1, Math.min(1000, parseInt(batchInput.value) || DEL_BATCH_DEFAULT));
+        batchInput.value = val;
+        _deleteBatch = val;
+        lsSet(LS.DEL_BATCH, val);
+      });
+    }
+
     // Populate tag dropdown when tab becomes visible
     const updateDelTags = () => {
       const sel = document.getElementById('b24t-del-tag');
@@ -10117,7 +12474,7 @@ To jest NIEODWRACALNE.`)) return;
       const url = new URL(window.location.href);
       const d1 = url.searchParams.get('d1') || '?';
       const d2 = url.searchParams.get('d2') || '?';
-      el.innerHTML = `<span style="color:#666677;">Zakres:</span> ${d1} → ${d2}`;
+      el.innerHTML = `<span style="color:var(--b24t-text-faint);">Zakres:</span> ${d1} → ${d2}`;
     };
 
     // Scope toggle
@@ -10186,6 +12543,7 @@ To jest NIEODWRACALNE.`)) return;
       const statusEl = document.getElementById('b24t-del-status');
       const progressEl = document.getElementById('b24t-del-progress');
       if (runBtn) runBtn.disabled = true;
+      if (progressEl) progressEl.classList.add('b24t-bar-active');
       const delTimer = makeTabTimer('b24t-del-timer');
       delTimer.start();
 
@@ -10207,13 +12565,13 @@ To jest NIEODWRACALNE.`)) return;
 
         setStatus(`Usuwam ${allIds.length} wzmianek...`);
         let deleted = 0;
-        const BATCH_QD = 5;
+        const BATCH_QD = _deleteBatch;
         for (let i = 0; i < allIds.length; i += BATCH_QD) {
           const chunk = allIds.slice(i, i + BATCH_QD);
           await Promise.all(chunk.map(id => deleteMention(id)));
           deleted += chunk.length;
           setProgress(deleted, allIds.length);
-          if (deleted % 25 === 0 || deleted === allIds.length) setStatus(`Usunięto ${deleted}/${allIds.length}...`);
+          if (deleted % BATCH_QD === 0 || deleted === allIds.length) setStatus(`Usunięto ${deleted}/${allIds.length}...`);
         }
 
         setStatus(`✓ Usunięto ${deleted} wzmianek`, 'success');
@@ -10224,6 +12582,7 @@ To jest NIEODWRACALNE.`)) return;
         addLog(`✕ Quick Delete błąd: ${e.message}`, 'error');
       } finally {
         delTimer.stop();
+        if (progressEl) progressEl.classList.remove('b24t-bar-active');
         if (runBtn) runBtn.disabled = false;
       }
     });
@@ -10247,6 +12606,8 @@ To jest NIEODWRACALNE.`)) return;
       if (!confirmed) return;
 
       if (runBtn) runBtn.disabled = true;
+      const delviewProgressEl = document.getElementById('b24t-delview-progress');
+      if (delviewProgressEl) delviewProgressEl.classList.add('b24t-bar-active');
       const delviewTimer = makeTabTimer('b24t-delview-timer');
       delviewTimer.start();
       setProgress(0, 1);
@@ -10282,7 +12643,7 @@ Tej operacji nie można cofnąć.`)) {
 
         setStatus(`Usuwam ${ids.length} wzmianek...`, 'info');
         let deleted = 0;
-        const BATCH_DV = 5;
+        const BATCH_DV = _deleteBatch;
         for (let i = 0; i < ids.length; i += BATCH_DV) {
           const chunk = ids.slice(i, i + BATCH_DV);
           await Promise.all(chunk.map(id => deleteMention(id)));
@@ -10299,6 +12660,7 @@ Tej operacji nie można cofnąć.`)) {
         addLog(`✕ Delete view błąd: ${e.message}`, 'error');
       } finally {
         delviewTimer.stop();
+        if (delviewProgressEl) delviewProgressEl.classList.remove('b24t-bar-active');
         if (runBtn) runBtn.disabled = false;
       }
     });
@@ -10313,8 +12675,8 @@ Tej operacji nie można cofnąć.`)) {
         const grNames = gr.length
           ? gr.map(id => id === 1 ? 'Untagged' : Object.entries(state.tags).find(([,tid]) => tid === id)?.[0] || `tag:${id}`).join(', ')
           : 'wszystkie';
-        el.innerHTML = `<span style="color:#666677;">Daty:</span> ${view.dateFrom} → ${view.dateTo}<br>` +
-          `<span style="color:#666677;">Filtry tagów:</span> ${grNames}`;
+        el.innerHTML = `<span style="color:var(--b24t-text-faint);">Daty:</span> ${view.dateFrom} → ${view.dateTo}<br>` +
+          `<span style="color:var(--b24t-text-faint);">Filtry tagów:</span> ${grNames}`;
       } else {
         el.textContent = 'Poczekaj chwilę — filtry zostaną wykryte automatycznie.';
       }
@@ -10437,16 +12799,17 @@ Tej operacji nie można cofnąć.`)) {
         return;
       }
 
-      // Tag in batches
+      // Tag in batches — QT_CONCURRENCY batchów równolegle
       setStatus(`Tagowanie ${ids.length} wzmianek → ${tagName}...`, 'info');
       let tagged = 0;
-      for (let i = 0; i < ids.length; i += MAX_BATCH_SIZE) {
-        const slice = ids.slice(i, i + MAX_BATCH_SIZE);
-        await bulkTagMentions(slice, tagId);
-        tagged += slice.length;
+      const qtSlices = [];
+      for (let i = 0; i < ids.length; i += MAX_BATCH_SIZE) qtSlices.push(ids.slice(i, i + MAX_BATCH_SIZE));
+      for (let i = 0; i < qtSlices.length; i += QT_CONCURRENCY) {
+        const concSlices = qtSlices.slice(i, i + QT_CONCURRENCY);
+        await Promise.all(concSlices.map(slice => bulkTagMentions(slice, tagId)));
+        tagged += concSlices.reduce((s, sl) => s + sl.length, 0);
         setProgress(tagged, ids.length);
         setStatus(`Otagowano ${tagged}/${ids.length}...`, 'info');
-        await sleep(200);
       }
 
       setStatus(`✓ Gotowe! Otagowano ${tagged} wzmianek tagiem "${tagName}"`, 'success');
@@ -10501,7 +12864,7 @@ Tej operacji nie można cofnąć.`)) {
 
         <!-- Progress bar -->
         <div class="b24t-progress-bar-track" style="margin-bottom:6px;">
-          <div id="b24t-qt-progress" style="height:100%;background:#6c6cff;border-radius:99px;width:0%;transition:width 0.3s;"></div>
+          <div id="b24t-qt-progress" style="height:100%;background:var(--b24t-accent-grad);border-radius:99px;width:0%;transition:width 0.3s;"></div>
         </div>
 
         <!-- Status + timer -->
@@ -10561,10 +12924,10 @@ Tej operacji nie można cofnąć.`)) {
       }).join(', ') : 'wszystkie';
 
       el.innerHTML = `
-        <span style="color:#666677;">Daty:</span> ${d1} → ${d2}<br>
-        <span style="color:#666677;">Filtry tagów:</span> ${grNames}<br>
-        ${sq ? `<span style="color:#666677;">Szukaj:</span> "${sq}"<br>` : ''}
-        <span style="color:#666677;">Aktualna strona:</span> ${p}
+        <span style="color:var(--b24t-text-faint);">Daty:</span> ${d1} → ${d2}<br>
+        <span style="color:var(--b24t-text-faint);">Filtry tagów:</span> ${grNames}<br>
+        ${sq ? `<span style="color:var(--b24t-text-faint);">Szukaj:</span> "${sq}"<br>` : ''}
+        <span style="color:var(--b24t-text-faint);">Aktualna strona:</span> ${p}
       `;
     };
 
@@ -10602,9 +12965,10 @@ Tej operacji nie można cofnąć.`)) {
         }
         if (!ids.length) { setStatus('Brak wzmianek.', 'warn'); return; }
         if (!confirm(`Usunąć tag "${tagName}" z ${ids.length} wzmianek?`)) { setStatus('Anulowano.', 'warn'); return; }
-        for (let i = 0; i < ids.length; i += MAX_BATCH_SIZE) {
-          await bulkUntagMentions(ids.slice(i, i + MAX_BATCH_SIZE), tagId);
-          await sleep(200);
+        const utSlices = [];
+        for (let i = 0; i < ids.length; i += MAX_BATCH_SIZE) utSlices.push(ids.slice(i, i + MAX_BATCH_SIZE));
+        for (let i = 0; i < utSlices.length; i += QT_CONCURRENCY) {
+          await Promise.all(utSlices.slice(i, i + QT_CONCURRENCY).map(slice => bulkUntagMentions(slice, tagId)));
         }
         setStatus(`✓ Usunięto tag "${tagName}" z ${ids.length} wzmianek`, 'success');
         addLog(`✓ Quick Untag: ${ids.length} wzmianek ← ${tagName}`, 'success');
@@ -10724,8 +13088,6 @@ Tej operacji nie można cofnąć.`)) {
           openNewsPanels();
           newsSideTab.classList.add('active');
         }
-        // Hide the side tab while news is open, restore on close
-        newsSideTab.style.display = newsState.panelsOpen ? 'flex' : 'none';
       });
       newsSideTab.style.display = 'none'; // shown by features.annotator_tools check
       document.body.appendChild(newsSideTab);
@@ -10733,7 +13095,14 @@ Tej operacji nie można cofnąć.`)) {
 
     setupDragging(panel);
     setupCollapse(panel);
-    setupResize(panel, LS.UI_SIZE, { minW: 360, maxW: 720, minH: 380, maxH: Math.round(window.innerHeight * 0.92), useMaxHeight: true });
+    // Dopasuj domyślny rozmiar startowy do rozmiaru ekranu (tylko gdy użytkownik nie ma zapisanego)
+    if (!lsGet(LS.UI_SIZE)) {
+      if (_getScreenProfile() === 'compact') {
+        panel.style.width  = Math.min(380, Math.round(window.innerWidth  * 0.55)) + 'px';
+        panel.style.height = Math.min(480, Math.round(window.innerHeight * 0.72)) + 'px';
+      }
+    }
+    setupResize(panel, LS.UI_SIZE, { minW: 300, maxW: Math.min(720, Math.round(window.innerWidth * 0.85)), minH: 300, maxH: Math.round(window.innerHeight * 0.92), useMaxHeight: true });
     wireEvents(panel);
     wireDeleteEvents(panel);
     wireQuickTagEvents(panel);
@@ -10758,6 +13127,8 @@ Tej operacji nie można cofnąć.`)) {
         if (tabEls.delete)   tabEls.delete.style.display   = tab === 'delete'   ? 'block' : 'none';
         if (tabEls.history)  tabEls.history.style.display  = tab === 'history'  ? 'block' : 'none';
         if (tabEls.actions)  tabEls.actions.style.display  = tab === 'main'     ? 'flex'  : 'none';
+        const activeEl = tabEls[tab];
+        if (activeEl) { activeEl.style.animation = 'none'; void activeEl.offsetHeight; activeEl.style.animation = 'b24t-tab-enter 0.18s ease'; }
       });
     });
 
@@ -10793,7 +13164,7 @@ Tej operacji nie można cofnąć.`)) {
     applyFeatures();
 
     // Show What's New on version change
-    setTimeout(() => showWhatsNewExtended(false), 2000);
+    setTimeout(() => showWelcomePanel(), 2000);
 
     // (checkForUpdate wywołane w głównym scope IIFE — ma dostęp do GM_xmlhttpRequest)
   }

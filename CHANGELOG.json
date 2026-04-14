@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.23.24",
+    "date": "2026-04-14",
+    "label": "feat",
+    "changes": [
+      "multitagowanie: separator | w kolumnie assessment pozwala nadać wzmiance kilka tagów naraz (np. POSITIVE|RELEVANT)",
+      "nowy tryb konfliktu: Multitag — dodaje tagi obok istniejących bez konfliktu",
+      "każdy assessment w wierszu przetwarzany niezależnie: pominięcie jednego nie blokuje pozostałych"
+    ]
+  },
+  {
     "version": "0.23.23",
     "date": "2026-04-14",
     "label": "feat",

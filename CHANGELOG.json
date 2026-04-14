@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.34",
+    "date": "2026-04-14",
+    "label": "ui",
+    "changes": [
+      "bardziej widoczne przyciski w topbarze — jaśniejsze tło (0.28), wyraźny border (0.5), box-shadow; wersja większa (12px, bold) i wyraźniejsza"
+    ]
+  },
+  {
     "version": "0.23.33",
     "date": "2026-04-14",
     "label": "fix",

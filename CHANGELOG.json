@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.23.23",
+    "date": "2026-04-14",
+    "label": "feat",
+    "changes": [
+      "integralność danych: sanitizeInputRows — wykrywa sci notation we wszystkich polach przy wczytaniu pliku",
+      "integralność danych: validateInputSchema — blokuje tagowanie przy sci notation URL, ostrzega o pustych/zduplikowanych URL-ach",
+      "fuzzy matching: ograniczenie do diff ≤5 znaków (FUZZY_SHORT); dłuższe dopasowania (FUZZY_LONG_SKIPPED) pomijane z logiiem",
+      "raport końcowy tagowania: ═══ RAPORT TAGOWANIA ═══ z podziałem exact/fuzzy/skip/błędy"
+    ]
+  },
+  {
     "version": "0.23.22",
     "date": "2026-04-13",
     "label": "fix",

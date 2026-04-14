@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.23.29",
+    "date": "2026-04-14",
+    "label": "fix",
+    "changes": [
+      "fix skanowania treści: bodyEl identyfikowany przed usunięciem szumu — chroni kontener artykułu gdy ma klasę z 'widget', 'promo' itp.",
+      "bodyEl i jego przodkowie chronieni przed noise removal (guard: el !== bodyEl && !el.contains(bodyEl))",
+      "header noise selector zmieniony z 'header' na 'body > header' — nie usuwa <header> wewnątrz artykułu",
+      "dodane wzorce CMS do _CONTENT_ZONE_SEL: content__body, text-body, article__lead"
+    ]
+  },
+  {
     "version": "0.23.28",
     "date": "2026-04-14",
     "label": "fix",

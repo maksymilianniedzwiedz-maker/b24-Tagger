@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.22
+// @version      0.23.23
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.22';
+  const VERSION = '0.23.23';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -708,6 +708,30 @@
     return Array.isArray(data) ? data : [data];
   }
 
+  // Post-processing po parsowaniu — tylko loguje podejrzane wartości, nie modyfikuje
+  function sanitizeInputRows(rows) {
+    const SCI_RE = /^-?\d+\.?\d*[eE][+\-]\d+$/;
+    const warnings = [];
+
+    rows.forEach((row, i) => {
+      Object.keys(row).forEach(col => {
+        const val = row[col];
+        if (!val) return;
+        if (SCI_RE.test(String(val).trim())) {
+          warnings.push(`Wiersz ${i + 2}, kolumna "${col}": wartość wygląda jak sci notation: "${val}"`);
+        }
+      });
+    });
+
+    if (warnings.length) {
+      addLog(`[INTEGRITY] ${warnings.length} podejrzanych wartości w pliku wejściowym:`, 'warn');
+      warnings.slice(0, 10).forEach(w => addLog('  ' + w, 'warn'));
+      if (warnings.length > 10) addLog(`  ...i ${warnings.length - 10} więcej`, 'warn');
+    }
+
+    return rows;
+  }
+
   function autoDetectColumns(rows) {
     if (!rows.length) return {};
     const headers = Object.keys(rows[0]);
@@ -1012,11 +1036,49 @@
   // MAIN TAGGING FLOW
   // ───────────────────────────────────────────
 
+  function validateInputSchema(rows, colMap) {
+    const issues = [];
+
+    if (!colMap.url) issues.push('BRAK kolumny URL — matching niemożliwy');
+    if (!colMap.assessment) issues.push('BRAK kolumny assessment — tagowanie niemożliwe');
+
+    if (issues.length) {
+      issues.forEach(i => addLog('[SCHEMA ERROR] ' + i, 'error'));
+      return false;
+    }
+
+    const SCI_RE = /^-?\d+\.?\d*[eE][+\-]\d+$/;
+    let emptyUrls = 0, sciUrls = 0, dupUrls = 0;
+    const urlsSeen = new Set();
+    const urlCol = colMap.url;
+
+    rows.forEach(row => {
+      const url = (row[urlCol] || '').trim();
+      if (!url) { emptyUrls++; return; }
+      if (SCI_RE.test(url)) { sciUrls++; return; }
+      if (urlsSeen.has(url)) { dupUrls++; } else { urlsSeen.add(url); }
+    });
+
+    if (emptyUrls) addLog(`[SCHEMA WARN] ${emptyUrls} pustych URL-i w pliku`, 'warn');
+    if (sciUrls) addLog(`[SCHEMA ERROR] ${sciUrls} URL-i wygląda jak sci notation — prawdopodobnie uszkodzone ID!`, 'error');
+    if (dupUrls) addLog(`[SCHEMA WARN] ${dupUrls} zduplikowanych URL-i w pliku (możliwe duplikaty wzmianek)`, 'warn');
+
+    addLog(`[SCHEMA OK] ${rows.length} rekordów, ${urlsSeen.size} unikalnych URL-i`, 'info');
+    return sciUrls === 0;
+  }
+
   async function runTagging(partition) {
     const { dateFrom, dateTo, rows } = partition;
 
     // Build URL map
     state.urlMap = await buildUrlMap(dateFrom, dateTo, state.mapMode === 'untagged');
+
+    // Walidacja schematu pliku — blokuje tagowanie przy sci notation URL
+    const schemaOk = validateInputSchema(rows, state.file.colMap);
+    if (!schemaOk) {
+      addLog('[TAGGING ABORTED] Schemat pliku wejściowego nie przeszedł walidacji. Napraw plik i spróbuj ponownie.', 'error');
+      return;
+    }
 
     // Build batches
     const batches = {};          // tagId → [snowflakeIds]
@@ -1028,6 +1090,7 @@
     const matchDiag = {
       total: rows.length, noAssessment: 0, noMapping: 0,
       noMatch: 0, truncated: 0, alreadyTagged: 0, conflict: 0, willTag: 0,
+      exactMatch: 0, fuzzyShort: 0,
       mapSize: Object.keys(state.urlMap).length,
       // próbki URL-i z pliku vs z mapy (pierwsze 2 każdej domeny)
       fileSamplesByDomain: {},
@@ -1053,12 +1116,39 @@
         matchDiag.fileSamplesByDomain[dom].push(normalizedUrl);
       }
 
-      // Szukaj w mapie: dokładne dopasowanie, potem fuzzy (obcięte ID)
-      let entry = state.urlMap[normalizedUrl];
-      if (!entry) {
-        const fuzzyKey = _mapKeys.find(k => urlsMatch(normalizedUrl, k));
-        if (fuzzyKey) entry = state.urlMap[fuzzyKey];
+      // Szukaj w mapie: 1) exact, 2) fuzzy bezpieczny (diff ≤5), 3) długi fuzzy → skip
+      let entry = null;
+      let matchConfidence = 'NO_MATCH';
+
+      if (state.urlMap[normalizedUrl]) {
+        entry = state.urlMap[normalizedUrl];
+        matchConfidence = 'EXACT';
       }
+
+      if (!entry) {
+        const fuzzyKey = _mapKeys.find(k => {
+          if (!urlsMatch(normalizedUrl, k)) return false;
+          return Math.abs(normalizedUrl.length - k.length) <= 5;
+        });
+        if (fuzzyKey) {
+          entry = state.urlMap[fuzzyKey];
+          matchConfidence = 'FUZZY_SHORT';
+        }
+      }
+
+      if (!entry) {
+        const longFuzzyKey = _mapKeys.find(k => urlsMatch(normalizedUrl, k));
+        if (longFuzzyKey) {
+          addLog(`[MATCH WARN] Długi fuzzy match (>5 znaków diff) — pomijam tagowanie. URL z pliku: "${normalizedUrl.substring(0, 70)}" → mapa: "${longFuzzyKey.substring(0, 70)}"`, 'warn');
+          skipped.push({ row, reason: 'FUZZY_LONG_SKIPPED', url: urlRaw, candidate: longFuzzyKey });
+          matchDiag.noMatch++;
+          state.stats.noMatch++;
+          return;
+        }
+      }
+
+      if (matchConfidence === 'EXACT') matchDiag.exactMatch++;
+      else if (matchConfidence === 'FUZZY_SHORT') matchDiag.fuzzyShort++;
 
       if (!assessment) {
         skipped.push({ row, reason: 'NO_ASSESSMENT' });
@@ -1332,10 +1422,29 @@
     }
 
     // Persystuj pominięte wiersze do state (NO_MATCH, TRUNCATED_URL, NO_MAPPING, NO_ASSESSMENT)
-    const _exportableReasons = new Set(['NO_MATCH', 'TRUNCATED_URL', 'NO_MAPPING', 'NO_ASSESSMENT']);
+    const _exportableReasons = new Set(['NO_MATCH', 'TRUNCATED_URL', 'NO_MAPPING', 'NO_ASSESSMENT', 'FUZZY_LONG_SKIPPED']);
     state.skippedRows.push(...skipped.filter(s => _exportableReasons.has(s.reason)));
 
     state.stats.skipped += skipped.length + totalTagFailed;
+
+    const _fuzzyLongSkipped = skipped.filter(s => s.reason === 'FUZZY_LONG_SKIPPED').length;
+    const _report = [
+      `═══ RAPORT TAGOWANIA ═══`,
+      `Rekordy wejściowe:  ${rows.length}`,
+      `Exact match:        ${matchDiag.exactMatch}`,
+      `Fuzzy match (safe): ${matchDiag.fuzzyShort}`,
+      `Długi fuzzy (skip): ${_fuzzyLongSkipped}`,
+      `Brak assessment:    ${matchDiag.noAssessment}`,
+      `Brak mappingu:      ${matchDiag.noMapping}`,
+      `Brak match:         ${matchDiag.noMatch - _fuzzyLongSkipped}`,
+      `Obcięte URL:        ${matchDiag.truncated}`,
+      `Konflikty:          ${matchDiag.conflict}`,
+      `Już otagowane:      ${matchDiag.alreadyTagged}`,
+      `WYKONANO tagowań:   ${matchDiag.willTag}`,
+      `════════════════════════`,
+    ].join('\n');
+    addLog(_report, 'info');
+
     addLog(`✓ Partycja zakończona: ${state.stats.tagged} otagowane, ${state.stats.skipped} pominięte${totalTagFailed > 0 ? `, ${totalTagFailed} błędy fallback` : ''}`, 'success');
   }
 
@@ -4265,6 +4374,8 @@
       }
 
       if (!rows || !rows.length) throw new Error('Plik jest pusty lub nieprawidłowy.');
+
+      rows = sanitizeInputRows(rows);
 
       const colMap = autoDetectColumns(rows);
       const meta = processFileData(rows, colMap);
@@ -8647,6 +8758,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.23",
+      "date": "2026-04-14",
+      "label": "feat",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "feat", "text": "sanitizeInputRows — wykrywa sci notation we wszystkich polach przy wczytaniu pliku"},
+        {"type": "feat", "text": "validateInputSchema — blokuje tagowanie przy sci notation URL; ostrzega o pustych/zduplikowanych URL-ach"},
+        {"type": "feat", "text": "fuzzy matching: ograniczenie do diff ≤5 znaków (FUZZY_SHORT); dluzsze (FUZZY_LONG_SKIPPED) pomijane z logiem"},
+        {"type": "feat", "text": "raport koncowy tagowania z podzialem exact/fuzzy/skip/bledy"}
+      ]
+    },
+    {
       "version": "0.23.22",
       "date": "2026-04-13",
       "label": "fix",
@@ -8733,16 +8856,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "News: data publikacji — badge zielony/amber/czerwony; >60 dni → stale (opacity 0.55, czerwona data)"},
         {"type": "feat", "text": "News: wykrywanie paywalla — JSON-LD, meta, CSS klasy, text-ratio; badge paywall"},
         {"type": "feat", "text": "News: filtr 'Ukryj nie-artykuly' — toggle button nad lista URLi; ukrywa wiersze nonArticle"}
-      ]
-    },
-    {
-      "version": "0.23.13",
-      "date": "2026-04-11",
-      "label": "feat",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "feat", "text": "News: detekcja typu strony — article/uncertain/nonArticle (og:type, JSON-LD, published_time, time[datetime], liczba akapitow)"},
-        {"type": "feat", "text": "News: badge 'nie-artykul' (szary) i '? typ niepewny' (amber) w liscie URLi dla stron bez cech artykulu"}
       ]
     },
   ];

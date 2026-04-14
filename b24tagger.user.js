@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.33
+// @version      0.23.34
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.33';
+  const VERSION = '0.23.34';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2791,7 +2791,7 @@
         white-space: nowrap;
         text-shadow: 0 1px 3px rgba(0,0,0,0.2);
       }
-      .b24t-version { font-size: 10px; color: rgba(255,255,255,0.65); margin-left: 4px; flex-shrink: 1; white-space: nowrap; overflow: hidden; }
+      .b24t-version { font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.92); margin-left: 4px; flex-shrink: 1; white-space: nowrap; overflow: hidden; text-shadow: 0 1px 3px rgba(0,0,0,0.25); }
       #b24t-topbar-right { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
 
       /* ── DARK MODE TOGGLE SLIDER ── */
@@ -2839,13 +2839,14 @@
 
       /* ── ICON BUTTONS (in topbar) ── */
       .b24t-icon-btn {
-        background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.2);
-        color: rgba(255,255,255,0.85);
+        background: rgba(255,255,255,0.28); border: 1px solid rgba(255,255,255,0.5);
+        color: #fff;
         cursor: pointer; padding: 3px 6px; border-radius: 5px;
         font-size: 13px; line-height: 1;
         transition: background 0.15s, color 0.15s, transform 0.1s;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.3);
       }
-      .b24t-icon-btn:hover { background: rgba(255,255,255,0.25); color: #fff; transform: scale(1.05); }
+      .b24t-icon-btn:hover { background: rgba(255,255,255,0.4); color: #fff; transform: scale(1.05); }
       .b24t-icon-btn:active { transform: scale(0.95); }
 
       /* ── TOKEN STATUS BAR ── */
@@ -2875,6 +2876,7 @@
         background: var(--b24t-primary-bg) !important;
         border: 1px solid color-mix(in srgb, var(--b24t-primary) 30%, transparent) !important;
         color: var(--b24t-primary) !important;
+        box-shadow: none !important;
       }
       #b24t-subbar .b24t-icon-btn:hover { background: var(--b24t-primary-bg) !important; filter: brightness(1.2); }
       /* Fix hardcoded dark colors on subbar buttons */
@@ -8978,6 +8980,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.34",
+      "date": "2026-04-14",
+      "label": "ui",
+      "labelColor": "#8b5cf6",
+      "changes": [
+        {"type": "ui", "text": "bardziej widoczne przyciski w topbarze — jaśniejsze tło (0.28), wyraźny border (0.5), box-shadow odcinający od gradientu"},
+        {"type": "ui", "text": "wersja w topbarze: 10px → 12px, bold, opacity 0.65 → 0.92"}
+      ]
+    },
+    {
       "version": "0.23.33",
       "date": "2026-04-14",
       "label": "fix",
@@ -9073,17 +9085,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "fix mapowania labelek: multi-assessment (Influencer|Wspolpraca) liczony osobno w kazdym woreczku zamiast jako jeden label"}
-      ]
-    },
-    {
-      "version": "0.23.24",
-      "date": "2026-04-14",
-      "label": "feat",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "feat", "text": "multitagowanie: separator | w kolumnie assessment pozwala nadac wzmiance kilka tagow naraz (np. POSITIVE|RELEVANT)"},
-        {"type": "feat", "text": "nowy tryb konfliktu: Multitag — dodaje tagi obok istniejacych bez konfliktu"},
-        {"type": "feat", "text": "kazdy assessment w wierszu przetwarzany niezaleznie: pominiecie jednego nie blokuje pozostalych"}
       ]
     },
   ];

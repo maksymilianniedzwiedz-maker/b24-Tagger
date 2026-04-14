@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.31",
+    "date": "2026-04-14",
+    "label": "ui",
+    "changes": [
+      "kompaktowy widok listy URL w panelu News — wszystkie badże (słowo kluczowe, data, język, nie-artykuł, paywall itp.) w jednym wierszu zamiast stackowania wertykalnego"
+    ]
+  },
+  {
     "version": "0.23.30",
     "date": "2026-04-14",
     "label": "feature",

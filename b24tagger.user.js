@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.25
+// @version      0.23.26
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.25';
+  const VERSION = '0.23.26';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6633,19 +6633,23 @@ function showOnboarding(onComplete) {
 
   // ── NEWS CONTENT SCANNER ──
   // Skanuje treść strony pod kątem słów kluczowych gdy URL nie zawiera żadnego dopasowania.
-  // Zwraca Promise<{status:'mention'|'contentmatch'|'keytopic'|'nomatch'|'blocked', score:Number, snippet:String}>
+  // Zwraca Promise<{status:'mention'|'contentmatch'|'keytopic'|'teasermatch'|'nomatch'|'blocked', score:Number, snippet:String}>
   //
   // Progi punktowe:
   //   keyword w tytule/og:title          → +8  (silny sygnał — autor strony wybrał ten tytuł)
   //   keyword w og:description/meta desc → +5  (silny sygnał — opis meta)
   //   keyword w h1                       → +5  (silny sygnał — nagłówek artykułu)
+  //   keyword w h2/h3 (podrozdziały)     → +3  (wyraźny sygnał — keyword w sekcji artykułu)
   //   keyword w pierwszym akapicie       → +4  (umiarkowany — lede artykułu)
   //   keyword w kolejnych akapitach      → +1 za każdy, maks. +3 łącznie
+  //   keyword w blockquote               → +2  (cytat w treści artykułu)
+  //   keyword w tagach artykułu          → +4  (sygnał redakcyjny — tag dodany przez autora)
   //
   // Poziomy relevancji:
   //   mention     → 1–4 pkt   (wzmianka w treści — poboczna, ale relevantna)
   //   contentmatch→ 5–11 pkt  (keyword w opisie meta lub kilka akapitów)
   //   keytopic    → 12+ pkt   (keyword w tytule — artykuł o marce)
+  //   teasermatch → 0 pkt     (keyword tylko w sekcji polecanych artykułów, nie w głównej treści)
 
   var NEWS_CONTENT_SCAN_CONCURRENCY = 5;
   var NEWS_CONTENT_SCAN_TIMEOUT_MS  = 8000;
@@ -6657,8 +6661,19 @@ function showOnboarding(onComplete) {
     '[class*="banner"]','[class*="sponsor"]','[class*="widget"]',
     '[class*="sidebar"]','[class*="promo"]','[class*="popup"]',
     '[class*="newsletter"]','[class*="cookie"]','[class*="consent"]',
-    '[class*="related"]','[class*="recommended"]',
     '[id*="banner"]','[id*="sidebar"]','[id*="cookie"]','[id*="popup"]',
+  ];
+
+  // Selektory sekcji z polecanymi/powiązanymi artykułami — wycinane PRZED skanowaniem głównej treści.
+  // Tekst z tych sekcji trafia do osobnego bucketu (_teaserTexts) — jeśli keyword trafił TYLKO tu,
+  // status = 'teasermatch' (nie liczy jako relevantny artykuł).
+  var NEWS_TEASER_SELECTORS = [
+    '[class*="related"]','[class*="recommended"]',
+    '[class*="more-articles"]','[class*="more-stories"]','[class*="more-news"]',
+    '[class*="also-read"]','[class*="you-may"]','[class*="you-might"]',
+    '[class*="read-next"]','[class*="next-article"]',
+    '[class*="suggestions"]','[class*="suggested"]',
+    '[data-module*="related"]','[data-type*="related"]','[data-widget*="related"]',
   ];
 
   function _newsParseContent(html, chips) {
@@ -6730,6 +6745,20 @@ function showOnboarding(onComplete) {
       if (_ac === 'subscription' || _ac === 'locked' || _ac === 'metered') _isPaywall = true;
     }
 
+    // ── TEASER EXTRACTION — przed usunięciem szumu, żeby nie stracić tekstu ──
+    // Wytnij sekcje polecanych/powiązanych artykułów do osobnego bucketu.
+    // Jeśli keyword trafia TYLKO tu (nie w głównej treści) → status 'teasermatch'.
+    var _teaserTexts = [];
+    NEWS_TEASER_SELECTORS.forEach(function(sel) {
+      try {
+        doc.querySelectorAll(sel).forEach(function(el) {
+          var t = (el.textContent || '').toLowerCase();
+          if (t.length > 10) _teaserTexts.push(t);
+          el.remove();
+        });
+      } catch(e) {}
+    });
+
     // Usuń szum — reklamy, nawigację, stopki, popupy
     NEWS_NOISE_SELECTORS.forEach(function(sel) {
       try {
@@ -6773,6 +6802,36 @@ function showOnboarding(onComplete) {
         .map(function(p) { return (p.textContent || '').trim(); })
         .filter(function(t) { return t.length > 40; }) // pomijaj krótkie fragmenty (np. podpisy, etykiety)
         .slice(0, 12); // max 12 pierwszych akapitów — lede artykułu, nie ogon
+    }
+
+    // h2/h3 podrozdziały — tylko wewnątrz artykułu/main (nie globalne nagłówki nawigacji)
+    var subHeadings = [];
+    if (bodyEl) {
+      subHeadings = Array.from(bodyEl.querySelectorAll('h2,h3'))
+        .map(function(h) { return (h.textContent || '').trim(); })
+        .filter(function(t) { return t.length > 3 && t.length < 200; });
+    }
+
+    // Cytaty blockquote w treści artykułu
+    var blockquotes = [];
+    if (bodyEl) {
+      blockquotes = Array.from(bodyEl.querySelectorAll('blockquote'))
+        .map(function(q) { return (q.textContent || '').trim(); })
+        .filter(function(t) { return t.length > 10; });
+    }
+
+    // Tagi redakcyjne artykułu — bardzo silny sygnał (autor/redakcja oznaczyła temat)
+    var articleTagTexts = [];
+    if (bodyEl) {
+      try {
+        bodyEl.querySelectorAll(
+          '[rel="tag"],[class*="article-tag"],[class*="entry-tag"],[class*="post-tag"],' +
+          '[class*="article__tag"],[class*="tags__item"],[class*="tag-list"] a'
+        ).forEach(function(el) {
+          var t = (el.textContent || '').trim().toLowerCase();
+          if (t.length > 1 && t.length < 60) articleTagTexts.push(t);
+        });
+      } catch(e) {}
     }
 
     // Detekcja artykułu — sygnały po usunięciu szumu (bodyEl dostępny)
@@ -6865,6 +6924,13 @@ function showOnboarding(onComplete) {
         // h1 liczy do scoringu, ale nie do snippetu — tytuł nie trafia do pola Treść
       }
 
+      // Strefa nagłówków h2/h3 — podrozdziały artykułu (po usunięciu szumu i teaserów, tylko bodyEl)
+      var h2h3Match = false;
+      for (var _hi = 0; _hi < subHeadings.length; _hi++) {
+        if (subHeadings[_hi].toLowerCase().indexOf(kw) !== -1) { h2h3Match = true; break; }
+      }
+      if (h2h3Match) { score += 3; chipMatched = true; }
+
       // Strefa akapitów — rozróżniamy pierwszy akapit (lede) od reszty
       var firstPMatch = false;
       var extraPMatches = 0;
@@ -6892,6 +6958,14 @@ function showOnboarding(onComplete) {
       });
       if (firstPMatch) score += 4;
       if (extraPMatches > 0) score += Math.min(extraPMatches, 3); // maks. +3 za wielokrotne wzmianki w treści
+
+      // Strefa blockquote — cytaty w treści artykułu
+      var inBlockquote = blockquotes.some(function(q) { return q.toLowerCase().indexOf(kw) !== -1; });
+      if (inBlockquote) { score += 2; chipMatched = true; }
+
+      // Tagi redakcyjne artykułu — bardzo silny sygnał (autor/redakcja oznaczyła temat tagem)
+      var inArticleTags = articleTagTexts.some(function(t) { return t.indexOf(kw) !== -1; });
+      if (inArticleTags) { score += 4; chipMatched = true; }
 
       // Strefy poboczne — tylko jeśli chip nie trafił w żadną strefę główną
       if (!chipMatched && _secZones.length > 0) {
@@ -6931,6 +7005,20 @@ function showOnboarding(onComplete) {
     else if (score <= 11) status = 'contentmatch';
     else                  status = 'keytopic';
 
+    // Teasermatch — keyword tylko w sekcji polecanych artykułów, nie w głównej treści.
+    // Sprawdzamy wyłącznie gdy score=0 (główna treść czysta) i są zebrane teasery.
+    var _teaserChips = [];
+    if (score === 0 && _teaserTexts.length > 0) {
+      chips.forEach(function(chip) {
+        var kw = chip.toLowerCase();
+        for (var _ti = 0; _ti < _teaserTexts.length; _ti++) {
+          if (_teaserTexts[_ti].indexOf(kw) !== -1) { _teaserChips.push(chip); break; }
+        }
+      });
+      if (_teaserChips.length > 0) status = 'teasermatch';
+    }
+    var _teaserMatchOnly = status === 'teasermatch';
+
     // Tytuł artykułu — h1 z artykułu (widoczny nagłówek) > content_title (custom meta) > og:title > <title>
     var articleTitle = (articleH1Text || contentTitle || ogTitle || titleText).trim();
     // Ogranicz do 200 znaków — <title> może być długi
@@ -6945,6 +7033,8 @@ function showOnboarding(onComplete) {
       matchedChips:      matchedChips,
       secondaryZoneOnly: secondaryZoneOnly,
       zoneHints:         _matchedZoneHints,
+      teaserMatchOnly:   _teaserMatchOnly,
+      teaserChips:       _teaserChips,
       pageType:          _pageType,
       pageTypeSignals:   _articleSignals,
       pageLang:          _pageLang,
@@ -7802,6 +7892,7 @@ function showOnboarding(onComplete) {
       if (s === 'keytopic')     return { dot: '◆', color: '#4ade80', label: 'Główny temat artykułu (score 12+)' };
       if (s === 'contentmatch') return { dot: '◆', color: '#06b6d4', label: 'Keyword w treści — kilkukrotnie (score 5–11)' };
       if (s === 'mention')      return { dot: '◆', color: '#facc15', label: 'Wzmianka w treści — poboczna (score 1–4)' };
+      if (s === 'teasermatch')  return { dot: '◇', color: '#9ca3af', label: 'Keyword tylko w polecanych artykułach — nie w treści głównej' };
       if (s === 'wrongcountry') return { dot: '●', color: '#f97316', label: 'Keyword w URL, ale wskazuje inny kraj' };
       if (s === 'opened')       return { dot: '●', color: '#a78bfa', label: 'Otwarty — w trakcie weryfikacji' };
       if (s === 'added')        return { dot: '✓', color: '#15803d', label: 'Dodany do Brand24' };
@@ -7813,7 +7904,7 @@ function showOnboarding(onComplete) {
     }
 
     function _newsUrlCounts() {
-      var c = { match: 0, keytopic: 0, contentmatch: 0, mention: 0, wrongcountry: 0, nomatch: 0, inproject: 0, opened: 0, added: 0, error: 0, scanning: 0, blocked: 0, total: 0 };
+      var c = { match: 0, keytopic: 0, contentmatch: 0, mention: 0, teasermatch: 0, wrongcountry: 0, nomatch: 0, inproject: 0, opened: 0, added: 0, error: 0, scanning: 0, blocked: 0, total: 0 };
       newsState.urls.forEach(function(u) { c[u.status] = (c[u.status] || 0) + 1; c.total++; });
       return c;
     }
@@ -7833,7 +7924,7 @@ function showOnboarding(onComplete) {
       if (!bar) return;
       var t = _newsThemeVars();
       var counts = _newsUrlCounts();
-      var nomatchCount = (counts.nomatch || 0) + (counts.wrongcountry || 0);
+      var nomatchCount = (counts.nomatch || 0) + (counts.wrongcountry || 0) + (counts.teasermatch || 0);
       var blockedCount = counts.blocked || 0; // osobno — blocked można otworzyć ręcznie
       var handledCount = (counts.added || 0) + (counts.error || 0);
       bar.innerHTML = '';
@@ -7841,9 +7932,9 @@ function showOnboarding(onComplete) {
         var b1 = document.createElement('button');
         b1.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer;white-space:nowrap;';
         b1.textContent = '\u2715 Usu\u0144 ' + nomatchCount + ' bez keyword';
-        b1.title = 'Usuwa URLe bez keyword i z b\u0142\u0119dnym krajem';
+        b1.title = 'Usuwa URLe bez keyword, z b\u0142\u0119dnym krajem i z keyword tylko w polecanych artyku\u0142ach';
         b1.addEventListener('click', function() {
-          _newsRemoveByStatus(function(u) { return u.status === 'nomatch' || u.status === 'wrongcountry'; });
+          _newsRemoveByStatus(function(u) { return u.status === 'nomatch' || u.status === 'wrongcountry' || u.status === 'teasermatch'; });
         });
         bar.appendChild(b1);
       }
@@ -8035,9 +8126,10 @@ function showOnboarding(onComplete) {
         var isScanning  = entry.status === 'scanning';
         var isIrrelevant = entry.status === 'nomatch' || entry.status === 'wrongcountry' ||
                            entry.status === 'inproject';
+        var isTeaserMatch = entry.status === 'teasermatch';
         var isBlocked   = entry.status === 'blocked'; // klikalny — annotator sprawdza ręcznie
-        var isStale     = entry.isStale && !isIrrelevant && !isScanning; // stale tylko gdy URL relevantny
-        var isClickable = !isIrrelevant && !isScanning; // blocked jest klikalny
+        var isStale     = entry.isStale && !isIrrelevant && !isScanning && !isTeaserMatch;
+        var isClickable = !isIrrelevant && !isScanning; // teasermatch i blocked są klikalne
 
         var row = document.createElement('div');
         row.className = 'b24t-news-url-row';
@@ -8047,7 +8139,7 @@ function showOnboarding(onComplete) {
           'cursor:' + (isClickable ? 'pointer' : 'default') + ';',
           'border:1px solid ' + (isActive ? 'var(--b24t-primary)' : isScanning ? 'rgba(129,140,248,0.25)' : isBlocked ? 'rgba(107,114,128,0.35)' : t.borderSub) + ';',
           'background:' + (isActive ? t.accentAlpha : (isIrrelevant || isScanning) ? 'transparent' : t.bgDeep) + ';',
-          'opacity:' + (isIrrelevant ? '0.4' : isStale ? '0.55' : (isBlocked || isScanning) ? '0.6' : '1') + ';',
+          'opacity:' + (isIrrelevant ? '0.4' : isTeaserMatch ? '0.5' : isStale ? '0.55' : (isBlocked || isScanning) ? '0.6' : '1') + ';',
           'transition:background 0.1s,border-color 0.1s;',
         ].join('');
         if (isBlocked) row.title = 'Wtyczka nie mogła przeskanować — kliknij aby sprawdzić ręcznie';
@@ -8112,6 +8204,13 @@ function showOnboarding(onComplete) {
           paywallBadgeHtml = '<div style="margin-top:2px;"><span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);color:#f59e0b;" title="Strona za paywallem lub blokad\u0105 — tre\u015b\u0107 mo\u017ce by\u0107 niepe\u0142na">\uD83D\uDD12 paywall</span></div>';
         }
 
+        // Teasermatch — keyword znaleziony tylko w sekcji polecanych/powiązanych artykułów
+        var teaserBadgeHtml = '';
+        if (isTeaserMatch && entry.teaserChips && entry.teaserChips.length > 0) {
+          var _tc = entry.teaserChips.map(function(c) { return c.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }).join(', ');
+          teaserBadgeHtml = '<div style="margin-top:2px;"><span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Keyword \'' + _tc + '\' wyst\u0105pi\u0142 tylko w sekcji polecanych artyku\u0142\u00f3w \u2014 nie w g\u0142\u00f3wnej tre\u015bci">w polecanym art.</span></div>';
+        }
+
         row.innerHTML =
           '<span style="flex-shrink:0;width:14px;text-align:center;font-size:12px;font-weight:700;color:' + sd.color + ';" title="' + sd.label + '">' + sd.dot + '</span>' +
           '<div style="flex:1;min-width:0;">' +
@@ -8119,6 +8218,7 @@ function showOnboarding(onComplete) {
             snippetHtml +
             chipsHtml +
             zoneHintHtml +
+            teaserBadgeHtml +
             pageTypeBadgeHtml +
             dateBadgeHtml +
             paywallBadgeHtml +
@@ -8440,6 +8540,8 @@ function showOnboarding(onComplete) {
           entry.matchedChips       = result.matchedChips || [];
           entry.secondaryZoneOnly  = result.secondaryZoneOnly || false;
           entry.zoneHints          = result.zoneHints || [];
+          entry.teaserMatchOnly    = result.teaserMatchOnly || false;
+          entry.teaserChips        = result.teaserChips || [];
           entry.pageType           = result.pageType || 'unknown';
           entry.pageTypeSignals    = result.pageTypeSignals || [];
           entry.pageLang           = result.pageLang || '';
@@ -8769,6 +8871,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.26",
+      "date": "2026-04-14",
+      "label": "feat",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "feat", "text": "teaser detection: keyword tylko w polecanych artykułach → status teasermatch (szary ◇, badge 'w polecanym art.'), redukuje false positive"},
+        {"type": "feat", "text": "nowe strefy skanowania: h2/h3 (+3), blockquote (+2), tagi redakcyjne artykułu (+4) — tylko wewnątrz article/main"},
+        {"type": "feat", "text": "NEWS_TEASER_SELECTORS: rozszerzone wzorce (related, recommended, more-articles, also-read, suggested itp.)"}
+      ]
+    },
+    {
       "version": "0.23.25",
       "date": "2026-04-14",
       "label": "fix",
@@ -8857,15 +8970,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "News: fix styl przycisku filtra — 3 stany: szary/amber/indigo; light+dark mode"}
-      ]
-    },
-    {
-      "version": "0.23.16",
-      "date": "2026-04-11",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News: fix filtr nie-artykulow — przycisk zawsze widoczny gdy sa URLe; szary/nieaktywny gdy 0 nie-artykulow"}
       ]
     },
   ];

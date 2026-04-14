@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.24
+// @version      0.23.25
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.24';
+  const VERSION = '0.23.25';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -811,9 +811,14 @@
     let minDate = null, maxDate = null;
 
     rows.forEach(row => {
-      const assessment = colMap.assessment ? (row[colMap.assessment] || '').trim() : '';
-      if (!assessment) { noAssessment++; return; }
-      assessments[assessment] = (assessments[assessment] || 0) + 1;
+      const assessmentRaw = colMap.assessment ? (row[colMap.assessment] || '').trim() : '';
+      if (!assessmentRaw) { noAssessment++; return; }
+      // Multi-assessment: split po "|", każda część liczy się osobno
+      const assessmentParts = assessmentRaw.split('|').map(a => a.trim()).filter(Boolean);
+      if (!assessmentParts.length) { noAssessment++; return; }
+      assessmentParts.forEach(a => {
+        assessments[a] = (assessments[a] || 0) + 1;
+      });
 
       const dateStr = colMap.date ? row[colMap.date] : null;
       if (dateStr) {
@@ -8764,6 +8769,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.25",
+      "date": "2026-04-14",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "fix mapowania labelek: multi-assessment (Influencer|Wspolpraca) liczony osobno w kazdym woreczku zamiast jako jeden label"}
+      ]
+    },
+    {
       "version": "0.23.24",
       "date": "2026-04-14",
       "label": "feat",
@@ -8852,15 +8866,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "News: fix filtr nie-artykulow — przycisk zawsze widoczny gdy sa URLe; szary/nieaktywny gdy 0 nie-artykulow"}
-      ]
-    },
-    {
-      "version": "0.23.15",
-      "date": "2026-04-11",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News: fix jezyk — angielski nie jest wyjatkiem; jezyk strony musi dokladnie pasowac do jezyka projektu"}
       ]
     },
   ];

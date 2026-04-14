@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.32",
+    "date": "2026-04-14",
+    "label": "ui",
+    "changes": [
+      "rewizja komunikacji aktywnych procesów — pulsowanie pasków postępu (tagowanie, News, Delete), badge Running/Error/Done z ikonkami, status token i CMS z labelkami"
+    ]
+  },
+  {
     "version": "0.23.31",
     "date": "2026-04-14",
     "label": "ui",

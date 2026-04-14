@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.35",
+    "date": "2026-04-14",
+    "label": "ui",
+    "changes": [
+      "spójny styl przycisków we wszystkich nagłówkach paneli — News, Annotator, Features, Groups, Overall (jaśniejsze tło, wyraźny border, box-shadow)"
+    ]
+  },
+  {
     "version": "0.23.34",
     "date": "2026-04-14",
     "label": "ui",

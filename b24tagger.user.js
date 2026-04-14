@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.32
+// @version      0.23.33
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.32';
+  const VERSION = '0.23.33';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1950,11 +1950,6 @@
       el.className = found ? 'b24t-token-ok' : 'b24t-token-pending';
       el.textContent = found ? '● Token' : '● Token';
     }
-    const sub = document.getElementById('b24t-token-status-sub');
-    if (sub) {
-      sub.textContent = found ? '● Token: aktywny' : '● Token: oczekuję...';
-      sub.style.color = found ? '#4ade80' : '#facc15';
-    }
   }
 
   function updateStatusUI() {
@@ -3603,7 +3598,6 @@
           <button class="b24t-icon-btn" id="b24t-btn-check-update" title="Sprawdź aktualizacje" style="font-size:11px;color:var(--b24t-text-faint);padding:3px 9px;border:1px solid #2a2a35;border-radius:4px;">↑ Sprawdź aktualizacje</button>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
-          <div id="b24t-token-status-sub" style="font-size:10px;"></div>
           <div id="b24t-session-timer-sub" style="font-size:11px;color:var(--b24t-text-faint);font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;"></div>
         </div>
       </div>
@@ -8984,6 +8978,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.33",
+      "date": "2026-04-14",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "usunięcie zdublowanego statusu tokenu z subbaru — '● Token' widoczny tylko w meta barze"}
+      ]
+    },
+    {
       "version": "0.23.32",
       "date": "2026-04-14",
       "label": "ui",
@@ -9081,18 +9084,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "multitagowanie: separator | w kolumnie assessment pozwala nadac wzmiance kilka tagow naraz (np. POSITIVE|RELEVANT)"},
         {"type": "feat", "text": "nowy tryb konfliktu: Multitag — dodaje tagi obok istniejacych bez konfliktu"},
         {"type": "feat", "text": "kazdy assessment w wierszu przetwarzany niezaleznie: pominiecie jednego nie blokuje pozostalych"}
-      ]
-    },
-    {
-      "version": "0.23.23",
-      "date": "2026-04-14",
-      "label": "feat",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "feat", "text": "sanitizeInputRows — wykrywa sci notation we wszystkich polach przy wczytaniu pliku"},
-        {"type": "feat", "text": "validateInputSchema — blokuje tagowanie przy sci notation URL; ostrzega o pustych/zduplikowanych URL-ach"},
-        {"type": "feat", "text": "fuzzy matching: ograniczenie do diff ≤5 znaków (FUZZY_SHORT); dluzsze (FUZZY_LONG_SKIPPED) pomijane z logiem"},
-        {"type": "feat", "text": "raport koncowy tagowania z podzialem exact/fuzzy/skip/bledy"}
       ]
     },
   ];

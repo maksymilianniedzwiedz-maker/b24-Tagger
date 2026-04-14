@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.23.26",
+    "date": "2026-04-14",
+    "label": "feature",
+    "changes": [
+      "teaser detection: keyword tylko w sekcji polecanych artykułów → status teasermatch (szary ◇, badge 'w polecanym art.'), redukuje false positive",
+      "nowe strefy skanowania: h2/h3 (+3), blockquote (+2), tagi redakcyjne artykułu (+4) — tylko wewnątrz <article>/<main>",
+      "NEWS_TEASER_SELECTORS: rozszerzone wzorce dla polecanych artykułów (related, recommended, more-articles, also-read, suggested itp.)"
+    ]
+  },
+  {
     "version": "0.23.25",
     "date": "2026-04-14",
     "label": "fix",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.28
+// @version      0.23.29
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.28';
+  const VERSION = '0.23.29';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6656,7 +6656,7 @@ function showOnboarding(onComplete) {
 
   var NEWS_NOISE_SELECTORS = [
     'script','style','noscript','svg','iframe',
-    'aside','footer','nav','header','form',
+    'aside','footer','nav','body > header','form',
     '[class*="ad-"]','[class*="-ad"]','[class*="__ad"]',
     '[class*="banner"]','[class*="sponsor"]','[class*="widget"]',
     '[class*="sidebar"]','[class*="promo"]','[class*="popup"]',
@@ -6759,10 +6759,31 @@ function showOnboarding(onComplete) {
       } catch(e) {}
     });
 
-    // Usuń szum — reklamy, nawigację, stopki, popupy
+    // ── WCZESNA IDENTYFIKACJA STREFY TREŚCI — przed usunięciem szumu ──
+    // Agresywne selektory noise (np. [class*="widget"]) mogą usunąć kontener artykułu
+    // gdy ma klasę zawierającą "widget" (np. "article-widget__body", "content-widget").
+    // Dlatego bodyEl musi być znaleziony ZANIM usuniemy szum — potem jest chroniony.
+    var _CONTENT_ZONE_SEL =
+      '[role="article"],[class*="article-body"],[class*="article-content"],' +
+      '[class*="article__body"],[class*="article__text"],[class*="article__content"],' +
+      '[class*="post-content"],[class*="post__content"],[class*="entry-content"],' +
+      '[class*="story-body"],[class*="story__content"],[class*="story-content"],' +
+      '[class*="content-body"],[class*="text-content"],[class*="body-copy"],' +
+      '[class*="content__body"],[class*="text-body"],[class*="article__lead"],' +
+      '[id*="article-body"],[id*="articleBody"],[id*="story-body"]';
+    var bodyEl = doc.querySelector('article') ||
+      doc.querySelector('main') ||
+      (function() { try { return doc.querySelector(_CONTENT_ZONE_SEL); } catch(e) { return null; } })() ||
+      doc.body;
+
+    // Usuń szum — reklamy, nawigację, stopki, popupy.
+    // bodyEl i jego przodkowie są chronieni: el !== bodyEl && !el.contains(bodyEl)
+    // zapobiega usunięciu kontenera artykułu lub jego rodzica przez szerokie selektory.
     NEWS_NOISE_SELECTORS.forEach(function(sel) {
       try {
-        doc.querySelectorAll(sel).forEach(function(el) { el.remove(); });
+        doc.querySelectorAll(sel).forEach(function(el) {
+          if (el !== bodyEl && !el.contains(bodyEl)) el.remove();
+        });
       } catch(e) {}
     });
 
@@ -6791,19 +6812,6 @@ function showOnboarding(onComplete) {
     var contentTitleEl = doc.querySelector('meta[name="content_title"]') || doc.querySelector('meta[property="content_title"]');
     if (contentTitleEl) contentTitle = (contentTitleEl.getAttribute('content') || '').trim();
 
-    // Treść artykułu: preferuj <article>, <main>, role=article,
-    // potem typowe klasy CMS (WordPress, Drupal, custom magazyny jak Elle) — na końcu <body>
-    var _CONTENT_ZONE_SEL =
-      '[role="article"],[class*="article-body"],[class*="article-content"],' +
-      '[class*="article__body"],[class*="article__text"],[class*="article__content"],' +
-      '[class*="post-content"],[class*="post__content"],[class*="entry-content"],' +
-      '[class*="story-body"],[class*="story__content"],[class*="story-content"],' +
-      '[class*="content-body"],[class*="text-content"],[class*="body-copy"],' +
-      '[id*="article-body"],[id*="articleBody"],[id*="story-body"]';
-    var bodyEl = doc.querySelector('article') ||
-      doc.querySelector('main') ||
-      (function() { try { return doc.querySelector(_CONTENT_ZONE_SEL); } catch(e) { return null; } })() ||
-      doc.body;
     // h1 z wnętrza artykułu — dokładniejszy niż globalny h1 (logo/nawigacja mogą mieć h1)
     var articleH1El = bodyEl ? bodyEl.querySelector('h1') : null;
     var articleH1Text = articleH1El ? (articleH1El.textContent || '').trim() : h1Text;
@@ -8927,6 +8935,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.29",
+      "date": "2026-04-14",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "fix skanowania treści: bodyEl identyfikowany przed usunięciem szumu — chroni kontener artykułu z klasą zawierającą 'widget', 'promo' itp."},
+        {"type": "fix", "text": "guard noise removal: el !== bodyEl && !el.contains(bodyEl) — przodkowie bodyEl też chronieni"},
+        {"type": "fix", "text": "header noise selector: 'header' → 'body > header' — nie usuwa <header> wewnątrz artykułu"},
+        {"type": "fix", "text": "nowe wzorce CMS w _CONTENT_ZONE_SEL: content__body, text-body, article__lead"}
+      ]
+    },
+    {
       "version": "0.23.28",
       "date": "2026-04-14",
       "label": "fix",
@@ -9022,16 +9042,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "Diagnostyka: _errContext kategoryzuje kazdy blad (BRAND24/SIEC/AUTORYZACJA/PLIK/PLUGIN) z jasnym komunikatem co zrobic"},
         {"type": "feat", "text": "Raport koncowy: lista wadliwych wzmianek z ID, tagiem, zrodlem bledu i wskazowka; eksport CSV"},
         {"type": "fix", "text": "gql/gqlRetry/bulkTagMentions/Untag — rozbudowane logi z kategoria bledu i konkretna wskazowka naprawy"}
-      ]
-    },
-    {
-      "version": "0.23.19",
-      "date": "2026-04-13",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Tagowanie: fallback — wadliwa wzmianka nie crashuje calego tagu; Promise.allSettled + retry 1-po-1 izoluje zly ID i kontynuuje"},
-        {"type": "fix", "text": "Tagowanie: logi [FALLBACK] pokazuja ktory batch i ktory ID jest problematyczny"}
       ]
     },
   ];

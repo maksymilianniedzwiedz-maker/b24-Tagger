@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.23.36",
+    "date": "2026-04-15",
+    "label": "ui",
+    "changes": [
+      "redesign modalu Changelog & Feedback — gradient header, CSS vars, spójny styl z resztą paneli; light/dark theme działa automatycznie",
+      "baner aktualizacji — font-family Inter zamiast monospace, kolory przez CSS vars",
+      "rewizja słownictwa UI — naturalniejszy język w onboardingu, trybie pomocy i komunikatach; labelki → oceny, niezmatched → niedopasowane"
+    ]
+  },
+  {
     "version": "0.23.35",
     "date": "2026-04-14",
     "label": "ui",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.35
+// @version      0.23.36
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.35';
+  const VERSION = '0.23.36';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3687,14 +3687,14 @@
         <div class="b24t-section" id="b24t-mapping-section" style="display:none">
           <div class="b24t-section-label">Mapowanie labelek</div>
           <div id="b24t-assessment-col-bar" style="display:none;margin-bottom:8px;background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:6px 8px;">
-            <div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:4px;">Kolumna z labelkami:</div>
+            <div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:4px;">Kolumna z ocenami:</div>
             <div id="b24t-assessment-col-active" style="display:flex;align-items:center;gap:6px;">
               <span id="b24t-assessment-col-name" style="font-size:11px;color:var(--b24t-text);background:var(--b24t-bg-input);border:1px solid var(--b24t-border);border-radius:4px;padding:2px 7px;font-family:monospace;"></span>
               <button id="b24t-assessment-col-clear" title="Zmień kolumnę" style="font-size:10px;background:none;border:none;color:var(--b24t-text-faint);cursor:pointer;padding:0 2px;">✕ zmień</button>
             </div>
             <div id="b24t-assessment-col-picker" style="display:none;margin-top:4px;">
               <select id="b24t-assessment-col-sel" class="b24t-select" style="width:100%;">
-                <option value="">— wybierz kolumnę z labelkami —</option>
+                <option value="">— wybierz kolumnę z ocenami —</option>
               </select>
             </div>
           </div>
@@ -4414,7 +4414,7 @@
       document.getElementById('b24t-file-name').textContent = file.name;
       document.getElementById('b24t-file-meta').textContent =
         `${meta.totalRows} wierszy · ${Object.keys(meta.assessments).map(k => `${meta.assessments[k]} ${k.toLowerCase()}`).join(' · ')}` +
-        (meta.noAssessment > 0 ? ` · ${meta.noAssessment} bez labela ℹ` : '');
+        (meta.noAssessment > 0 ? ` · ${meta.noAssessment} bez oceny ℹ` : '');
       const clearBtnEl = document.getElementById('b24t-btn-clear-file');
       if (clearBtnEl) clearBtnEl.style.display = 'block';
 
@@ -4679,7 +4679,7 @@
       row.className = 'b24t-map-row';
       row.innerHTML = `
         <div>
-          <div class="b24t-map-label">(bez labela)</div>
+          <div class="b24t-map-label">(bez oceny)</div>
           <div class="b24t-map-count">(${meta.noAssessment})</div>
         </div>
         <div style="font-size:10px;color:var(--b24t-text-faint);grid-column:span 2;">Pomiń ℹ</div>
@@ -4748,7 +4748,7 @@
     }
 
     function populatePicker() {
-      sel.innerHTML = '<option value="">— wybierz kolumnę z labelkami —</option>';
+      sel.innerHTML = '<option value="">— wybierz kolumnę z ocenami —</option>';
       headers.forEach(function(h) {
         const opt = document.createElement('option');
         opt.value = h;
@@ -4781,7 +4781,7 @@
         const m = state.file.meta;
         metaEl.textContent = `${m.totalRows} wierszy · ` +
           Object.keys(m.assessments).map(function(k){ return m.assessments[k] + ' ' + k.toLowerCase(); }).join(' · ') +
-          (m.noAssessment > 0 ? ` · ${m.noAssessment} bez labela ℹ` : '');
+          (m.noAssessment > 0 ? ` · ${m.noAssessment} bez oceny ℹ` : '');
       }
       // Revalidate
       const fileWarnings = validateFile(rows, state.file.colMap);
@@ -5344,7 +5344,7 @@ function getOnboardingSteps() {
         <span class="ob-tag">⚙</span> — funkcje opcjonalne (więcej za chwilę)<br>
         <span class="ob-tag">?</span> — tryb pomocy<br>
         <span class="ob-tag">▼</span> — zwiń/rozwiń panel<br><br>
-        Panel możesz <strong>przeciągać</strong> chwytając za header! 🖱️`,
+        Panel możesz <strong>przeciągać</strong> łapiąc za nagłówek! 🖱️`,
       tail: 'bottom',
     },
     // 3 — Meta bar (token)
@@ -5370,7 +5370,7 @@ function getOnboardingSteps() {
       target: '#b24t-tabs',
       title: '📑 Zakładki — tryby pracy',
       body: `Cztery tryby pracy:<br><br>
-        <span class="ob-tag">📄 Plik</span> — główny tryb: wgraj plik CSV/JSON z labelkami i otaguj setki wzmianek automatycznie<br>
+        <span class="ob-tag">📄 Plik</span> — główny tryb: wgraj plik CSV/JSON z ocenami i otaguj setki wzmianek automatycznie<br>
         <span class="ob-tag">⚡ Quick Tag</span> — błyskawiczne tagowanie bez pliku, na podstawie aktualnego widoku Brand24<br>
         <span class="ob-tag">🗑 Quick Delete</span> — masowe usuwanie wzmianek po tagu lub aktualnym widoku<br>
         <span class="ob-tag">📋 Historia</span> — ostatnie 20 sesji ze statystykami`,
@@ -5401,7 +5401,7 @@ function getOnboardingSteps() {
       title: '⚡ Quick Tag',
       body: `Zakładka do tagowania <strong>bez pliku</strong> — działa na aktualnym widoku Brand24.<br><br>
         Ustaw filtry w Brand24 (zakres dat, tagi, frazy) → przejdź do Quick Tag → wybierz tag → kliknij <strong>Taguj widok</strong>.<br><br>
-        Wtyczka pobiera wzmianki dokładnie z tego samego widoku który masz otwarty i masowo je taguje. Idealne do szybkich operacji! ⚡`,
+        Wtyczka pobiera wzmianki z aktualnie otwartego widoku i taguje je wszystkie naraz. Przydatne do szybkich operacji! ⚡`,
       tail: 'bottom',
     },
     // 9 — Quick Delete
@@ -5430,7 +5430,7 @@ function getOnboardingSteps() {
       body: `Na dole panelu (w zakładce Plik) znajdziesz główne przyciski operacji:<br><br>
         <strong>Start</strong> — uruchamia tagowanie lub wznawia po pauzie<br>
         <strong>Pause</strong> — bezpieczne zatrzymanie po aktualnej stronie<br>
-        <strong>Test Run</strong> — symulacja bez zapisu — sprawdź dopasowanie zanim ruszysz na poważnie!<br><br>
+        <strong>Test Run</strong> — symulacja bez zapisu — sprawdź dopasowanie przed właściwym tagowaniem!<br><br>
         Zawsze zacznij od <strong>Test Run</strong> przy nowym pliku! ✅`,
       tail: 'top',
     },
@@ -5438,8 +5438,8 @@ function getOnboardingSteps() {
     {
       target: '#b24t-btn-features',
       title: '⚙️ Funkcje opcjonalne',
-      body: `Przycisk ⚙ otwiera panel z funkcjami, które możesz włączyć na żądanie.<br><br>
-        Każda z nich ma <strong>własny mini-tutorial</strong>, który pojawi się automatycznie przy pierwszym włączeniu — więc nie musisz znać szczegółów z góry! 🎯<br><br>
+      body: `Przycisk ⚙ otwiera panel z funkcjami, które możesz włączyć w razie potrzeby.<br><br>
+        Każda z nich ma <strong>krótki przewodnik</strong>, który pojawi się automatycznie przy pierwszym włączeniu — nie musisz nic konfigurować z góry! 🎯<br><br>
         Odkrywaj funkcje w swoim tempie.`,
       tail: 'bottom',
     },
@@ -5448,7 +5448,7 @@ function getOnboardingSteps() {
       target: '#b24t-btn-help',
       title: '❓ Tryb pomocy',
       body: `Ten przycisk uruchamia <strong>interaktywny tryb pomocy</strong>.<br><br>
-        Panel zostanie "wyszarzony", a Ty możesz <strong>klikać na dowolne elementy</strong> interfejsu żeby dowiedzieć się co robią — każdy element ma swój opis.<br><br>
+        Panel zostanie <strong>przyciemniony</strong>, a Ty możesz klikać na dowolne elementy interfejsu, żeby dowiedzieć się co robią — każdy ma swój opis.<br><br>
         Wróć tu kiedy zapomnisz do czego służy jakiś przycisk! 🔍`,
       tail: 'bottom',
     },
@@ -5459,7 +5459,7 @@ function getOnboardingSteps() {
       body: `Przycisk <strong>📋 Changelog & Feedback</strong> otwiera okno z trzema zakładkami:<br><br>
         <span class="ob-tag">📰 Co nowego</span> — pełna lista zmian per wersja<br>
         <span class="ob-tag">🗓 Planowane</span> — co będzie w następnych wersjach<br>
-        <span class="ob-tag">💬 Feedback</span> — bugi i sugestie prosto do autora<br><br>
+        <span class="ob-tag">💬 Feedback</span> — błędy i pomysły bezpośrednio do autora<br><br>
         Wtyczka <strong>aktualizuje się automatycznie</strong> przez Tampermonkey — sprawdzaj tu co zostało zmienione!`,
       tail: 'bottom',
     },
@@ -5497,7 +5497,7 @@ function getOnboardingSteps() {
       body: `To tyle! Teraz wiesz jak działa B24 Tagger.<br><br>
         <strong>Szybki start:</strong><br>
         1️⃣ Przejdź do widoku Mentions w Brand24<br>
-        2️⃣ Wgraj plik JSON z labelkami<br>
+        2️⃣ Wgraj plik JSON z ocenami<br>
         3️⃣ Zrób <strong>Test Run</strong> żeby sprawdzić dopasowanie<br>
         4️⃣ Kliknij <strong>Start</strong> i obserwuj progress!<br><br>
         Pytania? Kliknij <span class="ob-tag">📋 Changelog & Feedback</span> → zakładka Feedback 💬`,
@@ -5792,7 +5792,7 @@ function showOnboarding(onComplete) {
       {
         selector: '#b24t-topbar',
         title: 'Header — pasek tytułowy',
-        desc: 'Możesz przeciągać panel trzymając za ten obszar. Zawiera: status sesji, przełącznik motywu, przyciski funkcji opcjonalnych, pomocy i zwijania.',
+        desc: 'Możesz przeciągać panel trzymając za ten obszar. Zawiera: status sesji, zmianę motywu, przyciski funkcji dodatkowych, pomocy i zwijania.',
       },
       {
         selector: '#b24t-theme-toggle',
@@ -5807,7 +5807,7 @@ function showOnboarding(onComplete) {
       {
         selector: '#b24t-btn-features',
         title: '⚙ Funkcje opcjonalne',
-        desc: 'Otwiera modal z funkcjami które możesz włączyć — np. Annotators Tab. Każda funkcja ma własny tutorial.',
+        desc: 'Otwiera panel z dodatkowymi funkcjami do włączenia — np. panel Annotatora. Każda ma krótki przewodnik przy pierwszym uruchomieniu.',
       },
       {
         selector: '#b24t-btn-help',
@@ -5827,7 +5827,7 @@ function showOnboarding(onComplete) {
       {
         selector: '#b24t-subbar',
         title: 'Pasek narzędzi',
-        desc: '"Changelog & Feedback" otwiera dziennik zmian i zakładkę feedbacku. "Sprawdź aktualizacje" ręcznie wyzwala sprawdzenie nowej wersji.',
+        desc: '"Changelog & Feedback" otwiera dziennik zmian i zakładkę opinii. "Sprawdź aktualizacje" ręcznie sprawdza czy jest nowa wersja.',
       },
       {
         selector: '#b24t-tabs',
@@ -5889,7 +5889,7 @@ function showOnboarding(onComplete) {
         {
           selector: 'input[name="b24t-qt-scope"]',
           title: 'Zakres tagowania',
-          desc: 'Bieżąca strona — tylko 60 wzmianek z aktualnej strony. Wszystkie strony — iteruje przez cały widok (może potrwać dłużej).',
+          desc: 'Bieżąca strona — tylko wzmianki z aktualnej strony. Wszystkie strony — przetwarza cały widok po kolei (może potrwać dłużej).',
         },
         {
           selector: '#b24t-qt-run',
@@ -5916,12 +5916,12 @@ function showOnboarding(onComplete) {
         {
           selector: 'input[name="b24t-del-scope"]',
           title: 'Zakres operacji',
-          desc: 'Aktualny widok — daty z URL Brand24. Własny zakres — ręczne daty. 🌐 Wszystkie projekty — usuwa tag ze wszystkich znanych projektów (wymaga Annotators Tab).',
+          desc: 'Aktualny widok — daty z URL Brand24. Własny zakres — ręczne daty. 🌐 Wszystkie projekty — usuwa tag ze wszystkich znanych projektów (wymaga panelu Annotatora).',
         },
         {
           selector: '#b24t-del-run',
           title: '🗑 Usuń wzmianki z tagiem',
-          desc: 'Uruchamia masowe usuwanie. Przy pierwszym użyciu pojawi się ostrzeżenie. Operacja nieodwracalna.',
+          desc: 'Uruchamia masowe usuwanie. Przy pierwszym użyciu pojawi się ostrzeżenie. Tego nie można cofnąć.',
         },
         {
           selector: '#b24t-delview-info',
@@ -5931,7 +5931,7 @@ function showOnboarding(onComplete) {
         {
           selector: '#b24t-delview-run',
           title: '🗑 Usuń wyświetlane wzmianki',
-          desc: 'Usuwa wszystko co jest widoczne w aktualnym widoku Brand24. Operacja nieodwracalna.',
+          desc: 'Usuwa wszystkie wzmianki widoczne w aktualnym widoku Brand24. Tego nie można cofnąć.',
         },
       ],
       history: [
@@ -5965,7 +5965,7 @@ function showOnboarding(onComplete) {
       {
         selector: '.b24t-ann-tab[data-ann-tab="tagstats"]',
         title: '🏷 Zakładka Tagi',
-        desc: 'Przegląd wszystkich projektów — ile wzmianek ma tagi REQUIRES_VERIFICATION i TO_DELETE. Ładuje się w tle.',
+        desc: 'Przegląd wszystkich projektów — ile wzmianek ma tagi do weryfikacji (REQ) i do usunięcia (DEL). Ładuje się w tle.',
         panel: 'annotator',
       },
       {
@@ -5977,7 +5977,7 @@ function showOnboarding(onComplete) {
       {
         selector: '#b24t-ann-tagstats-content',
         title: 'Tabela tagów wszystkich projektów',
-        desc: 'REQ = liczba wzmianek z tagiem REQUIRES_VERIFICATION, DEL = z tagiem TO_DELETE. Pokazuje tylko projekty gdzie coś jest do przetworzenia.',
+        desc: 'REQ = wzmianki do weryfikacji, DEL = wzmianki do usunięcia. Pokazuje tylko projekty, w których coś zostało do zrobienia.',
         panel: 'annotator',
       },
     ] : [];
@@ -6000,15 +6000,15 @@ function showOnboarding(onComplete) {
         '<span style="font-size:14px;font-weight:700;color:' + color + ';">' + preview.pct + '%</span>' +
       '</div>' +
       '<div style="display:flex;gap:10px;font-size:10px;margin-bottom:6px;">' +
-        '<span style="color:#4ade80;">✓ ' + preview.matched + ' matched</span>' +
+        '<span style="color:#4ade80;">✓ ' + preview.matched + ' dopasowane</span>' +
         '<span style="color:#f87171;">✗ ' + preview.unmatched + ' brak</span>' +
-        (preview.noAssessment ? '<span style="color:var(--b24t-text-faint);">~ ' + preview.noAssessment + ' bez labelki</span>' : '') +
+        (preview.noAssessment ? '<span style="color:var(--b24t-text-faint);">~ ' + preview.noAssessment + ' bez oceny</span>' : '') +
       '</div>' +
       '<div style="height:4px;background:var(--b24t-bg-input);border-radius:99px;overflow:hidden;margin-bottom:6px;">' +
         '<div style="height:100%;width:' + preview.pct + '%;background:' + color + ';border-radius:99px;transition:width 0.4s;"></div>' +
       '</div>' +
       (preview.unmatched > 0
-        ? '<button id="b24t-preview-btn" style="font-size:10px;color:var(--b24t-text-faint);background:none;border:none;cursor:pointer;padding:0;">Pokaż niezmatched (' + Math.min(preview.unmatched, 50) + ') \u25be</button>' +
+        ? '<button id="b24t-preview-btn" style="font-size:10px;color:var(--b24t-text-faint);background:none;border:none;cursor:pointer;padding:0;">Pokaż niedopasowane (' + Math.min(preview.unmatched, 50) + ') \u25be</button>' +
           '<div id="b24t-preview-list" style="display:none;max-height:80px;overflow-y:auto;margin-top:4px;font-size:9px;color:var(--b24t-text-faint);line-height:1.6;">' +
           preview.unmatchedList.map(function(u){ return '<div>' + u.substring(0,60) + '</div>'; }).join('') +
           (preview.unmatched > 50 ? '<div>...i ' + (preview.unmatched-50) + ' więcej</div>' : '') +
@@ -6019,7 +6019,7 @@ function showOnboarding(onComplete) {
       var list = document.getElementById('b24t-preview-list');
       var show = list.style.display === 'none';
       list.style.display = show ? 'block' : 'none';
-      btn.textContent = 'Pokaż niezmatched (' + Math.min(preview.unmatched, 50) + ') ' + (show ? '\u25b4' : '\u25be');
+      btn.textContent = 'Pokaż niedopasowane (' + Math.min(preview.unmatched, 50) + ') ' + (show ? '\u25b4' : '\u25be');
     });
   }
 
@@ -6148,7 +6148,7 @@ function showOnboarding(onComplete) {
   function wireHistoryTab() {
     const clearBtn = document.getElementById('b24t-history-clear');
     if (clearBtn) clearBtn.addEventListener('click', function() {
-      if (confirm('Wyczyścić historię sesji?')) {
+      if (confirm('Wyczyścić całą historię sesji? Tego nie można cofnąć.')) {
         lsSet(LS.HISTORY, []);
         renderHistoryTab();
       }
@@ -6170,7 +6170,7 @@ function showOnboarding(onComplete) {
       warnings.push({ type: 'error', msg: 'Brak kolumny URL — matching wzmianek nie zadziała. Sprawdź plik lub użyj "Zmień wykryte kolumny".' });
     }
     if (!colMap.assessment) {
-      warnings.push({ type: 'error', msg: 'Brak kolumny z labelką (assessment) — nie wiadomo jak tagować wzmianki.' });
+      warnings.push({ type: 'error', msg: 'Brak kolumny z ocenami (assessment) — nie wiadomo jak tagować wzmianki.' });
     }
     if (colMap.date) {
       const validDates = rows.filter(function(r){ return /^\d{4}-\d{2}-\d{2}/.test((r[colMap.date] || '')); });
@@ -6194,7 +6194,7 @@ function showOnboarding(onComplete) {
     if (dupUrls > 0)        warnings.push({ type: 'warn', msg: dupUrls + ' zduplikowanych URLi — te wzmianki mogą być otagowane podwójnie' });
     if (noUrl > 0)          warnings.push({ type: 'warn', msg: noUrl + ' wierszy bez URL — zostaną pominięte' });
     if (badUrl > 0)         warnings.push({ type: 'warn', msg: badUrl + ' URLi bez http/https' });
-    if (noAssessment > 0)   warnings.push({ type: 'info', msg: noAssessment + ' wierszy bez labelki — zostaną pominięte' });
+    if (noAssessment > 0)   warnings.push({ type: 'info', msg: noAssessment + ' wierszy bez oceny — zostaną pominięte' });
     if (rows.length > 5000) warnings.push({ type: 'warn', msg: 'Duży plik: ' + rows.length + ' wierszy. Operacja może potrwać kilkadziesiąt sekund.' });
     if (colMap.date) {
       const dates = rows.map(function(r){ return (r[colMap.date] || '').substring(0,10); }).filter(function(d){ return /^\d{4}-\d{2}-\d{2}$/.test(d); });
@@ -8980,6 +8980,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.36",
+      "date": "2026-04-15",
+      "label": "ui",
+      "labelColor": "#8b5cf6",
+      "changes": [
+        {"type": "ui", "text": "redesign modalu Changelog & Feedback — gradient header, CSS vars, spójny styl z resztą paneli; light/dark theme działa automatycznie"},
+        {"type": "ui", "text": "baner aktualizacji — font-family Inter zamiast monospace, kolory przez CSS vars"},
+        {"type": "ui", "text": "rewizja słownictwa UI — naturalniejszy język w onboardingu, trybie pomocy i komunikatach; labelki → oceny, niezmatched → niedopasowane"}
+      ]
+    },
+    {
       "version": "0.23.35",
       "date": "2026-04-14",
       "label": "ui",
@@ -9076,17 +9087,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "hint języka projektu w formularzu pod polem KRAJ (np. 'lang: cs, sk')"}
       ]
     },
-    {
-      "version": "0.23.26",
-      "date": "2026-04-14",
-      "label": "feat",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "feat", "text": "teaser detection: keyword tylko w polecanych artykułach → status teasermatch (szary ◇, badge 'w polecanym art.'), redukuje false positive"},
-        {"type": "feat", "text": "nowe strefy skanowania: h2/h3 (+3), blockquote (+2), tagi redakcyjne artykułu (+4) — tylko wewnątrz article/main"},
-        {"type": "feat", "text": "NEWS_TEASER_SELECTORS: rozszerzone wzorce (related, recommended, more-articles, also-read, suggested itp.)"}
-      ]
-    },
   ];
 
   function _fetchChangelog(onDone) {
@@ -9135,7 +9135,7 @@ function showOnboarding(onComplete) {
     });
     plannedHtml +=
       '<div style="padding:10px 0 4px;font-size:12px;color:#4a4a66;line-height:1.6;font-style:italic;">' +
-        '...i inne funkcje zgłaszane przez użytkowników — masz pomysł lub coś nie działa? Daj znać przez formularz feedbacku.' +
+        '...i inne funkcje zgłaszane przez użytkowników — masz pomysł lub coś nie działa? Napisz przez formularz Feedback.' +
       '</div>' +
       '<div style="margin-top:14px;padding:14px;background:#1a0d2e;border-radius:8px;border:1px solid #3d1a6e;">' +
         '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
@@ -9157,7 +9157,7 @@ function showOnboarding(onComplete) {
             '<div style="width:38px;height:38px;background:#6c6cff22;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;">🛠️</div>' +
             '<div style="flex:1;">' +
               '<div style="font-size:16px;font-weight:700;color:#e2e2e8;letter-spacing:-0.01em;">B24 Tagger <span style="font-size:11px;color:#6c6cff;letter-spacing:0.08em;font-weight:600;">BETA</span></div>' +
-              '<div style="font-size:12px;color:#3a3a55;margin-top:3px;">v' + VERSION + ' · ostatnia wersja przed stable</div>' +
+              '<div style="font-size:12px;color:#3a3a55;margin-top:3px;">v' + VERSION + ' · ostatnia wersja przed stabilną</div>' +
             '</div>' +
           '</div>' +
           '<div style="display:flex;gap:2px;margin-bottom:0;">' +
@@ -9170,7 +9170,7 @@ function showOnboarding(onComplete) {
           // Tab: Witaj
           '<div id="b24t-wp-welcome" style="padding:24px;">' +
             '<p style="font-size:14px;color:#c0c0e0;line-height:1.8;margin:0 0 14px 0;">' +
-              'Wersja <strong style="color:#e2e2e8;">0.21.0</strong> to ostatnia oficjalna wersja przed wydaniem wersji <strong style="color:#6c6cff;">1.0.0 stable</strong>.' +
+              'Wersja <strong style="color:#e2e2e8;">0.21.0</strong> to ostatnia oficjalna wersja przed wydaniem wersji <strong style="color:#6c6cff;">1.0.0 stabilnej</strong>.' +
             '</p>' +
             '<p style="font-size:14px;color:#c0c0e0;line-height:1.8;margin:0 0 14px 0;">' +
               'Od poprzedniej wersji naprawiono kilka błędów związanych z tagowaniem za pomocą pliku.' +
@@ -9409,20 +9409,20 @@ function showOnboarding(onComplete) {
         html +=
           '<div style="margin-bottom:' + (idx < entries.length - 1 ? '20' : '0') + 'px;">' +
             '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
-              '<span style="font-size:15px;font-weight:700;color:#e2e2e8;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;">v' + v.version + '</span>' +
+              '<span style="font-size:15px;font-weight:700;color:var(--b24t-text);font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;">v' + v.version + '</span>' +
               '<span style="font-size:12px;font-weight:600;background:' + v.labelColor + '22;color:' + v.labelColor + ';padding:2px 10px;border-radius:99px;">' + v.label + '</span>' +
-              '<span style="font-size:11px;color:#3a3a55;margin-left:auto;">' + v.date + '</span>' +
+              '<span style="font-size:11px;color:var(--b24t-text-faint);margin-left:auto;">' + v.date + '</span>' +
             '</div>' +
             '<div style="' + (isLatest ? '' : 'opacity:0.6;') + '">' +
             v.changes.map(function(ch) {
               return '<div style="display:flex;gap:8px;align-items:flex-start;padding:3px 0;">' +
                 '<span style="flex-shrink:0;font-size:15px;color:' + (typeColor[ch.type] || '#9090aa') + ';width:18px;text-align:center;line-height:1;">' + (typeIcon[ch.type] || '•') + '</span>' +
-                '<span style="font-size:13px;color:#a0a0cc;line-height:1.6;">' + ch.text + '</span>' +
+                '<span style="font-size:13px;color:var(--b24t-text-muted);line-height:1.6;">' + ch.text + '</span>' +
               '</div>';
             }).join('') +
             '</div>' +
           '</div>' +
-          (idx < entries.length - 1 ? '<div style="height:1px;background:#1e1e28;margin:0 0 20px 0;"></div>' : '');
+          (idx < entries.length - 1 ? '<div style="height:1px;background:var(--b24t-border-sub);margin:0 0 20px 0;"></div>' : '');
       });
       return html;
     }
@@ -9438,25 +9438,25 @@ function showOnboarding(onComplete) {
       low:    { color: '#4ade80', label: 'Niski',  desc: 'priorytet niski' },
     };
     let plannedHtml =
-      '<div style="font-size:13px;font-weight:600;color:#c0c0e0;margin-bottom:12px;line-height:1.6;">Roadmap — v1.0.0 i nowsze</div>';
+      '<div style="font-size:13px;font-weight:600;color:var(--b24t-text-muted);margin-bottom:12px;line-height:1.6;">Roadmap — v1.0.0 i nowsze</div>';
     PLANNED_FEATURES.forEach(function(f) {
       const pm = prioMeta[f.priority] || { color: '#6060aa' };
       plannedHtml +=
-        '<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid #1a1a22;">' +
+        '<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--b24t-border-sub);">' +
           '<span style="flex-shrink:0;width:8px;height:8px;border-radius:50%;background:' + pm.color + ';margin-top:5px;"></span>' +
-          '<span style="font-size:13px;color:#a0a0cc;line-height:1.6;flex:1;">' + f.text + '</span>' +
+          '<span style="font-size:13px;color:var(--b24t-text-muted);line-height:1.6;flex:1;">' + f.text + '</span>' +
         '</div>';
     });
     plannedHtml +=
-      '<div style="padding:10px 0 4px;font-size:12px;color:#4a4a66;line-height:1.6;font-style:italic;">' +
-        '...i inne funkcje zgłaszane przez użytkowników — masz pomysł lub coś nie działa? Daj znać przez formularz feedbacku.' +
+      '<div style="padding:10px 0 4px;font-size:12px;color:var(--b24t-text-faint);line-height:1.6;font-style:italic;">' +
+        '...i inne funkcje zgłaszane przez użytkowników — masz pomysł lub coś nie działa? Napisz przez formularz Feedback.' +
       '</div>' +
-      '<div style="margin-top:14px;padding:14px;background:#1a0d2e;border-radius:8px;border:1px solid #3d1a6e;">' +
+      '<div style="margin-top:14px;padding:14px;background:rgba(168,85,247,0.08);border-radius:8px;border:1px solid rgba(168,85,247,0.25);">' +
         '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
           '<span style="font-size:14px;">✨</span>' +
           '<span style="font-size:11px;font-weight:600;color:#a855f7;letter-spacing:0.06em;">W PLANACH</span>' +
         '</div>' +
-        '<div style="font-size:13px;color:#9060cc;line-height:1.6;">Automatyczna klasyfikacja AI — tłumaczenie wzmianek na bieżąco, automatyczna ocena sentymentu i klasyfikacja za pomocą modeli AI.</div>' +
+        '<div style="font-size:13px;color:#a855f7;opacity:0.75;line-height:1.6;">Automatyczna klasyfikacja AI — tłumaczenie wzmianek na bieżąco, automatyczna ocena sentymentu i klasyfikacja za pomocą modeli AI.</div>' +
       '</div>';
 
     const modal = document.createElement('div');
@@ -9465,38 +9465,35 @@ function showOnboarding(onComplete) {
 
     modal.innerHTML =
       // Outer container - wider, flex column
-      '<div style="background:#0f0f13;border:1px solid #2a2a35;border-radius:14px;width:520px;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.85);">' +
+      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:520px;max-height:86vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);">' +
 
-        // ── HEADER ────────────────────────────────────────────────────────
-        '<div style="padding:16px 20px 0;flex-shrink:0;border-bottom:1px solid #1e1e28;">' +
-          // Title row
-          '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">' +
-            '<div style="width:36px;height:36px;background:#6c6cff22;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">🚀</div>' +
-            '<div style="flex:1;">' +
-              '<div style="font-size:16px;font-weight:700;color:#e2e2e8;letter-spacing:-0.01em;">B24 Tagger <span style="font-size:11px;color:#6c6cff;letter-spacing:0.08em;font-weight:600;">BETA</span></div>' +
-              '<div style="font-size:12px;color:#3a3a55;margin-top:3px;">v' + VERSION + ' · Dziennik zmian</div>' +
-            '</div>' +
-            '<button id="b24t-wnm-close" style="background:none;border:none;color:#444455;cursor:pointer;font-size:22px;line-height:1;padding:4px;border-radius:6px;transition:color 0.15s;">\u00d7</button>' +
+        // ── HEADER (gradient) ─────────────────────────────────────────────
+        '<div style="padding:10px 14px;background:var(--b24t-accent-grad);display:flex;align-items:center;flex-shrink:0;gap:10px;">' +
+          '<div style="width:32px;height:32px;background:rgba(255,255,255,0.18);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">🚀</div>' +
+          '<div style="flex:1;">' +
+            '<div style="font-size:14px;font-weight:700;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.2);">B24 Tagger <span style="font-size:10px;font-weight:600;letter-spacing:0.08em;opacity:0.85;">BETA</span></div>' +
+            '<div style="font-size:11px;color:rgba(255,255,255,0.65);margin-top:1px;">v' + VERSION + ' · Dziennik zmian</div>' +
           '</div>' +
-          // Tabs row - 3 tabs, ikon + label
-          '<div style="display:flex;gap:2px;">' +
-            '<button class="b24t-wnm-tab" data-tab="news" ' +
-              'style="flex:1;background:none;border:none;border-bottom:2px solid #6c6cff;color:#6c6cff;' +
-              'font-size:11px;font-weight:600;padding:8px 4px;cursor:pointer;font-family:inherit;' +
-              'display:flex;align-items:center;justify-content:center;gap:5px;">📋 Historia zmian</button>' +
-            '<button class="b24t-wnm-tab" data-tab="planned" ' +
-              'style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:#4a4a66;' +
-              'font-size:11px;padding:8px 4px;cursor:pointer;font-family:inherit;' +
-              'display:flex;align-items:center;justify-content:center;gap:5px;">🗓 Planowane</button>' +
-            '<button class="b24t-wnm-tab" data-tab="feedback" ' +
-              'style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:#4a4a66;' +
-              'font-size:11px;padding:8px 4px;cursor:pointer;font-family:inherit;' +
-              'display:flex;align-items:center;justify-content:center;gap:5px;">💬 Feedback</button>' +
-          '</div>' +
+          '<button id="b24t-wnm-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:15px;line-height:1;padding:2px 7px;border-radius:5px;flex-shrink:0;">\u00d7</button>' +
+        '</div>' +
+        // ── TABS ──────────────────────────────────────────────────────────
+        '<div style="display:flex;background:var(--b24t-bg-elevated);border-bottom:1px solid var(--b24t-border);padding:0 4px;flex-shrink:0;">' +
+          '<button class="b24t-wnm-tab" data-tab="news" ' +
+            'style="flex:1;background:none;border:none;border-bottom:2px solid var(--b24t-primary);color:var(--b24t-primary);' +
+            'font-size:11px;font-weight:600;padding:8px 4px;cursor:pointer;font-family:inherit;' +
+            'display:flex;align-items:center;justify-content:center;gap:5px;">📋 Historia zmian</button>' +
+          '<button class="b24t-wnm-tab" data-tab="planned" ' +
+            'style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:var(--b24t-text-faint);' +
+            'font-size:11px;padding:8px 4px;cursor:pointer;font-family:inherit;' +
+            'display:flex;align-items:center;justify-content:center;gap:5px;">🗓 Planowane</button>' +
+          '<button class="b24t-wnm-tab" data-tab="feedback" ' +
+            'style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:var(--b24t-text-faint);' +
+            'font-size:11px;padding:8px 4px;cursor:pointer;font-family:inherit;' +
+            'display:flex;align-items:center;justify-content:center;gap:5px;">💬 Feedback</button>' +
         '</div>' +
 
         // ── BODY (scrollable) ─────────────────────────────────────────────
-        '<div style="overflow-y:auto;flex:1;min-height:0;" id="b24t-wnm-body">' +
+        '<div style="overflow-y:auto;flex:1;min-height:0;background:var(--b24t-bg);" id="b24t-wnm-body">' +
 
           // Tab: Co nowego
           '<div id="b24t-wnm-news" style="padding:20px 24px;">' + changelogHtml + '</div>' +
@@ -9508,18 +9505,18 @@ function showOnboarding(onComplete) {
           '<div id="b24t-wnm-feedback" style="display:none;padding:20px 24px;">' +
 
             // Bug Report card
-            '<div style="border:1px solid #2a1a1a;border-radius:10px;background:#141018;margin-bottom:12px;overflow:hidden;">' +
-              '<div style="padding:14px 16px;border-bottom:1px solid #2a1a1a;display:flex;align-items:center;gap:10px;">' +
-                '<div style="width:30px;height:30px;background:#f8717118;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">🐛</div>' +
+            '<div style="border:1px solid rgba(248,113,113,0.25);border-radius:10px;background:var(--b24t-bg-elevated);margin-bottom:12px;overflow:hidden;">' +
+              '<div style="padding:14px 16px;border-bottom:1px solid rgba(248,113,113,0.15);display:flex;align-items:center;gap:10px;">' +
+                '<div style="width:30px;height:30px;background:rgba(248,113,113,0.12);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">🐛</div>' +
                 '<div>' +
                   '<div style="font-size:13px;font-weight:700;color:#f87171;">Bug Report</div>' +
-                  '<div style="font-size:10px;color:#664444;margin-top:1px;">Wersja, projekt, URL i logi wypełniają się automatycznie</div>' +
+                  '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Wersja, projekt, URL i logi wypełniają się automatycznie</div>' +
                 '</div>' +
               '</div>' +
               '<div style="padding:12px 16px;">' +
-                '<div style="font-size:11px;color:#886666;margin-bottom:8px;">Opisz problem:</div>' +
+                '<div style="font-size:11px;color:var(--b24t-text-faint);margin-bottom:8px;">Opisz problem:</div>' +
                 '<textarea id="b24t-wnm-fb-bugs" placeholder="Co się stało? Kiedy wystąpił błąd? Jakie kroki doprowadziły do problemu?" ' +
-                  'style="width:100%;height:80px;background:#0f0c10;border:1px solid #2a1a1a;border-radius:6px;color:#c0c0e0;' +
+                  'style="width:100%;height:80px;background:var(--b24t-bg-deep);border:1px solid var(--b24t-border);border-radius:6px;color:var(--b24t-text-muted);' +
                   'font-family:inherit;font-size:12px;padding:8px 10px;resize:none;box-sizing:border-box;outline:none;line-height:1.5;">' +
                 '</textarea>' +
                 '<button id="b24t-wnm-fb-send-bug" ' +
@@ -9529,22 +9526,22 @@ function showOnboarding(onComplete) {
             '</div>' +
 
             // Suggestion card
-            '<div style="border:1px solid #1a1a2a;border-radius:10px;background:#10101a;overflow:hidden;">' +
-              '<div style="padding:14px 16px;border-bottom:1px solid #1a1a2a;display:flex;align-items:center;gap:10px;">' +
-                '<div style="width:30px;height:30px;background:#6c6cff18;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">💡</div>' +
+            '<div style="border:1px solid var(--b24t-border);border-radius:10px;background:var(--b24t-bg-elevated);overflow:hidden;">' +
+              '<div style="padding:14px 16px;border-bottom:1px solid var(--b24t-border-sub);display:flex;align-items:center;gap:10px;">' +
+                '<div style="width:30px;height:30px;background:rgba(108,108,255,0.12);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">💡</div>' +
                 '<div>' +
-                  '<div style="font-size:13px;font-weight:700;color:#6c6cff;">Suggestion</div>' +
-                  '<div style="font-size:10px;color:#333366;margin-top:1px;">Pomysł na nową funkcję lub ulepszenie</div>' +
+                  '<div style="font-size:13px;font-weight:700;color:var(--b24t-primary);">Suggestion</div>' +
+                  '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Pomysł na nową funkcję lub ulepszenie</div>' +
                 '</div>' +
               '</div>' +
               '<div style="padding:12px 16px;">' +
-                '<div style="font-size:11px;color:#446688;margin-bottom:8px;">Twój pomysł:</div>' +
+                '<div style="font-size:11px;color:var(--b24t-text-faint);margin-bottom:8px;">Twój pomysł:</div>' +
                 '<textarea id="b24t-wnm-fb-ideas" placeholder="Jaka funkcja by Ci się przydała? Jak powinna działać?" ' +
-                  'style="width:100%;height:80px;background:#0c0c14;border:1px solid #1a1a2a;border-radius:6px;color:#c0c0e0;' +
+                  'style="width:100%;height:80px;background:var(--b24t-bg-deep);border:1px solid var(--b24t-border);border-radius:6px;color:var(--b24t-text-muted);' +
                   'font-family:inherit;font-size:12px;padding:8px 10px;resize:none;box-sizing:border-box;outline:none;line-height:1.5;">' +
                 '</textarea>' +
                 '<button id="b24t-wnm-fb-send-suggest" ' +
-                  'style="width:100%;margin-top:8px;background:#6c6cff;color:#fff;border:none;border-radius:7px;padding:9px;' +
+                  'style="width:100%;margin-top:8px;background:var(--b24t-primary);color:#fff;border:none;border-radius:7px;padding:9px;' +
                   'font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Otwórz formularz Feedback →</button>' +
               '</div>' +
             '</div>' +
@@ -9552,16 +9549,16 @@ function showOnboarding(onComplete) {
             '<div id="b24t-wnm-fb-status" style="font-size:11px;min-height:14px;margin-top:10px;text-align:center;"></div>' +
 
             // Reset onboarding
-            '<div style="margin-top:16px;padding-top:12px;border-top:1px solid #1a1a22;text-align:center;">' +
-              '<button id="b24t-wnm-reset-onboarding" style="background:none;border:none;color:#2a2a42;font-size:10px;cursor:pointer;font-family:inherit;letter-spacing:0.03em;padding:4px 10px;border-radius:4px;transition:color 0.2s;">↺ Powtórz onboarding</button>' +
+            '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--b24t-border-sub);text-align:center;">' +
+              '<button id="b24t-wnm-reset-onboarding" style="background:none;border:none;color:var(--b24t-text-faint);font-size:10px;cursor:pointer;font-family:inherit;letter-spacing:0.03em;padding:4px 10px;border-radius:4px;transition:color 0.2s;opacity:0.5;">↺ Powtórz onboarding</button>' +
             '</div>' +
           '</div>' +
         '</div>' +
 
         // ── FOOTER ────────────────────────────────────────────────────────
-        '<div style="padding:10px 20px;border-top:1px solid #1a1a22;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:12px;">' +
+        '<div style="padding:10px 20px;border-top:1px solid var(--b24t-border);flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:12px;">' +
           // Lewa strona: legenda
-          '<div id="b24t-wnm-legend" style="display:flex;gap:8px;font-size:11px;color:#3a3a55;">' +
+          '<div id="b24t-wnm-legend" style="display:flex;gap:8px;font-size:11px;color:var(--b24t-text-faint);">' +
             '<span title="Nowa funkcja"><span style="color:#6c6cff;">✦</span> nowe</span>' +
             '<span title="Naprawa błędu"><span style="color:#4ade80;">⚒</span> fix</span>' +
             '<span title="Wydajność"><span style="color:#facc15;">⚡</span> perf</span>' +
@@ -9591,12 +9588,12 @@ function showOnboarding(onComplete) {
       btn.addEventListener('click', function() {
         modal.querySelectorAll('.b24t-wnm-tab').forEach(function(b) {
           b.style.borderBottomColor = 'transparent';
-          b.style.color = '#555588';
+          b.style.color = 'var(--b24t-text-faint)';
           b.style.fontWeight = 'normal';
           b.style.fontSize = '13px';
         });
-        btn.style.borderBottomColor = '#6c6cff';
-        btn.style.color = '#6c6cff';
+        btn.style.borderBottomColor = 'var(--b24t-primary)';
+        btn.style.color = 'var(--b24t-primary)';
         btn.style.fontWeight = '600';
         btn.style.fontSize = '13px';
         ['news','planned','feedback'].forEach(function(t) {
@@ -9646,8 +9643,8 @@ function showOnboarding(onComplete) {
     // Reset onboarding - dyskretny przycisk na dole zakładki Feedback
     var wnmResetOb = document.getElementById('b24t-wnm-reset-onboarding');
     if (wnmResetOb) {
-      wnmResetOb.addEventListener('mouseenter', function() { this.style.color = '#6c6cff'; });
-      wnmResetOb.addEventListener('mouseleave', function() { this.style.color = '#2a2a42'; });
+      wnmResetOb.addEventListener('mouseenter', function() { this.style.color = 'var(--b24t-primary)'; this.style.opacity = '1'; });
+      wnmResetOb.addEventListener('mouseleave', function() { this.style.color = 'var(--b24t-text-faint)'; this.style.opacity = '0.5'; });
       wnmResetOb.addEventListener('click', function() {
         closeWnm();
         lsSet(LS.SETUP_DONE, false);
@@ -9750,13 +9747,13 @@ function showOnboarding(onComplete) {
       'top:60px',
       'right:16px',
       'width:300px',
-      'background:#0f0f13',
-      'border:1px solid ' + (newVersion ? '#6c6cff' : '#4ade80'),
+      'background:var(--b24t-bg)',
+      'border:1px solid ' + (newVersion ? 'var(--b24t-primary)' : '#4ade80'),
       'border-radius:12px',
       'padding:16px',
-      'box-shadow:0 8px 32px rgba(0,0,0,0.6)',
+      'box-shadow:var(--b24t-shadow-h)',
       'z-index:2147483646',
-      'font-family:monospace',
+      'font-family:Inter,Segoe UI,system-ui,sans-serif',
       'animation:b24t-slide-in 0.35s cubic-bezier(0.34,1.56,0.64,1)',
     ].join(';');
 
@@ -9782,22 +9779,22 @@ function showOnboarding(onComplete) {
     el.innerHTML =
       // Nagłówek
       '<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;">' +
-        '<div style="width:36px;height:36px;background:#6c6cff22;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">✦</div>' +
+        '<div style="width:36px;height:36px;background:var(--b24t-primary-bg);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">✦</div>' +
         '<div style="flex:1;">' +
-          '<div style="font-size:14px;font-weight:700;color:#e2e2e8;letter-spacing:-0.01em;">Dostępna aktualizacja</div>' +
+          '<div style="font-size:14px;font-weight:700;color:var(--b24t-text);letter-spacing:-0.01em;">Dostępna aktualizacja</div>' +
           '<div style="font-size:11px;color:var(--b24t-text-faint);margin-top:3px;">B24 Tagger BETA</div>' +
         '</div>' +
-        '<button id="b24t-update-dismiss" style="background:none;border:none;color:#444455;cursor:pointer;font-size:18px;line-height:1;padding:2px;flex-shrink:0;">✕</button>' +
+        '<button id="b24t-update-dismiss" style="background:none;border:none;color:var(--b24t-text-faint);cursor:pointer;font-size:18px;line-height:1;padding:2px;flex-shrink:0;">✕</button>' +
       '</div>' +
       // Wersje
-      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:8px 10px;background:#141419;border-radius:8px;">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:8px 10px;background:var(--b24t-bg-elevated);border-radius:8px;border:1px solid var(--b24t-border-sub);">' +
         '<span style="font-size:12px;color:var(--b24t-text-faint);font-family:monospace;">v' + VERSION + '</span>' +
         '<span style="font-size:14px;color:var(--b24t-text-faint);">→</span>' +
-        '<span style="font-size:13px;font-weight:700;color:#6c6cff;font-family:monospace;">v' + newVersion + '</span>' +
-        '<span style="margin-left:auto;font-size:10px;background:#6c6cff22;color:#6c6cff;padding:2px 7px;border-radius:99px;">nowa wersja</span>' +
+        '<span style="font-size:13px;font-weight:700;color:var(--b24t-primary);font-family:monospace;">v' + newVersion + '</span>' +
+        '<span style="margin-left:auto;font-size:10px;background:var(--b24t-primary-bg);color:var(--b24t-primary);padding:2px 7px;border-radius:99px;">nowa wersja</span>' +
       '</div>' +
       // Przycisk
-      '<button id="b24t-update-install" style="width:100%;background:#6c6cff;color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:monospace;letter-spacing:0.02em;">Zainstaluj aktualizację →</button>';
+      '<button id="b24t-update-install" style="width:100%;background:var(--b24t-primary);color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;letter-spacing:0.02em;">Zainstaluj aktualizację →</button>';
 
     document.body.appendChild(el);
 

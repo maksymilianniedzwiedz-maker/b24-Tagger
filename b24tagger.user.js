@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.36
+// @version      0.23.37
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.36';
+  const VERSION = '0.23.37';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1840,7 +1840,7 @@
     div.className = `b24t-log-entry b24t-log-${type}`;
     div.innerHTML = `<span class="b24t-log-time">${time}</span><span class="b24t-log-msg">${message}</span><span class="b24t-log-elapsed"></span>`;
     log.appendChild(div);
-    log.scrollTop = log.scrollHeight;
+    requestAnimationFrame(function() { log.scrollTop = log.scrollHeight; });
 
     // Keep max 200 entries in DOM
     while (log.children.length > 200) log.removeChild(log.firstChild);
@@ -2907,7 +2907,7 @@
       #b24t-body::-webkit-scrollbar-track { background: transparent; }
       #b24t-body::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
       /* main-tab fills body; other tabs are display:none so don't participate in flex */
-      #b24t-main-tab { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+      #b24t-main-tab { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
       #b24t-main-tab::-webkit-scrollbar { width: 3px; }
       #b24t-main-tab::-webkit-scrollbar-track { background: transparent; }
       #b24t-main-tab::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
@@ -8980,6 +8980,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.37",
+      "date": "2026-04-16",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "modal Changelog — 'undefined' zamiast opisów zmian (normalizacja stringów z CHANGELOG.json do obiektów {type,text})"},
+        {"type": "fix", "text": "modal Changelog — kanciaste rogi nagłówka (border-radius: 14px 14px 0 0)"},
+        {"type": "fix", "text": "log w głównym panelu — kontener rośnie zamiast scrollować; auto-scroll przez requestAnimationFrame"}
+      ]
+    },
+    {
       "version": "0.23.36",
       "date": "2026-04-15",
       "label": "ui",
@@ -9072,19 +9083,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "lepsze wykrywanie strefy artykułu: CMS fallbacks (entry-content, post-content, article__body, story-body, role=article) przed fallbackiem do doc.body"},
         {"type": "fix", "text": "rozszerzone wzorce dat: itemprop datePublished, publishdate, DC.date, data-date, time z apostrofem, dateModified jako ostatnia instancja"},
         {"type": "fix", "text": "revert blind content autofill — fetchPageInfo nie wklejał już pierwszego akapitu bez związku ze słowem kluczowym"}
-      ]
-    },
-    {
-      "version": "0.23.27",
-      "date": "2026-04-14",
-      "label": "feat",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "feat", "text": "paywall: rozróżnienie twardych blokad (access-denied, subscriber-only) od słabych sygnałów (piano, tinypass) — słabe flagują tylko gdy body < 1200 znaków"},
-        {"type": "feat", "text": "autofill tytułu: h1 z article/main > meta content_title > og:title > title"},
-        {"type": "feat", "text": "autofill treści: pierwszy akapit z article/main wypełnia pole Treść gdy jest puste"},
-        {"type": "feat", "text": "badge języka strony w liście URLi po skanowaniu (np. 'pl', 'cs')"},
-        {"type": "feat", "text": "hint języka projektu w formularzu pod polem KRAJ (np. 'lang: cs, sk')"}
       ]
     },
   ];
@@ -9399,22 +9397,28 @@ function showOnboarding(onComplete) {
     const seenVersion = lsGet('b24tagger_seen_version', '');
     if (!forceShow && seenVersion === VERSION) return;
 
-    const typeIcon = { new: '✦', fix: '⚒', perf: '⚡', ui: '◈' };
-    const typeColor = { new: '#6c6cff', fix: '#4ade80', perf: '#facc15', ui: '#b0b0cc' };
+    const typeIcon = { new: '✦', fix: '⚒', perf: '⚡', ui: '◈', feat: '✦' };
+    const typeColor = { new: '#6c6cff', fix: '#4ade80', perf: '#facc15', ui: '#b0b0cc', feat: '#06b6d4' };
+
+    const labelColorFallback = { ui: '#8b5cf6', fix: '#22c55e', feat: '#06b6d4', new: '#6c6cff', perf: '#facc15' };
 
     function _buildChangelogHtml(entries) {
       let html = '';
       entries.forEach(function(v, idx) {
         const isLatest = idx === 0;
+        const lc = v.labelColor || labelColorFallback[v.label] || '#8b5cf6';
+        const normalizedChanges = v.changes.map(function(c) {
+          return (typeof c === 'string') ? { type: v.label || 'new', text: c } : c;
+        });
         html +=
           '<div style="margin-bottom:' + (idx < entries.length - 1 ? '20' : '0') + 'px;">' +
             '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
               '<span style="font-size:15px;font-weight:700;color:var(--b24t-text);font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;">v' + v.version + '</span>' +
-              '<span style="font-size:12px;font-weight:600;background:' + v.labelColor + '22;color:' + v.labelColor + ';padding:2px 10px;border-radius:99px;">' + v.label + '</span>' +
+              '<span style="font-size:12px;font-weight:600;background:' + lc + '22;color:' + lc + ';padding:2px 10px;border-radius:99px;">' + v.label + '</span>' +
               '<span style="font-size:11px;color:var(--b24t-text-faint);margin-left:auto;">' + v.date + '</span>' +
             '</div>' +
             '<div style="' + (isLatest ? '' : 'opacity:0.6;') + '">' +
-            v.changes.map(function(ch) {
+            normalizedChanges.map(function(ch) {
               return '<div style="display:flex;gap:8px;align-items:flex-start;padding:3px 0;">' +
                 '<span style="flex-shrink:0;font-size:15px;color:' + (typeColor[ch.type] || '#9090aa') + ';width:18px;text-align:center;line-height:1;">' + (typeIcon[ch.type] || '•') + '</span>' +
                 '<span style="font-size:13px;color:var(--b24t-text-muted);line-height:1.6;">' + ch.text + '</span>' +
@@ -9468,7 +9472,7 @@ function showOnboarding(onComplete) {
       '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:520px;max-height:86vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);">' +
 
         // ── HEADER (gradient) ─────────────────────────────────────────────
-        '<div style="padding:10px 14px;background:var(--b24t-accent-grad);display:flex;align-items:center;flex-shrink:0;gap:10px;">' +
+        '<div style="padding:10px 14px;background:var(--b24t-accent-grad);border-radius:14px 14px 0 0;overflow:hidden;display:flex;align-items:center;flex-shrink:0;gap:10px;">' +
           '<div style="width:32px;height:32px;background:rgba(255,255,255,0.18);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">🚀</div>' +
           '<div style="flex:1;">' +
             '<div style="font-size:14px;font-weight:700;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.2);">B24 Tagger <span style="font-size:10px;font-weight:600;letter-spacing:0.08em;opacity:0.85;">BETA</span></div>' +

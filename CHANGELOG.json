@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.23.40",
+    "date": "2026-04-17",
+    "label": "feat",
+    "changes": [
+      "feat: News — przebudowa paneli na jeden fullscreen overlay (95vw×95vh) z dwiema kolumnami: lista URLi + formularz wzmianki",
+      "feat: News — import URLi przeniesiony do modalu popup (przycisk 'Importuj URLe' → popup z textarea + chips + Skanuj → modal zamyka się, skan odbywa się live w liście)",
+      "feat: News — live feedback skanowania: pulsujący pasek postępu, chipy i doty relevantności pojawiają się na żywo",
+      "feat: News — responsywny układ: zakładki [Lista | Formularz] na wąskich ekranach (< 880px), kolumny na szerokich"
+    ]
+  },
+  {
     "version": "0.23.39",
     "date": "2026-04-16",
     "label": "chore",

@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.23.38",
+    "date": "2026-04-16",
+    "label": "ui",
+    "changes": [
+      "ui: header — BETA chip bezpośrednio przy TAGGER, wersja przeniesiona pod nazwę jako klikalna linia (klik = sprawdź aktualizacje)",
+      "ui: toggle dark/light przeniesiony z headera do ⚙ Ustawień",
+      "ui: subbar usunięty — token, dwie ikonki (📋 Changelog, 💬 Feedback) i timer w jednej meta-bar",
+      "ui: Changelog i Feedback rozdzielone na osobne modale; ikonki z opóźnionym tooltipem"
+    ]
+  },
+  {
     "version": "0.23.37",
     "date": "2026-04-16",
     "label": "fix",

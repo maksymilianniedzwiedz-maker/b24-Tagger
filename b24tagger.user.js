@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.37
+// @version      0.23.38
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.37';
+  const VERSION = '0.23.38';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2787,11 +2787,15 @@
         flex-shrink: 1;
         min-width: 0;
         overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0;
         text-shadow: 0 1px 3px rgba(0,0,0,0.2);
       }
-      .b24t-version { font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.92); margin-left: 4px; flex-shrink: 1; white-space: nowrap; overflow: hidden; text-shadow: 0 1px 3px rgba(0,0,0,0.25); }
+      .b24t-logo-name { display: flex; align-items: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .b24t-version { font-size: 9px; font-weight: 500; color: rgba(255,255,255,0.6); cursor: pointer; letter-spacing: 0.03em; text-transform: none; white-space: nowrap; transition: color 0.15s; line-height: 1.4; text-shadow: none; }
+      .b24t-version:hover { color: rgba(255,255,255,0.9); text-decoration: underline; text-decoration-style: dotted; }
       #b24t-topbar-right { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
 
       /* ── DARK MODE TOGGLE SLIDER ── */
@@ -2864,6 +2868,19 @@
       .b24t-token-error   { color: var(--b24t-err); font-weight: 700; font-size: 12px; }
       .b24t-cms-checking  { animation: b24t-dot-pulse 1.4s ease-in-out infinite; }
       #b24t-session-timer { color: var(--b24t-text-meta); font-size: 11px; font-weight: 500; }
+      .b24t-meta-btn-wrap { position: relative; display: inline-flex; }
+      .b24t-meta-tooltip {
+        position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+        background: var(--b24t-bg-elevated); border: 1px solid var(--b24t-border);
+        color: var(--b24t-text-muted); font-size: 10px; font-weight: 500;
+        padding: 3px 8px; border-radius: 5px; white-space: nowrap;
+        opacity: 0; pointer-events: none;
+        transition: opacity 0.15s 0.4s;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+        font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+        z-index: 10;
+      }
+      .b24t-meta-btn-wrap:hover .b24t-meta-tooltip { opacity: 1; }
 
       /* ── SUBBAR ── */
       #b24t-subbar {
@@ -3569,17 +3586,9 @@
     panel.innerHTML = `<div id="b24t-panel-inner">
       <!-- TOPBAR -->
       <div id="b24t-topbar">
-        <span class="b24t-logo">B24 Tagger <span style="font-size:9px;font-weight:700;letter-spacing:0.1em;background:var(--b24t-primary-bg);color:var(--b24t-primary-h);border:1px solid var(--b24t-primary-glow);border-radius:4px;padding:1px 5px;vertical-align:middle;">BETA</span></span>
-        <span class="b24t-version">v${VERSION}</span>
+        <span class="b24t-logo"><span class="b24t-logo-name">B24 TAGGER<span style="font-size:9px;font-weight:700;letter-spacing:0.1em;background:rgba(255,255,255,0.18);color:#fff;border:1px solid rgba(255,255,255,0.35);border-radius:4px;padding:1px 5px;vertical-align:middle;margin-left:4px;">BETA</span></span><span id="b24t-version" class="b24t-version" title="Kliknij aby sprawdzić aktualizacje">v${VERSION}</span></span>
         <div id="b24t-topbar-right">
           <span id="b24t-status-badge" class="b24t-badge badge-idle">Idle</span>
-          <div id="b24t-theme-toggle" title="Przełącz jasny/ciemny motyw">
-            <span class="b24t-toggle-icon">☀️</span>
-            <div class="b24t-slider-track" id="b24t-theme-track">
-              <div class="b24t-slider-knob"></div>
-            </div>
-            <span class="b24t-toggle-icon">🌙</span>
-          </div>
           <button class="b24t-icon-btn" id="b24t-btn-features" title="Dodatkowe funkcje" style="font-size:14px;">⚙</button>
           <button class="b24t-icon-btn" id="b24t-btn-help" title="Pomoc">?</button>
           <button class="b24t-icon-btn" id="b24t-btn-collapse" title="Zwiń/Rozwiń">▼</button><button class="b24t-icon-btn" id="b24t-btn-hide-panel" title="Schowaj panel do boku" style="font-size:13px;">‹</button>
@@ -3588,20 +3597,18 @@
 
       <!-- META BAR -->
       <div id="b24t-meta-bar">
-        <span id="b24t-token-status" class="b24t-token-pending" title="Status tokenu API">●</span>
-        <span id="b24t-session-timer">00:00:00</span>
-      </div>
-
-      <!-- TABS -->
-      <!-- SUBBAR: changelog + session timer -->
-      <div id="b24t-subbar" style="display:flex;align-items:center;justify-content:space-between;padding:4px 12px;background:var(--b24t-bg-deep);border-bottom:1px solid var(--b24t-border-sub);">
         <div style="display:flex;align-items:center;gap:6px;">
-          <button class="b24t-icon-btn" id="b24t-btn-changelog" title="Changelog & Feedback" style="font-size:11px;letter-spacing:0.02em;color:#6c6cff;padding:3px 9px;border:1px solid #6c6cff33;border-radius:4px;">📋 Changelog & Feedback</button>
-          <button class="b24t-icon-btn" id="b24t-btn-check-update" title="Sprawdź aktualizacje" style="font-size:11px;color:var(--b24t-text-faint);padding:3px 9px;border:1px solid #2a2a35;border-radius:4px;">↑ Sprawdź aktualizacje</button>
+          <span id="b24t-token-status" class="b24t-token-pending" title="Status tokenu API">●</span>
+          <div class="b24t-meta-btn-wrap">
+            <button class="b24t-icon-btn" id="b24t-btn-changelog" style="font-size:13px;padding:2px 6px;">📋</button>
+            <span class="b24t-meta-tooltip">Changelog</span>
+          </div>
+          <div class="b24t-meta-btn-wrap">
+            <button class="b24t-icon-btn" id="b24t-btn-feedback" style="font-size:13px;padding:2px 6px;">💬</button>
+            <span class="b24t-meta-tooltip">Feedback</span>
+          </div>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <div id="b24t-session-timer-sub" style="font-size:11px;color:var(--b24t-text-faint);font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;"></div>
-        </div>
+        <span id="b24t-session-timer">00:00:00</span>
       </div>
 
       <div id="b24t-tabs">
@@ -4132,6 +4139,20 @@
   // UI - EVENT WIRING
   // ───────────────────────────────────────────
 
+  function applyTheme(theme) {
+    document.documentElement.setAttribute('data-b24t-theme', theme);
+    const track = document.getElementById('b24t-theme-track');
+    if (track) {
+      if (theme === 'dark') track.classList.add('is-dark');
+      else track.classList.remove('is-dark');
+    }
+    lsSet(LS.THEME, theme);
+    const ap = document.getElementById('b24t-annotator-panel');
+    const at = document.getElementById('b24t-annotator-tab');
+    if (ap) ap.setAttribute('data-b24t-theme', theme);
+    if (at) at.setAttribute('data-b24t-theme', theme);
+  }
+
   function wireEvents(panel) {
     // File upload
     const fileZone = panel.querySelector('#b24t-file-zone');
@@ -4238,46 +4259,30 @@
     // Help
     panel.querySelector('#b24t-btn-help').addEventListener('click', toggleHelpMode);
 
-    // Changelog / What's New
+    // Changelog
     panel.querySelector('#b24t-btn-changelog')?.addEventListener('click', () => showWhatsNewExtended(true));
+
+    // Feedback
+    panel.querySelector('#b24t-btn-feedback')?.addEventListener('click', () => showFeedbackModal());
 
     // Dodatkowe funkcje
     panel.querySelector('#b24t-btn-features')?.addEventListener('click', () => showFeaturesModal());
 
-    // ── DARK/LIGHT THEME TOGGLE ──
-    (function() {
-      const track = document.getElementById('b24t-theme-track');
-      if (!track) return;
-      const savedTheme = lsGet(LS.THEME, 'light');
-      function applyTheme(theme) {
-        document.documentElement.setAttribute('data-b24t-theme', theme);
-        if (theme === 'dark') track.classList.add('is-dark');
-        else track.classList.remove('is-dark');
-        lsSet(LS.THEME, theme);
-        // Also restyle annotator panel to match
-        const ap = document.getElementById('b24t-annotator-panel');
-        const at = document.getElementById('b24t-annotator-tab');
-        if (ap) ap.setAttribute('data-b24t-theme', theme);
-        if (at) at.setAttribute('data-b24t-theme', theme);
-      }
-      applyTheme(savedTheme);
-      track.addEventListener('click', function() {
-        const current = document.documentElement.getAttribute('data-b24t-theme') || 'light';
-        applyTheme(current === 'light' ? 'dark' : 'light');
-      });
-    })();
+    // ── APPLY SAVED THEME ON INIT ──
+    applyTheme(lsGet(LS.THEME, 'light'));
 
     // Annotator Tools: wired in buildAnnotatorPanel()
 
-    // Sprawdź aktualizacje ręcznie
-    panel.querySelector('#b24t-btn-check-update')?.addEventListener('click', () => {
-      const btn = document.getElementById('b24t-btn-check-update');
-      if (btn) { btn.textContent = '↻ Sprawdzam...'; btn.style.color = '#7878aa'; }
-      checkForUpdate(true);
-      setTimeout(() => {
-        if (btn) { btn.textContent = '↑ Sprawdź aktualizacje'; btn.style.color = '#555577'; }
-      }, 3000);
-    });
+    // Version click — sprawdź aktualizacje
+    const versionEl = document.getElementById('b24t-version');
+    if (versionEl) {
+      versionEl.addEventListener('mousedown', function(e) { e.stopPropagation(); });
+      versionEl.addEventListener('click', function() {
+        versionEl.style.opacity = '0.5';
+        checkForUpdate(true);
+        setTimeout(function() { versionEl.style.opacity = ''; }, 3000);
+      });
+    }
 
     // Crash banner
     panel.querySelector('#b24t-crash-resume').addEventListener('click', () => {
@@ -8980,6 +8985,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.38",
+      "date": "2026-04-16",
+      "label": "ui",
+      "labelColor": "#8b5cf6",
+      "changes": [
+        {"type": "ui", "text": "header — BETA chip bezpośrednio przy TAGGER, wersja przeniesiona pod nazwę jako klikalna linia (klik = sprawdź aktualizacje)"},
+        {"type": "ui", "text": "toggle dark/light przeniesiony z headera do ⚙ Ustawień"},
+        {"type": "ui", "text": "subbar usunięty — token, dwie ikonki (📋 Changelog, 💬 Feedback) i timer w jednej meta-bar"},
+        {"type": "ui", "text": "Changelog i Feedback rozdzielone na osobne modale; ikonki z opóźnionym tooltipem"}
+      ]
+    },
+    {
       "version": "0.23.37",
       "date": "2026-04-16",
       "label": "fix",
@@ -9072,17 +9089,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "guard noise removal: el !== bodyEl && !el.contains(bodyEl) — przodkowie bodyEl też chronieni"},
         {"type": "fix", "text": "header noise selector: 'header' → 'body > header' — nie usuwa <header> wewnątrz artykułu"},
         {"type": "fix", "text": "nowe wzorce CMS w _CONTENT_ZONE_SEL: content__body, text-body, article__lead"}
-      ]
-    },
-    {
-      "version": "0.23.28",
-      "date": "2026-04-14",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "lepsze wykrywanie strefy artykułu: CMS fallbacks (entry-content, post-content, article__body, story-body, role=article) przed fallbackiem do doc.body"},
-        {"type": "fix", "text": "rozszerzone wzorce dat: itemprop datePublished, publishdate, DC.date, data-date, time z apostrofem, dateModified jako ostatnia instancja"},
-        {"type": "fix", "text": "revert blind content autofill — fetchPageInfo nie wklejał już pierwszego akapitu bez związku ze słowem kluczowym"}
       ]
     },
   ];
@@ -9490,10 +9496,6 @@ function showOnboarding(onComplete) {
             'style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:var(--b24t-text-faint);' +
             'font-size:11px;padding:8px 4px;cursor:pointer;font-family:inherit;' +
             'display:flex;align-items:center;justify-content:center;gap:5px;">🗓 Planowane</button>' +
-          '<button class="b24t-wnm-tab" data-tab="feedback" ' +
-            'style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:var(--b24t-text-faint);' +
-            'font-size:11px;padding:8px 4px;cursor:pointer;font-family:inherit;' +
-            'display:flex;align-items:center;justify-content:center;gap:5px;">💬 Feedback</button>' +
         '</div>' +
 
         // ── BODY (scrollable) ─────────────────────────────────────────────
@@ -9505,58 +9507,6 @@ function showOnboarding(onComplete) {
           // Tab: Planowane
           '<div id="b24t-wnm-planned" style="display:none;padding:20px 24px;">' + plannedHtml + '</div>' +
 
-          // Tab: Feedback - Bug Report i Suggestion przez Google Forms
-          '<div id="b24t-wnm-feedback" style="display:none;padding:20px 24px;">' +
-
-            // Bug Report card
-            '<div style="border:1px solid rgba(248,113,113,0.25);border-radius:10px;background:var(--b24t-bg-elevated);margin-bottom:12px;overflow:hidden;">' +
-              '<div style="padding:14px 16px;border-bottom:1px solid rgba(248,113,113,0.15);display:flex;align-items:center;gap:10px;">' +
-                '<div style="width:30px;height:30px;background:rgba(248,113,113,0.12);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">🐛</div>' +
-                '<div>' +
-                  '<div style="font-size:13px;font-weight:700;color:#f87171;">Bug Report</div>' +
-                  '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Wersja, projekt, URL i logi wypełniają się automatycznie</div>' +
-                '</div>' +
-              '</div>' +
-              '<div style="padding:12px 16px;">' +
-                '<div style="font-size:11px;color:var(--b24t-text-faint);margin-bottom:8px;">Opisz problem:</div>' +
-                '<textarea id="b24t-wnm-fb-bugs" placeholder="Co się stało? Kiedy wystąpił błąd? Jakie kroki doprowadziły do problemu?" ' +
-                  'style="width:100%;height:80px;background:var(--b24t-bg-deep);border:1px solid var(--b24t-border);border-radius:6px;color:var(--b24t-text-muted);' +
-                  'font-family:inherit;font-size:12px;padding:8px 10px;resize:none;box-sizing:border-box;outline:none;line-height:1.5;">' +
-                '</textarea>' +
-                '<button id="b24t-wnm-fb-send-bug" ' +
-                  'style="width:100%;margin-top:8px;background:#f87171;color:#fff;border:none;border-radius:7px;padding:9px;' +
-                  'font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Otwórz formularz Bug Report →</button>' +
-              '</div>' +
-            '</div>' +
-
-            // Suggestion card
-            '<div style="border:1px solid var(--b24t-border);border-radius:10px;background:var(--b24t-bg-elevated);overflow:hidden;">' +
-              '<div style="padding:14px 16px;border-bottom:1px solid var(--b24t-border-sub);display:flex;align-items:center;gap:10px;">' +
-                '<div style="width:30px;height:30px;background:rgba(108,108,255,0.12);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">💡</div>' +
-                '<div>' +
-                  '<div style="font-size:13px;font-weight:700;color:var(--b24t-primary);">Suggestion</div>' +
-                  '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Pomysł na nową funkcję lub ulepszenie</div>' +
-                '</div>' +
-              '</div>' +
-              '<div style="padding:12px 16px;">' +
-                '<div style="font-size:11px;color:var(--b24t-text-faint);margin-bottom:8px;">Twój pomysł:</div>' +
-                '<textarea id="b24t-wnm-fb-ideas" placeholder="Jaka funkcja by Ci się przydała? Jak powinna działać?" ' +
-                  'style="width:100%;height:80px;background:var(--b24t-bg-deep);border:1px solid var(--b24t-border);border-radius:6px;color:var(--b24t-text-muted);' +
-                  'font-family:inherit;font-size:12px;padding:8px 10px;resize:none;box-sizing:border-box;outline:none;line-height:1.5;">' +
-                '</textarea>' +
-                '<button id="b24t-wnm-fb-send-suggest" ' +
-                  'style="width:100%;margin-top:8px;background:var(--b24t-primary);color:#fff;border:none;border-radius:7px;padding:9px;' +
-                  'font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Otwórz formularz Feedback →</button>' +
-              '</div>' +
-            '</div>' +
-
-            '<div id="b24t-wnm-fb-status" style="font-size:11px;min-height:14px;margin-top:10px;text-align:center;"></div>' +
-
-            // Reset onboarding
-            '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--b24t-border-sub);text-align:center;">' +
-              '<button id="b24t-wnm-reset-onboarding" style="background:none;border:none;color:var(--b24t-text-faint);font-size:10px;cursor:pointer;font-family:inherit;letter-spacing:0.03em;padding:4px 10px;border-radius:4px;transition:color 0.2s;opacity:0.5;">↺ Powtórz onboarding</button>' +
-            '</div>' +
-          '</div>' +
         '</div>' +
 
         // ── FOOTER ────────────────────────────────────────────────────────
@@ -9600,42 +9550,12 @@ function showOnboarding(onComplete) {
         btn.style.color = 'var(--b24t-primary)';
         btn.style.fontWeight = '600';
         btn.style.fontSize = '13px';
-        ['news','planned','feedback'].forEach(function(t) {
+        ['news','planned'].forEach(function(t) {
           document.getElementById('b24t-wnm-' + t).style.display = btn.dataset.tab === t ? 'block' : 'none';
         });
         if (legend) legend.style.display = btn.dataset.tab === 'news' ? 'flex' : 'none';
       });
     });
-
-    // Bug Report button
-    document.getElementById('b24t-wnm-fb-send-bug')?.addEventListener('click', function() {
-      const statusEl = document.getElementById('b24t-wnm-fb-status');
-      const bugs = document.getElementById('b24t-wnm-fb-bugs')?.value.trim() || '';
-      if (!bugs) {
-        if (statusEl) { statusEl.textContent = '⚠ Opisz problem przed wysłaniem'; statusEl.style.color = '#facc15'; }
-        return;
-      }
-      openBugReportForm(bugs);
-      addLog('✓ Formularz Bug Report otwarty w nowej karcie', 'success');
-      if (statusEl) { statusEl.textContent = '✓ Formularz otwarty z danymi — opisz błąd i wyślij!'; statusEl.style.color = '#4ade80'; }
-      setTimeout(function() { closeWnm(); }, 2000);
-    });
-
-    // Suggestion button
-    document.getElementById('b24t-wnm-fb-send-suggest')?.addEventListener('click', function() {
-      const statusEl = document.getElementById('b24t-wnm-fb-status');
-      const ideas = document.getElementById('b24t-wnm-fb-ideas')?.value.trim() || '';
-      if (!ideas) {
-        if (statusEl) { statusEl.textContent = '⚠ Wpisz swój pomysł'; statusEl.style.color = '#facc15'; }
-        return;
-      }
-      openFeedbackForm(ideas);
-      addLog('✓ Formularz Feedback otwarty w nowej karcie', 'success');
-      if (statusEl) { statusEl.textContent = '✓ Formularz otwarty — opisz pomysł i wyślij!'; statusEl.style.color = '#4ade80'; }
-      setTimeout(function() { closeWnm(); }, 2000);
-    });
-
-    // Dev patch notes button
 
     function closeWnm() {
       lsSet('b24tagger_seen_version', VERSION);
@@ -9643,24 +9563,98 @@ function showOnboarding(onComplete) {
     }
     document.getElementById('b24t-wnm-close').addEventListener('click', closeWnm);
     document.getElementById('b24t-wnm-ok').addEventListener('click', closeWnm);
-
-    // Reset onboarding - dyskretny przycisk na dole zakładki Feedback
-    var wnmResetOb = document.getElementById('b24t-wnm-reset-onboarding');
-    if (wnmResetOb) {
-      wnmResetOb.addEventListener('mouseenter', function() { this.style.color = 'var(--b24t-primary)'; this.style.opacity = '1'; });
-      wnmResetOb.addEventListener('mouseleave', function() { this.style.color = 'var(--b24t-text-faint)'; this.style.opacity = '0.5'; });
-      wnmResetOb.addEventListener('click', function() {
-        closeWnm();
-        lsSet(LS.SETUP_DONE, false);
-        setTimeout(function() {
-          showOnboarding(function() { addLog('✓ Onboarding zakończony ponownie.', 'success'); });
-        }, 300);
-      });
-    }
     modal.addEventListener('click', function(e) { if (e.target === modal) closeWnm(); });
   }
 
+  function showFeedbackModal() {
+    if (document.getElementById('b24t-feedback-modal')) return;
+    const modal = document.createElement('div');
+    modal.id = 'b24t-feedback-modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;animation:b24t-fadein 0.2s ease;';
 
+    modal.innerHTML =
+      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:440px;max-height:86vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);">' +
+        '<div style="padding:10px 14px;background:var(--b24t-accent-grad);border-radius:14px 14px 0 0;display:flex;align-items:center;flex-shrink:0;gap:10px;">' +
+          '<div style="width:32px;height:32px;background:rgba(255,255,255,0.18);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">💬</div>' +
+          '<div style="flex:1;">' +
+            '<div style="font-size:14px;font-weight:700;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.2);">Feedback</div>' +
+            '<div style="font-size:11px;color:rgba(255,255,255,0.65);margin-top:1px;">B24 Tagger v' + VERSION + '</div>' +
+          '</div>' +
+          '<button id="b24t-fb-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:15px;line-height:1;padding:2px 7px;border-radius:5px;flex-shrink:0;">\u00d7</button>' +
+        '</div>' +
+        '<div style="overflow-y:auto;flex:1;min-height:0;padding:20px 24px;">' +
+          '<div style="border:1px solid rgba(248,113,113,0.25);border-radius:10px;background:var(--b24t-bg-elevated);margin-bottom:12px;overflow:hidden;">' +
+            '<div style="padding:14px 16px;border-bottom:1px solid rgba(248,113,113,0.15);display:flex;align-items:center;gap:10px;">' +
+              '<div style="width:30px;height:30px;background:rgba(248,113,113,0.12);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">🐛</div>' +
+              '<div>' +
+                '<div style="font-size:13px;font-weight:700;color:#f87171;">Bug Report</div>' +
+                '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Wersja, projekt, URL i logi wypełniają się automatycznie</div>' +
+              '</div>' +
+            '</div>' +
+            '<div style="padding:12px 16px;">' +
+              '<div style="font-size:11px;color:var(--b24t-text-faint);margin-bottom:8px;">Opisz problem:</div>' +
+              '<textarea id="b24t-fb-bugs" placeholder="Co się stało? Kiedy wystąpił błąd? Jakie kroki doprowadziły do problemu?" style="width:100%;height:80px;background:var(--b24t-bg-deep);border:1px solid var(--b24t-border);border-radius:6px;color:var(--b24t-text-muted);font-family:inherit;font-size:12px;padding:8px 10px;resize:none;box-sizing:border-box;outline:none;line-height:1.5;"></textarea>' +
+              '<button id="b24t-fb-send-bug" style="width:100%;margin-top:8px;background:#f87171;color:#fff;border:none;border-radius:7px;padding:9px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Otwórz formularz Bug Report →</button>' +
+            '</div>' +
+          '</div>' +
+          '<div style="border:1px solid var(--b24t-border);border-radius:10px;background:var(--b24t-bg-elevated);overflow:hidden;">' +
+            '<div style="padding:14px 16px;border-bottom:1px solid var(--b24t-border-sub);display:flex;align-items:center;gap:10px;">' +
+              '<div style="width:30px;height:30px;background:rgba(108,108,255,0.12);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">💡</div>' +
+              '<div>' +
+                '<div style="font-size:13px;font-weight:700;color:var(--b24t-primary);">Suggestion</div>' +
+                '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Pomysł na nową funkcję lub ulepszenie</div>' +
+              '</div>' +
+            '</div>' +
+            '<div style="padding:12px 16px;">' +
+              '<div style="font-size:11px;color:var(--b24t-text-faint);margin-bottom:8px;">Twój pomysł:</div>' +
+              '<textarea id="b24t-fb-ideas" placeholder="Jaka funkcja by Ci się przydała? Jak powinna działać?" style="width:100%;height:80px;background:var(--b24t-bg-deep);border:1px solid var(--b24t-border);border-radius:6px;color:var(--b24t-text-muted);font-family:inherit;font-size:12px;padding:8px 10px;resize:none;box-sizing:border-box;outline:none;line-height:1.5;"></textarea>' +
+              '<button id="b24t-fb-send-suggest" style="width:100%;margin-top:8px;background:var(--b24t-primary);color:#fff;border:none;border-radius:7px;padding:9px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Otwórz formularz Feedback →</button>' +
+            '</div>' +
+          '</div>' +
+          '<div id="b24t-fb-status" style="font-size:11px;min-height:14px;margin-top:10px;text-align:center;"></div>' +
+          '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--b24t-border-sub);text-align:center;">' +
+            '<button id="b24t-fb-reset-onboarding" style="background:none;border:none;color:var(--b24t-text-faint);font-size:10px;cursor:pointer;font-family:inherit;letter-spacing:0.03em;padding:4px 10px;border-radius:4px;transition:color 0.2s;opacity:0.5;">\u21ba Powtórz onboarding</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+    document.body.appendChild(modal);
+
+    function close() { modal.remove(); }
+    document.getElementById('b24t-fb-close').addEventListener('click', close);
+    modal.addEventListener('click', function(e) { if (e.target === modal) close(); });
+
+    document.getElementById('b24t-fb-send-bug').addEventListener('click', function() {
+      const statusEl = document.getElementById('b24t-fb-status');
+      const bugs = document.getElementById('b24t-fb-bugs').value.trim();
+      if (!bugs) { if (statusEl) { statusEl.textContent = '\u26a0 Opisz problem przed wysłaniem'; statusEl.style.color = '#facc15'; } return; }
+      openBugReportForm(bugs);
+      addLog('\u2713 Formularz Bug Report otwarty w nowej karcie', 'success');
+      if (statusEl) { statusEl.textContent = '\u2713 Formularz otwarty — opisz błąd i wyślij!'; statusEl.style.color = '#4ade80'; }
+      setTimeout(close, 2000);
+    });
+
+    document.getElementById('b24t-fb-send-suggest').addEventListener('click', function() {
+      const statusEl = document.getElementById('b24t-fb-status');
+      const ideas = document.getElementById('b24t-fb-ideas').value.trim();
+      if (!ideas) { if (statusEl) { statusEl.textContent = '\u26a0 Wpisz swój pomysł'; statusEl.style.color = '#facc15'; } return; }
+      openFeedbackForm(ideas);
+      addLog('\u2713 Formularz Feedback otwarty w nowej karcie', 'success');
+      if (statusEl) { statusEl.textContent = '\u2713 Formularz otwarty — opisz pomysł i wyślij!'; statusEl.style.color = '#4ade80'; }
+      setTimeout(close, 2000);
+    });
+
+    const fbResetOb = document.getElementById('b24t-fb-reset-onboarding');
+    if (fbResetOb) {
+      fbResetOb.addEventListener('mouseenter', function() { this.style.color = 'var(--b24t-primary)'; this.style.opacity = '1'; });
+      fbResetOb.addEventListener('mouseleave', function() { this.style.color = 'var(--b24t-text-faint)'; this.style.opacity = '0.5'; });
+      fbResetOb.addEventListener('click', function() {
+        close();
+        lsSet(LS.SETUP_DONE, false);
+        setTimeout(function() { showOnboarding(function() { addLog('\u2713 Onboarding zakończony ponownie.', 'success'); }); }, 300);
+      });
+    }
+  }
 
 
   // ───────────────────────────────────────────
@@ -9902,6 +9896,21 @@ function showOnboarding(onComplete) {
       '</label>';
     }).join('');
 
+    const _savedTheme = lsGet(LS.THEME, 'light');
+    const _themeTrackClass = 'b24t-slider-track' + (_savedTheme === 'dark' ? ' is-dark' : '');
+    const themeRowHtml =
+      '<div style="padding:12px 20px;border-bottom:1px solid var(--b24t-border-sub);display:flex;align-items:center;justify-content:space-between;">' +
+        '<div>' +
+          '<div style="font-size:13px;font-weight:600;color:var(--b24t-text);">Motyw interfejsu</div>' +
+          '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:2px;">Jasny lub ciemny motyw wtyczki</div>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:5px;cursor:pointer;" id="b24t-features-theme-wrap">' +
+          '<span style="font-size:11px;line-height:1;user-select:none;">☀️</span>' +
+          '<div id="b24t-theme-track" class="' + _themeTrackClass + '"><div class="b24t-slider-knob"></div></div>' +
+          '<span style="font-size:11px;line-height:1;user-select:none;">🌙</span>' +
+        '</div>' +
+      '</div>';
+
     modal.innerHTML =
       '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:16px;width:400px;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);">' +
         '<div style="padding:14px 0;background:var(--b24t-accent-grad);border-radius:16px 16px 0 0;display:flex;align-items:center;gap:10px;padding:14px 20px;">' +
@@ -9912,6 +9921,7 @@ function showOnboarding(onComplete) {
           '</div>' +
           '<button id="b24t-features-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:18px;line-height:1;padding:2px 8px;border-radius:5px;">✕</button>' +
         '</div>' +
+        themeRowHtml +
         '<div style="padding:4px 20px 0;">' + checkboxesHtml + '</div>' +
         '<div style="padding:12px 20px 4px;border-top:1px solid var(--b24t-border-sub);">' +
           '<div style="font-size:11px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Kanał aktualizacji</div>' +
@@ -9928,6 +9938,11 @@ function showOnboarding(onComplete) {
 
     document.getElementById('b24t-features-close').addEventListener('click', close);
     modal.addEventListener('click', function(e) { if (e.target === modal) close(); });
+
+    document.getElementById('b24t-theme-track')?.addEventListener('click', function() {
+      const current = document.documentElement.getAttribute('data-b24t-theme') || 'light';
+      applyTheme(current === 'light' ? 'dark' : 'light');
+    });
 
     document.getElementById('b24t-features-save').addEventListener('click', function() {
       const newFeatures = {};

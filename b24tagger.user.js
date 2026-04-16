@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.38
+// @version      0.23.39
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.38';
+  const VERSION = '0.23.39';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2315,10 +2315,8 @@
   _win.B24Tagger = window.B24Tagger = {
     state,
     version: VERSION,
-    exportReport,
     exportFailedMentions,
     exportSkippedMentions,
-    exportPartitions,
     debug: {
       getState: () => JSON.parse(JSON.stringify({ ...state, urlMap: `[${Object.keys(state.urlMap).length} entries]`, logs: `[${state.logs.length} entries]` })),
       sniffUiTag: () => { state._sniffUiTag = true; addLog('[SNIFF] Aktywny — otaguj teraz wzmiankę ręcznie w UI Brand24', 'info'); },
@@ -8985,6 +8983,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.39",
+      "date": "2026-04-16",
+      "label": "chore",
+      "labelColor": "#6b7280",
+      "changes": [
+        {"type": "chore", "text": "usunięcie martwego kodu — legacy sendFeedbackToSlack, refreshTagStats, deleteMentionsByTag, buildAutoDeleteKey, exportReport, exportPartitions"}
+      ]
+    },
+    {
       "version": "0.23.38",
       "date": "2026-04-16",
       "label": "ui",
@@ -9077,18 +9084,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "uproszczone skanowanie po URL jako opcja (⚙ w headerze panelu Import URLi), domyślnie wyłączone"},
         {"type": "feat", "text": "żywy licznik postępu skanowania w przycisku: '⟳ Skanowanie 3/15...' aktualizowany po każdym URL"},
         {"type": "feat", "text": "ustawienie urlSimpleMode zapisywane w localStorage"}
-      ]
-    },
-    {
-      "version": "0.23.29",
-      "date": "2026-04-14",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "fix skanowania treści: bodyEl identyfikowany przed usunięciem szumu — chroni kontener artykułu z klasą zawierającą 'widget', 'promo' itp."},
-        {"type": "fix", "text": "guard noise removal: el !== bodyEl && !el.contains(bodyEl) — przodkowie bodyEl też chronieni"},
-        {"type": "fix", "text": "header noise selector: 'header' → 'body > header' — nie usuwa <header> wewnątrz artykułu"},
-        {"type": "fix", "text": "nowe wzorce CMS w _CONTENT_ZONE_SEL: content__body, text-body, article__lead"}
       ]
     },
   ];
@@ -9390,13 +9385,6 @@ function showOnboarding(onComplete) {
     ]};
     sendToSlack(payload, onDone, function(err) { addLog('⚠ Błąd wysyłki Suggestion: ' + err, 'warn'); });
   }
-
-  // Legacy wrapper
-  function sendFeedbackToSlack(bugs, ideas, version, projectName) {
-    if (bugs) sendBugReport(bugs, function() {});
-    if (ideas) sendSuggestion(ideas, function() {});
-  }
-
 
   // What's New modal - extended with tabs (Co nowego / Planowane / Feedback)
   function showWhatsNewExtended(forceShow) {
@@ -10096,48 +10084,6 @@ function showOnboarding(onComplete) {
       '</div>';
   }
 
-  // Odśwież dane tag stats
-  async function refreshTagStats() {
-    const el = document.getElementById('b24t-tagstats-content');
-    if (!el) return;
-    if (!state.tokenHeaders) {
-      el.innerHTML = '<div style="padding:14px;font-size:11px;color:#f87171;">⚠ Token nie gotowy — odśwież stronę</div>';
-      return;
-    }
-
-    const projects = getKnownProjects();
-    if (projects.length === 0) {
-      el.innerHTML = '<div style="padding:14px;font-size:11px;color:var(--b24t-text-faint);">Brak zapisanych projektów. Odwiedź każdy projekt raz żeby go zarejestrować.</div>';
-      return;
-    }
-
-    // Daty — bieżący miesiąc (lub poprzedni na 1-2 dzień) — przez getAnnotatorDates (lokalne daty, bez UTC shift)
-    var _annDates = getAnnotatorDates();
-    var dateFrom = _annDates.dateFrom;
-    var dateTo   = _annDates.dateTo;
-
-    // Pokaż loader z postępem
-    el.innerHTML = '<div style="padding:20px;text-align:center;">' +
-      '<div style="font-size:11px;color:var(--b24t-text-faint);margin-bottom:8px;">↻ Pobieram dane ze wszystkich projektów...</div>' +
-      '<div id="b24t-tagstats-progress" style="font-size:10px;color:var(--b24t-text-faint);">0/' + projects.length + ' projektów</div>' +
-    '</div>';
-
-    const results = [];
-    for (let i = 0; i < projects.length; i++) {
-      const p = projects[i];
-      const progressEl = document.getElementById('b24t-tagstats-progress');
-      if (progressEl) progressEl.textContent = (i + 1) + '/' + projects.length + ' — ' + p.name;
-      try {
-        const counts = await fetchProjectTagCounts(p.id, p.reqVerId, p.toDeleteId, dateFrom, dateTo, null);
-        results.push({ name: p.name, id: p.id, ...counts });
-      } catch(e) {
-        results.push({ name: p.name, id: p.id, total: 0, reqVer: 0, toDelete: 0, error: e.message });
-      }
-    }
-
-    renderTagStats(el, results, dateFrom, dateTo);
-  }
-
   // ───────────────────────────────────────────
   // DASHBOARD ANNOTATORA
   // ───────────────────────────────────────────
@@ -10283,22 +10229,6 @@ function showOnboarding(onComplete) {
       '<div style="font-size:16px;font-weight:700;color:' + color + ';">' + (value ?? '—') + '</div>' +
       '<div style="font-size:9px;color:var(--b24t-text-faint);margin-top:2px;">' + label + '</div>' +
     '</div>';
-  }
-
-  // Odśwież dane dashboardu i wyrenderuj
-  async function refreshDashboard() {
-    const el = document.getElementById('b24t-dashboard-content');
-    if (!el) return;
-
-    // Pokaż loader
-    el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--b24t-text-faint);font-size:11px;">↻ Ładowanie...</div>';
-
-    try {
-      const stats = await fetchDashboardStats();
-      renderDashboard(el, stats);
-    } catch(e) {
-      el.innerHTML = '<div style="padding:14px;font-size:10px;color:#f87171;">⚠ ' + e.message + '</div>';
-    }
   }
 
   // ───────────────────────────────────────────
@@ -10856,36 +10786,6 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
   // DELETE MODE
 
-  // Delete all mentions with given tagId in given date range
-  async function deleteMentionsByTag(tagId, tagName, dateFrom, dateTo, onProgress) {
-    addLog(`→ Zbieram wzmianki do usunięcia (tag: ${tagName}, ${dateFrom} → ${dateTo})`, 'warn');
-    const allIds = await fetchAllIds(
-      p => getMentions(state.projectId, dateFrom, dateTo, [tagId], p),
-      onProgress
-    );
-
-    if (!allIds.length) {
-      addLog(`⚠ Brak wzmianek z tagiem "${tagName}" w podanym zakresie dat.`, 'warn');
-      return 0;
-    }
-
-    addLog(`→ Usuwam ${allIds.length} wzmianek z tagiem "${tagName}"... (batch=${_deleteBatch})`, 'warn');
-    let deleted = 0;
-    const BATCH = _deleteBatch;
-    for (let i = 0; i < allIds.length; i += BATCH) {
-      if (state.status === 'paused' || state.status === 'idle') break;
-      const chunk = allIds.slice(i, i + BATCH);
-      await Promise.all(chunk.map(id => gqlRetry('deleteMention', { id }, `mutation deleteMention($id: IntString!) {
-        deleteMention(id: $id)
-      }`)));
-      deleted += chunk.length;
-      if (onProgress) onProgress(deleted, allIds.length, deleted, allIds.length);
-    }
-
-    addLog(`✓ Usunięto ${deleted} wzmianek z tagiem "${tagName}"`, 'success');
-    return deleted;
-  }
-
   // Auto-delete prefs key for current project + mapping combo
   function getAutoDeletePrefKey() {
     if (!state.projectId || !state.mapping) return null;
@@ -11040,11 +10940,6 @@ function showOnboarding(onComplete) {
         });
       });
     });
-  }
-
-  // Build auto-delete key for localStorage (per project + tag)
-  function buildAutoDeleteKey(projectId, tagId) {
-    return `${projectId}_${tagId}`;
   }
 
   // Core delete function: collect all mention IDs with given tag in date range, then delete

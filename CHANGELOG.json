@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.39",
+    "date": "2026-04-16",
+    "label": "chore",
+    "changes": [
+      "chore: usunięcie martwego kodu — legacy sendFeedbackToSlack, refreshTagStats, deleteMentionsByTag, buildAutoDeleteKey, exportReport, exportPartitions"
+    ]
+  },
+  {
     "version": "0.23.38",
     "date": "2026-04-16",
     "label": "ui",

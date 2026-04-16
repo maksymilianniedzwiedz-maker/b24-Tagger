@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.39
+// @version      0.23.40
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.39';
+  const VERSION = '0.23.40';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7304,19 +7304,14 @@ function showOnboarding(onComplete) {
   }
 
   function openNewsPanels() {
-    // If already open — just show
-    if (document.getElementById('b24t-news-p1')) {
-      ['b24t-news-p1','b24t-news-p2','b24t-news-p3'].forEach(function(id) {
-        var el = document.getElementById(id);
-        if (el) el.style.display = 'flex';
-      });
+    var overlay = document.getElementById('b24t-news-overlay');
+    if (overlay) {
+      overlay.style.display = 'flex';
       newsState.panelsOpen = true;
       if (!newsState.wired) { _wireNewsPanels(); newsState.wired = true; }
-      // Re-stack import below list + odśwież chipy (mogły zniknąć lub kraj się zmienił)
       requestAnimationFrame(function() {
-        _newsStackPanels();
         if (_newsChipsRenderer) _newsChipsRenderer();
-        _newsRefillTags(); // odśwież tagi — projekt mógł się załadować po pierwszym buildie
+        _newsRefillTags();
       });
       return;
     }
@@ -7348,48 +7343,13 @@ function showOnboarding(onComplete) {
     };
   }
 
-  function _newsPanelBase(id, widthPx, topPx, rightPx, zIdx) {
-    var el = document.createElement('div');
-    el.id = id;
-    el.setAttribute('data-news-panel', '1');
-    el.style.cssText = [
-      'position:fixed;',
-      'top:' + topPx + 'px;',
-      'right:' + rightPx + 'px;',
-      'width:' + widthPx + 'px;',
-      'max-height:80vh;',
-      'z-index:' + (zIdx || 2147483630) + ';',
-      'display:flex;',
-      'flex-direction:column;',
-      'border-radius:14px;',
-      'border:1px solid var(--b24t-border);',
-      'background:var(--b24t-bg);',
-      'box-shadow:var(--b24t-shadow-h);',
-      'color:var(--b24t-text);',
-      'font-family:Inter,Segoe UI,system-ui,sans-serif;',
-      'font-size:13px;',
-      'overflow:hidden;',
-      'animation:b24t-slidein 0.28s cubic-bezier(0.34,1.56,0.64,1) both;',
-    ].join('');
-    return el;
-  }
-
-  function _newsPanelHeader(title, onClose, extraHtml) {
-    var d = document.createElement('div');
-    d.style.cssText = 'display:flex;align-items:center;padding:10px 14px;background:var(--b24t-accent-grad);flex-shrink:0;cursor:move;user-select:none;position:relative;overflow:hidden;';
-    d.innerHTML = '<span style="font-size:13px;font-weight:700;color:#fff;flex:1;text-shadow:0 1px 3px rgba(0,0,0,0.2);">' + title + '</span>' +
-      (extraHtml || '') +
-      '<button class="b24t-news-close-all" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:15px;line-height:1;padding:2px 7px;border-radius:5px;flex-shrink:0;">×</button>';
-    if (onClose) {
-      d.querySelector('.b24t-news-close-all').addEventListener('click', onClose);
-    }
-    return d;
-  }
 
   function closeNewsPanels() {
-    document.querySelectorAll('[data-news-panel]').forEach(function(el) { el.style.display = 'none'; });
+    var overlay = document.getElementById('b24t-news-overlay');
+    if (overlay) overlay.style.display = 'none';
+    var modal = document.getElementById('b24t-news-import-modal');
+    if (modal) modal.style.display = 'none';
     newsState.panelsOpen = false;
-    // Restore side tab visibility so user can reopen
     var nst = document.getElementById('b24t-news-side-tab');
     if (nst) {
       nst.classList.remove('active');
@@ -7399,28 +7359,100 @@ function showOnboarding(onComplete) {
 
   function _buildNewsPanels() {
     var t = _newsThemeVars();
-    // Position panels relative to right edge — use annTab strip width (always visible) or fixed offset
-    var annTab = document.getElementById('b24t-annotator-tab');
-    var annTabW = annTab ? annTab.getBoundingClientRect().width : 40;
-    var baseRight = annTabW + 10;
-    var PANEL_W = Math.min(360, Math.max(280, Math.round(window.innerWidth * 0.30)));
-    var GAP = 10;
-    var topList   = 80;
-    var topImport = null; // will be set after list renders — use estimate
 
-    // ─── PANEL 1: Lista URLi (top of left column) ───
-    var p1 = _newsPanelBase('b24t-news-p1', PANEL_W, topList, baseRight, 2147483632);
+    // ─── IMPORT MODAL ───
+    var modal = document.createElement('div');
+    modal.id = 'b24t-news-import-modal';
+    modal.style.cssText = 'display:none;position:fixed;inset:0;z-index:2147483645;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;font-family:Inter,Segoe UI,system-ui,sans-serif;';
+    var modalInner = document.createElement('div');
+    modalInner.style.cssText = 'background:' + t.bg + ';border:1px solid ' + t.border + ';border-radius:14px;padding:20px;width:500px;max-width:calc(100vw - 40px);max-height:88vh;overflow-y:auto;box-shadow:' + t.shadow + ';color:' + t.text + ';';
+    modalInner.innerHTML = [
+      '<div style="display:flex;align-items:center;margin-bottom:14px;">',
+        '<span style="font-size:14px;font-weight:700;color:' + t.text + ';flex:1;">📥 Importuj URLe</span>',
+        '<button id="b24t-news-import-settings-btn" style="background:transparent;border:1px solid ' + t.border + ';color:' + t.textMuted + ';cursor:pointer;font-size:13px;padding:2px 8px;border-radius:5px;margin-right:8px;" title="Ustawienia skanowania">⚙</button>',
+        '<button id="b24t-news-modal-close-btn" style="background:transparent;border:none;color:' + t.textMuted + ';cursor:pointer;font-size:22px;line-height:1;padding:0 4px;">×</button>',
+      '</div>',
+      '<div id="b24t-news-import-settings" style="display:none;padding:10px 12px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;margin-bottom:12px;">',
+        '<div style="font-size:10px;font-weight:700;color:' + t.textMuted + ';letter-spacing:0.06em;margin-bottom:8px;">USTAWIENIA SKANOWANIA</div>',
+        '<label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">',
+          '<input type="checkbox" id="b24t-news-opt-urlsimple" style="margin-top:2px;flex-shrink:0;"' + (_newsImportOpts.urlSimpleMode ? ' checked' : '') + '>',
+          '<span>',
+            '<span style="font-weight:600;color:' + t.text + ';">Uproszczone skanowanie (URL)</span>',
+            '<br><span style="font-size:10px;color:' + t.textFaint + ';line-height:1.4;">Klasyfikuje URLe tylko po adresie — szybsze, bez tytułu i daty.</span>',
+          '</span>',
+        '</label>',
+      '</div>',
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">',
+        '<label style="font-size:11px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">WKLEJ ADRESY URL</label>',
+        '<span style="font-size:9px;color:' + t.textFaint + ';">jeden na linię</span>',
+      '</div>',
+      '<textarea id="b24t-news-paste-area" rows="7" placeholder="Wklej URLe...\n\nhttps://example.com/artykul-1\nhttps://example.com/artykul-2" style="width:100%;box-sizing:border-box;font-size:10px;padding:8px 10px;border-radius:8px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';resize:vertical;font-family:monospace;line-height:1.5;min-height:130px;"></textarea>',
+      '<div id="b24t-news-country-row" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;margin-top:8px;">',
+        '<div style="display:flex;align-items:center;gap:6px;">',
+          '<span style="font-size:10px;color:' + t.textMuted + ';">Wykryty kraj URLi:</span>',
+          '<span id="b24t-news-country-badge" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;background:var(--b24t-primary);color:#fff;"></span>',
+          '<span id="b24t-news-country-proj" style="font-size:10px;color:' + t.textMuted + ';"></span>',
+        '</div>',
+        '<div id="b24t-news-country-warn" style="display:none;margin-top:5px;font-size:10px;color:#f59e0b;line-height:1.4;"></div>',
+      '</div>',
+      '<div style="margin-top:12px;">',
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">',
+          '<label style="font-size:11px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">SŁOWA KLUCZOWE</label>',
+          '<div style="display:flex;gap:4px;">',
+            '<button id="b24t-news-add-chip-btn" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textMuted + ';cursor:pointer;">+ Dodaj</button>',
+            '<button id="b24t-news-reset-chips-btn" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;" title="Przywróć domyślne">↺</button>',
+          '</div>',
+        '</div>',
+        '<div id="b24t-news-chips" style="display:flex;flex-wrap:wrap;gap:4px;min-height:24px;padding:6px 8px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';"></div>',
+        '<div style="margin-top:4px;font-size:9px;color:' + t.textFaint + ';">Chipy filtrowane per kraj i zapisywane automatycznie.</div>',
+      '</div>',
+      '<button id="b24t-news-import-btn" style="margin-top:14px;width:100%;padding:10px;border-radius:9px;border:none;background:var(--b24t-accent-grad);color:#fff;font-size:13px;font-weight:700;cursor:pointer;letter-spacing:0.02em;box-shadow:inset 0 1px 0 rgba(255,255,255,0.15);">▶ Skanuj URLe</button>',
+    ].join('');
+    modal.appendChild(modalInner);
+    modal.addEventListener('click', function(e) { if (e.target === modal) modal.style.display = 'none'; });
+    document.body.appendChild(modal);
 
-    var hdr1 = _newsPanelHeader('📋 Lista URLi', closeNewsPanels,
-      '<div id="b24t-news-winsize-wrap" style="position:relative;margin-right:6px;"><button id="b24t-news-winsize-btn" title="Rozmiar okna" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;">▢ Okno</button><div id="b24t-news-winsize-menu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:var(--b24t-bg-elevated);border:1px solid color-mix(in srgb,var(--b24t-primary) 40%,transparent);border-radius:8px;min-width:160px;box-shadow:var(--b24t-shadow-h);z-index:2147483699;overflow:hidden;"><div class="b24t-wsz" data-sz="900x700" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">900×700 (domyślne)</div><div class="b24t-wsz" data-sz="1100x800" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">1100×800 (duże)</div><div class="b24t-wsz" data-sz="800x600" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">800×600 (kompakt)</div><div class="b24t-wsz" data-sz="half" style="padding:7px 14px;font-size:11px;color:var(--b24t-text);cursor:pointer;">½ekranu (dyn.)</div></div></div><button id="b24t-news-langmap-btn" title="Mapa języków" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:11px;padding:2px 8px;border-radius:5px;margin-right:6px;">⚙ Języki</button>'
-    );
-    _newsDraggable(hdr1, p1);
+    // ─── MAIN OVERLAY ───
+    var overlay = document.createElement('div');
+    overlay.id = 'b24t-news-overlay';
+    overlay.style.cssText = 'display:flex;position:fixed;inset:0;z-index:2147483632;background:rgba(0,0,0,0.55);align-items:center;justify-content:center;font-family:Inter,Segoe UI,system-ui,sans-serif;animation:b24t-fadein 0.2s ease both;';
 
-    var body1 = document.createElement('div');
-    body1.style.cssText = 'display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;max-height:42vh;';
-    body1.innerHTML = [
-      // Progress bar
-      '<div id="b24t-news-progress-wrap" style="display:none;padding:8px 12px 0;flex-shrink:0;">',
+    var panelMain = document.createElement('div');
+    panelMain.id = 'b24t-news-panel-main';
+    panelMain.style.cssText = 'position:relative;width:calc(100vw - 40px);max-width:1400px;height:calc(100vh - 40px);max-height:900px;background:' + t.bg + ';border-radius:16px;border:1px solid ' + t.border + ';box-shadow:' + t.shadow + ';display:flex;flex-direction:column;overflow:hidden;color:' + t.text + ';';
+
+    // Header
+    var header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--b24t-accent-grad);flex-shrink:0;';
+    header.innerHTML = [
+      '<span style="font-size:13px;font-weight:700;color:#fff;flex:1;text-shadow:0 1px 3px rgba(0,0,0,0.2);">📰 News</span>',
+      '<button id="b24t-news-langmap-btn" style="background:rgba(255,255,255,0.20);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:11px;padding:3px 9px;border-radius:6px;flex-shrink:0;" title="Mapa języków">⚙ Języki</button>',
+      '<button id="b24t-news-modal-open-btn" style="background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.55);color:#fff;cursor:pointer;font-size:12px;font-weight:700;padding:5px 14px;border-radius:7px;flex-shrink:0;letter-spacing:0.01em;">+ Importuj URLe</button>',
+      '<span id="b24t-news-cms-dot" class="b24t-cms-checking" style="font-size:11px;font-weight:700;flex-shrink:0;cursor:default;color:rgba(255,255,255,0.5);" title="Sprawdzanie CMS...">● CMS</span>',
+      '<button class="b24t-news-close-all" style="background:rgba(255,255,255,0.20);border:1px solid rgba(255,255,255,0.4);color:#fff;cursor:pointer;font-size:17px;line-height:1;padding:1px 7px;border-radius:5px;flex-shrink:0;">×</button>',
+    ].join('');
+
+    // Tab bar (small screens < 880px)
+    var tabsBar = document.createElement('div');
+    tabsBar.id = 'b24t-news-tabs';
+    tabsBar.style.cssText = 'display:none;border-bottom:1px solid ' + t.border + ';flex-shrink:0;background:' + t.bg + ';';
+    tabsBar.innerHTML = [
+      '<button class="b24t-news-tab b24t-news-tab-active" data-tab="list" style="padding:8px 20px;border:none;background:transparent;font-size:12px;font-weight:600;color:var(--b24t-primary);cursor:pointer;border-bottom:2px solid var(--b24t-primary);">Lista</button>',
+      '<button class="b24t-news-tab" data-tab="form" style="padding:8px 20px;border:none;background:transparent;font-size:12px;font-weight:500;color:' + t.textMuted + ';cursor:pointer;border-bottom:2px solid transparent;">Formularz</button>',
+    ].join('');
+
+    // Columns container
+    var cols = document.createElement('div');
+    cols.id = 'b24t-news-cols';
+    cols.style.cssText = 'display:flex;flex:1;min-height:0;overflow:hidden;';
+
+    // Left column: URL list
+    var colList = document.createElement('div');
+    colList.id = 'b24t-news-col-list';
+    colList.style.cssText = 'width:340px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid ' + t.border + ';min-height:0;overflow:hidden;';
+    colList.innerHTML = [
+      // Progress bar (scan + session) — shown when URLs present
+      '<div id="b24t-news-progress-wrap" style="display:none;padding:8px 10px 0;flex-shrink:0;">',
         '<div style="display:flex;justify-content:space-between;font-size:10px;color:' + t.textMuted + ';margin-bottom:4px;">',
           '<span>Postęp sesji</span>',
           '<span id="b24t-news-progress-label">0 / 0</span>',
@@ -7429,185 +7461,52 @@ function showOnboarding(onComplete) {
           '<div id="b24t-news-progress-bar" style="height:6px;background:var(--b24t-accent-grad);width:0%;transition:width 0.4s ease;border-radius:2px;"></div>',
         '</div>',
       '</div>',
-      // Filter bar — pokazuje się gdy są nie-artykuły w liście
-      '<div id="b24t-news-filter-bar" style="display:none;padding:3px 8px;flex-shrink:0;border-bottom:1px solid ' + t.borderSub + ';align-items:center;gap:6px;flex-wrap:wrap;">',
-        '<button id="b24t-news-filter-nonarticle" style="font-size:9px;padding:2px 8px;border-radius:4px;border:1px solid ' + t.border + ';background:rgba(107,114,128,0.08);color:' + t.textMuted + ';cursor:pointer;transition:background 0.15s,color 0.15s,border-color 0.15s;">Ukryj nie-artyku\u0142y (0)</button>',
+      // Filter bar
+      '<div id="b24t-news-filter-bar" style="display:none;padding:4px 8px;flex-shrink:0;border-bottom:1px solid ' + t.borderSub + ';align-items:center;gap:6px;flex-wrap:wrap;">',
+        '<button id="b24t-news-filter-nonarticle" style="font-size:9px;padding:2px 8px;border-radius:4px;border:1px solid ' + t.border + ';background:rgba(107,114,128,0.08);color:' + t.textMuted + ';cursor:pointer;">Ukryj nie-artykuły (0)</button>',
       '</div>',
-      // List
+      // URL list
       '<div id="b24t-news-url-list" style="flex:1;overflow-y:auto;padding:8px 6px;display:flex;flex-direction:column;gap:3px;min-height:0;">',
-        '<div id="b24t-news-empty" style="padding:24px 16px;text-align:center;">',
-          '<div style="font-size:28px;margin-bottom:8px;">📋</div>',
-          '<div style="font-size:12px;font-weight:600;color:' + t.text + ';margin-bottom:4px;">Brak URLi</div>',
-          '<div style="font-size:11px;color:' + t.textFaint + ';line-height:1.5;">Wklej adresy w panelu importu<br>i kliknij ▶ Wczytaj URLe</div>',
+        '<div id="b24t-news-empty" style="padding:32px 16px;text-align:center;">',
+          '<div style="font-size:32px;margin-bottom:10px;">📋</div>',
+          '<div style="font-size:13px;font-weight:600;color:' + t.text + ';margin-bottom:6px;">Brak URLi</div>',
+          '<div style="font-size:11px;color:' + t.textFaint + ';line-height:1.7;">Kliknij <strong style="color:' + t.text + ';">+ Importuj URLe</strong><br>i wklej adresy do przeskanowania.</div>',
         '</div>',
       '</div>',
-      // Bulk action bar
-      '<div id="b24t-news-bulk-bar" style="display:flex;flex-wrap:wrap;gap:4px;padding:6px 10px;flex-shrink:0;border-top:1px solid ' + t.borderSub + ';min-height:0;"></div>',
+      // Bulk bar
+      '<div id="b24t-news-bulk-bar" style="display:flex;flex-wrap:wrap;gap:4px;padding:5px 8px;flex-shrink:0;border-top:1px solid ' + t.borderSub + ';min-height:0;"></div>',
+      // Scan status info (visible in main panel)
+      '<div id="b24t-news-import-info" style="display:none;font-size:10px;text-align:center;padding:3px 8px;flex-shrink:0;"></div>',
+      '<div id="b24t-news-project-info" style="display:none;font-size:10px;text-align:center;padding:2px 8px 4px;flex-shrink:0;"></div>',
       // Next button
-      '<div style="padding:4px 10px 8px;flex-shrink:0;">',
-        '<button id="b24t-news-next-btn" style="width:100%;padding:6px;border-radius:8px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-size:11px;cursor:pointer;font-weight:500;">▼ Następny relevantny</button>',
+      '<div style="padding:4px 8px 8px;flex-shrink:0;">',
+        '<button id="b24t-news-next-btn" style="width:100%;padding:6px;border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-size:11px;cursor:pointer;font-weight:500;">▼ Następny relevantny</button>',
       '</div>',
     ].join('');
 
-    p1.appendChild(hdr1);
-    p1.appendChild(body1);
-    document.body.appendChild(p1);
-    _updatePanelClass(p1);
+    // Right column: mention form
+    var colForm = document.createElement('div');
+    colForm.id = 'b24t-news-col-form';
+    colForm.style.cssText = 'flex:1;display:flex;flex-direction:column;overflow-y:auto;padding:14px 16px;gap:10px;min-width:0;';
 
-    // ─── LEGEND PANEL (small, attached top-right of P1) ───
-    var legend = document.createElement('div');
-    legend.id = 'b24t-news-legend';
-    legend.setAttribute('data-news-panel', '1');
-    legend.style.cssText = [
-      'position:fixed;',
-      'z-index:2147483633;',
-      'background:' + t.bg + ';',
-      'border:1px solid ' + t.border + ';',
-      'border-radius:10px;',
-      'padding:8px 12px;',
-      'font-family:Inter,Segoe UI,system-ui,sans-serif;',
-      'font-size:10px;',
-      'color:' + t.text + ';',
-      'box-shadow:' + t.shadow + ';',
-      'min-width:180px;',
-    ].join('');
-    var legendGroups = [
-      {
-        title: 'RELEVANTNE',
-        items: [
-          { dot: '●', color: '#22c55e', label: 'Keyword w URL' },
-          { dot: '◆', color: '#4ade80', label: 'Główny temat (score 12+)' },
-          { dot: '◆', color: '#06b6d4', label: 'Kontekst (score 5–11)' },
-          { dot: '◆', color: '#facc15', label: 'Wzmianka (score 1–4)' },
-          { dot: '●', color: '#f97316', label: 'Keyword w URL, inny kraj' },
-        ]
-      },
-      {
-        title: 'SESJA',
-        items: [
-          { dot: '●', color: '#a78bfa', label: 'Otwarty / weryfikowany' },
-          { dot: '✓', color: '#15803d', label: 'Dodany do Brand24' },
-          { dot: '✗', color: '#ef4444', label: 'Błąd / duplikat' },
-        ]
-      },
-      {
-        title: 'POMINIĘTE',
-        items: [
-          { dot: '◌', color: '#818cf8', label: 'Skanowanie...' },
-          { dot: '—', color: '#6b7280', label: 'Nie przeskanowana — otwórz ręcznie' },
-          { dot: '○', color: '#4b5563', label: 'Brak keyword' },
-          { dot: '●', color: '#64748b', label: 'Już w projekcie' },
-        ]
-      },
-    ];
-    legend.innerHTML = '<div style="font-size:10px;font-weight:700;color:' + t.textMuted + ';letter-spacing:0.04em;margin-bottom:7px;text-transform:uppercase;">Legenda</div>' +
-      legendGroups.map(function(grp) {
-        return '<div style="font-size:9px;font-weight:700;color:' + t.textFaint + ';letter-spacing:0.06em;margin:5px 0 3px;text-transform:uppercase;">' + grp.title + '</div>' +
-          grp.items.map(function(item) {
-            return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">' +
-              '<span style="font-size:11px;font-weight:700;color:' + item.color + ';width:12px;text-align:center;flex-shrink:0;">' + item.dot + '</span>' +
-              '<span style="color:' + t.textMuted + ';font-size:10px;">' + item.label + '</span>' +
-            '</div>';
-          }).join('');
-      }).join('');
-    document.body.appendChild(legend);
-
-    // Position legend to the left of P1 after first paint
-    requestAnimationFrame(function() {
-      _newsPositionLegend();
-    });
-
-    // ─── PANEL 2: Import URLi (bottom of left column, below p1) ───
-    // Position below p1 — use p1's estimated height (42vh + header ~40px + footer ~46px)
-    // We'll update position after DOM paint via requestAnimationFrame
-    var p2 = _newsPanelBase('b24t-news-p2', PANEL_W, topList, baseRight, 2147483631);
-    // Remove bottom-attachment of position — will be set dynamically
-    p2.style.removeProperty('top');
-    p2.style.top = topList + 'px'; // temporary, fixed by _newsStackPanels()
-
-    var hdr2 = _newsPanelHeader('📥 Import URLi', closeNewsPanels,
-      '<button id="b24t-news-import-settings-btn" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:13px;line-height:1;padding:2px 7px;border-radius:5px;flex-shrink:0;margin-right:4px;" title="Ustawienia importu">⚙</button>');
-    _newsDraggable(hdr2, p2);
-
-    var body2 = document.createElement('div');
-    body2.style.cssText = 'padding:12px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;flex:1;min-height:0;';
-    body2.innerHTML = [
-      // Paste area
-      '<div>',
-        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">',
-          '<label style="font-size:11px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">WKLEJ ADRESY URL</label>',
-          '<span style="font-size:9px;color:' + t.textFaint + ';">jeden na linię</span>',
-        '</div>',
-        '<textarea id="b24t-news-paste-area" rows="4" placeholder="Wklej URLe z arkusza H&M Manually...\n\nURLe nie zostaną przetworzone dopóki nie klikniesz &quot;Wczytaj URLe&quot; poniżej." style="width:100%;box-sizing:border-box;font-size:10px;padding:7px 9px;border-radius:8px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';resize:vertical;font-family:monospace;min-height:80px;line-height:1.5;"></textarea>',
-        '<button id="b24t-news-import-btn" style="margin-top:6px;width:100%;padding:7px;border-radius:8px;border:none;background:var(--b24t-accent-grad);color:#fff;font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em;box-shadow:inset 0 1px 0 rgba(255,255,255,0.15);">▶ Wczytaj URLe</button>',
-        '<div id="b24t-news-import-info" style="display:none;font-size:10px;text-align:center;margin-top:4px;"></div>' +
-        '<div id="b24t-news-project-info" style="display:none;font-size:10px;text-align:center;margin-top:2px;"></div>',
+    colForm.innerHTML = [
+      '<div id="b24t-news-cms-warn" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.5;flex-shrink:0;">' +
+        '<span id="b24t-news-cms-warn-text"></span>' +
+        '<button id="b24t-news-cms-recheck" style="display:inline-block;margin-left:8px;font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:' + t.yellow + ';cursor:pointer;">↺ Sprawdź ponownie</button>' +
       '</div>',
-      // Ustawienia importu (collapsible)
-      '<div id="b24t-news-import-settings" style="display:none;padding:10px 12px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;">',
-        '<div style="font-size:10px;font-weight:700;color:' + t.textMuted + ';letter-spacing:0.06em;margin-bottom:8px;">USTAWIENIA SKANOWANIA</div>',
-        '<label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">',
-          '<input type="checkbox" id="b24t-news-opt-urlsimple" style="margin-top:2px;flex-shrink:0;"' + (_newsImportOpts.urlSimpleMode ? ' checked' : '') + '>',
-          '<span>',
-            '<span style="font-weight:600;color:' + t.text + ';">Uproszczone skanowanie (URL)</span>',
-            '<br><span style="font-size:10px;color:' + t.textFaint + ';line-height:1.4;">Klasyfikuje URLe tylko po adresie — szybsze, ale bez tytułu, daty ani oceny trafności. Domyślnie wyłączone.</span>',
-          '</span>',
-        '</label>',
+      '<div id="b24t-news-form-err" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.redBg + ';border:1px solid rgba(239,68,68,0.35);font-size:10px;color:' + t.red + ';line-height:1.4;flex-shrink:0;"></div>',
+      '<div id="b24t-news-lang-warn" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.4;flex-shrink:0;"></div>',
+      _newsFormRow('URL wzmianki', '<input id="b24t-news-f-url" type="text" readonly placeholder="(kliknij URL z listy)" style="' + _newsInputCss(t) + 'font-family:monospace;font-size:10px;opacity:0.75;"><button id="b24t-news-lang-force-open" style="display:none;flex-shrink:0;font-size:9px;padding:3px 6px;border-radius:5px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:' + t.yellow + ';cursor:pointer;margin-left:4px;" title="Otwórz mimo ostrzeżenia">Otwórz</button>', true, 'flex'),
+      '<div style="display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">',
+        '<span style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">DANE ARTYKUŁU</span>',
+        '<button id="b24t-news-clear-btn" style="background:transparent;border:1px solid ' + t.border + ';color:' + t.textMuted + ';cursor:pointer;font-size:10px;padding:2px 8px;border-radius:5px;">✕ Wyczyść</button>',
       '</div>',
-      // Country detection
-      '<div id="b24t-news-country-row" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;">',
-        '<div style="display:flex;align-items:center;gap:6px;">',
-          '<span style="font-size:10px;color:' + t.textMuted + ';">Wykryty kraj URLi:</span>',
-          '<span id="b24t-news-country-badge" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;background:var(--b24t-primary);color:#fff;"></span>',
-          '<span id="b24t-news-country-proj" style="font-size:10px;color:' + t.textMuted + ';"></span>',
-        '</div>',
-        '<div id="b24t-news-country-warn" style="display:none;margin-top:5px;font-size:10px;color:#f59e0b;line-height:1.4;"></div>',
-      '</div>',
-      // Keywords chips
-      '<div>',
-        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">',
-          '<label style="font-size:11px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">SŁOWA KLUCZOWE</label>',
-          '<div style="display:flex;gap:4px;">',
-            '<button id="b24t-news-add-chip-btn" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textMuted + ';cursor:pointer;">+ Dodaj</button>',
-            '<button id="b24t-news-reset-chips-btn" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;" title="Przywróć domyślne">↺</button>',
-          '</div>',
-        '</div>',
-        '<div id="b24t-news-chips" style="display:flex;flex-wrap:wrap;gap:4px;min-height:22px;padding:6px 8px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';"></div>',
-        '<div style="margin-top:4px;font-size:9px;color:' + t.textFaint + ';">Chipy filtrowane per kraj i zapisywane automatycznie.</div>',
-      '</div>',
-    ].join('');
-
-    p2.appendChild(hdr2);
-    p2.appendChild(body2);
-    document.body.appendChild(p2);
-    _updatePanelClass(p2);
-
-    // ─── PANEL 3: Formularz wzmianki (right column) ───
-    var p3 = _newsPanelBase('b24t-news-p3', PANEL_W, topList, baseRight + PANEL_W + GAP, 2147483630);
-
-    var clearBtnHtml = '<span id="b24t-news-cms-dot" class="b24t-cms-checking" style="font-size:11px;font-weight:700;flex-shrink:0;margin-right:6px;cursor:default;color:#6b7280;" title="Sprawdzanie CMS...">● CMS</span><button id="b24t-news-clear-btn" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;font-size:10px;font-weight:600;padding:2px 8px;border-radius:5px;flex-shrink:0;margin-right:4px;letter-spacing:0.02em;" title="Wyczyść tytuł i treść">✕ Wyczyść</button>';
-    var hdr3 = _newsPanelHeader('✍ Formularz wzmianki', closeNewsPanels, clearBtnHtml);
-    _newsDraggable(hdr3, p3);
-
-    var body3 = document.createElement('div');
-    body3.style.cssText = 'padding:12px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;flex:1;min-height:0;';
-
-    var cmsBannerHtml = '<div id="b24t-news-cms-warn" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.5;">' +
-      '<span id="b24t-news-cms-warn-text"></span>' +
-      '<button id="b24t-news-cms-recheck" style="display:inline-block;margin-left:8px;font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:' + t.yellow + ';cursor:pointer;">↺ Sprawdź ponownie</button>' +
-    '</div>';
-
-    body3.innerHTML = [
-      cmsBannerHtml,
-      '<div id="b24t-news-form-err" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.redBg + ';border:1px solid rgba(239,68,68,0.35);font-size:10px;color:' + t.red + ';line-height:1.4;"></div>',
-      '<div id="b24t-news-lang-warn" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.4;"></div>',
-      _newsFormRow('URL wzmianki', '<input id="b24t-news-f-url" type="text" readonly placeholder="(wybierz URL z listy)" style="' + _newsInputCss(t) + 'font-family:monospace;font-size:10px;opacity:0.75;"><button id="b24t-news-lang-force-open" style="display:none;flex-shrink:0;font-size:9px;padding:3px 6px;border-radius:5px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:' + t.yellow + ';cursor:pointer;margin-left:4px;" title="Otwórz mimo ostrzeżenia">Otwórz</button>', true, 'flex'),
       _newsFormRow('Tytuł artykułu', '<input id="b24t-news-f-title" type="text" placeholder="Wklej tytuł artykułu..." style="' + _newsInputCss(t) + '">', true),
-      '<div style="display:flex;flex-direction:column;gap:4px;">' +
+      '<div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">' +
         '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">TREŚĆ <span style="color:#ef4444;">*</span></label>' +
         '<textarea id="b24t-news-f-content" rows="3" placeholder="Wklej fragment treści artykułu..." style="' + _newsInputCss(t) + 'resize:vertical;min-height:60px;"></textarea>' +
       '</div>',
-      '<div style="display:flex;gap:6px;">',
+      '<div style="display:flex;gap:6px;flex-shrink:0;">',
         '<div style="flex:2;display:flex;flex-direction:column;gap:4px;">',
           '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">DATA <span style="color:#ef4444;">*</span></label>',
           '<div style="display:flex;gap:4px;align-items:center;">',
@@ -7624,8 +7523,8 @@ function showOnboarding(onComplete) {
           '<input id="b24t-news-f-minute" type="text" value="00" style="' + _newsInputCss(t) + '">',
         '</div>',
       '</div>',
-      '<div style="display:flex;gap:6px;">',
-        '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
+      '<div style="display:flex;gap:6px;flex-shrink:0;">',
+        '<div style="flex:2;display:flex;flex-direction:column;gap:4px;">',
           '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">KAT.</label>',
           '<input type="text" value="7 — News" readonly style="' + _newsInputCss(t) + 'opacity:0.5;">',
         '</div>',
@@ -7643,7 +7542,7 @@ function showOnboarding(onComplete) {
           '</select>',
         '</div>',
       '</div>',
-      '<div id="b24t-news-tag-row" style="border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;overflow:hidden;">' +
+      '<div id="b24t-news-tag-row" style="border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;overflow:hidden;flex-shrink:0;">' +
         '<div id="b24t-news-tag-toggle" style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;cursor:pointer;user-select:none;" title="Rozwiń/zwiń listę tagów">' +
           '<span style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">TAGI</span>' +
           '<div style="display:flex;align-items:center;gap:6px;">' +
@@ -7651,55 +7550,61 @@ function showOnboarding(onComplete) {
             '<span id="b24t-news-tag-chevron" style="font-size:10px;color:' + t.textFaint + ';transition:transform 0.2s;">▼</span>' +
           '</div>' +
         '</div>' +
-        '<div id="b24t-news-tag-list" style="display:none;flex-wrap:wrap;gap:5px;padding:0 10px 8px;max-height:200px;overflow-y:auto;"></div>' +
+        '<div id="b24t-news-tag-list" style="display:none;flex-wrap:wrap;gap:5px;padding:0 10px 8px;max-height:160px;overflow-y:auto;"></div>' +
       '</div>',
-      '<button id="b24t-news-submit-btn" style="padding:9px;border-radius:9px;border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:12px;font-weight:700;cursor:pointer;width:100%;letter-spacing:0.03em;transition:opacity 0.15s;">✚ Dodaj wzmiankę do Brand24</button>',
-      '<div id="b24t-news-submit-status" style="font-size:10px;text-align:center;min-height:14px;font-weight:500;"></div>',
+      '<button id="b24t-news-submit-btn" style="flex-shrink:0;padding:9px;border-radius:9px;border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:12px;font-weight:700;cursor:pointer;width:100%;letter-spacing:0.03em;transition:opacity 0.15s;">✚ Dodaj wzmiankę do Brand24</button>',
+      '<div id="b24t-news-submit-status" style="font-size:10px;text-align:center;min-height:14px;font-weight:500;flex-shrink:0;"></div>',
     ].join('');
 
-    p3.appendChild(hdr3);
-    p3.appendChild(body3);
-    document.body.appendChild(p3);
+    cols.appendChild(colList);
+    cols.appendChild(colForm);
+    panelMain.appendChild(header);
+    panelMain.appendChild(tabsBar);
+    panelMain.appendChild(cols);
+    overlay.appendChild(panelMain);
+    document.body.appendChild(overlay);
 
-    // Stack p2 (Import) below p1 (Lista) after DOM paint
-    requestAnimationFrame(function() {
-      _newsStackPanels();
+    // Responsive: switch between columns and tabs at < 880px
+    function _newsApplyResponsive() {
+      var narrow = panelMain.offsetWidth < 880;
+      tabsBar.style.display = narrow ? '' : 'none';
+      if (!narrow) {
+        colList.style.display = 'flex';
+        colForm.style.display = 'flex';
+        colList.style.width = '340px';
+        colList.style.borderRight = '1px solid ' + t.border;
+      } else {
+        var activeTab = tabsBar.querySelector('.b24t-news-tab-active');
+        var activeTabName = activeTab ? activeTab.dataset.tab : 'list';
+        colList.style.display = activeTabName === 'list' ? 'flex' : 'none';
+        colForm.style.display = activeTabName === 'form' ? 'flex' : 'none';
+        colList.style.width = '100%';
+        colList.style.borderRight = 'none';
+      }
+    }
+    requestAnimationFrame(_newsApplyResponsive);
+    if (window.ResizeObserver) {
+      new ResizeObserver(_newsApplyResponsive).observe(panelMain);
+    }
+
+    tabsBar.querySelectorAll('.b24t-news-tab').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        tabsBar.querySelectorAll('.b24t-news-tab').forEach(function(b) {
+          b.classList.remove('b24t-news-tab-active');
+          b.style.color = t.textMuted;
+          b.style.fontWeight = '500';
+          b.style.borderBottom = '2px solid transparent';
+        });
+        btn.classList.add('b24t-news-tab-active');
+        btn.style.color = 'var(--b24t-primary)';
+        btn.style.fontWeight = '600';
+        btn.style.borderBottom = '2px solid var(--b24t-primary)';
+        _newsApplyResponsive();
+      });
     });
 
-    // Wypełnij listę tagów — wywoływane też przy każdym otwarciu panelu
     _newsRefillTags();
   }
-
-  // Keep Import panel flush below Lista panel (left column)
-  function _newsPositionLegend() {
-    var p1 = document.getElementById('b24t-news-p1');
-    var lg = document.getElementById('b24t-news-legend');
-    if (!p1 || !lg) return;
-    var r1 = p1.getBoundingClientRect();
-    // Position legend to the right of P1's right edge (which uses css `right:`),
-    // but if panel has been dragged it uses `left:`. Use right edge of p1 + gap.
-    var lgW = lg.offsetWidth || 188;
-    // Place it at top-right corner of p1, shifted right by small gap — but
-    // it should not overlap p3. Keep it tight: left = p1.right - lgW (floats over right edge)
-    // Actually: position it just BELOW the p1 header, to the right of the list panel
-    lg.style.top  = (r1.top + 2) + 'px';
-    lg.style.left = (r1.right + 8) + 'px';
-    lg.style.right = 'auto';
-  }
-
-  function _newsStackPanels() {
-    var p1 = document.getElementById('b24t-news-p1');
-    var p2 = document.getElementById('b24t-news-p2');
-    if (!p1 || !p2) return;
-    var r1 = p1.getBoundingClientRect();
-    var newTop = r1.bottom + 8;
-    p2.style.top   = newTop + 'px';
-    p2.style.right = p1.style.right;
-    p2.style.left  = p1.style.left || 'auto';
-    _newsPositionLegend();
-  }
-
-
   function _newsInputCss(t) {
     return 'width:100%;box-sizing:border-box;font-size:11px;padding:6px 8px;border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-family:Inter,Segoe UI,system-ui,sans-serif;outline:none;transition:border-color 0.15s;';
   }
@@ -7709,47 +7614,6 @@ function showOnboarding(onComplete) {
       '<label style="font-size:10px;font-weight:600;color:var(--b24t-text-muted, #8b8fa8);letter-spacing:0.04em;">' + label.toUpperCase() + (required ? ' <span style="color:#ef4444;">*</span>' : '') + '</label>' +
       '<div style="display:' + (display || 'block') + ';align-items:center;">' + inputHtml + '</div>' +
     '</div>';
-  }
-
-  function _newsDraggable(handle, panel) {
-    var dragging = false, ox = 0, oy = 0;
-    var isP1 = panel.id === 'b24t-news-p1';
-    var isP2 = panel.id === 'b24t-news-p2';
-    handle.addEventListener('mousedown', function(e) {
-      if (e.target.tagName === 'BUTTON') return;
-      dragging = true;
-      _bringToFront(panel);
-      var r = panel.getBoundingClientRect();
-      ox = e.clientX - r.left;
-      oy = e.clientY - r.top;
-      e.preventDefault();
-    });
-    document.addEventListener('mousemove', function(e) {
-      if (!dragging) return;
-      var newLeft = Math.max(0, Math.min(window.innerWidth  - panel.offsetWidth,  e.clientX - ox));
-      var newTop  = Math.max(0, Math.min(window.innerHeight - panel.offsetHeight, e.clientY - oy));
-      panel.style.left  = newLeft + 'px';
-      panel.style.top   = newTop  + 'px';
-      panel.style.right = 'auto';
-      if (isP1) {
-        requestAnimationFrame(function() { _newsStackPanels(); });
-      }
-      // Dragging P2 (Import) also moves P1 (Lista) so they stay together
-      if (isP2) {
-        var p1 = document.getElementById('b24t-news-p1');
-        if (p1) {
-          var p1H = p1.offsetHeight;
-          p1.style.left  = newLeft + 'px';
-          p1.style.top   = Math.max(0, newTop - p1H - 8) + 'px';
-          p1.style.right = 'auto';
-          requestAnimationFrame(_newsPositionLegend);
-        }
-      }
-    });
-    document.addEventListener('mouseup', function() {
-      if (dragging && (isP1 || isP2)) _newsStackPanels();
-      dragging = false;
-    });
   }
 
   function _newsCheckTagDodane() {
@@ -7859,55 +7723,23 @@ function showOnboarding(onComplete) {
     var langMapBtn = document.getElementById('b24t-news-langmap-btn');
     if (langMapBtn) langMapBtn.addEventListener('click', _newsOpenLangMapEditor);
 
-    // ─── WINDOW SIZE DROPDOWN ───
-    (function() {
-      var wBtn  = document.getElementById('b24t-news-winsize-btn');
-      var wMenu = document.getElementById('b24t-news-winsize-menu');
-      if (!wBtn || !wMenu) return;
-
-      // Mark active option on open
-      function refreshActive() {
-        var cur = lsGet(LS.NEWS_WIN_SIZE, '900x700');
-        wMenu.querySelectorAll('.b24t-wsz').forEach(function(el) {
-          var active = el.getAttribute('data-sz') === cur;
-          el.style.background = active ? 'rgba(139,92,246,0.25)' : 'transparent';
-          el.style.color = active ? '#a78bfa' : '#e2e8f0';
-          el.style.fontWeight = active ? '700' : '400';
-        });
-        // Update button label to show current size
-        var labels = {'900x700':'900×700','1100x800':'1100×800','800x600':'800×600','half':'½ekranu'};
-        wBtn.textContent = '▢ ' + (labels[cur] || cur);
-      }
-      refreshActive();
-
-      wBtn.addEventListener('click', function(e) {
-        e.stopPropagation();
-        var open = wMenu.style.display !== 'none';
-        wMenu.style.display = open ? 'none' : 'block';
-        if (!open) refreshActive();
+    // ─── MODAL BUTTONS ───
+    var modalOpenBtn = document.getElementById('b24t-news-modal-open-btn');
+    var importModal  = document.getElementById('b24t-news-import-modal');
+    if (modalOpenBtn && importModal) {
+      modalOpenBtn.addEventListener('click', function() {
+        importModal.style.display = 'flex';
+        if (_newsChipsRenderer) _newsChipsRenderer();
+        var pasteEl = document.getElementById('b24t-news-paste-area');
+        if (pasteEl) setTimeout(function() { pasteEl.focus(); }, 50);
       });
-
-      wMenu.querySelectorAll('.b24t-wsz').forEach(function(el) {
-        el.addEventListener('mouseenter', function() {
-          el.style.background = 'rgba(139,92,246,0.15)';
-        });
-        el.addEventListener('mouseleave', function() {
-          var cur = lsGet(LS.NEWS_WIN_SIZE, '900x700');
-          el.style.background = el.getAttribute('data-sz') === cur ? 'rgba(139,92,246,0.25)' : 'transparent';
-        });
-        el.addEventListener('click', function(e) {
-          e.stopPropagation();
-          lsSet(LS.NEWS_WIN_SIZE, el.getAttribute('data-sz'));
-          wMenu.style.display = 'none';
-          refreshActive();
-        });
+    }
+    var modalCloseBtn = document.getElementById('b24t-news-modal-close-btn');
+    if (modalCloseBtn && importModal) {
+      modalCloseBtn.addEventListener('click', function() {
+        importModal.style.display = 'none';
       });
-
-      // Close on outside click
-      document.addEventListener('click', function() {
-        wMenu.style.display = 'none';
-      });
-    })();
+    }
 
     // ─── CHIPS ───
     // Eksportuj referencję na poziom modułu — żeby openNewsPanels() mogło wywołać re-render
@@ -8502,6 +8334,10 @@ function showOnboarding(onComplete) {
       // Blokuj ponowne kliknięcie gdy skanowanie w toku
       if (newsState.scanning) return;
 
+      // Zamknij modal importu — skan odbywa się na żywo w liście
+      var _importModal = document.getElementById('b24t-news-import-modal');
+      if (_importModal) _importModal.style.display = 'none';
+
       var raw = pasteArea ? pasteArea.value : '';
       var lines = raw.split('\n').map(function(l) { return l.trim(); }).filter(function(l) { return /^https?:\/\//.test(l); });
       var seen = {};
@@ -8649,7 +8485,7 @@ function showOnboarding(onComplete) {
       if (_newsBar) _newsBar.classList.remove('b24t-bar-active');
       if (importBtn) {
         importBtn.disabled = false;
-        importBtn.textContent = '▶ Wczytaj URLe';
+        importBtn.textContent = '▶ Skanuj URLe';
         importBtn.style.opacity = '';
       }
 
@@ -8983,6 +8819,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.40",
+      "date": "2026-04-17",
+      "label": "feat",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "feat", "text": "News — przebudowa paneli na jeden fullscreen overlay (95vw×95vh) z dwiema kolumnami: lista URLi + formularz wzmianki"},
+        {"type": "feat", "text": "News — import URLi przeniesiony do modalu popup (przycisk 'Importuj URLe' → modal z textarea + chips + Skanuj → zamknięcie modalu, live skan w liście)"},
+        {"type": "feat", "text": "News — live feedback skanowania: pulsujący pasek postępu, chipy i doty relevantności pojawiają się na bieżąco"},
+        {"type": "feat", "text": "News — responsywny układ: zakładki [Lista | Formularz] na wąskich ekranach (< 880px), kolumny na szerokich"}
+      ]
+    },
+    {
       "version": "0.23.39",
       "date": "2026-04-16",
       "label": "chore",
@@ -9072,18 +8920,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#8b5cf6",
       "changes": [
         {"type": "ui", "text": "kompaktowy widok listy URL w panelu News — wszystkie badże (słowo kluczowe, data, język, nie-artykuł, paywall) w jednym wierszu zamiast stackowania wertykalnego"}
-      ]
-    },
-    {
-      "version": "0.23.30",
-      "date": "2026-04-14",
-      "label": "feat",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "feat", "text": "skanowanie treści stron jako metoda domyślna — każdy URL przechodzi przez content scan (tytuł, data, snippet, score)"},
-        {"type": "feat", "text": "uproszczone skanowanie po URL jako opcja (⚙ w headerze panelu Import URLi), domyślnie wyłączone"},
-        {"type": "feat", "text": "żywy licznik postępu skanowania w przycisku: '⟳ Skanowanie 3/15...' aktualizowany po każdym URL"},
-        {"type": "feat", "text": "ustawienie urlSimpleMode zapisywane w localStorage"}
       ]
     },
   ];

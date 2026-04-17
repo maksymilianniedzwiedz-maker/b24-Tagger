@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.44
+// @version      0.23.45
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.44';
+  const VERSION = '0.23.45';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -217,12 +217,20 @@
 
   function _aiDefaultSettings() {
     return {
-      apiKey: '', model: 'claude-haiku-4-5-20251001', prompts: [],
-      tagging: { activePromptId: null, batchSize: 10, firstUseWarningShown: false },
-      news: { enabled: false, maxCallsPerDay: 100 }
+      apiKey: '', prompts: [],
+      tagging: { model: 'claude-haiku-4-5-20251001', activePromptId: null, batchSize: 10, firstUseWarningShown: false },
+      news: { model: 'claude-haiku-4-5-20251001', enabled: false }
     };
   }
-  function _aiGetSettings() { return lsGet(LS.AI_SETTINGS, _aiDefaultSettings()); }
+  function _aiGetSettings() {
+    var s = lsGet(LS.AI_SETTINGS, _aiDefaultSettings());
+    if (!s.news) s.news = {};
+    if (!s.tagging) s.tagging = {};
+    if (!s.news.model) s.news.model = s.model || 'claude-haiku-4-5-20251001';
+    if (!s.tagging.model) s.tagging.model = s.model || 'claude-haiku-4-5-20251001';
+    if (!s.prompts) s.prompts = [];
+    return s;
+  }
   function _aiSaveSettings(s) { lsSet(LS.AI_SETTINGS, s); }
   function _aiUuid() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
@@ -235,19 +243,117 @@
     if (!list) return;
     var s = _aiGetSettings();
     if (!s.prompts.length) {
-      list.innerHTML = '<div style="font-size:10px;color:var(--b24t-text-faint);padding:4px 0;">Brak promptów — dodaj pierwszy.</div>';
+      list.innerHTML = '<div style="font-size:10px;color:#999;padding:4px 0;">Brak promptów — dodaj pierwszy.</div>';
       return;
     }
     function esc(str) { return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
     list.innerHTML = s.prompts.map(function(p) {
       var isActive = s.tagging.activePromptId === p.id;
-      return '<div style="display:flex;align-items:center;gap:4px;padding:4px 6px;background:var(--b24t-bg-card);border:1px solid var(--b24t-border);border-radius:6px;">' +
-        '<span style="flex:1;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(p.name) + '">' + esc(p.name) + '</span>' +
-        '<button class="b24t-btn-ghost" data-ai-set="' + esc(p.id) + '" style="font-size:10px;padding:1px 5px;' + (isActive ? 'color:var(--b24t-primary);font-weight:600;' : '') + '">' + (isActive ? '● Aktywny' : 'Ustaw') + '</button>' +
-        '<button class="b24t-btn-ghost" data-ai-edit="' + esc(p.id) + '" style="font-size:10px;padding:1px 5px;">✎</button>' +
-        '<button class="b24t-btn-ghost" data-ai-del="' + esc(p.id) + '" style="font-size:10px;padding:1px 5px;color:var(--b24t-danger);">✕</button>' +
+      return '<div style="display:flex;align-items:center;gap:4px;padding:5px 8px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:7px;">' +
+        '<span style="flex:1;font-size:12px;color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(p.name) + '">' + esc(p.name) + '</span>' +
+        '<button data-ai-set="' + esc(p.id) + '" style="font-size:10px;padding:2px 7px;background:transparent;border:1px solid #ccc;border-radius:5px;cursor:pointer;' + (isActive ? 'color:#6366f1;font-weight:700;border-color:#6366f1;' : 'color:#666;') + '">' + (isActive ? '● Aktywny' : 'Ustaw') + '</button>' +
+        '<button data-ai-edit="' + esc(p.id) + '" style="font-size:11px;padding:2px 7px;background:transparent;border:1px solid #ccc;color:#555;border-radius:5px;cursor:pointer;">✎</button>' +
+        '<button data-ai-del="' + esc(p.id) + '" style="font-size:11px;padding:2px 7px;background:transparent;border:1px solid #fca5a5;color:#ef4444;border-radius:5px;cursor:pointer;">✕</button>' +
         '</div>';
     }).join('');
+  }
+
+  function _showPromptLibraryModal() {
+    if (document.getElementById('b24t-prompt-lib-modal')) return;
+    var modal = document.createElement('div');
+    modal.id = 'b24t-prompt-lib-modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;backdrop-filter:blur(4px);animation:b24t-fadein 0.2s ease;';
+    modal.innerHTML =
+      '<div style="background:#fff;border:1px solid #e0e0e0;border-radius:16px;width:480px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,0.22);animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);">' +
+        '<div style="padding:14px 20px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:16px 16px 0 0;display:flex;align-items:center;gap:10px;flex-shrink:0;">' +
+          '<span style="font-size:18px;">📚</span>' +
+          '<div style="flex:1;">' +
+            '<div style="font-size:13px;font-weight:700;color:#fff;">Biblioteka promptów</div>' +
+            '<div style="font-size:10px;color:rgba(255,255,255,0.7);margin-top:2px;">Zarządzaj promptami systemowymi dla AI</div>' +
+          '</div>' +
+          '<button id="b24t-prompt-lib-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:18px;line-height:1;padding:2px 8px;border-radius:5px;">✕</button>' +
+        '</div>' +
+        '<div style="overflow-y:auto;flex:1;padding:16px 20px;">' +
+          '<div id="b24t-ai-prompt-list" style="display:flex;flex-direction:column;gap:5px;margin-bottom:12px;"></div>' +
+          '<button id="b24t-ai-add-prompt" style="width:100%;font-size:12px;padding:7px 0;background:transparent;border:1px dashed #bbb;color:#666;border-radius:8px;cursor:pointer;font-family:inherit;">+ Dodaj nowy prompt</button>' +
+          '<div id="b24t-ai-prompt-editor" style="display:none;margin-top:12px;padding:12px;background:#f7f7f7;border:1px solid #e0e0e0;border-radius:10px;">' +
+            '<input type="text" id="b24t-ai-prompt-name" placeholder="Nazwa (np. InditexGroup TR)" style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:8px;border:1px solid #ddd;background:#fff;color:#333;font-size:12px;margin-bottom:7px;">' +
+            '<textarea id="b24t-ai-prompt-body" rows="5" placeholder="Treść system promptu..." style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:8px;border:1px solid #ddd;background:#fff;color:#333;font-size:11px;resize:vertical;font-family:monospace;"></textarea>' +
+            '<div style="display:flex;gap:6px;margin-top:8px;">' +
+              '<button id="b24t-ai-prompt-save" style="flex:1;font-size:12px;padding:6px 0;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;border-radius:7px;cursor:pointer;font-family:inherit;font-weight:600;">Zapisz</button>' +
+              '<button id="b24t-ai-prompt-cancel" style="flex:1;font-size:12px;padding:6px 0;background:transparent;border:1px solid #ddd;color:#666;border-radius:7px;cursor:pointer;font-family:inherit;">Anuluj</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(modal);
+    _aiRenderPromptList();
+
+    function closeLib() { modal.remove(); }
+    document.getElementById('b24t-prompt-lib-close').addEventListener('click', closeLib);
+    modal.addEventListener('click', function(e) { if (e.target === modal) closeLib(); });
+
+    var promptEditor = document.getElementById('b24t-ai-prompt-editor');
+    var promptNameInput = document.getElementById('b24t-ai-prompt-name');
+    var promptBodyInput = document.getElementById('b24t-ai-prompt-body');
+
+    function openEditor(id) {
+      _aiEditingPromptId = id || null;
+      if (id) {
+        var cfg = _aiGetSettings();
+        var p = cfg.prompts.find(function(x) { return x.id === id; });
+        if (p) {
+          if (promptNameInput) promptNameInput.value = p.name;
+          if (promptBodyInput) promptBodyInput.value = p.system;
+        }
+      } else {
+        if (promptNameInput) promptNameInput.value = '';
+        if (promptBodyInput) promptBodyInput.value = '';
+      }
+      if (promptEditor) promptEditor.style.display = '';
+    }
+
+    document.getElementById('b24t-ai-add-prompt').addEventListener('click', function() { openEditor(null); });
+
+    document.getElementById('b24t-ai-prompt-save').addEventListener('click', function() {
+      var name = (promptNameInput && promptNameInput.value.trim()) || '';
+      var system = (promptBodyInput && promptBodyInput.value.trim()) || '';
+      if (!name || !system) return;
+      var cfg = _aiGetSettings();
+      if (_aiEditingPromptId) {
+        var p = cfg.prompts.find(function(x) { return x.id === _aiEditingPromptId; });
+        if (p) { p.name = name; p.system = system; }
+      } else {
+        cfg.prompts.push({ id: _aiUuid(), name: name, system: system, createdAt: new Date().toISOString(), knownAssessments: [], tagMap: {} });
+      }
+      _aiSaveSettings(cfg);
+      _aiEditingPromptId = null;
+      if (promptEditor) promptEditor.style.display = 'none';
+      _aiRenderPromptList();
+    });
+
+    document.getElementById('b24t-ai-prompt-cancel').addEventListener('click', function() {
+      _aiEditingPromptId = null;
+      if (promptEditor) promptEditor.style.display = 'none';
+    });
+
+    document.getElementById('b24t-ai-prompt-list').addEventListener('click', function(e) {
+      var setBtn = e.target.closest('[data-ai-set]');
+      var editBtn = e.target.closest('[data-ai-edit]');
+      var delBtn = e.target.closest('[data-ai-del]');
+      var cfg = _aiGetSettings();
+      if (setBtn) {
+        if (!cfg.tagging) cfg.tagging = {};
+        cfg.tagging.activePromptId = setBtn.dataset.aiSet;
+        _aiSaveSettings(cfg); _aiRenderPromptList();
+      } else if (editBtn) {
+        openEditor(editBtn.dataset.aiEdit);
+      } else if (delBtn) {
+        cfg.prompts = cfg.prompts.filter(function(p) { return p.id !== delBtn.dataset.aiDel; });
+        if (cfg.tagging && cfg.tagging.activePromptId === delBtn.dataset.aiDel) cfg.tagging.activePromptId = null;
+        _aiSaveSettings(cfg); _aiRenderPromptList();
+      }
+    });
   }
 
   // ── PROJECT NAME RESOLVER ──────────────────────────────────────────────────
@@ -9008,6 +9114,20 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.45",
+      "date": "2026-04-17",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Ustawienia AI — klucz API bez autofill hasła (type=text + autocomplete=off)"},
+        {"type": "fix", "text": "dropdown modelu — hardcoded kolory, czytelny na białym tle (color-scheme:light)"},
+        {"type": "feat", "text": "wybór modelu osobno dla News i Tagowania"},
+        {"type": "feat", "text": "Biblioteka promptów przeniesiona do osobnego modalu"},
+        {"type": "fix", "text": "usunięty limit dzienny wywołań AI"},
+        {"type": "fix", "text": "modal ⚙ — max-height:90vh + scroll (overflow przy wielu elementach)"}
+      ]
+    },
+    {
       "version": "0.23.44",
       "date": "2026-04-17",
       "label": "fix",
@@ -9100,15 +9220,6 @@ function showOnboarding(onComplete) {
         {"type": "ui", "text": "redesign modalu Changelog & Feedback — gradient header, CSS vars, spójny styl z resztą paneli; light/dark theme działa automatycznie"},
         {"type": "ui", "text": "baner aktualizacji — font-family Inter zamiast monospace, kolory przez CSS vars"},
         {"type": "ui", "text": "rewizja słownictwa UI — naturalniejszy język w onboardingu, trybie pomocy i komunikatach; labelki → oceny, niezmatched → niedopasowane"}
-      ]
-    },
-    {
-      "version": "0.23.35",
-      "date": "2026-04-14",
-      "label": "ui",
-      "labelColor": "#8b5cf6",
-      "changes": [
-        {"type": "ui", "text": "spójny styl przycisków we wszystkich nagłówkach paneli — News, Annotator, Features, Groups, Overall (jaśniejsze tło 0.28, border 0.5, box-shadow)"}
       ]
     },
   ];
@@ -9925,7 +10036,7 @@ function showOnboarding(onComplete) {
       '</div>';
 
     modal.innerHTML =
-      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:16px;width:400px;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);">' +
+      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:16px;width:400px;max-height:90vh;overflow-y:auto;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);">' +
         '<div style="padding:14px 0;background:var(--b24t-accent-grad);border-radius:16px 16px 0 0;display:flex;align-items:center;gap:10px;padding:14px 20px;">' +
           '<span style="font-size:18px;">⚙</span>' +
           '<div style="flex:1;">' +
@@ -9942,44 +10053,37 @@ function showOnboarding(onComplete) {
         '</div>' +
         '<div style="padding:12px 20px 16px;border-top:1px solid var(--b24t-border-sub);">' +
           '<div style="font-size:11px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Ustawienia AI</div>' +
-          '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">' +
+          '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">' +
             '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">Klucz API:</span>' +
-            '<input type="password" id="b24t-ai-api-key" placeholder="sk-ant-..." style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:monospace;">' +
+            '<input type="text" id="b24t-ai-api-key" autocomplete="off" spellcheck="false" placeholder="sk-ant-api03-..." style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:monospace;">' +
             '<button id="b24t-ai-key-toggle" title="Pokaż/ukryj" style="padding:3px 7px;flex-shrink:0;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;cursor:pointer;font-size:13px;">👁</button>' +
           '</div>' +
-          '<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">' +
+          '<div style="height:1px;background:var(--b24t-border-sub);margin:4px 0 10px;"></div>' +
+          '<div style="font-size:10px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:7px;">News</div>' +
+          '<div style="display:flex;align-items:center;gap:6px;margin-bottom:7px;">' +
             '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">Model:</span>' +
-            '<select id="b24t-ai-model" style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:inherit;">' +
+            '<select id="b24t-ai-model-news" style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:#fff;color:#333;font-size:11px;font-family:inherit;color-scheme:light;">' +
               '<option value="claude-haiku-4-5-20251001">Haiku 4.5 — szybki, tani</option>' +
               '<option value="claude-sonnet-4-6">Sonnet 4.6 — mocniejszy</option>' +
             '</select>' +
           '</div>' +
-          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">' +
-            '<span style="font-size:11px;font-weight:600;color:var(--b24t-text-muted);">Biblioteka promptów</span>' +
-            '<button id="b24t-ai-add-prompt" style="font-size:10px;padding:2px 8px;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:5px;cursor:pointer;font-family:inherit;">+ Dodaj</button>' +
-          '</div>' +
-          '<div id="b24t-ai-prompt-list" style="display:flex;flex-direction:column;gap:3px;margin-bottom:4px;"></div>' +
-          '<div id="b24t-ai-prompt-editor" style="display:none;margin-bottom:8px;padding:8px;background:var(--b24t-bg-deep);border:1px solid var(--b24t-border);border-radius:8px;">' +
-            '<input type="text" id="b24t-ai-prompt-name" placeholder="Nazwa (np. InditexGroup TR)" style="width:100%;box-sizing:border-box;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;margin-bottom:5px;">' +
-            '<textarea id="b24t-ai-prompt-body" rows="4" placeholder="Treść system promptu..." style="width:100%;box-sizing:border-box;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;resize:vertical;font-family:monospace;"></textarea>' +
-            '<div style="display:flex;gap:4px;margin-top:5px;">' +
-              '<button id="b24t-ai-prompt-save" style="flex:1;font-size:11px;padding:4px 0;background:var(--b24t-accent-grad);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:inherit;">Zapisz</button>' +
-              '<button id="b24t-ai-prompt-cancel" style="flex:1;font-size:11px;padding:4px 0;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;cursor:pointer;font-family:inherit;">Anuluj</button>' +
-            '</div>' +
-          '</div>' +
-          '<div style="height:1px;background:var(--b24t-border-sub);margin:6px 0;"></div>' +
-          '<label style="display:flex;gap:10px;align-items:center;cursor:pointer;padding:4px 0;">' +
+          '<label style="display:flex;gap:10px;align-items:center;cursor:pointer;padding:4px 0;margin-bottom:4px;">' +
             '<input type="checkbox" id="b24t-ai-news-enabled" style="accent-color:var(--b24t-primary);width:14px;height:14px;flex-shrink:0;cursor:pointer;">' +
             '<div>' +
               '<div style="font-size:12px;font-weight:600;color:var(--b24t-text);">AI scoring w module News</div>' +
               '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Automatyczna ocena artykułów przez Claude</div>' +
             '</div>' +
           '</label>' +
-          '<div id="b24t-ai-news-limit-row" style="display:none;align-items:center;gap:6px;margin-top:4px;">' +
-            '<span style="font-size:11px;color:var(--b24t-text-muted);">Limit dzienny:</span>' +
-            '<input type="number" id="b24t-ai-news-limit" min="1" max="1000" style="width:60px;padding:4px 8px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;">' +
-            '<span style="font-size:10px;color:var(--b24t-text-faint);">wywołań/dzień</span>' +
+          '<div style="height:1px;background:var(--b24t-border-sub);margin:8px 0 10px;"></div>' +
+          '<div style="font-size:10px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:7px;">Tagowanie</div>' +
+          '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">' +
+            '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">Model:</span>' +
+            '<select id="b24t-ai-model-tagging" style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:#fff;color:#333;font-size:11px;font-family:inherit;color-scheme:light;">' +
+              '<option value="claude-haiku-4-5-20251001">Haiku 4.5 — szybki, tani</option>' +
+              '<option value="claude-sonnet-4-6">Sonnet 4.6 — mocniejszy</option>' +
+            '</select>' +
           '</div>' +
+          '<button id="b24t-ai-open-prompts" style="width:100%;box-sizing:border-box;padding:7px 12px;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:8px;cursor:pointer;font-family:inherit;font-size:11px;display:flex;align-items:center;justify-content:space-between;">📚 Biblioteka promptów<span style="font-size:10px;opacity:0.6;">→</span></button>' +
         '</div>' +
         '<div style="padding:14px 20px;border-top:1px solid var(--b24t-border-sub);text-align:right;">' +
           '<button id="b24t-features-save" style="background:var(--b24t-accent-grad);color:#fff;border:none;border-radius:8px;padding:9px 24px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px var(--b24t-primary-glow);transition:opacity 0.15s;">Zapisz</button>' +
@@ -9997,22 +10101,14 @@ function showOnboarding(onComplete) {
     (function() {
       var s = _aiGetSettings();
       var apiKeyInput = document.getElementById('b24t-ai-api-key');
-      var modelSelect = document.getElementById('b24t-ai-model');
+      var newsModelSelect = document.getElementById('b24t-ai-model-news');
+      var taggingModelSelect = document.getElementById('b24t-ai-model-tagging');
       var newsEnabledCb = document.getElementById('b24t-ai-news-enabled');
-      var newsLimitInput = document.getElementById('b24t-ai-news-limit');
-      var newsLimitRow = document.getElementById('b24t-ai-news-limit-row');
-      var promptEditor = document.getElementById('b24t-ai-prompt-editor');
-      var promptNameInput = document.getElementById('b24t-ai-prompt-name');
-      var promptBodyInput = document.getElementById('b24t-ai-prompt-body');
 
       if (apiKeyInput) apiKeyInput.value = s.apiKey || '';
-      if (modelSelect) modelSelect.value = s.model || 'claude-haiku-4-5-20251001';
-      if (newsEnabledCb) {
-        newsEnabledCb.checked = !!(s.news && s.news.enabled);
-        if (newsLimitRow) newsLimitRow.style.display = newsEnabledCb.checked ? 'flex' : 'none';
-      }
-      if (newsLimitInput) newsLimitInput.value = (s.news && s.news.maxCallsPerDay) || 100;
-      _aiRenderPromptList();
+      if (newsModelSelect) newsModelSelect.value = (s.news && s.news.model) || 'claude-haiku-4-5-20251001';
+      if (taggingModelSelect) taggingModelSelect.value = (s.tagging && s.tagging.model) || 'claude-haiku-4-5-20251001';
+      if (newsEnabledCb) newsEnabledCb.checked = !!(s.news && s.news.enabled);
 
       if (apiKeyInput) {
         apiKeyInput.addEventListener('change', function() {
@@ -10025,95 +10121,29 @@ function showOnboarding(onComplete) {
           apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
         });
       }
-      if (modelSelect) {
-        modelSelect.addEventListener('change', function() {
-          var cfg = _aiGetSettings(); cfg.model = modelSelect.value; _aiSaveSettings(cfg);
+      if (newsModelSelect) {
+        newsModelSelect.addEventListener('change', function() {
+          var cfg = _aiGetSettings();
+          if (!cfg.news) cfg.news = {};
+          cfg.news.model = newsModelSelect.value; _aiSaveSettings(cfg);
+        });
+      }
+      if (taggingModelSelect) {
+        taggingModelSelect.addEventListener('change', function() {
+          var cfg = _aiGetSettings();
+          if (!cfg.tagging) cfg.tagging = {};
+          cfg.tagging.model = taggingModelSelect.value; _aiSaveSettings(cfg);
         });
       }
       if (newsEnabledCb) {
         newsEnabledCb.addEventListener('change', function() {
           var cfg = _aiGetSettings();
           if (!cfg.news) cfg.news = {};
-          cfg.news.enabled = newsEnabledCb.checked;
-          _aiSaveSettings(cfg);
-          if (newsLimitRow) newsLimitRow.style.display = newsEnabledCb.checked ? 'flex' : 'none';
+          cfg.news.enabled = newsEnabledCb.checked; _aiSaveSettings(cfg);
         });
       }
-      if (newsLimitInput) {
-        newsLimitInput.addEventListener('change', function() {
-          var cfg = _aiGetSettings();
-          if (!cfg.news) cfg.news = {};
-          cfg.news.maxCallsPerDay = parseInt(newsLimitInput.value) || 100;
-          _aiSaveSettings(cfg);
-        });
-      }
-
-      function openPromptEditor(id) {
-        _aiEditingPromptId = id || null;
-        if (id) {
-          var cfg = _aiGetSettings();
-          var p = cfg.prompts.find(function(x) { return x.id === id; });
-          if (p) {
-            if (promptNameInput) promptNameInput.value = p.name;
-            if (promptBodyInput) promptBodyInput.value = p.system;
-          }
-        } else {
-          if (promptNameInput) promptNameInput.value = '';
-          if (promptBodyInput) promptBodyInput.value = '';
-        }
-        if (promptEditor) promptEditor.style.display = '';
-      }
-
-      var addPromptBtn = document.getElementById('b24t-ai-add-prompt');
-      if (addPromptBtn) addPromptBtn.addEventListener('click', function() { openPromptEditor(null); });
-
-      var promptSaveBtn = document.getElementById('b24t-ai-prompt-save');
-      if (promptSaveBtn) {
-        promptSaveBtn.addEventListener('click', function() {
-          var name = (promptNameInput && promptNameInput.value.trim()) || '';
-          var system = (promptBodyInput && promptBodyInput.value.trim()) || '';
-          if (!name || !system) return;
-          var cfg = _aiGetSettings();
-          if (_aiEditingPromptId) {
-            var p = cfg.prompts.find(function(x) { return x.id === _aiEditingPromptId; });
-            if (p) { p.name = name; p.system = system; }
-          } else {
-            cfg.prompts.push({ id: _aiUuid(), name: name, system: system, createdAt: new Date().toISOString(), knownAssessments: [], tagMap: {} });
-          }
-          _aiSaveSettings(cfg);
-          _aiEditingPromptId = null;
-          if (promptEditor) promptEditor.style.display = 'none';
-          _aiRenderPromptList();
-        });
-      }
-
-      var promptCancelBtn = document.getElementById('b24t-ai-prompt-cancel');
-      if (promptCancelBtn) {
-        promptCancelBtn.addEventListener('click', function() {
-          _aiEditingPromptId = null;
-          if (promptEditor) promptEditor.style.display = 'none';
-        });
-      }
-
-      var promptList = document.getElementById('b24t-ai-prompt-list');
-      if (promptList) {
-        promptList.addEventListener('click', function(e) {
-          var setBtn = e.target.closest('[data-ai-set]');
-          var editBtn = e.target.closest('[data-ai-edit]');
-          var delBtn = e.target.closest('[data-ai-del]');
-          var cfg = _aiGetSettings();
-          if (setBtn) {
-            cfg.tagging.activePromptId = setBtn.dataset.aiSet;
-            _aiSaveSettings(cfg); _aiRenderPromptList();
-          } else if (editBtn) {
-            openPromptEditor(editBtn.dataset.aiEdit);
-          } else if (delBtn) {
-            cfg.prompts = cfg.prompts.filter(function(p) { return p.id !== delBtn.dataset.aiDel; });
-            if (cfg.tagging.activePromptId === delBtn.dataset.aiDel) cfg.tagging.activePromptId = null;
-            _aiSaveSettings(cfg); _aiRenderPromptList();
-          }
-        });
-      }
+      var openPromptsBtn = document.getElementById('b24t-ai-open-prompts');
+      if (openPromptsBtn) openPromptsBtn.addEventListener('click', function() { _showPromptLibraryModal(); });
     })();
 
     document.getElementById('b24t-theme-track')?.addEventListener('click', function() {

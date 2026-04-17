@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.23.41",
+    "date": "2026-04-17",
+    "label": "feat",
+    "changes": [
+      "feat: News — Faza 2: środkowa kolumna z podglądem artykułu (iframe gdy strona pozwala, rich preview card gdy nie)",
+      "feat: News — detekcja iframeable podczas skanowania (X-Frame-Options, CSP frame-ancestors)",
+      "feat: News — rich preview card: tytuł, snippet, badże (status, data, język, chipy, paywall), przycisk 'Otwórz w nowej karcie'",
+      "feat: News — badge ▢ na liście przy URLach z dostępnym iframe",
+      "feat: News — 3 zakładki na wąskich ekranach [Lista | Podgląd | Formularz], auto-switch do Podglądu po kliknięciu artykułu"
+    ]
+  },
+  {
     "version": "0.23.40",
     "date": "2026-04-17",
     "label": "feat",

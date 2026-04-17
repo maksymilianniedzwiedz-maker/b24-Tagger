@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.40
+// @version      0.23.41
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.40';
+  const VERSION = '0.23.41';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7131,7 +7131,26 @@ function showOnboarding(onComplete) {
               _done({ status: 'nomatch', score: 0, snippet: '' });
               return;
             }
-            _done(_newsParseContent(resp.responseText, chips));
+            // Iframeable — X-Frame-Options lub CSP frame-ancestors
+            var _rh = ct; // już lowercase
+            var _iframeable = true;
+            var _xfoM = _rh.match(/x-frame-options:\s*([a-z\-]+)/);
+            if (_xfoM && (_xfoM[1] === 'deny' || _xfoM[1] === 'sameorigin')) _iframeable = false;
+            if (_iframeable) {
+              var _cspIdx = _rh.indexOf('content-security-policy:');
+              if (_cspIdx !== -1) {
+                var _cspEnd = _rh.indexOf('\n', _cspIdx);
+                var _cspLine = _cspEnd !== -1 ? _rh.slice(_cspIdx, _cspEnd) : _rh.slice(_cspIdx);
+                var _faIdx = _cspLine.indexOf('frame-ancestors');
+                if (_faIdx !== -1) {
+                  var _faVal = _cspLine.slice(_faIdx + 15).replace(/^\s+/, '').split(';')[0];
+                  if (_faVal.indexOf('*') === -1) _iframeable = false;
+                }
+              }
+            }
+            var _sr = _newsParseContent(resp.responseText, chips);
+            _sr.iframeable = _iframeable;
+            _done(_sr);
           },
           onerror: function() {
             clearTimeout(timer);
@@ -7437,8 +7456,9 @@ function showOnboarding(onComplete) {
     tabsBar.id = 'b24t-news-tabs';
     tabsBar.style.cssText = 'display:none;border-bottom:1px solid ' + t.border + ';flex-shrink:0;background:' + t.bg + ';';
     tabsBar.innerHTML = [
-      '<button class="b24t-news-tab b24t-news-tab-active" data-tab="list" style="padding:8px 20px;border:none;background:transparent;font-size:12px;font-weight:600;color:var(--b24t-primary);cursor:pointer;border-bottom:2px solid var(--b24t-primary);">Lista</button>',
-      '<button class="b24t-news-tab" data-tab="form" style="padding:8px 20px;border:none;background:transparent;font-size:12px;font-weight:500;color:' + t.textMuted + ';cursor:pointer;border-bottom:2px solid transparent;">Formularz</button>',
+      '<button class="b24t-news-tab b24t-news-tab-active" data-tab="list" style="padding:8px 16px;border:none;background:transparent;font-size:12px;font-weight:600;color:var(--b24t-primary);cursor:pointer;border-bottom:2px solid var(--b24t-primary);">Lista</button>',
+      '<button class="b24t-news-tab" data-tab="preview" style="padding:8px 16px;border:none;background:transparent;font-size:12px;font-weight:500;color:' + t.textMuted + ';cursor:pointer;border-bottom:2px solid transparent;">Podgląd</button>',
+      '<button class="b24t-news-tab" data-tab="form" style="padding:8px 16px;border:none;background:transparent;font-size:12px;font-weight:500;color:' + t.textMuted + ';cursor:pointer;border-bottom:2px solid transparent;">Formularz</button>',
     ].join('');
 
     // Columns container
@@ -7449,7 +7469,7 @@ function showOnboarding(onComplete) {
     // Left column: URL list
     var colList = document.createElement('div');
     colList.id = 'b24t-news-col-list';
-    colList.style.cssText = 'width:340px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid ' + t.border + ';min-height:0;overflow:hidden;';
+    colList.style.cssText = 'width:270px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid ' + t.border + ';min-height:0;overflow:hidden;';
     colList.innerHTML = [
       // Progress bar (scan + session) — shown when URLs present
       '<div id="b24t-news-progress-wrap" style="display:none;padding:8px 10px 0;flex-shrink:0;">',
@@ -7484,10 +7504,29 @@ function showOnboarding(onComplete) {
       '</div>',
     ].join('');
 
+    // Middle column: article preview (iframe / rich card)
+    var colPreview = document.createElement('div');
+    colPreview.id = 'b24t-news-col-preview';
+    colPreview.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;border-right:1px solid ' + t.border + ';overflow:hidden;';
+    colPreview.innerHTML = [
+      '<div id="b24t-news-preview-header" style="display:none;flex-shrink:0;padding:4px 10px;background:' + t.bgDeep + ';border-bottom:1px solid ' + t.borderSub + ';align-items:center;gap:6px;">',
+        '<span id="b24t-news-preview-url-label" style="flex:1;font-size:10px;font-family:monospace;color:' + t.textFaint + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>',
+        '<button id="b24t-news-preview-switch-rich-btn" style="flex-shrink:0;font-size:10px;padding:2px 8px;border-radius:5px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textMuted + ';cursor:pointer;" title="Przełącz na kartę podglądu">▢ Karta</button>',
+        '<a id="b24t-news-preview-open-link" href="#" target="_blank" rel="noopener noreferrer" style="flex-shrink:0;font-size:10px;padding:2px 8px;border-radius:5px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textMuted + ';text-decoration:none;" title="Otwórz w nowej karcie">↗</a>',
+      '</div>',
+      '<div id="b24t-news-preview-empty" style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:24px;">',
+        '<div style="font-size:30px;margin-bottom:10px;opacity:0.4;">📄</div>',
+        '<div style="font-size:13px;font-weight:600;color:' + t.textMuted + ';margin-bottom:5px;">Kliknij artykuł z listy</div>',
+        '<div style="font-size:11px;color:' + t.textFaint + ';">Podgląd pojawi się tutaj</div>',
+      '</div>',
+      '<iframe id="b24t-news-iframe" src="" style="display:none;flex:1;width:100%;border:none;background:#fff;"></iframe>',
+      '<div id="b24t-news-rich-preview" style="display:none;flex:1;overflow-y:auto;padding:16px 14px;flex-direction:column;gap:12px;"></div>',
+    ].join('');
+
     // Right column: mention form
     var colForm = document.createElement('div');
     colForm.id = 'b24t-news-col-form';
-    colForm.style.cssText = 'flex:1;display:flex;flex-direction:column;overflow-y:auto;padding:14px 16px;gap:10px;min-width:0;';
+    colForm.style.cssText = 'width:285px;flex-shrink:0;display:flex;flex-direction:column;overflow-y:auto;padding:14px 16px;gap:10px;min-width:0;';
 
     colForm.innerHTML = [
       '<div id="b24t-news-cms-warn" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.5;flex-shrink:0;">' +
@@ -7557,6 +7596,7 @@ function showOnboarding(onComplete) {
     ].join('');
 
     cols.appendChild(colList);
+    cols.appendChild(colPreview);
     cols.appendChild(colForm);
     panelMain.appendChild(header);
     panelMain.appendChild(tabsBar);
@@ -7564,22 +7604,30 @@ function showOnboarding(onComplete) {
     overlay.appendChild(panelMain);
     document.body.appendChild(overlay);
 
-    // Responsive: switch between columns and tabs at < 880px
+    // Responsive: switch between columns and tabs at < 960px (3 columns)
     function _newsApplyResponsive() {
-      var narrow = panelMain.offsetWidth < 880;
+      var narrow = panelMain.offsetWidth < 960;
       tabsBar.style.display = narrow ? '' : 'none';
       if (!narrow) {
         colList.style.display = 'flex';
+        colPreview.style.display = 'flex';
         colForm.style.display = 'flex';
-        colList.style.width = '340px';
+        colList.style.width = '270px';
         colList.style.borderRight = '1px solid ' + t.border;
+        colPreview.style.width = '';
+        colPreview.style.borderRight = '1px solid ' + t.border;
+        colForm.style.width = '285px';
       } else {
         var activeTab = tabsBar.querySelector('.b24t-news-tab-active');
         var activeTabName = activeTab ? activeTab.dataset.tab : 'list';
         colList.style.display = activeTabName === 'list' ? 'flex' : 'none';
+        colPreview.style.display = activeTabName === 'preview' ? 'flex' : 'none';
         colForm.style.display = activeTabName === 'form' ? 'flex' : 'none';
         colList.style.width = '100%';
+        colPreview.style.width = '100%';
+        colForm.style.width = '100%';
         colList.style.borderRight = 'none';
+        colPreview.style.borderRight = 'none';
       }
     }
     requestAnimationFrame(_newsApplyResponsive);
@@ -8064,6 +8112,10 @@ function showOnboarding(onComplete) {
         // Wszystkie badże w jednym wierszu — chips, zone, teaser, typ, data, język, paywall
         var _metaBadges = [];
 
+        if (entry.iframeable === true) {
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.18);color:#818cf8;" title="Podgl\u0105d iframe dost\u0119pny">▢</span>');
+        }
+
         var _chips = entry.matchedChips;
         if (_chips && _chips.length > 0 && entry.status !== 'nomatch' && entry.status !== 'blocked' && entry.status !== 'wrongcountry' && entry.status !== 'inproject') {
           _chips.forEach(function(c) {
@@ -8188,9 +8240,108 @@ function showOnboarding(onComplete) {
       var fContent = document.getElementById('b24t-news-f-content');
       if (fTitle) fTitle.value = entry.title || '';
       if (fContent) fContent.value = entry.snippet || '';
-      // Otwórz okno natychmiast — fetch page info asynchronicznie (nadpisze prefill daty i tytułu jeśli znajdzie)
-      _newsOpenUrl(entry.url);
+      // Pokaż podgląd w środkowej kolumnie, fetch page info asynchronicznie
+      _newsShowPreview(entry);
       _newsFetchPageInfo(entry.url);
+    }
+
+    // ─── PREVIEW — iframe lub rich card ───
+    function _newsShowPreview(entry) {
+      var t = _newsThemeVars();
+      var emptyEl    = document.getElementById('b24t-news-preview-empty');
+      var headerEl   = document.getElementById('b24t-news-preview-header');
+      var urlLabelEl = document.getElementById('b24t-news-preview-url-label');
+      var iframeEl   = document.getElementById('b24t-news-iframe');
+      var richEl     = document.getElementById('b24t-news-rich-preview');
+      var openLinkEl = document.getElementById('b24t-news-preview-open-link');
+      var switchBtn  = document.getElementById('b24t-news-preview-switch-rich-btn');
+      if (!iframeEl || !richEl) return;
+
+      if (emptyEl) emptyEl.style.display = 'none';
+      if (headerEl) headerEl.style.display = 'flex';
+
+      var shortUrl = entry.url.replace(/^https?:\/\//, '');
+      if (shortUrl.length > 60) shortUrl = shortUrl.substring(0, 60) + '\u2026';
+      if (urlLabelEl) urlLabelEl.textContent = shortUrl;
+      if (openLinkEl) openLinkEl.href = entry.url;
+
+      if (switchBtn && !switchBtn.dataset.wired) {
+        switchBtn.dataset.wired = '1';
+        switchBtn.addEventListener('click', function() {
+          if (iframeEl) { iframeEl.style.display = 'none'; iframeEl.src = ''; }
+          var _e = newsState.activeIdx >= 0 ? newsState.urls[newsState.activeIdx] : null;
+          if (_e) { _e.iframeable = false; _newsShowRichPreviewCard(_e, t); }
+        });
+      }
+
+      if (entry.iframeable === true) {
+        richEl.style.display = 'none';
+        iframeEl.style.display = 'block';
+        iframeEl.src = entry.url;
+      } else {
+        iframeEl.style.display = 'none';
+        iframeEl.src = '';
+        _newsShowRichPreviewCard(entry, t);
+      }
+
+      // Na wąskim ekranie — przełącz na zakładkę Podgląd
+      var tabsBarEl = document.getElementById('b24t-news-tabs');
+      if (tabsBarEl && tabsBarEl.style.display !== 'none') {
+        tabsBarEl.querySelectorAll('.b24t-news-tab').forEach(function(b) {
+          var active = b.dataset.tab === 'preview';
+          b.classList.toggle('b24t-news-tab-active', active);
+          b.style.color = active ? 'var(--b24t-primary)' : t.textMuted;
+          b.style.fontWeight = active ? '600' : '500';
+          b.style.borderBottom = active ? '2px solid var(--b24t-primary)' : '2px solid transparent';
+        });
+        var colListEl    = document.getElementById('b24t-news-col-list');
+        var colFormEl    = document.getElementById('b24t-news-col-form');
+        var colPreviewEl = document.getElementById('b24t-news-col-preview');
+        if (colListEl)    { colListEl.style.display = 'none'; colListEl.style.width = '100%'; }
+        if (colFormEl)    { colFormEl.style.display = 'none'; colFormEl.style.width = '100%'; }
+        if (colPreviewEl) { colPreviewEl.style.display = 'flex'; colPreviewEl.style.width = '100%'; }
+      }
+    }
+
+    function _newsShowRichPreviewCard(entry, t) {
+      var richEl = document.getElementById('b24t-news-rich-preview');
+      if (!richEl) return;
+      function _esc(s) { return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+      var _statusColors = { keytopic: '#22c55e', contentmatch: '#a78bfa', mention: '#60a5fa', teasermatch: '#9ca3af', blocked: '#9ca3af', opened: '#818cf8' };
+      var _statusBgs    = { keytopic: 'rgba(34,197,94,0.12)', contentmatch: 'rgba(167,139,250,0.12)', mention: 'rgba(96,165,250,0.12)', teasermatch: 'rgba(107,114,128,0.10)', blocked: 'rgba(107,114,128,0.10)', opened: 'rgba(99,102,241,0.10)' };
+      var _statusLabels = { keytopic: 'kluczowy temat', contentmatch: 'content match', mention: 'wzmianka', teasermatch: 'w polecanych', blocked: 'zablokowany', opened: 'otwarty' };
+      var _sc = _statusColors[entry.status] || '#9ca3af';
+      var _sb = _statusBgs[entry.status]    || 'rgba(107,114,128,0.10)';
+      var _sl = _statusLabels[entry.status] || entry.status || '';
+
+      var _badges = [];
+      if (_sl) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:' + _sb + ';border:1px solid ' + _sc + '33;color:' + _sc + ';font-weight:600;">' + _esc(_sl) + '</span>');
+      if (entry.score !== undefined && entry.score > 0) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textFaint + ';">score ' + entry.score + '</span>');
+      if (entry.articleDate) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textMuted + ';">\uD83D\uDCC5 ' + _esc(entry.articleDate) + '</span>');
+      if (entry.pageLang) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);color:#a78bfa;">\uD83C\uDF10 ' + _esc(entry.pageLang) + '</span>');
+      if (entry.isPaywall) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);color:#f59e0b;">\uD83D\uDD12 paywall</span>');
+      if (entry.pageType === 'nonArticle') _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textMuted + ';">\uD83D\uDCC4 nie-artyku\u0142</span>');
+
+      var _chipHtml = '';
+      if (entry.matchedChips && entry.matchedChips.length > 0) {
+        _chipHtml = '<div style="display:flex;flex-wrap:wrap;gap:4px;">' +
+          entry.matchedChips.map(function(c) {
+            return '<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.28);color:#a78bfa;font-family:monospace;">' + _esc(c) + '</span>';
+          }).join('') + '</div>';
+      }
+
+      var _snippetText = entry.snippet ? entry.snippet.slice(0, 400) + (entry.snippet.length > 400 ? '\u2026' : '') : '';
+
+      richEl.innerHTML =
+        (entry.title ? '<div style="font-size:15px;font-weight:700;line-height:1.4;color:' + t.text + ';margin-bottom:10px;">' + _esc(entry.title) + '</div>' : '<div style="font-size:12px;color:' + t.textFaint + ';margin-bottom:10px;font-style:italic;">Brak tytu\u0142u — artyku\u0142 nie zosta\u0142 jeszcze przeskanowany</div>') +
+        (_badges.length > 0 ? '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px;">' + _badges.join('') + '</div>' : '') +
+        (_chipHtml ? _chipHtml + '<div style="height:10px;"></div>' : '') +
+        (_snippetText ? '<div style="font-size:12px;line-height:1.7;color:' + t.text + ';background:' + t.bgDeep + ';border-radius:8px;padding:10px 12px;border:1px solid ' + t.borderSub + ';margin-bottom:14px;">' + _esc(_snippetText) + '</div>' : '') +
+        '<a href="' + _esc(entry.url) + '" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:7px 16px;border-radius:8px;background:var(--b24t-accent-grad);color:#fff;text-decoration:none;font-weight:600;box-shadow:0 2px 8px rgba(99,102,241,0.2);">\u2197 Otw\u00f3rz w nowej karcie</a>';
+
+      richEl.style.display = 'flex';
+      richEl.style.flexDirection = 'column';
     }
 
     // ─── FETCH PAGE INFO (lang + date) ───
@@ -8473,6 +8624,7 @@ function showOnboarding(onComplete) {
           entry.articleDate        = result.articleDate || null;
           entry.isStale            = _isStale;
           entry.isPaywall          = result.isPaywall || false;
+          if (result.iframeable !== undefined) entry.iframeable = result.iframeable;
           newsState.scanDone++;
           if (importBtn) importBtn.textContent = '⟳ Skanowanie ' + newsState.scanDone + '/' + newsState.scanTotal + '...';
           renderUrlList(); // aktualizacja na żywo — wpada do listy w momencie rozpoznania
@@ -8819,6 +8971,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.41",
+      "date": "2026-04-17",
+      "label": "feat",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "feat", "text": "News — Faza 2: środkowa kolumna z podglądem artykułu (iframe lub rich preview card)"},
+        {"type": "feat", "text": "News — detekcja iframeable podczas skanowania (X-Frame-Options, CSP frame-ancestors)"},
+        {"type": "feat", "text": "News — rich preview card: tytuł, snippet, badże, przycisk 'Otwórz w nowej karcie'"},
+        {"type": "feat", "text": "News — badge ▢ na liście przy URLach z dostępnym iframe; 3 zakładki na wąskich ekranach [Lista|Podgląd|Formularz]"}
+      ]
+    },
+    {
       "version": "0.23.40",
       "date": "2026-04-17",
       "label": "feat",
@@ -8911,15 +9075,6 @@ function showOnboarding(onComplete) {
         {"type": "ui", "text": "badge statusu: ⟳ Running / ⚠ Error (migający) / ✓ Done — większy font, border"},
         {"type": "ui", "text": "status tokenu: '● Token' z labelką i pogrubieniem zamiast samej kropki"},
         {"type": "ui", "text": "CMS dot w formularzu News: '● CMS' z labelką, animacja pulsowania podczas sprawdzania"}
-      ]
-    },
-    {
-      "version": "0.23.31",
-      "date": "2026-04-14",
-      "label": "ui",
-      "labelColor": "#8b5cf6",
-      "changes": [
-        {"type": "ui", "text": "kompaktowy widok listy URL w panelu News — wszystkie badże (słowo kluczowe, data, język, nie-artykuł, paywall) w jednym wierszu zamiast stackowania wertykalnego"}
       ]
     },
   ];

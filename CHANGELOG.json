@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.23.44",
+    "date": "2026-04-17",
+    "label": "fix",
+    "changes": [
+      "fix: Ustawienia AI przeniesione do modalu ⚙ — dostępne bez wczytywania pliku",
+      "fix: News — przycisk 'Następny relevantny' zastąpiony 'Importuj URLe'"
+    ]
+  },
+  {
     "version": "0.23.43",
     "date": "2026-04-17",
     "label": "feat",

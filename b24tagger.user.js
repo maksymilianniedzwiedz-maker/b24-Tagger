@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.43
+// @version      0.23.44
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.43';
+  const VERSION = '0.23.44';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3796,50 +3796,6 @@
             <label for="b24t-sound-cb">Dźwięk po zakończeniu sesji</label>
           </div>
 
-          <!-- AI SETTINGS -->
-          <div style="height:1px;background:var(--b24t-border);margin:10px 0 8px;"></div>
-          <div class="b24t-section-label" style="margin-bottom:6px;">Ustawienia AI</div>
-
-          <div class="b24t-toggle-row" style="gap:6px;">
-            <span class="b24t-toggle-label">Klucz API:</span>
-            <input type="password" id="b24t-ai-api-key" class="b24t-input" placeholder="sk-ant-..." style="flex:1;width:auto;">
-            <button class="b24t-btn-ghost" id="b24t-ai-key-toggle" title="Pokaż/ukryj" style="padding:3px 7px;flex-shrink:0;">👁</button>
-          </div>
-
-          <div class="b24t-toggle-row" style="margin-top:6px;">
-            <span class="b24t-toggle-label">Model:</span>
-            <select class="b24t-select" id="b24t-ai-model" style="flex:1;">
-              <option value="claude-haiku-4-5-20251001">Haiku 4.5 — szybki, tani</option>
-              <option value="claude-sonnet-4-6">Sonnet 4.6 — mocniejszy</option>
-            </select>
-          </div>
-
-          <div style="margin-top:8px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-              <span style="font-size:11px;font-weight:600;color:var(--b24t-text-meta);">Biblioteka promptów</span>
-              <button class="b24t-btn-ghost" id="b24t-ai-add-prompt" style="font-size:10px;padding:2px 8px;">+ Dodaj</button>
-            </div>
-            <div id="b24t-ai-prompt-list"></div>
-            <div id="b24t-ai-prompt-editor" style="display:none;margin-top:6px;padding:8px;background:var(--b24t-bg-card);border:1px solid var(--b24t-border);border-radius:8px;">
-              <input type="text" id="b24t-ai-prompt-name" class="b24t-input" placeholder="Nazwa (np. InditexGroup TR)" style="margin-bottom:5px;">
-              <textarea id="b24t-ai-prompt-body" class="b24t-input" rows="4" placeholder="Treść system promptu..." style="resize:vertical;font-family:monospace;font-size:11px;"></textarea>
-              <div style="display:flex;gap:4px;margin-top:5px;">
-                <button class="b24t-btn-primary" id="b24t-ai-prompt-save" style="flex:1;font-size:11px;padding:4px 0;">Zapisz</button>
-                <button class="b24t-btn-ghost" id="b24t-ai-prompt-cancel" style="flex:1;font-size:11px;padding:4px 0;">Anuluj</button>
-              </div>
-            </div>
-          </div>
-
-          <div style="height:1px;background:var(--b24t-border);margin:8px 0;"></div>
-          <div class="b24t-checkbox-row">
-            <input type="checkbox" id="b24t-ai-news-enabled">
-            <label for="b24t-ai-news-enabled">AI scoring w module News</label>
-          </div>
-          <div id="b24t-ai-news-limit-row" class="b24t-toggle-row" style="display:none;margin-top:4px;">
-            <span class="b24t-toggle-label">Limit dzienny:</span>
-            <input type="number" id="b24t-ai-news-limit" class="b24t-input" min="1" max="1000" style="width:60px;">
-            <span style="font-size:10px;color:var(--b24t-text-meta);margin-left:4px;">wywołań/dzień</span>
-          </div>
         </div>
 
         <!-- POSTĘP -->
@@ -4452,128 +4408,6 @@
         noMatchLogs.map(l => l.message.replace('⚠ ', '')).join('\n'));
     });
 
-    // AI Settings
-    (function() {
-      var s = _aiGetSettings();
-      var apiKeyInput = panel.querySelector('#b24t-ai-api-key');
-      var modelSelect = panel.querySelector('#b24t-ai-model');
-      var newsEnabledCb = panel.querySelector('#b24t-ai-news-enabled');
-      var newsLimitInput = panel.querySelector('#b24t-ai-news-limit');
-      var newsLimitRow = panel.querySelector('#b24t-ai-news-limit-row');
-      var promptEditor = panel.querySelector('#b24t-ai-prompt-editor');
-      var promptNameInput = panel.querySelector('#b24t-ai-prompt-name');
-      var promptBodyInput = panel.querySelector('#b24t-ai-prompt-body');
-
-      if (apiKeyInput) apiKeyInput.value = s.apiKey || '';
-      if (modelSelect) modelSelect.value = s.model || 'claude-haiku-4-5-20251001';
-      if (newsEnabledCb) {
-        newsEnabledCb.checked = !!(s.news && s.news.enabled);
-        if (newsLimitRow) newsLimitRow.style.display = newsEnabledCb.checked ? '' : 'none';
-      }
-      if (newsLimitInput) newsLimitInput.value = (s.news && s.news.maxCallsPerDay) || 100;
-      _aiRenderPromptList();
-
-      if (apiKeyInput) {
-        apiKeyInput.addEventListener('change', function() {
-          var cfg = _aiGetSettings(); cfg.apiKey = apiKeyInput.value.trim(); _aiSaveSettings(cfg);
-        });
-      }
-      var keyToggle = panel.querySelector('#b24t-ai-key-toggle');
-      if (keyToggle && apiKeyInput) {
-        keyToggle.addEventListener('click', function() {
-          apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
-        });
-      }
-      if (modelSelect) {
-        modelSelect.addEventListener('change', function() {
-          var cfg = _aiGetSettings(); cfg.model = modelSelect.value; _aiSaveSettings(cfg);
-        });
-      }
-      if (newsEnabledCb) {
-        newsEnabledCb.addEventListener('change', function() {
-          var cfg = _aiGetSettings();
-          if (!cfg.news) cfg.news = {};
-          cfg.news.enabled = newsEnabledCb.checked;
-          _aiSaveSettings(cfg);
-          if (newsLimitRow) newsLimitRow.style.display = newsEnabledCb.checked ? '' : 'none';
-        });
-      }
-      if (newsLimitInput) {
-        newsLimitInput.addEventListener('change', function() {
-          var cfg = _aiGetSettings();
-          if (!cfg.news) cfg.news = {};
-          cfg.news.maxCallsPerDay = parseInt(newsLimitInput.value) || 100;
-          _aiSaveSettings(cfg);
-        });
-      }
-
-      function openPromptEditor(id) {
-        _aiEditingPromptId = id || null;
-        if (id) {
-          var cfg = _aiGetSettings();
-          var p = cfg.prompts.find(function(x) { return x.id === id; });
-          if (p) {
-            if (promptNameInput) promptNameInput.value = p.name;
-            if (promptBodyInput) promptBodyInput.value = p.system;
-          }
-        } else {
-          if (promptNameInput) promptNameInput.value = '';
-          if (promptBodyInput) promptBodyInput.value = '';
-        }
-        if (promptEditor) promptEditor.style.display = '';
-      }
-
-      var addPromptBtn = panel.querySelector('#b24t-ai-add-prompt');
-      if (addPromptBtn) addPromptBtn.addEventListener('click', function() { openPromptEditor(null); });
-
-      var promptSaveBtn = panel.querySelector('#b24t-ai-prompt-save');
-      if (promptSaveBtn) {
-        promptSaveBtn.addEventListener('click', function() {
-          var name = (promptNameInput && promptNameInput.value.trim()) || '';
-          var system = (promptBodyInput && promptBodyInput.value.trim()) || '';
-          if (!name || !system) return;
-          var cfg = _aiGetSettings();
-          if (_aiEditingPromptId) {
-            var p = cfg.prompts.find(function(x) { return x.id === _aiEditingPromptId; });
-            if (p) { p.name = name; p.system = system; }
-          } else {
-            cfg.prompts.push({ id: _aiUuid(), name: name, system: system, createdAt: new Date().toISOString(), knownAssessments: [], tagMap: {} });
-          }
-          _aiSaveSettings(cfg);
-          _aiEditingPromptId = null;
-          if (promptEditor) promptEditor.style.display = 'none';
-          _aiRenderPromptList();
-        });
-      }
-
-      var promptCancelBtn = panel.querySelector('#b24t-ai-prompt-cancel');
-      if (promptCancelBtn) {
-        promptCancelBtn.addEventListener('click', function() {
-          _aiEditingPromptId = null;
-          if (promptEditor) promptEditor.style.display = 'none';
-        });
-      }
-
-      var promptList = panel.querySelector('#b24t-ai-prompt-list');
-      if (promptList) {
-        promptList.addEventListener('click', function(e) {
-          var setBtn = e.target.closest('[data-ai-set]');
-          var editBtn = e.target.closest('[data-ai-edit]');
-          var delBtn = e.target.closest('[data-ai-del]');
-          var cfg = _aiGetSettings();
-          if (setBtn) {
-            cfg.tagging.activePromptId = setBtn.dataset.aiSet;
-            _aiSaveSettings(cfg); _aiRenderPromptList();
-          } else if (editBtn) {
-            openPromptEditor(editBtn.dataset.aiEdit);
-          } else if (delBtn) {
-            cfg.prompts = cfg.prompts.filter(function(p) { return p.id !== delBtn.dataset.aiDel; });
-            if (cfg.tagging.activePromptId === delBtn.dataset.aiDel) cfg.tagging.activePromptId = null;
-            _aiSaveSettings(cfg); _aiRenderPromptList();
-          }
-        });
-      }
-    })();
   }
 
   // ───────────────────────────────────────────
@@ -7706,9 +7540,9 @@ function showOnboarding(onComplete) {
       // Scan status info (visible in main panel)
       '<div id="b24t-news-import-info" style="display:none;font-size:10px;text-align:center;padding:3px 8px;flex-shrink:0;"></div>',
       '<div id="b24t-news-project-info" style="display:none;font-size:10px;text-align:center;padding:2px 8px 4px;flex-shrink:0;"></div>',
-      // Next button
+      // Import button
       '<div style="padding:4px 8px 8px;flex-shrink:0;">',
-        '<button id="b24t-news-next-btn" style="width:100%;padding:6px;border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-size:11px;cursor:pointer;font-weight:500;">▼ Następny relevantny</button>',
+        '<button id="b24t-news-bottom-import-btn" style="width:100%;padding:6px;border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-size:11px;cursor:pointer;font-weight:500;">+ Importuj URLe</button>',
       '</div>',
     ].join('');
 
@@ -8894,20 +8728,15 @@ function showOnboarding(onComplete) {
       });
     }
 
-    // ─── NEXT BTN ───
-    var nextBtn = document.getElementById('b24t-news-next-btn');
-    if (nextBtn) {
-      nextBtn.addEventListener('click', function() {
-        // Only navigate to relevant (match/opened) — skip nomatch and wrongcountry
-        function isWorkable(s) { return s === 'match' || s === 'contentmatch' || s === 'pending' || s === 'opened'; } // inproject/blocked/nomatch celowo pomijane
-        var start = newsState.activeIdx + 1;
-        for (var i = start; i < newsState.urls.length; i++) {
-          if (isWorkable(newsState.urls[i].status)) { activateUrl(i); return; }
-        }
-        // Wrap around
-        for (var j = 0; j < start; j++) {
-          if (isWorkable(newsState.urls[j].status)) { activateUrl(j); return; }
-        }
+    // ─── BOTTOM IMPORT BTN ───
+    var bottomImportBtn = document.getElementById('b24t-news-bottom-import-btn');
+    var _importModalRef = document.getElementById('b24t-news-import-modal');
+    if (bottomImportBtn && _importModalRef) {
+      bottomImportBtn.addEventListener('click', function() {
+        _importModalRef.style.display = 'flex';
+        if (_newsChipsRenderer) _newsChipsRenderer();
+        var pasteEl = document.getElementById('b24t-news-paste-area');
+        if (pasteEl) setTimeout(function() { pasteEl.focus(); }, 50);
       });
     }
 
@@ -9179,6 +9008,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.44",
+      "date": "2026-04-17",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Ustawienia AI przeniesione do modalu ⚙ — dostępne bez wczytywania pliku"},
+        {"type": "fix", "text": "News — przycisk 'Następny relevantny' zastąpiony 'Importuj URLe'"}
+      ]
+    },
+    {
       "version": "0.23.43",
       "date": "2026-04-17",
       "label": "feat",
@@ -9270,16 +9109,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#8b5cf6",
       "changes": [
         {"type": "ui", "text": "spójny styl przycisków we wszystkich nagłówkach paneli — News, Annotator, Features, Groups, Overall (jaśniejsze tło 0.28, border 0.5, box-shadow)"}
-      ]
-    },
-    {
-      "version": "0.23.34",
-      "date": "2026-04-14",
-      "label": "ui",
-      "labelColor": "#8b5cf6",
-      "changes": [
-        {"type": "ui", "text": "bardziej widoczne przyciski w topbarze — jaśniejsze tło (0.28), wyraźny border (0.5), box-shadow odcinający od gradientu"},
-        {"type": "ui", "text": "wersja w topbarze: 10px → 12px, bold, opacity 0.65 → 0.92"}
       ]
     },
   ];
@@ -10111,6 +9940,47 @@ function showOnboarding(onComplete) {
           '<div style="font-size:11px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Kanał aktualizacji</div>' +
           channelHtml +
         '</div>' +
+        '<div style="padding:12px 20px 16px;border-top:1px solid var(--b24t-border-sub);">' +
+          '<div style="font-size:11px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Ustawienia AI</div>' +
+          '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">' +
+            '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">Klucz API:</span>' +
+            '<input type="password" id="b24t-ai-api-key" placeholder="sk-ant-..." style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:monospace;">' +
+            '<button id="b24t-ai-key-toggle" title="Pokaż/ukryj" style="padding:3px 7px;flex-shrink:0;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;cursor:pointer;font-size:13px;">👁</button>' +
+          '</div>' +
+          '<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">' +
+            '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">Model:</span>' +
+            '<select id="b24t-ai-model" style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:inherit;">' +
+              '<option value="claude-haiku-4-5-20251001">Haiku 4.5 — szybki, tani</option>' +
+              '<option value="claude-sonnet-4-6">Sonnet 4.6 — mocniejszy</option>' +
+            '</select>' +
+          '</div>' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">' +
+            '<span style="font-size:11px;font-weight:600;color:var(--b24t-text-muted);">Biblioteka promptów</span>' +
+            '<button id="b24t-ai-add-prompt" style="font-size:10px;padding:2px 8px;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:5px;cursor:pointer;font-family:inherit;">+ Dodaj</button>' +
+          '</div>' +
+          '<div id="b24t-ai-prompt-list" style="display:flex;flex-direction:column;gap:3px;margin-bottom:4px;"></div>' +
+          '<div id="b24t-ai-prompt-editor" style="display:none;margin-bottom:8px;padding:8px;background:var(--b24t-bg-deep);border:1px solid var(--b24t-border);border-radius:8px;">' +
+            '<input type="text" id="b24t-ai-prompt-name" placeholder="Nazwa (np. InditexGroup TR)" style="width:100%;box-sizing:border-box;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;margin-bottom:5px;">' +
+            '<textarea id="b24t-ai-prompt-body" rows="4" placeholder="Treść system promptu..." style="width:100%;box-sizing:border-box;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;resize:vertical;font-family:monospace;"></textarea>' +
+            '<div style="display:flex;gap:4px;margin-top:5px;">' +
+              '<button id="b24t-ai-prompt-save" style="flex:1;font-size:11px;padding:4px 0;background:var(--b24t-accent-grad);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:inherit;">Zapisz</button>' +
+              '<button id="b24t-ai-prompt-cancel" style="flex:1;font-size:11px;padding:4px 0;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;cursor:pointer;font-family:inherit;">Anuluj</button>' +
+            '</div>' +
+          '</div>' +
+          '<div style="height:1px;background:var(--b24t-border-sub);margin:6px 0;"></div>' +
+          '<label style="display:flex;gap:10px;align-items:center;cursor:pointer;padding:4px 0;">' +
+            '<input type="checkbox" id="b24t-ai-news-enabled" style="accent-color:var(--b24t-primary);width:14px;height:14px;flex-shrink:0;cursor:pointer;">' +
+            '<div>' +
+              '<div style="font-size:12px;font-weight:600;color:var(--b24t-text);">AI scoring w module News</div>' +
+              '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Automatyczna ocena artykułów przez Claude</div>' +
+            '</div>' +
+          '</label>' +
+          '<div id="b24t-ai-news-limit-row" style="display:none;align-items:center;gap:6px;margin-top:4px;">' +
+            '<span style="font-size:11px;color:var(--b24t-text-muted);">Limit dzienny:</span>' +
+            '<input type="number" id="b24t-ai-news-limit" min="1" max="1000" style="width:60px;padding:4px 8px;border-radius:6px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;">' +
+            '<span style="font-size:10px;color:var(--b24t-text-faint);">wywołań/dzień</span>' +
+          '</div>' +
+        '</div>' +
         '<div style="padding:14px 20px;border-top:1px solid var(--b24t-border-sub);text-align:right;">' +
           '<button id="b24t-features-save" style="background:var(--b24t-accent-grad);color:#fff;border:none;border-radius:8px;padding:9px 24px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px var(--b24t-primary-glow);transition:opacity 0.15s;">Zapisz</button>' +
         '</div>' +
@@ -10122,6 +9992,129 @@ function showOnboarding(onComplete) {
 
     document.getElementById('b24t-features-close').addEventListener('click', close);
     modal.addEventListener('click', function(e) { if (e.target === modal) close(); });
+
+    // AI Settings wiring
+    (function() {
+      var s = _aiGetSettings();
+      var apiKeyInput = document.getElementById('b24t-ai-api-key');
+      var modelSelect = document.getElementById('b24t-ai-model');
+      var newsEnabledCb = document.getElementById('b24t-ai-news-enabled');
+      var newsLimitInput = document.getElementById('b24t-ai-news-limit');
+      var newsLimitRow = document.getElementById('b24t-ai-news-limit-row');
+      var promptEditor = document.getElementById('b24t-ai-prompt-editor');
+      var promptNameInput = document.getElementById('b24t-ai-prompt-name');
+      var promptBodyInput = document.getElementById('b24t-ai-prompt-body');
+
+      if (apiKeyInput) apiKeyInput.value = s.apiKey || '';
+      if (modelSelect) modelSelect.value = s.model || 'claude-haiku-4-5-20251001';
+      if (newsEnabledCb) {
+        newsEnabledCb.checked = !!(s.news && s.news.enabled);
+        if (newsLimitRow) newsLimitRow.style.display = newsEnabledCb.checked ? 'flex' : 'none';
+      }
+      if (newsLimitInput) newsLimitInput.value = (s.news && s.news.maxCallsPerDay) || 100;
+      _aiRenderPromptList();
+
+      if (apiKeyInput) {
+        apiKeyInput.addEventListener('change', function() {
+          var cfg = _aiGetSettings(); cfg.apiKey = apiKeyInput.value.trim(); _aiSaveSettings(cfg);
+        });
+      }
+      var keyToggle = document.getElementById('b24t-ai-key-toggle');
+      if (keyToggle && apiKeyInput) {
+        keyToggle.addEventListener('click', function() {
+          apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
+        });
+      }
+      if (modelSelect) {
+        modelSelect.addEventListener('change', function() {
+          var cfg = _aiGetSettings(); cfg.model = modelSelect.value; _aiSaveSettings(cfg);
+        });
+      }
+      if (newsEnabledCb) {
+        newsEnabledCb.addEventListener('change', function() {
+          var cfg = _aiGetSettings();
+          if (!cfg.news) cfg.news = {};
+          cfg.news.enabled = newsEnabledCb.checked;
+          _aiSaveSettings(cfg);
+          if (newsLimitRow) newsLimitRow.style.display = newsEnabledCb.checked ? 'flex' : 'none';
+        });
+      }
+      if (newsLimitInput) {
+        newsLimitInput.addEventListener('change', function() {
+          var cfg = _aiGetSettings();
+          if (!cfg.news) cfg.news = {};
+          cfg.news.maxCallsPerDay = parseInt(newsLimitInput.value) || 100;
+          _aiSaveSettings(cfg);
+        });
+      }
+
+      function openPromptEditor(id) {
+        _aiEditingPromptId = id || null;
+        if (id) {
+          var cfg = _aiGetSettings();
+          var p = cfg.prompts.find(function(x) { return x.id === id; });
+          if (p) {
+            if (promptNameInput) promptNameInput.value = p.name;
+            if (promptBodyInput) promptBodyInput.value = p.system;
+          }
+        } else {
+          if (promptNameInput) promptNameInput.value = '';
+          if (promptBodyInput) promptBodyInput.value = '';
+        }
+        if (promptEditor) promptEditor.style.display = '';
+      }
+
+      var addPromptBtn = document.getElementById('b24t-ai-add-prompt');
+      if (addPromptBtn) addPromptBtn.addEventListener('click', function() { openPromptEditor(null); });
+
+      var promptSaveBtn = document.getElementById('b24t-ai-prompt-save');
+      if (promptSaveBtn) {
+        promptSaveBtn.addEventListener('click', function() {
+          var name = (promptNameInput && promptNameInput.value.trim()) || '';
+          var system = (promptBodyInput && promptBodyInput.value.trim()) || '';
+          if (!name || !system) return;
+          var cfg = _aiGetSettings();
+          if (_aiEditingPromptId) {
+            var p = cfg.prompts.find(function(x) { return x.id === _aiEditingPromptId; });
+            if (p) { p.name = name; p.system = system; }
+          } else {
+            cfg.prompts.push({ id: _aiUuid(), name: name, system: system, createdAt: new Date().toISOString(), knownAssessments: [], tagMap: {} });
+          }
+          _aiSaveSettings(cfg);
+          _aiEditingPromptId = null;
+          if (promptEditor) promptEditor.style.display = 'none';
+          _aiRenderPromptList();
+        });
+      }
+
+      var promptCancelBtn = document.getElementById('b24t-ai-prompt-cancel');
+      if (promptCancelBtn) {
+        promptCancelBtn.addEventListener('click', function() {
+          _aiEditingPromptId = null;
+          if (promptEditor) promptEditor.style.display = 'none';
+        });
+      }
+
+      var promptList = document.getElementById('b24t-ai-prompt-list');
+      if (promptList) {
+        promptList.addEventListener('click', function(e) {
+          var setBtn = e.target.closest('[data-ai-set]');
+          var editBtn = e.target.closest('[data-ai-edit]');
+          var delBtn = e.target.closest('[data-ai-del]');
+          var cfg = _aiGetSettings();
+          if (setBtn) {
+            cfg.tagging.activePromptId = setBtn.dataset.aiSet;
+            _aiSaveSettings(cfg); _aiRenderPromptList();
+          } else if (editBtn) {
+            openPromptEditor(editBtn.dataset.aiEdit);
+          } else if (delBtn) {
+            cfg.prompts = cfg.prompts.filter(function(p) { return p.id !== delBtn.dataset.aiDel; });
+            if (cfg.tagging.activePromptId === delBtn.dataset.aiDel) cfg.tagging.activePromptId = null;
+            _aiSaveSettings(cfg); _aiRenderPromptList();
+          }
+        });
+      }
+    })();
 
     document.getElementById('b24t-theme-track')?.addEventListener('click', function() {
       const current = document.documentElement.getAttribute('data-b24t-theme') || 'light';

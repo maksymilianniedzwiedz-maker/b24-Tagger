@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.42",
+    "date": "2026-04-17",
+    "label": "fix",
+    "changes": [
+      "fix: scroll panelu głównego przywrócony po załadowaniu pliku (regresja z v0.23.37)"
+    ]
+  },
+  {
     "version": "0.23.41",
     "date": "2026-04-17",
     "label": "feat",

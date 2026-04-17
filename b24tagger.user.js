@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.50
+// @version      0.23.51
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.50';
+  const VERSION = '0.23.51';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8494,7 +8494,7 @@ function showOnboarding(onComplete) {
         row.className = 'b24t-news-url-row';
         row.dataset.idx = idx;
         row.style.cssText = [
-          'display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:8px;',
+          'display:flex;flex-direction:column;gap:3px;padding:7px 10px;border-radius:8px;',
           'cursor:' + (isClickable ? 'pointer' : 'default') + ';',
           'border:1px solid ' + (isActive ? 'var(--b24t-primary)' : isScanning ? 'rgba(129,140,248,0.25)' : isBlocked ? 'rgba(107,114,128,0.35)' : t.borderSub) + ';',
           'background:' + (isActive ? t.accentAlpha : (isIrrelevant || isScanning) ? 'transparent' : t.bgDeep) + ';',
@@ -8503,21 +8503,42 @@ function showOnboarding(onComplete) {
         ].join('');
         if (isBlocked) row.title = 'Wtyczka nie mogła przeskanować — kliknij aby sprawdzić ręcznie';
 
-        var shortUrl = entry.url.replace(/^https?:\/\//, '');
-        if (shortUrl.length > 42) shortUrl = shortUrl.substring(0, 42) + '\u2026';
+        var displayUrl = entry.url.replace(/^https?:\/\//, '');
 
-        // Snippet dla wyników content scan — widoczny poniżej URL jako mały podpis
+        // Snippet dla wyników content scan
         var snippetHtml = '';
         var _hasSnippet = (entry.status === 'contentmatch' || entry.status === 'mention' || entry.status === 'keytopic') && entry.snippet;
         if (_hasSnippet) {
-          snippetHtml = '<div style="font-size:9px;color:' + t.textFaint + ';margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + entry.snippet.replace(/"/g,'&quot;') + '">' + entry.snippet.slice(0,80) + '</div>';
+          snippetHtml = '<div style="font-size:9px;color:' + t.textFaint + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + entry.snippet.replace(/"/g,'&quot;') + '">' + entry.snippet.slice(0,100) + '</div>';
         }
 
-        // Wszystkie badże w jednym wierszu — chips, zone, teaser, typ, data, język, paywall
+        // Status badge — pierwszy w górnym wierszu
+        var _sLabels = { match:'Keyword w URL', keytopic:'G\u0142\u00f3wny temat', contentmatch:'W tre\u015bci', mention:'Wzmianka', teasermatch:'Polecany art.', wrongcountry:'Z\u0142y kraj', opened:'Otwarty', added:'Dodano \u2713', error:'B\u0142\u0105d', inproject:'W projekcie', scanning:'Skanowanie\u2026', blocked:'Zablokowana', nomatch:'Brak keyword' };
+        var _sbStyle;
+        if (isScanning) {
+          _sbStyle = 'background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.2);color:#818cf8;';
+        } else if (entry.status === 'keytopic' || entry.status === 'match') {
+          _sbStyle = 'background:rgba(34,197,94,0.10);border:1px solid rgba(34,197,94,0.25);color:#22c55e;';
+        } else if (entry.status === 'contentmatch') {
+          _sbStyle = 'background:rgba(129,140,248,0.10);border:1px solid rgba(129,140,248,0.25);color:#818cf8;';
+        } else if (entry.status === 'mention') {
+          _sbStyle = 'background:rgba(251,146,60,0.10);border:1px solid rgba(251,146,60,0.25);color:#fb923c;';
+        } else if (entry.status === 'added') {
+          _sbStyle = 'background:rgba(21,128,61,0.12);border:1px solid rgba(21,128,61,0.3);color:#15803d;';
+        } else if (entry.status === 'error') {
+          _sbStyle = 'background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);color:#ef4444;';
+        } else if (entry.status === 'opened') {
+          _sbStyle = 'background:rgba(167,139,250,0.10);border:1px solid rgba(167,139,250,0.25);color:#a78bfa;';
+        } else {
+          _sbStyle = 'background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:#9ca3af;';
+        }
+        var _statusBadgeHtml = '<span style="font-size:8px;padding:1px 6px;border-radius:4px;font-weight:600;flex-shrink:0;' + _sbStyle + '" title="' + sd.label + '">' + sd.dot + ' ' + (_sLabels[entry.status] || entry.status) + '</span>';
+
+        // Pozostałe badże
         var _metaBadges = [];
 
         if (entry.iframeable === true) {
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.18);color:#818cf8;" title="Podgl\u0105d iframe dost\u0119pny">▢</span>');
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.18);color:#818cf8;" title="Podgl\u0105d iframe dost\u0119pny">\u25a2</span>');
         }
 
         var _chips = entry.matchedChips;
@@ -8542,7 +8563,7 @@ function showOnboarding(onComplete) {
         }
         var _pt = entry.pageType;
         if (_pt === 'nonArticle') {
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Brak sygnałów że to artykuł/news (og:type, JSON-LD, published_time, &lt;time&gt;, paragraphs)">\u{1f4c4} nie-artyku\u0142</span>');
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Brak sygna\u0142\u00f3w \u017ce to artyku\u0142/news (og:type, JSON-LD, published_time, &lt;time&gt;, paragraphs)">\uD83D\uDCC4 nie-artyku\u0142</span>');
         } else if (_pt === 'uncertain') {
           var _sigList = (entry.pageTypeSignals || []).join(', ');
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);color:#d97706;" title="Tylko 1 sygna\u0142 artyku\u0142u: ' + _sigList + '">? typ niepewny</span>');
@@ -8552,14 +8573,14 @@ function showOnboarding(onComplete) {
           var _dc = _diffD > 60 ? '#f87171' : _diffD > 30 ? '#f59e0b' : '#4ade80';
           var _db = _diffD > 60 ? 'rgba(239,68,68,0.10)' : _diffD > 30 ? 'rgba(245,158,11,0.10)' : 'rgba(34,197,94,0.10)';
           var _dbd = _diffD > 60 ? 'rgba(239,68,68,0.3)' : _diffD > 30 ? 'rgba(245,158,11,0.3)' : 'rgba(34,197,94,0.25)';
-          var _staleTitle = _diffD > 60 ? ' — zbyt stary artyku\u0142 (&gt;60 dni)' : '';
+          var _staleTitle = _diffD > 60 ? ' \u2014 zbyt stary artyku\u0142 (&gt;60 dni)' : '';
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:' + _db + ';border:1px solid ' + _dbd + ';color:' + _dc + ';" title="Data publikacji' + _staleTitle + '">' + entry.articleDate + '</span>');
         }
         if (entry.pageLang) {
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.25);color:#a78bfa;" title="Wykryty j\u0119zyk strony">' + entry.pageLang + '</span>');
         }
         if (entry.isPaywall) {
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);color:#f59e0b;" title="Strona za paywallem lub blokad\u0105 — tre\u015b\u0107 mo\u017ce by\u0107 niepe\u0142na">\uD83D\uDD12 paywall</span>');
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);color:#f59e0b;" title="Strona za paywallem lub blokad\u0105 \u2014 tre\u015b\u0107 mo\u017ce by\u0107 niepe\u0142na">\uD83D\uDD12 paywall</span>');
         }
         if (entry.aiStatus === 'pending') {
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.2);color:#818cf8;">\u23f3 AI...</span>');
@@ -8574,18 +8595,18 @@ function showOnboarding(onComplete) {
           var _airsn = (entry.aiReason || '').replace(/"/g, '&quot;');
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:' + _aib + ';border:1px solid ' + _aibd + ';color:' + _aic + ';" title="' + _airsn + '">' + _ailbl + '</span>');
         }
-        var metaLineHtml = _metaBadges.length > 0
-          ? '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px;">' + _metaBadges.join('') + '</div>'
-          : '';
+
+        var _delBtnHtml = isScanning ? '' : '<button class="b24t-news-del-btn" style="flex-shrink:0;margin-left:4px;font-size:11px;width:18px;height:18px;line-height:1;border-radius:4px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Usu\u0144 z listy">\u2715</button>';
 
         row.innerHTML =
-          '<span style="flex-shrink:0;width:14px;text-align:center;font-size:12px;font-weight:700;color:' + sd.color + ';" title="' + sd.label + '">' + sd.dot + '</span>' +
-          '<div style="flex:1;min-width:0;">' +
-            '<div style="font-size:10px;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + t.text + ';" title="' + entry.url.replace(/"/g, '&quot;') + '">' + shortUrl + '</div>' +
-            snippetHtml +
-            metaLineHtml +
+          '<div style="display:flex;align-items:flex-start;gap:3px;">' +
+            '<div style="flex:1;display:flex;flex-wrap:wrap;gap:3px;align-items:center;">' +
+              _statusBadgeHtml + _metaBadges.join('') +
+            '</div>' +
+            _delBtnHtml +
           '</div>' +
-          (isScanning ? '' : '<button class="b24t-news-del-btn" style="flex-shrink:0;font-size:11px;width:18px;height:18px;line-height:1;border-radius:4px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Usu\u0144 z listy">\u2715</button>');
+          '<div style="font-size:11px;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + t.text + ';" title="' + entry.url.replace(/"/g, '&quot;') + '">' + displayUrl + '</div>' +
+          snippetHtml;
 
         list.appendChild(row);
 
@@ -9421,6 +9442,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.51",
+      "date": "2026-04-18",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "News — lista URLi przeprojektowana na karty: status badge z etykietą + badże w górnym wierszu, URL pełnej szerokości (11px, bez limitu 42 znaków)"},
+        {"type": "feat", "text": "News — status jako kolorowy badge z krótką etykietą (Wzmianka / W treści / Główny temat itp.) zamiast samego kropki"}
+      ]
+    },
+    {
       "version": "0.23.50",
       "date": "2026-04-18",
       "label": "fix",
@@ -9520,18 +9551,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "scroll panelu głównego przywrócony po załadowaniu pliku (regresja z v0.23.37)"}
-      ]
-    },
-    {
-      "version": "0.23.41",
-      "date": "2026-04-17",
-      "label": "feat",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "feat", "text": "News — Faza 2: środkowa kolumna z podglądem artykułu (iframe lub rich preview card)"},
-        {"type": "feat", "text": "News — detekcja iframeable podczas skanowania (X-Frame-Options, CSP frame-ancestors)"},
-        {"type": "feat", "text": "News — rich preview card: tytuł, snippet, badże, przycisk 'Otwórz w nowej karcie'"},
-        {"type": "feat", "text": "News — badge ▢ na liście przy URLach z dostępnym iframe; 3 zakładki na wąskich ekranach [Lista|Podgląd|Formularz]"}
       ]
     },
   ];

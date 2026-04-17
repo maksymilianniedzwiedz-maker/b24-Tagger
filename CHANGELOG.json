@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.23.50",
+    "date": "2026-04-18",
+    "label": "fix",
+    "changes": [
+      "fix: _newsContentScan onload — try/catch chroni przed zawieszeniem Promise gdy _newsParseContent rzuci wyjątek (skanowanie nie zatrzymuje się w połowie)",
+      "fix: iframe onload fallback — detekcja pustego contentDocument po X-Frame-Options block; auto-switch na rich card bez klikania"
+    ]
+  },
+  {
     "version": "0.23.49",
     "date": "2026-04-17",
     "label": "feat",

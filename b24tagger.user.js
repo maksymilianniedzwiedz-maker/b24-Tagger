@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.42
+// @version      0.23.43
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.42';
+  const VERSION = '0.23.43';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -142,6 +142,7 @@
     MONTH_CLOSE_DONE: 'b24tagger_month_close_done',
     DEL_BATCH:        'b24tagger_del_batch',
     DEL_BATCH_WARNED: 'b24tagger_del_batch_warned',
+    AI_SETTINGS:      'b24t_ai_settings',
   };
   const MAX_BATCH_SIZE = 500;
   const DEL_BATCH_DEFAULT = 25; // domyślny batch równoległych deletów (edytowalny w UI)
@@ -209,6 +210,45 @@
   const lsSet = (key, val) => {
     try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
   };
+
+  // ── AI SETTINGS HELPERS ────────────────────────────────────────────────────
+
+  var _aiEditingPromptId = null;
+
+  function _aiDefaultSettings() {
+    return {
+      apiKey: '', model: 'claude-haiku-4-5-20251001', prompts: [],
+      tagging: { activePromptId: null, batchSize: 10, firstUseWarningShown: false },
+      news: { enabled: false, maxCallsPerDay: 100 }
+    };
+  }
+  function _aiGetSettings() { return lsGet(LS.AI_SETTINGS, _aiDefaultSettings()); }
+  function _aiSaveSettings(s) { lsSet(LS.AI_SETTINGS, s); }
+  function _aiUuid() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      var r = Math.random() * 16 | 0;
+      return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    });
+  }
+  function _aiRenderPromptList() {
+    var list = document.getElementById('b24t-ai-prompt-list');
+    if (!list) return;
+    var s = _aiGetSettings();
+    if (!s.prompts.length) {
+      list.innerHTML = '<div style="font-size:10px;color:var(--b24t-text-faint);padding:4px 0;">Brak promptów — dodaj pierwszy.</div>';
+      return;
+    }
+    function esc(str) { return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+    list.innerHTML = s.prompts.map(function(p) {
+      var isActive = s.tagging.activePromptId === p.id;
+      return '<div style="display:flex;align-items:center;gap:4px;padding:4px 6px;background:var(--b24t-bg-card);border:1px solid var(--b24t-border);border-radius:6px;">' +
+        '<span style="flex:1;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(p.name) + '">' + esc(p.name) + '</span>' +
+        '<button class="b24t-btn-ghost" data-ai-set="' + esc(p.id) + '" style="font-size:10px;padding:1px 5px;' + (isActive ? 'color:var(--b24t-primary);font-weight:600;' : '') + '">' + (isActive ? '● Aktywny' : 'Ustaw') + '</button>' +
+        '<button class="b24t-btn-ghost" data-ai-edit="' + esc(p.id) + '" style="font-size:10px;padding:1px 5px;">✎</button>' +
+        '<button class="b24t-btn-ghost" data-ai-del="' + esc(p.id) + '" style="font-size:10px;padding:1px 5px;color:var(--b24t-danger);">✕</button>' +
+        '</div>';
+    }).join('');
+  }
 
   // ── PROJECT NAME RESOLVER ──────────────────────────────────────────────────
   // Trwały słownik {projectId: "Nazwa"} niezależny od struktury LS.PROJECTS.
@@ -3755,6 +3795,51 @@
             <input type="checkbox" id="b24t-sound-cb">
             <label for="b24t-sound-cb">Dźwięk po zakończeniu sesji</label>
           </div>
+
+          <!-- AI SETTINGS -->
+          <div style="height:1px;background:var(--b24t-border);margin:10px 0 8px;"></div>
+          <div class="b24t-section-label" style="margin-bottom:6px;">Ustawienia AI</div>
+
+          <div class="b24t-toggle-row" style="gap:6px;">
+            <span class="b24t-toggle-label">Klucz API:</span>
+            <input type="password" id="b24t-ai-api-key" class="b24t-input" placeholder="sk-ant-..." style="flex:1;width:auto;">
+            <button class="b24t-btn-ghost" id="b24t-ai-key-toggle" title="Pokaż/ukryj" style="padding:3px 7px;flex-shrink:0;">👁</button>
+          </div>
+
+          <div class="b24t-toggle-row" style="margin-top:6px;">
+            <span class="b24t-toggle-label">Model:</span>
+            <select class="b24t-select" id="b24t-ai-model" style="flex:1;">
+              <option value="claude-haiku-4-5-20251001">Haiku 4.5 — szybki, tani</option>
+              <option value="claude-sonnet-4-6">Sonnet 4.6 — mocniejszy</option>
+            </select>
+          </div>
+
+          <div style="margin-top:8px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+              <span style="font-size:11px;font-weight:600;color:var(--b24t-text-meta);">Biblioteka promptów</span>
+              <button class="b24t-btn-ghost" id="b24t-ai-add-prompt" style="font-size:10px;padding:2px 8px;">+ Dodaj</button>
+            </div>
+            <div id="b24t-ai-prompt-list"></div>
+            <div id="b24t-ai-prompt-editor" style="display:none;margin-top:6px;padding:8px;background:var(--b24t-bg-card);border:1px solid var(--b24t-border);border-radius:8px;">
+              <input type="text" id="b24t-ai-prompt-name" class="b24t-input" placeholder="Nazwa (np. InditexGroup TR)" style="margin-bottom:5px;">
+              <textarea id="b24t-ai-prompt-body" class="b24t-input" rows="4" placeholder="Treść system promptu..." style="resize:vertical;font-family:monospace;font-size:11px;"></textarea>
+              <div style="display:flex;gap:4px;margin-top:5px;">
+                <button class="b24t-btn-primary" id="b24t-ai-prompt-save" style="flex:1;font-size:11px;padding:4px 0;">Zapisz</button>
+                <button class="b24t-btn-ghost" id="b24t-ai-prompt-cancel" style="flex:1;font-size:11px;padding:4px 0;">Anuluj</button>
+              </div>
+            </div>
+          </div>
+
+          <div style="height:1px;background:var(--b24t-border);margin:8px 0;"></div>
+          <div class="b24t-checkbox-row">
+            <input type="checkbox" id="b24t-ai-news-enabled">
+            <label for="b24t-ai-news-enabled">AI scoring w module News</label>
+          </div>
+          <div id="b24t-ai-news-limit-row" class="b24t-toggle-row" style="display:none;margin-top:4px;">
+            <span class="b24t-toggle-label">Limit dzienny:</span>
+            <input type="number" id="b24t-ai-news-limit" class="b24t-input" min="1" max="1000" style="width:60px;">
+            <span style="font-size:10px;color:var(--b24t-text-meta);margin-left:4px;">wywołań/dzień</span>
+          </div>
         </div>
 
         <!-- POSTĘP -->
@@ -4366,6 +4451,129 @@
       alert(`Wzmianki bez matcha (${noMatchLogs.length}):\n\n` +
         noMatchLogs.map(l => l.message.replace('⚠ ', '')).join('\n'));
     });
+
+    // AI Settings
+    (function() {
+      var s = _aiGetSettings();
+      var apiKeyInput = panel.querySelector('#b24t-ai-api-key');
+      var modelSelect = panel.querySelector('#b24t-ai-model');
+      var newsEnabledCb = panel.querySelector('#b24t-ai-news-enabled');
+      var newsLimitInput = panel.querySelector('#b24t-ai-news-limit');
+      var newsLimitRow = panel.querySelector('#b24t-ai-news-limit-row');
+      var promptEditor = panel.querySelector('#b24t-ai-prompt-editor');
+      var promptNameInput = panel.querySelector('#b24t-ai-prompt-name');
+      var promptBodyInput = panel.querySelector('#b24t-ai-prompt-body');
+
+      if (apiKeyInput) apiKeyInput.value = s.apiKey || '';
+      if (modelSelect) modelSelect.value = s.model || 'claude-haiku-4-5-20251001';
+      if (newsEnabledCb) {
+        newsEnabledCb.checked = !!(s.news && s.news.enabled);
+        if (newsLimitRow) newsLimitRow.style.display = newsEnabledCb.checked ? '' : 'none';
+      }
+      if (newsLimitInput) newsLimitInput.value = (s.news && s.news.maxCallsPerDay) || 100;
+      _aiRenderPromptList();
+
+      if (apiKeyInput) {
+        apiKeyInput.addEventListener('change', function() {
+          var cfg = _aiGetSettings(); cfg.apiKey = apiKeyInput.value.trim(); _aiSaveSettings(cfg);
+        });
+      }
+      var keyToggle = panel.querySelector('#b24t-ai-key-toggle');
+      if (keyToggle && apiKeyInput) {
+        keyToggle.addEventListener('click', function() {
+          apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
+        });
+      }
+      if (modelSelect) {
+        modelSelect.addEventListener('change', function() {
+          var cfg = _aiGetSettings(); cfg.model = modelSelect.value; _aiSaveSettings(cfg);
+        });
+      }
+      if (newsEnabledCb) {
+        newsEnabledCb.addEventListener('change', function() {
+          var cfg = _aiGetSettings();
+          if (!cfg.news) cfg.news = {};
+          cfg.news.enabled = newsEnabledCb.checked;
+          _aiSaveSettings(cfg);
+          if (newsLimitRow) newsLimitRow.style.display = newsEnabledCb.checked ? '' : 'none';
+        });
+      }
+      if (newsLimitInput) {
+        newsLimitInput.addEventListener('change', function() {
+          var cfg = _aiGetSettings();
+          if (!cfg.news) cfg.news = {};
+          cfg.news.maxCallsPerDay = parseInt(newsLimitInput.value) || 100;
+          _aiSaveSettings(cfg);
+        });
+      }
+
+      function openPromptEditor(id) {
+        _aiEditingPromptId = id || null;
+        if (id) {
+          var cfg = _aiGetSettings();
+          var p = cfg.prompts.find(function(x) { return x.id === id; });
+          if (p) {
+            if (promptNameInput) promptNameInput.value = p.name;
+            if (promptBodyInput) promptBodyInput.value = p.system;
+          }
+        } else {
+          if (promptNameInput) promptNameInput.value = '';
+          if (promptBodyInput) promptBodyInput.value = '';
+        }
+        if (promptEditor) promptEditor.style.display = '';
+      }
+
+      var addPromptBtn = panel.querySelector('#b24t-ai-add-prompt');
+      if (addPromptBtn) addPromptBtn.addEventListener('click', function() { openPromptEditor(null); });
+
+      var promptSaveBtn = panel.querySelector('#b24t-ai-prompt-save');
+      if (promptSaveBtn) {
+        promptSaveBtn.addEventListener('click', function() {
+          var name = (promptNameInput && promptNameInput.value.trim()) || '';
+          var system = (promptBodyInput && promptBodyInput.value.trim()) || '';
+          if (!name || !system) return;
+          var cfg = _aiGetSettings();
+          if (_aiEditingPromptId) {
+            var p = cfg.prompts.find(function(x) { return x.id === _aiEditingPromptId; });
+            if (p) { p.name = name; p.system = system; }
+          } else {
+            cfg.prompts.push({ id: _aiUuid(), name: name, system: system, createdAt: new Date().toISOString(), knownAssessments: [], tagMap: {} });
+          }
+          _aiSaveSettings(cfg);
+          _aiEditingPromptId = null;
+          if (promptEditor) promptEditor.style.display = 'none';
+          _aiRenderPromptList();
+        });
+      }
+
+      var promptCancelBtn = panel.querySelector('#b24t-ai-prompt-cancel');
+      if (promptCancelBtn) {
+        promptCancelBtn.addEventListener('click', function() {
+          _aiEditingPromptId = null;
+          if (promptEditor) promptEditor.style.display = 'none';
+        });
+      }
+
+      var promptList = panel.querySelector('#b24t-ai-prompt-list');
+      if (promptList) {
+        promptList.addEventListener('click', function(e) {
+          var setBtn = e.target.closest('[data-ai-set]');
+          var editBtn = e.target.closest('[data-ai-edit]');
+          var delBtn = e.target.closest('[data-ai-del]');
+          var cfg = _aiGetSettings();
+          if (setBtn) {
+            cfg.tagging.activePromptId = setBtn.dataset.aiSet;
+            _aiSaveSettings(cfg); _aiRenderPromptList();
+          } else if (editBtn) {
+            openPromptEditor(editBtn.dataset.aiEdit);
+          } else if (delBtn) {
+            cfg.prompts = cfg.prompts.filter(function(p) { return p.id !== delBtn.dataset.aiDel; });
+            if (cfg.tagging.activePromptId === delBtn.dataset.aiDel) cfg.tagging.activePromptId = null;
+            _aiSaveSettings(cfg); _aiRenderPromptList();
+          }
+        });
+      }
+    })();
   }
 
   // ───────────────────────────────────────────
@@ -8971,6 +9179,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.43",
+      "date": "2026-04-17",
+      "label": "feat",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "feat", "text": "Ustawienia AI — klucz API Anthropic, wybór modelu (Haiku 4.5 / Sonnet 4.6), biblioteka promptów z edytorem, toggle AI scoring w module News"}
+      ]
+    },
+    {
       "version": "0.23.42",
       "date": "2026-04-17",
       "label": "fix",
@@ -9063,15 +9280,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "ui", "text": "bardziej widoczne przyciski w topbarze — jaśniejsze tło (0.28), wyraźny border (0.5), box-shadow odcinający od gradientu"},
         {"type": "ui", "text": "wersja w topbarze: 10px → 12px, bold, opacity 0.65 → 0.92"}
-      ]
-    },
-    {
-      "version": "0.23.33",
-      "date": "2026-04-14",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "usunięcie zdublowanego statusu tokenu z subbaru — '● Token' widoczny tylko w meta barze"}
       ]
     },
   ];

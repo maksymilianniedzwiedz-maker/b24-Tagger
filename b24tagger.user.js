@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.48
+// @version      0.23.49
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.48';
+  const VERSION = '0.23.49';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7245,6 +7245,42 @@ function showOnboarding(onComplete) {
       keywordContexts[chip] = ctxs;
     });
 
+    // Autor — meta[name="author"] > JSON-LD author.name > itemprop=author > byline class
+    var _author = '';
+    var _authorMeta = doc.querySelector('meta[name="author"]') || doc.querySelector('meta[property="author"]');
+    if (_authorMeta) _author = (_authorMeta.getAttribute('content') || '').trim();
+    if (!_author) {
+      doc.querySelectorAll('script[type="application/ld+json"]').forEach(function(el) {
+        if (_author) return;
+        try {
+          var _ld = JSON.parse(el.textContent);
+          var _ldArr = Array.isArray(_ld) ? _ld : [_ld];
+          _ldArr.forEach(function(item) {
+            if (_author) return;
+            var _a = item.author;
+            if (!_a) return;
+            if (typeof _a === 'string') _author = _a;
+            else if (Array.isArray(_a) && _a[0]) _author = _a[0].name || _a[0];
+            else if (_a.name) _author = _a.name;
+          });
+        } catch(e) {}
+      });
+    }
+    if (!_author) {
+      try {
+        var _bylineEl = doc.querySelector('[itemprop="author"]') ||
+          doc.querySelector('[class*="author__name"],[class*="byline__name"],[class*="article-author"],[class*="post-author"],[rel="author"]');
+        if (_bylineEl) _author = (_bylineEl.textContent || '').trim().slice(0, 80);
+      } catch(e) {}
+    }
+
+    // Liczba słów w treści artykułu
+    var _wordCount = 0;
+    if (bodyEl) {
+      var _bodyText = (bodyEl.textContent || '').trim();
+      _wordCount = _bodyText ? _bodyText.split(/\s+/).filter(Boolean).length : 0;
+    }
+
     return {
       status:            status,
       score:             score,
@@ -7261,6 +7297,8 @@ function showOnboarding(onComplete) {
       pageLang:          _pageLang,
       articleDate:       _articleDate,
       isPaywall:         _isPaywall,
+      author:            _author,
+      wordCount:         _wordCount,
     };
   }
 
@@ -7297,63 +7335,90 @@ function showOnboarding(onComplete) {
     var systemPrompt = _newsAiBuildSystemPrompt();
     if (!systemPrompt) return;
     entry.aiStatus = 'pending';
+    entry.aiError = '';
     renderUrlList();
-    var s = _aiGetSettings();
-    var model = (s.news && s.news.model) || 'claude-haiku-4-5-20251001';
-    var ctxLines = Object.keys(entry.keywordContexts || {}).map(function(chip) {
-      return chip + ':\n' + (entry.keywordContexts[chip] || []).join('\n---\n');
-    }).join('\n\n');
-    var userPrompt = [
-      'Title: ' + (entry.title || ''),
-      'Snippet: ' + (entry.snippet || ''),
-      'Keywords matched: ' + (entry.matchedChips || []).join(', '),
-      'Scanner status: ' + entry.status,
-      'Secondary zone only: ' + !!entry.secondaryZoneOnly,
-      'Teaser match only: ' + !!entry.teaserMatchOnly,
-      'Paywall: ' + !!entry.isPaywall,
-      ctxLines ? 'Keyword contexts:\n' + ctxLines : '',
-    ].filter(Boolean).join('\n');
-    GM_xmlhttpRequest({
-      method: 'POST',
-      url: 'https://api.anthropic.com/v1/messages',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': s.apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'prompt-caching-2024-07-31',
-      },
-      data: JSON.stringify({
-        model: model,
-        max_tokens: 120,
-        system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
-        messages: [{ role: 'user', content: userPrompt }],
-      }),
-      timeout: 15000,
-      onload: function(resp) {
-        try {
-          if (resp.status === 401) {
-            var cfg = _aiGetSettings();
-            if (!cfg.news) cfg.news = {};
-            cfg.news.enabled = false;
-            _aiSaveSettings(cfg);
+    try {
+      var s = _aiGetSettings();
+      var model = (s.news && s.news.model) || 'claude-haiku-4-5-20251001';
+      var ctxLines = Object.keys(entry.keywordContexts || {}).map(function(chip) {
+        return chip + ':\n' + (entry.keywordContexts[chip] || []).join('\n---\n');
+      }).join('\n\n');
+      var userPrompt = [
+        'Title: ' + (entry.title || ''),
+        'Snippet: ' + (entry.snippet || ''),
+        'Keywords matched: ' + (entry.matchedChips || []).join(', '),
+        'Scanner status: ' + entry.status,
+        'Secondary zone only: ' + !!entry.secondaryZoneOnly,
+        'Teaser match only: ' + !!entry.teaserMatchOnly,
+        'Paywall: ' + !!entry.isPaywall,
+        ctxLines ? 'Keyword contexts:\n' + ctxLines : '',
+      ].filter(Boolean).join('\n');
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url: 'https://api.anthropic.com/v1/messages',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': s.apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-beta': 'prompt-caching-2024-07-31',
+        },
+        data: JSON.stringify({
+          model: model,
+          max_tokens: 120,
+          system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
+          messages: [{ role: 'user', content: userPrompt }],
+        }),
+        timeout: 15000,
+        onload: function(resp) {
+          try {
+            if (resp.status === 401) {
+              var cfg = _aiGetSettings();
+              if (!cfg.news) cfg.news = {};
+              cfg.news.enabled = false;
+              _aiSaveSettings(cfg);
+              entry.aiStatus = 'error';
+              entry.aiError = 'błędny klucz API';
+              renderUrlList();
+              return;
+            }
+            if (resp.status === 429) {
+              entry.aiStatus = 'error';
+              entry.aiError = 'limit API (429)';
+              renderUrlList();
+              return;
+            }
+            if (resp.status >= 500) {
+              entry.aiStatus = 'error';
+              entry.aiError = 'błąd serwera (' + resp.status + ')';
+              renderUrlList();
+              return;
+            }
+            if (resp.status < 200 || resp.status >= 300) {
+              entry.aiStatus = 'error';
+              entry.aiError = 'HTTP ' + resp.status;
+              renderUrlList();
+              return;
+            }
+            var data = JSON.parse(resp.responseText);
+            var text = (data.content && data.content[0] && data.content[0].text) || '';
+            var parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
+            entry.aiStatus = 'done';
+            entry.aiRelevant = !!parsed.relevant;
+            entry.aiReason = parsed.reason || '';
+          } catch(e) {
             entry.aiStatus = 'error';
-            renderUrlList();
-            return;
+            entry.aiError = 'błąd parsowania';
           }
-          var data = JSON.parse(resp.responseText);
-          var text = (data.content && data.content[0] && data.content[0].text) || '';
-          var parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
-          entry.aiStatus = 'done';
-          entry.aiRelevant = !!parsed.relevant;
-          entry.aiReason = parsed.reason || '';
-        } catch(e) {
-          entry.aiStatus = 'error';
-        }
-        renderUrlList();
-      },
-      onerror: function() { entry.aiStatus = 'error'; renderUrlList(); },
-      ontimeout: function() { entry.aiStatus = 'error'; renderUrlList(); },
-    });
+          renderUrlList();
+        },
+        onerror: function() { entry.aiStatus = 'error'; entry.aiError = 'brak połączenia'; renderUrlList(); },
+        ontimeout: function() { entry.aiStatus = 'error'; entry.aiError = 'timeout'; renderUrlList(); },
+      });
+    } catch(e) {
+      entry.aiStatus = 'error';
+      entry.aiError = 'błąd wywołania';
+      renderUrlList();
+    }
   }
 
   // Pobiera stronę przez GM_xmlhttpRequest (pomija CORS) i skanuje jej treść.
@@ -7730,6 +7795,7 @@ function showOnboarding(onComplete) {
     header.innerHTML = [
       '<span style="font-size:13px;font-weight:700;color:#fff;flex:1;text-shadow:0 1px 3px rgba(0,0,0,0.2);">📰 News</span>',
       _aiChipHtml,
+      '<button id="b24t-news-legend-btn" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:12px;font-weight:700;padding:3px 8px;border-radius:6px;flex-shrink:0;" title="Legenda oznaczeń">?</button>',
       '<button id="b24t-news-langmap-btn" style="background:rgba(255,255,255,0.20);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:11px;padding:3px 9px;border-radius:6px;flex-shrink:0;" title="Mapa języków">⚙ Języki</button>',
       '<button id="b24t-news-modal-open-btn" style="background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.55);color:#fff;cursor:pointer;font-size:12px;font-weight:700;padding:5px 14px;border-radius:7px;flex-shrink:0;letter-spacing:0.01em;">+ Importuj URLe</button>',
       '<span id="b24t-news-cms-dot" class="b24t-cms-checking" style="font-size:11px;font-weight:700;flex-shrink:0;cursor:default;color:rgba(255,255,255,0.5);" title="Sprawdzanie CMS...">● CMS</span>',
@@ -7883,9 +7949,47 @@ function showOnboarding(onComplete) {
     cols.appendChild(colList);
     cols.appendChild(colPreview);
     cols.appendChild(colForm);
+    // Legend overlay — shows badge descriptions when ? is clicked
+    var legendOverlay = document.createElement('div');
+    legendOverlay.id = 'b24t-news-legend-overlay';
+    legendOverlay.style.cssText = 'display:none;position:absolute;inset:0;z-index:10;background:' + t.bg + ';border-radius:16px;overflow-y:auto;padding:20px 24px;';
+    var _legendRows = [
+      ['◆', '#22c55e',  'Główny temat',   'Keyword w tytule artykułu (score 12+)'],
+      ['◆', '#818cf8',  'W treści',       'Keyword wielokrotnie w treści (score 5–11)'],
+      ['◆', '#fb923c',  'Wzmianka',       'Keyword pobocznie w treści (score 1–4)'],
+      ['●', '#22c55e',  'URL match',      'Keyword znaleziony w adresie URL'],
+      ['◇', '#9ca3af',  'W polecanych',   'Keyword tylko w sekcji polecanych artykułów'],
+      ['●', '#f97316',  'Inny kraj',      'Keyword w URL, ale adres wskazuje inny kraj'],
+      ['—', '#6b7280',  'Nieprzeskan.',   'Strona niedostępna — kliknij wiersz aby sprawdzić ręcznie'],
+      ['✓', '#15803d',  'Dodany',         'Wzmianka dodana do projektu Brand24'],
+      ['✗', '#ef4444',  'Błąd/duplikat',  'Błąd dodawania lub duplikat w projekcie'],
+      ['📅', t.textMuted, 'Data',         'Data publikacji artykułu (wykryta ze strony)'],
+      ['🌐', '#a78bfa',  'Język',         'Język strony wykryty ze znacznika <html lang>'],
+      ['🔒', '#f59e0b',  'Paywall',       'Strona za paywallem — treść może być niepełna'],
+      ['📄', t.textMuted, 'Nie-artykuł',  'Strona katalogowa, firmowa lub inny typ niż artykuł'],
+      ['▢',  '#818cf8',  'iframe',        'Podgląd bezpośredni w panelu dostępny'],
+      ['⏳', '#818cf8',  'AI...',         'Oczekuje na analizę AI'],
+      ['🤖', '#22c55e',  'AI Relevant',   'AI oceniło artykuł jako relevantny dla marki'],
+      ['🤖', '#9ca3af',  'AI Not rel.',   'AI oceniło artykuł jako nierelevantny'],
+      ['🤖', '#f87171',  'AI błąd',       'Błąd analizy AI — najedź na badge aby zobaczyć szczegóły'],
+    ];
+    legendOverlay.innerHTML =
+      '<div style="display:flex;align-items:center;margin-bottom:16px;">' +
+        '<span style="font-size:14px;font-weight:700;color:' + t.text + ';flex:1;">Legenda oznaczeń</span>' +
+        '<button id="b24t-news-legend-close" style="background:transparent;border:1px solid ' + t.border + ';color:' + t.textMuted + ';cursor:pointer;font-size:17px;line-height:1;padding:1px 7px;border-radius:5px;">×</button>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:24px 1fr 1fr;gap:6px 12px;align-items:center;">' +
+      _legendRows.map(function(r) {
+        return '<span style="font-size:13px;color:' + r[1] + ';text-align:center;">' + r[0] + '</span>' +
+               '<span style="font-size:11px;font-weight:600;color:' + t.text + ';">' + r[2] + '</span>' +
+               '<span style="font-size:11px;color:' + t.textMuted + ';">' + r[3] + '</span>';
+      }).join('') +
+      '</div>';
+
     panelMain.appendChild(header);
     panelMain.appendChild(tabsBar);
     panelMain.appendChild(cols);
+    panelMain.appendChild(legendOverlay);
     overlay.appendChild(panelMain);
     document.body.appendChild(overlay);
 
@@ -8051,6 +8155,17 @@ function showOnboarding(onComplete) {
         });
       }
     });
+
+    // ─── LEGEND BUTTON ───
+    var legendBtn   = document.getElementById('b24t-news-legend-btn');
+    var legendOvrl  = document.getElementById('b24t-news-legend-overlay');
+    var legendClose = document.getElementById('b24t-news-legend-close');
+    if (legendBtn && legendOvrl) {
+      legendBtn.addEventListener('click', function() { legendOvrl.style.display = legendOvrl.style.display === 'none' ? '' : 'none'; });
+    }
+    if (legendClose && legendOvrl) {
+      legendClose.addEventListener('click', function() { legendOvrl.style.display = 'none'; });
+    }
 
     // ─── LANG MAP BUTTON ───
     var langMapBtn = document.getElementById('b24t-news-langmap-btn');
@@ -8444,6 +8559,9 @@ function showOnboarding(onComplete) {
         }
         if (entry.aiStatus === 'pending') {
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.2);color:#818cf8;">\u23f3 AI...</span>');
+        } else if (entry.aiStatus === 'error') {
+          var _aiErrMsg = entry.aiError ? '\uD83E\uDD16 ' + entry.aiError : '\uD83E\uDD16 b\u0142\u0105d';
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);color:#f87171;" title="AI nie mog\u0142o przeanalizowa\u0107 artyku\u0142u \u2014 ' + (entry.aiError || 'nieznany b\u0142\u0105d') + '">' + _aiErrMsg + '</span>');
         } else if (entry.aiStatus === 'done') {
           var _aic  = entry.aiRelevant ? '#22c55e' : '#9ca3af';
           var _aib  = entry.aiRelevant ? 'rgba(34,197,94,0.10)' : 'rgba(107,114,128,0.08)';
@@ -8572,6 +8690,13 @@ function showOnboarding(onComplete) {
       if (entry.iframeable === true) {
         richEl.style.display = 'none';
         iframeEl.style.display = 'block';
+        iframeEl.onerror = function() {
+          entry.iframeable = false;
+          iframeEl.style.display = 'none';
+          iframeEl.src = '';
+          _newsShowRichPreviewCard(entry, _newsThemeVars());
+          renderUrlList();
+        };
         iframeEl.src = entry.url;
       } else {
         iframeEl.style.display = 'none';
@@ -8617,6 +8742,9 @@ function showOnboarding(onComplete) {
       if (entry.pageLang) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);color:#a78bfa;">\uD83C\uDF10 ' + _esc(entry.pageLang) + '</span>');
       if (entry.isPaywall) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);color:#f59e0b;">\uD83D\uDD12 paywall</span>');
       if (entry.pageType === 'nonArticle') _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textMuted + ';">\uD83D\uDCC4 nie-artyku\u0142</span>');
+      if (entry.iframeable === true) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.18);color:#818cf8;" title="Podgl\u0105d iframe dost\u0119pny">▢ iframe</span>');
+      if (entry.wordCount > 0) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textFaint + ';">' + entry.wordCount + ' s\u0142\u00f3w</span>');
+      if (entry.zoneHints && entry.zoneHints.length > 0) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.25);color:#fb923c;" title="Keyword znaleziony w strefach: ' + _esc(entry.zoneHints.join(', ')) + '">\uD83D\uDCCD ' + _esc(entry.zoneHints[0]) + (entry.zoneHints.length > 1 ? ' +' + (entry.zoneHints.length - 1) : '') + '</span>');
 
       var _chipHtml = '';
       if (entry.matchedChips && entry.matchedChips.length > 0) {
@@ -8629,7 +8757,8 @@ function showOnboarding(onComplete) {
       var _snippetText = entry.snippet ? entry.snippet.slice(0, 400) + (entry.snippet.length > 400 ? '\u2026' : '') : '';
 
       richEl.innerHTML =
-        (entry.title ? '<div style="font-size:15px;font-weight:700;line-height:1.4;color:' + t.text + ';margin-bottom:10px;">' + _esc(entry.title) + '</div>' : '<div style="font-size:12px;color:' + t.textFaint + ';margin-bottom:10px;font-style:italic;">Brak tytu\u0142u — artyku\u0142 nie zosta\u0142 jeszcze przeskanowany</div>') +
+        (entry.title ? '<div style="font-size:15px;font-weight:700;line-height:1.4;color:' + t.text + ';margin-bottom:' + (entry.author ? '4px' : '10px') + ';">' + _esc(entry.title) + '</div>' : '<div style="font-size:12px;color:' + t.textFaint + ';margin-bottom:10px;font-style:italic;">Brak tytu\u0142u — artyku\u0142 nie zosta\u0142 jeszcze przeskanowany</div>') +
+        (entry.author ? '<div style="font-size:11px;color:' + t.textMuted + ';margin-bottom:10px;">✍ ' + _esc(entry.author) + '</div>' : '') +
         (_badges.length > 0 ? '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px;">' + _badges.join('') + '</div>' : '') +
         (_chipHtml ? _chipHtml + '<div style="height:10px;"></div>' : '') +
         (_snippetText ? '<div style="font-size:12px;line-height:1.7;color:' + t.text + ';background:' + t.bgDeep + ';border-radius:8px;padding:10px 12px;border:1px solid ' + t.borderSub + ';margin-bottom:14px;">' + _esc(_snippetText) + '</div>' : '') +
@@ -8934,6 +9063,8 @@ function showOnboarding(onComplete) {
           entry.isStale            = _isStale;
           entry.isPaywall          = result.isPaywall || false;
           entry.keywordContexts    = result.keywordContexts || {};
+          entry.author             = result.author || '';
+          entry.wordCount          = result.wordCount || 0;
           if (result.iframeable !== undefined) entry.iframeable = result.iframeable;
           newsState.scanDone++;
           if (importBtn) importBtn.textContent = '⟳ Skanowanie ' + newsState.scanDone + '/' + newsState.scanTotal + '...';
@@ -9279,6 +9410,19 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.49",
+      "date": "2026-04-17",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "News AI — obsługa błędów 429/5xx/timeout/parse z komunikatem per URL"},
+        {"type": "feat", "text": "News AI — badge błędu w liście URLi (🤖 limit API / timeout / błąd parsowania)"},
+        {"type": "feat", "text": "News — fallback iframe→rich card gdy iframe rzuca onerror"},
+        {"type": "feat", "text": "News — rich preview: autor, liczba słów, strefy artykułu, badge iframe"},
+        {"type": "feat", "text": "News — legenda oznaczeń: przycisk ? w headerze, overlay z opisami wszystkich badży"}
+      ]
+    },
+    {
       "version": "0.23.48",
       "date": "2026-04-17",
       "label": "feat",
@@ -9379,15 +9523,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "News — import URLi przeniesiony do modalu popup (przycisk 'Importuj URLe' → modal z textarea + chips + Skanuj → zamknięcie modalu, live skan w liście)"},
         {"type": "feat", "text": "News — live feedback skanowania: pulsujący pasek postępu, chipy i doty relevantności pojawiają się na bieżąco"},
         {"type": "feat", "text": "News — responsywny układ: zakładki [Lista | Formularz] na wąskich ekranach (< 880px), kolumny na szerokich"}
-      ]
-    },
-    {
-      "version": "0.23.39",
-      "date": "2026-04-16",
-      "label": "chore",
-      "labelColor": "#6b7280",
-      "changes": [
-        {"type": "chore", "text": "usunięcie martwego kodu — legacy sendFeedbackToSlack, refreshTagStats, deleteMentionsByTag, buildAutoDeleteKey, exportReport, exportPartitions"}
       ]
     },
   ];

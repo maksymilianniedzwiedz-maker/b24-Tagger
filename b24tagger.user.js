@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.41
+// @version      0.23.42
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.41';
+  const VERSION = '0.23.42';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2922,7 +2922,7 @@
       #b24t-body::-webkit-scrollbar-track { background: transparent; }
       #b24t-body::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
       /* main-tab fills body; other tabs are display:none so don't participate in flex */
-      #b24t-main-tab { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+      #b24t-main-tab { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; overflow-x: hidden; }
       #b24t-main-tab::-webkit-scrollbar { width: 3px; }
       #b24t-main-tab::-webkit-scrollbar-track { background: transparent; }
       #b24t-main-tab::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
@@ -8971,6 +8971,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.42",
+      "date": "2026-04-17",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "scroll panelu głównego przywrócony po załadowaniu pliku (regresja z v0.23.37)"}
+      ]
+    },
+    {
       "version": "0.23.41",
       "date": "2026-04-17",
       "label": "feat",
@@ -9063,18 +9072,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "usunięcie zdublowanego statusu tokenu z subbaru — '● Token' widoczny tylko w meta barze"}
-      ]
-    },
-    {
-      "version": "0.23.32",
-      "date": "2026-04-14",
-      "label": "ui",
-      "labelColor": "#8b5cf6",
-      "changes": [
-        {"type": "ui", "text": "pulsowanie pasków postępu podczas aktywnych procesów (tagowanie plikiem, skanowanie News, Delete)"},
-        {"type": "ui", "text": "badge statusu: ⟳ Running / ⚠ Error (migający) / ✓ Done — większy font, border"},
-        {"type": "ui", "text": "status tokenu: '● Token' z labelką i pogrubieniem zamiast samej kropki"},
-        {"type": "ui", "text": "CMS dot w formularzu News: '● CMS' z labelką, animacja pulsowania podczas sprawdzania"}
       ]
     },
   ];

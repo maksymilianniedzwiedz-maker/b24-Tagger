@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.23.49",
+    "date": "2026-04-17",
+    "label": "feat",
+    "changes": [
+      "feat: News AI — obsługa błędów 429/5xx/timeout/parse z konkretnym komunikatem per URL",
+      "feat: News AI — badge błędu w liście URLi (🤖 limit API / błąd serwera / timeout itd.)",
+      "feat: News — fallback iframe→rich card gdy iframe rzuca onerror",
+      "feat: News — rich preview card: autor, liczba słów, strefy artykułu, badge iframe",
+      "feat: News — legenda oznaczeń (przycisk ? w headerze panelu, overlay z opisami wszystkich badży)"
+    ]
+  },
+  {
     "version": "0.23.48",
     "date": "2026-04-17",
     "label": "feat",

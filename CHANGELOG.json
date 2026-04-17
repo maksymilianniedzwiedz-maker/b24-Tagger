@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.43",
+    "date": "2026-04-17",
+    "label": "feat",
+    "changes": [
+      "feat: sekcja Ustawienia AI — klucz API Anthropic, wybór modelu (Haiku 4.5 / Sonnet 4.6), biblioteka promptów z edytorem inline, toggle AI scoring w module News z dziennym limitem wywołań"
+    ]
+  },
+  {
     "version": "0.23.42",
     "date": "2026-04-17",
     "label": "fix",

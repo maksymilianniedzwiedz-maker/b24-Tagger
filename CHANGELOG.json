@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.23.51",
+    "date": "2026-04-18",
+    "label": "feat",
+    "changes": [
+      "feat: News — przeprojektowanie listy URLi na układ kart: status badge + pozostałe badże w górnym wierszu, URL pełnej szerokości (11px monospace, bez limitu 42 znaków), snippet poniżej",
+      "feat: News — status jako kolorowy badge z etykietą (Wzmianka / W treści / Główny temat / Keyword w URL itp.) zamiast samego kropki"
+    ]
+  },
+  {
     "version": "0.23.50",
     "date": "2026-04-18",
     "label": "fix",

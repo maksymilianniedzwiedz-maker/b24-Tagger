@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.23.45",
+    "date": "2026-04-17",
+    "label": "fix",
+    "changes": [
+      "fix: Ustawienia AI — klucz API bez autofill hasła (type=text + autocomplete=off)",
+      "fix: dropdown modelu — hardcoded kolory, czytelny na białym tle (color-scheme:light)",
+      "feat: wybór modelu osobno dla News i Tagowania",
+      "feat: Biblioteka promptów przeniesiona do osobnego modalu",
+      "fix: usunięty limit dzienny wywołań AI",
+      "fix: modal ⚙ — max-height:90vh + scroll (overflow przy wielu elementach)"
+    ]
+  },
+  {
     "version": "0.23.44",
     "date": "2026-04-17",
     "label": "fix",

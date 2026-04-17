@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.46
+// @version      0.23.47
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.46';
+  const VERSION = '0.23.47';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7265,23 +7265,6 @@ function showOnboarding(onComplete) {
   }
 
   // ── NEWS AI SCORING ──
-  var _NEWS_AI_DEFAULT_SYSTEM = [
-    'You are analyzing whether a news article is relevant to brand monitoring.',
-    'A keyword was found on this page by an automated scanner. Your job is to determine',
-    'if the keyword appears in the main article content, or only in peripheral areas',
-    '(recommended articles, ads, sidebars, navigation, footers).',
-    '',
-    'Context clues:',
-    '- secondary_zone_only: true \u2192 scanner already suspects keyword is only in sidebar/secondary zones',
-    '- teaser_match_only: true \u2192 keyword found only in "recommended articles" section, not main content',
-    '- scanner_status: hint from keyword scorer (mention=weak, contentmatch=medium, teasermatch=teaser only)',
-    '',
-    'Respond ONLY with valid JSON:',
-    '{"relevant": true, "reason": "one sentence in Polish"}',
-    'or: {"relevant": false, "reason": "one sentence in Polish"}',
-    '',
-    'No markdown. No explanation outside the JSON.',
-  ].join('\n');
 
   function _newsAiGetBrandCtx(projectId) {
     return lsGet('b24t_news_ai_brand_ctx_' + (projectId || 'default'), '');
@@ -7297,27 +7280,26 @@ function showOnboarding(onComplete) {
   }
   function _newsAiBuildSystemPrompt() {
     var s = _aiGetSettings();
-    var basePrompt = _NEWS_AI_DEFAULT_SYSTEM;
-    if (s.news && s.news.activePromptId && s.prompts) {
-      var found = null;
-      for (var _pi = 0; _pi < s.prompts.length; _pi++) {
-        if (s.prompts[_pi].id === s.news.activePromptId) { found = s.prompts[_pi]; break; }
-      }
-      if (found && found.system) basePrompt = found.system;
+    if (!s.news || !s.news.activePromptId || !s.prompts) return null;
+    var found = null;
+    for (var _pi = 0; _pi < s.prompts.length; _pi++) {
+      if (s.prompts[_pi].id === s.news.activePromptId) { found = s.prompts[_pi]; break; }
     }
+    if (!found || !found.system) return null;
     var projectName = state.projectId ? (_pnResolve(state.projectId) || '') : '';
     var brandCtx = _newsAiGetBrandCtx(state.projectId);
-    return basePrompt
+    return found.system
       .replace(/\{PROJECT_NAME\}/g, projectName)
       .replace(/\{BRAND_CONTEXT\}/g, brandCtx);
   }
   function _newsAiAnalyze(entry) {
     if (!_newsAiShouldRun()) return;
+    var systemPrompt = _newsAiBuildSystemPrompt();
+    if (!systemPrompt) return;
     entry.aiStatus = 'pending';
     renderUrlList();
     var s = _aiGetSettings();
     var model = (s.news && s.news.model) || 'claude-haiku-4-5-20251001';
-    var systemPrompt = _newsAiBuildSystemPrompt();
     var ctxLines = Object.keys(entry.keywordContexts || {}).map(function(chip) {
       return chip + ':\n' + (entry.keywordContexts[chip] || []).join('\n---\n');
     }).join('\n\n');
@@ -9277,6 +9259,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.47",
+      "date": "2026-04-17",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "usunięto hardcoded system prompt z kodu wtyczki"},
+        {"type": "fix", "text": "AI News nie startuje gdy brak wybranego promptu w bibliotece"},
+        {"type": "fix", "text": "dropdown promptu News: '— domyślny —' → '— wybierz z biblioteki —'"}
+      ]
+    },
+    {
       "version": "0.23.46",
       "date": "2026-04-17",
       "label": "feat",
@@ -9374,17 +9367,6 @@ function showOnboarding(onComplete) {
         {"type": "ui", "text": "toggle dark/light przeniesiony z headera do ⚙ Ustawień"},
         {"type": "ui", "text": "subbar usunięty — token, dwie ikonki (📋 Changelog, 💬 Feedback) i timer w jednej meta-bar"},
         {"type": "ui", "text": "Changelog i Feedback rozdzielone na osobne modale; ikonki z opóźnionym tooltipem"}
-      ]
-    },
-    {
-      "version": "0.23.37",
-      "date": "2026-04-16",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "modal Changelog — 'undefined' zamiast opisów zmian (normalizacja stringów z CHANGELOG.json do obiektów {type,text})"},
-        {"type": "fix", "text": "modal Changelog — kanciaste rogi nagłówka (border-radius: 14px 14px 0 0)"},
-        {"type": "fix", "text": "log w głównym panelu — kontener rośnie zamiast scrollować; auto-scroll przez requestAnimationFrame"}
       ]
     },
   ];
@@ -10242,7 +10224,7 @@ function showOnboarding(onComplete) {
           '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' +
             '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">Prompt:</span>' +
             '<select id="b24t-ai-news-prompt" style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:#fff;color:#333;font-size:11px;font-family:inherit;color-scheme:light;">' +
-              '<option value="">\u2014 domy\u015blny \u2014</option>' +
+              '<option value="">\u2014 wybierz z biblioteki \u2014</option>' +
             '</select>' +
           '</div>' +
           '<div style="height:1px;background:var(--b24t-border-sub);margin:8px 0 10px;"></div>' +

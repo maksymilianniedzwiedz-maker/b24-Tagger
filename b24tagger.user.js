@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.49
+// @version      0.23.50
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.49';
+  const VERSION = '0.23.50';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7443,39 +7443,43 @@ function showOnboarding(onComplete) {
           timeout: NEWS_CONTENT_SCAN_TIMEOUT_MS,
           onload: function(resp) {
             clearTimeout(timer);
-            if (resp.status < 200 || resp.status >= 400) {
-              _done({ status: 'blocked', score: 0, snippet: '' });
-              return;
-            }
-            // Odrzuć non-HTML (PDFy, obrazy, feed XML itp.)
-            var ct = (resp.responseHeaders || '').toLowerCase();
-            var isHtml = ct.indexOf('content-type: text/html') !== -1 ||
-                         ct.indexOf('content-type: application/xhtml') !== -1;
-            // Fallback: jeśli brak nagłówka content-type, sprawdź czy odpowiedź zaczyna się od '<'
-            if (!isHtml && (resp.responseText || '').trimStart().charAt(0) !== '<') {
-              _done({ status: 'nomatch', score: 0, snippet: '' });
-              return;
-            }
-            // Iframeable — X-Frame-Options lub CSP frame-ancestors
-            var _rh = ct; // już lowercase
-            var _iframeable = true;
-            var _xfoM = _rh.match(/x-frame-options:\s*([a-z\-]+)/);
-            if (_xfoM && (_xfoM[1] === 'deny' || _xfoM[1] === 'sameorigin')) _iframeable = false;
-            if (_iframeable) {
-              var _cspIdx = _rh.indexOf('content-security-policy:');
-              if (_cspIdx !== -1) {
-                var _cspEnd = _rh.indexOf('\n', _cspIdx);
-                var _cspLine = _cspEnd !== -1 ? _rh.slice(_cspIdx, _cspEnd) : _rh.slice(_cspIdx);
-                var _faIdx = _cspLine.indexOf('frame-ancestors');
-                if (_faIdx !== -1) {
-                  var _faVal = _cspLine.slice(_faIdx + 15).replace(/^\s+/, '').split(';')[0];
-                  if (_faVal.indexOf('*') === -1) _iframeable = false;
+            try {
+              if (resp.status < 200 || resp.status >= 400) {
+                _done({ status: 'blocked', score: 0, snippet: '' });
+                return;
+              }
+              // Odrzuć non-HTML (PDFy, obrazy, feed XML itp.)
+              var ct = (resp.responseHeaders || '').toLowerCase();
+              var isHtml = ct.indexOf('content-type: text/html') !== -1 ||
+                           ct.indexOf('content-type: application/xhtml') !== -1;
+              // Fallback: jeśli brak nagłówka content-type, sprawdź czy odpowiedź zaczyna się od '<'
+              if (!isHtml && (resp.responseText || '').trimStart().charAt(0) !== '<') {
+                _done({ status: 'nomatch', score: 0, snippet: '' });
+                return;
+              }
+              // Iframeable — X-Frame-Options lub CSP frame-ancestors
+              var _rh = ct; // już lowercase
+              var _iframeable = true;
+              var _xfoM = _rh.match(/x-frame-options:\s*([a-z\-]+)/);
+              if (_xfoM && (_xfoM[1] === 'deny' || _xfoM[1] === 'sameorigin')) _iframeable = false;
+              if (_iframeable) {
+                var _cspIdx = _rh.indexOf('content-security-policy:');
+                if (_cspIdx !== -1) {
+                  var _cspEnd = _rh.indexOf('\n', _cspIdx);
+                  var _cspLine = _cspEnd !== -1 ? _rh.slice(_cspIdx, _cspEnd) : _rh.slice(_cspIdx);
+                  var _faIdx = _cspLine.indexOf('frame-ancestors');
+                  if (_faIdx !== -1) {
+                    var _faVal = _cspLine.slice(_faIdx + 15).replace(/^\s+/, '').split(';')[0];
+                    if (_faVal.indexOf('*') === -1) _iframeable = false;
+                  }
                 }
               }
+              var _sr = _newsParseContent(resp.responseText, chips);
+              _sr.iframeable = _iframeable;
+              _done(_sr);
+            } catch(e) {
+              _done({ status: 'blocked', score: 0, snippet: '' });
             }
-            var _sr = _newsParseContent(resp.responseText, chips);
-            _sr.iframeable = _iframeable;
-            _done(_sr);
           },
           onerror: function() {
             clearTimeout(timer);
@@ -8690,12 +8694,19 @@ function showOnboarding(onComplete) {
       if (entry.iframeable === true) {
         richEl.style.display = 'none';
         iframeEl.style.display = 'block';
-        iframeEl.onerror = function() {
+        var _iframeFallback = function() {
           entry.iframeable = false;
           iframeEl.style.display = 'none';
           iframeEl.src = '';
           _newsShowRichPreviewCard(entry, _newsThemeVars());
           renderUrlList();
+        };
+        iframeEl.onerror = _iframeFallback;
+        iframeEl.onload = function() {
+          try {
+            var doc = iframeEl.contentDocument;
+            if (doc && doc.body && doc.body.childElementCount === 0) _iframeFallback();
+          } catch(e) { /* cross-origin = załadowano poprawnie */ }
         };
         iframeEl.src = entry.url;
       } else {
@@ -9410,6 +9421,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.50",
+      "date": "2026-04-18",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "skanowanie News nie zawiesza się w połowie — try/catch w onload chroni przed wyjątkiem w _newsParseContent"},
+        {"type": "fix", "text": "iframe fallback — detekcja pustego contentDocument po blokadzie X-Frame-Options; auto-switch na rich card"}
+      ]
+    },
+    {
       "version": "0.23.49",
       "date": "2026-04-17",
       "label": "feat",
@@ -9511,18 +9532,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "News — detekcja iframeable podczas skanowania (X-Frame-Options, CSP frame-ancestors)"},
         {"type": "feat", "text": "News — rich preview card: tytuł, snippet, badże, przycisk 'Otwórz w nowej karcie'"},
         {"type": "feat", "text": "News — badge ▢ na liście przy URLach z dostępnym iframe; 3 zakładki na wąskich ekranach [Lista|Podgląd|Formularz]"}
-      ]
-    },
-    {
-      "version": "0.23.40",
-      "date": "2026-04-17",
-      "label": "feat",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "feat", "text": "News — przebudowa paneli na jeden fullscreen overlay (95vw×95vh) z dwiema kolumnami: lista URLi + formularz wzmianki"},
-        {"type": "feat", "text": "News — import URLi przeniesiony do modalu popup (przycisk 'Importuj URLe' → modal z textarea + chips + Skanuj → zamknięcie modalu, live skan w liście)"},
-        {"type": "feat", "text": "News — live feedback skanowania: pulsujący pasek postępu, chipy i doty relevantności pojawiają się na bieżąco"},
-        {"type": "feat", "text": "News — responsywny układ: zakładki [Lista | Formularz] na wąskich ekranach (< 880px), kolumny na szerokich"}
       ]
     },
   ];

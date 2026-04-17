@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.45
+// @version      0.23.46
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.45';
+  const VERSION = '0.23.46';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7226,12 +7226,32 @@ function showOnboarding(onComplete) {
     if (articleTitle.length > 200) articleTitle = articleTitle.slice(0, 200);
 
     var secondaryZoneOnly = _secondaryChips.length > 0 && matchedChips.length === _secondaryChips.length;
+
+    // Konteksty tekstowe per chip — do analizy AI (150 znaków wokół każdego trafienia)
+    var keywordContexts = {};
+    matchedChips.forEach(function(chip) {
+      var kw = chip.toLowerCase();
+      var ctxs = [];
+      paragraphs.forEach(function(p) {
+        if (ctxs.length >= 3) return;
+        var pidx = p.toLowerCase().indexOf(kw);
+        if (pidx !== -1) ctxs.push(p.slice(Math.max(0, pidx - 100), Math.min(p.length, pidx + kw.length + 100)).trim());
+      });
+      if (ctxs.length === 0) {
+        var metaTxt = ogDesc || metaDesc || '';
+        var midx = metaTxt.toLowerCase().indexOf(kw);
+        if (midx !== -1) ctxs.push(metaTxt.slice(Math.max(0, midx - 100), Math.min(metaTxt.length, midx + kw.length + 100)).trim());
+      }
+      keywordContexts[chip] = ctxs;
+    });
+
     return {
       status:            status,
       score:             score,
       snippet:           snippet,
       title:             articleTitle,
       matchedChips:      matchedChips,
+      keywordContexts:   keywordContexts,
       secondaryZoneOnly: secondaryZoneOnly,
       zoneHints:         _matchedZoneHints,
       teaserMatchOnly:   _teaserMatchOnly,
@@ -7242,6 +7262,116 @@ function showOnboarding(onComplete) {
       articleDate:       _articleDate,
       isPaywall:         _isPaywall,
     };
+  }
+
+  // ── NEWS AI SCORING ──
+  var _NEWS_AI_DEFAULT_SYSTEM = [
+    'You are analyzing whether a news article is relevant to brand monitoring.',
+    'A keyword was found on this page by an automated scanner. Your job is to determine',
+    'if the keyword appears in the main article content, or only in peripheral areas',
+    '(recommended articles, ads, sidebars, navigation, footers).',
+    '',
+    'Context clues:',
+    '- secondary_zone_only: true \u2192 scanner already suspects keyword is only in sidebar/secondary zones',
+    '- teaser_match_only: true \u2192 keyword found only in "recommended articles" section, not main content',
+    '- scanner_status: hint from keyword scorer (mention=weak, contentmatch=medium, teasermatch=teaser only)',
+    '',
+    'Respond ONLY with valid JSON:',
+    '{"relevant": true, "reason": "one sentence in Polish"}',
+    'or: {"relevant": false, "reason": "one sentence in Polish"}',
+    '',
+    'No markdown. No explanation outside the JSON.',
+  ].join('\n');
+
+  function _newsAiGetBrandCtx(projectId) {
+    return lsGet('b24t_news_ai_brand_ctx_' + (projectId || 'default'), '');
+  }
+  function _newsAiSetBrandCtx(projectId, text) {
+    lsSet('b24t_news_ai_brand_ctx_' + (projectId || 'default'), text);
+  }
+  function _newsAiShouldRun() {
+    var s = _aiGetSettings();
+    if (!s.news || !s.news.enabled) return false;
+    if (!s.apiKey) return false;
+    return true;
+  }
+  function _newsAiBuildSystemPrompt() {
+    var s = _aiGetSettings();
+    var basePrompt = _NEWS_AI_DEFAULT_SYSTEM;
+    if (s.news && s.news.activePromptId && s.prompts) {
+      var found = null;
+      for (var _pi = 0; _pi < s.prompts.length; _pi++) {
+        if (s.prompts[_pi].id === s.news.activePromptId) { found = s.prompts[_pi]; break; }
+      }
+      if (found && found.system) basePrompt = found.system;
+    }
+    var projectName = state.projectId ? (_pnResolve(state.projectId) || '') : '';
+    var brandCtx = _newsAiGetBrandCtx(state.projectId);
+    return basePrompt
+      .replace(/\{PROJECT_NAME\}/g, projectName)
+      .replace(/\{BRAND_CONTEXT\}/g, brandCtx);
+  }
+  function _newsAiAnalyze(entry) {
+    if (!_newsAiShouldRun()) return;
+    entry.aiStatus = 'pending';
+    renderUrlList();
+    var s = _aiGetSettings();
+    var model = (s.news && s.news.model) || 'claude-haiku-4-5-20251001';
+    var systemPrompt = _newsAiBuildSystemPrompt();
+    var ctxLines = Object.keys(entry.keywordContexts || {}).map(function(chip) {
+      return chip + ':\n' + (entry.keywordContexts[chip] || []).join('\n---\n');
+    }).join('\n\n');
+    var userPrompt = [
+      'Title: ' + (entry.title || ''),
+      'Snippet: ' + (entry.snippet || ''),
+      'Keywords matched: ' + (entry.matchedChips || []).join(', '),
+      'Scanner status: ' + entry.status,
+      'Secondary zone only: ' + !!entry.secondaryZoneOnly,
+      'Teaser match only: ' + !!entry.teaserMatchOnly,
+      'Paywall: ' + !!entry.isPaywall,
+      ctxLines ? 'Keyword contexts:\n' + ctxLines : '',
+    ].filter(Boolean).join('\n');
+    GM_xmlhttpRequest({
+      method: 'POST',
+      url: 'https://api.anthropic.com/v1/messages',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': s.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'prompt-caching-2024-07-31',
+      },
+      data: JSON.stringify({
+        model: model,
+        max_tokens: 120,
+        system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
+        messages: [{ role: 'user', content: userPrompt }],
+      }),
+      timeout: 15000,
+      onload: function(resp) {
+        try {
+          if (resp.status === 401) {
+            var cfg = _aiGetSettings();
+            if (!cfg.news) cfg.news = {};
+            cfg.news.enabled = false;
+            _aiSaveSettings(cfg);
+            entry.aiStatus = 'error';
+            renderUrlList();
+            return;
+          }
+          var data = JSON.parse(resp.responseText);
+          var text = (data.content && data.content[0] && data.content[0].text) || '';
+          var parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
+          entry.aiStatus = 'done';
+          entry.aiRelevant = !!parsed.relevant;
+          entry.aiReason = parsed.reason || '';
+        } catch(e) {
+          entry.aiStatus = 'error';
+        }
+        renderUrlList();
+      },
+      onerror: function() { entry.aiStatus = 'error'; renderUrlList(); },
+      ontimeout: function() { entry.aiStatus = 'error'; renderUrlList(); },
+    });
   }
 
   // Pobiera stronę przez GM_xmlhttpRequest (pomija CORS) i skanuje jej treść.
@@ -7548,6 +7678,11 @@ function showOnboarding(onComplete) {
             '<br><span style="font-size:10px;color:' + t.textFaint + ';line-height:1.4;">Klasyfikuje URLe tylko po adresie — szybsze, bez tytułu i daty.</span>',
           '</span>',
         '</label>',
+      '</div>',
+      '<div id="b24t-news-ai-brand-section" style="display:none;padding:10px 12px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;margin-bottom:12px;">',
+        '<div style="font-size:10px;font-weight:700;color:' + t.textMuted + ';letter-spacing:0.06em;margin-bottom:6px;">OPIS MARKI (AI)</div>',
+        '<textarea id="b24t-news-ai-brand-ctx" rows="3" placeholder="Opisz mark\u0119: czym si\u0119 zajmuje, jakie produkty/brandy, kim jest odbiorca..." style="width:100%;box-sizing:border-box;font-size:11px;padding:7px 9px;border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';resize:vertical;font-family:inherit;line-height:1.5;"></textarea>',
+        '<div style="margin-top:4px;font-size:9px;color:' + t.textFaint + ';">Kontekst dla AI. Zapisywany per projekt. U\u017cyj <code>{PROJECT_NAME}</code> i <code>{BRAND_CONTEXT}</code> w swoim prompcie.</div>',
       '</div>',
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">',
         '<label style="font-size:11px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">WKLEJ ADRESY URL</label>',
@@ -8305,6 +8440,16 @@ function showOnboarding(onComplete) {
         if (entry.isPaywall) {
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);color:#f59e0b;" title="Strona za paywallem lub blokad\u0105 — tre\u015b\u0107 mo\u017ce by\u0107 niepe\u0142na">\uD83D\uDD12 paywall</span>');
         }
+        if (entry.aiStatus === 'pending') {
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.2);color:#818cf8;">\u23f3 AI...</span>');
+        } else if (entry.aiStatus === 'done') {
+          var _aic  = entry.aiRelevant ? '#22c55e' : '#9ca3af';
+          var _aib  = entry.aiRelevant ? 'rgba(34,197,94,0.10)' : 'rgba(107,114,128,0.08)';
+          var _aibd = entry.aiRelevant ? 'rgba(34,197,94,0.25)' : 'rgba(107,114,128,0.2)';
+          var _ailbl = entry.aiRelevant ? '\uD83E\uDD16 Relevant' : '\uD83E\uDD16 Not relevant';
+          var _airsn = (entry.aiReason || '').replace(/"/g, '&quot;');
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:' + _aib + ';border:1px solid ' + _aibd + ';color:' + _aic + ';" title="' + _airsn + '">' + _ailbl + '</span>');
+        }
         var metaLineHtml = _metaBadges.length > 0
           ? '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px;">' + _metaBadges.join('') + '</div>'
           : '';
@@ -8629,6 +8774,20 @@ function showOnboarding(onComplete) {
     var pasteArea = document.getElementById('b24t-news-paste-area');
     var importInfo = document.getElementById('b24t-news-import-info');
 
+    // "Opis marki" — show/hide + persystencja per projekt
+    (function() {
+      var brandSection = document.getElementById('b24t-news-ai-brand-section');
+      var brandCtxTA   = document.getElementById('b24t-news-ai-brand-ctx');
+      if (!brandSection || !brandCtxTA) return;
+      if (_newsAiShouldRun()) {
+        brandSection.style.display = '';
+        brandCtxTA.value = _newsAiGetBrandCtx(state.projectId);
+      }
+      brandCtxTA.addEventListener('input', function() {
+        _newsAiSetBrandCtx(state.projectId, brandCtxTA.value);
+      });
+    })();
+
     async function importUrls() {
       // Blokuj ponowne kliknięcie gdy skanowanie w toku
       if (newsState.scanning) return;
@@ -8772,10 +8931,14 @@ function showOnboarding(onComplete) {
           entry.articleDate        = result.articleDate || null;
           entry.isStale            = _isStale;
           entry.isPaywall          = result.isPaywall || false;
+          entry.keywordContexts    = result.keywordContexts || {};
           if (result.iframeable !== undefined) entry.iframeable = result.iframeable;
           newsState.scanDone++;
           if (importBtn) importBtn.textContent = '⟳ Skanowanie ' + newsState.scanDone + '/' + newsState.scanTotal + '...';
           renderUrlList(); // aktualizacja na żywo — wpada do listy w momencie rozpoznania
+          if (result.status === 'mention' || result.status === 'contentmatch' || result.status === 'keytopic') {
+            _newsAiAnalyze(entry);
+          }
         }
       }
       await Promise.all(Array.from({ length: NEWS_CONTENT_SCAN_CONCURRENCY }, _scanWorker));
@@ -9114,6 +9277,19 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.46",
+      "date": "2026-04-17",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "AI News Scoring (krok 2) — ocena relevancji artykułów przez Claude po content scan"},
+        {"type": "feat", "text": "keywordContexts w _newsParseContent — fragmenty tekstu wokół każdego słowa kluczowego"},
+        {"type": "feat", "text": "badge AI w liście URLi — ⏳ pending / 🤖 Relevant / 🤖 Not relevant + tooltip z uzasadnieniem"},
+        {"type": "feat", "text": "pole 'Opis marki' w modalu importu — persystuje per projekt, placeholdery {PROJECT_NAME} i {BRAND_CONTEXT}"},
+        {"type": "feat", "text": "dropdown wyboru promptu News w ustawieniach AI"}
+      ]
+    },
+    {
       "version": "0.23.45",
       "date": "2026-04-17",
       "label": "fix",
@@ -9209,17 +9385,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "modal Changelog — 'undefined' zamiast opisów zmian (normalizacja stringów z CHANGELOG.json do obiektów {type,text})"},
         {"type": "fix", "text": "modal Changelog — kanciaste rogi nagłówka (border-radius: 14px 14px 0 0)"},
         {"type": "fix", "text": "log w głównym panelu — kontener rośnie zamiast scrollować; auto-scroll przez requestAnimationFrame"}
-      ]
-    },
-    {
-      "version": "0.23.36",
-      "date": "2026-04-15",
-      "label": "ui",
-      "labelColor": "#8b5cf6",
-      "changes": [
-        {"type": "ui", "text": "redesign modalu Changelog & Feedback — gradient header, CSS vars, spójny styl z resztą paneli; light/dark theme działa automatycznie"},
-        {"type": "ui", "text": "baner aktualizacji — font-family Inter zamiast monospace, kolory przez CSS vars"},
-        {"type": "ui", "text": "rewizja słownictwa UI — naturalniejszy język w onboardingu, trybie pomocy i komunikatach; labelki → oceny, niezmatched → niedopasowane"}
       ]
     },
   ];
@@ -10071,9 +10236,15 @@ function showOnboarding(onComplete) {
             '<input type="checkbox" id="b24t-ai-news-enabled" style="accent-color:var(--b24t-primary);width:14px;height:14px;flex-shrink:0;cursor:pointer;">' +
             '<div>' +
               '<div style="font-size:12px;font-weight:600;color:var(--b24t-text);">AI scoring w module News</div>' +
-              '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Automatyczna ocena artykułów przez Claude</div>' +
+              '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Automatyczna ocena artyku\u0142\u00f3w przez Claude</div>' +
             '</div>' +
           '</label>' +
+          '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' +
+            '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">Prompt:</span>' +
+            '<select id="b24t-ai-news-prompt" style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:#fff;color:#333;font-size:11px;font-family:inherit;color-scheme:light;">' +
+              '<option value="">\u2014 domy\u015blny \u2014</option>' +
+            '</select>' +
+          '</div>' +
           '<div style="height:1px;background:var(--b24t-border-sub);margin:8px 0 10px;"></div>' +
           '<div style="font-size:10px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:7px;">Tagowanie</div>' +
           '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">' +
@@ -10104,11 +10275,21 @@ function showOnboarding(onComplete) {
       var newsModelSelect = document.getElementById('b24t-ai-model-news');
       var taggingModelSelect = document.getElementById('b24t-ai-model-tagging');
       var newsEnabledCb = document.getElementById('b24t-ai-news-enabled');
+      var newsPromptSelect = document.getElementById('b24t-ai-news-prompt');
 
       if (apiKeyInput) apiKeyInput.value = s.apiKey || '';
       if (newsModelSelect) newsModelSelect.value = (s.news && s.news.model) || 'claude-haiku-4-5-20251001';
       if (taggingModelSelect) taggingModelSelect.value = (s.tagging && s.tagging.model) || 'claude-haiku-4-5-20251001';
       if (newsEnabledCb) newsEnabledCb.checked = !!(s.news && s.news.enabled);
+      if (newsPromptSelect && s.prompts) {
+        s.prompts.forEach(function(p) {
+          var opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = p.name || p.id;
+          newsPromptSelect.appendChild(opt);
+        });
+        newsPromptSelect.value = (s.news && s.news.activePromptId) || '';
+      }
 
       if (apiKeyInput) {
         apiKeyInput.addEventListener('change', function() {
@@ -10140,6 +10321,14 @@ function showOnboarding(onComplete) {
           var cfg = _aiGetSettings();
           if (!cfg.news) cfg.news = {};
           cfg.news.enabled = newsEnabledCb.checked; _aiSaveSettings(cfg);
+        });
+      }
+      if (newsPromptSelect) {
+        newsPromptSelect.addEventListener('change', function() {
+          var cfg = _aiGetSettings();
+          if (!cfg.news) cfg.news = {};
+          cfg.news.activePromptId = newsPromptSelect.value || null;
+          _aiSaveSettings(cfg);
         });
       }
       var openPromptsBtn = document.getElementById('b24t-ai-open-prompts');

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.47
+// @version      0.23.48
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.47';
+  const VERSION = '0.23.48';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7524,14 +7524,30 @@ function showOnboarding(onComplete) {
       /<time[^>]+datetime=["'](\d{4}-\d{2}-\d{2})/i,
       // JSON-LD dateModified jako ostatnia deska ratunku
       /"dateModified"\s*:\s*"(\d{4}-\d{2}-\d{2})/,
-      // Common date patterns in content — celowo pominięte (zbyt szerokie, łapie daty z footerów itp.)
     ];
     for (var i = 0; i < patterns.length; i++) {
       var m = html.match(patterns[i]);
       if (m) {
         var d = m[1];
-        // Validate it looks like a real date
         if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d > '2000-01-01' && d <= _localDateStr(new Date())) return d;
+      }
+    }
+    // Fallback: widoczny tekst z nazwą miesiąca blisko słowa-klucza publikacji
+    var _mn = { january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12 };
+    var _textPatterns = [
+      /(?:published|posted|written|created|date)[^<]{0,80}(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})/i,
+      /(?:published|posted|written|created|date)[^<]{0,80}(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(\d{4})/i,
+    ];
+    for (var j = 0; j < _textPatterns.length; j++) {
+      var tm = html.match(_textPatterns[j]);
+      if (tm) {
+        var y, mo, dy;
+        if (/^\d/.test(tm[1])) { dy = parseInt(tm[1], 10); mo = _mn[tm[2].toLowerCase()]; y = parseInt(tm[3], 10); }
+        else                   { mo = _mn[tm[1].toLowerCase()]; dy = parseInt(tm[2], 10); y = parseInt(tm[3], 10); }
+        if (y && mo && dy) {
+          var ds = y + '-' + String(mo).padStart(2, '0') + '-' + String(dy).padStart(2, '0');
+          if (/^\d{4}-\d{2}-\d{2}$/.test(ds) && ds > '2000-01-01' && ds <= _localDateStr(new Date())) return ds;
+        }
       }
     }
     return null;
@@ -7708,8 +7724,12 @@ function showOnboarding(onComplete) {
     // Header
     var header = document.createElement('div');
     header.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--b24t-accent-grad);flex-shrink:0;';
+    var _aiChipHtml = _newsAiShouldRun()
+      ? '<span id="b24t-news-ai-chip" title="AI News aktywne — artykuły będą analizowane przez Claude" style="font-size:11px;padding:3px 9px;border-radius:12px;background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.40);color:#fff;font-weight:600;flex-shrink:0;cursor:default;letter-spacing:0.01em;">🤖 AI</span>'
+      : '';
     header.innerHTML = [
       '<span style="font-size:13px;font-weight:700;color:#fff;flex:1;text-shadow:0 1px 3px rgba(0,0,0,0.2);">📰 News</span>',
+      _aiChipHtml,
       '<button id="b24t-news-langmap-btn" style="background:rgba(255,255,255,0.20);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:11px;padding:3px 9px;border-radius:6px;flex-shrink:0;" title="Mapa języków">⚙ Języki</button>',
       '<button id="b24t-news-modal-open-btn" style="background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.55);color:#fff;cursor:pointer;font-size:12px;font-weight:700;padding:5px 14px;border-radius:7px;flex-shrink:0;letter-spacing:0.01em;">+ Importuj URLe</button>',
       '<span id="b24t-news-cms-dot" class="b24t-cms-checking" style="font-size:11px;font-weight:700;flex-shrink:0;cursor:default;color:rgba(255,255,255,0.5);" title="Sprawdzanie CMS...">● CMS</span>',
@@ -7765,7 +7785,7 @@ function showOnboarding(onComplete) {
       '<div id="b24t-news-project-info" style="display:none;font-size:10px;text-align:center;padding:2px 8px 4px;flex-shrink:0;"></div>',
       // Import button
       '<div style="padding:4px 8px 8px;flex-shrink:0;">',
-        '<button id="b24t-news-bottom-import-btn" style="width:100%;padding:6px;border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-size:11px;cursor:pointer;font-weight:500;">+ Importuj URLe</button>',
+        '<button id="b24t-news-bottom-import-btn" title="Otwórz formularz importu URLi" style="width:100%;padding:6px;border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-size:11px;cursor:pointer;font-weight:500;">↑ Wczytaj URLe</button>',
       '</div>',
     ].join('');
 
@@ -8109,9 +8129,9 @@ function showOnboarding(onComplete) {
     // ─── URL LIST ───
     function _statusDot(s) {
       if (s === 'match')        return { dot: '●', color: '#22c55e', label: 'Keyword w URL — relevantny' };
-      if (s === 'keytopic')     return { dot: '◆', color: '#4ade80', label: 'Główny temat artykułu (score 12+)' };
-      if (s === 'contentmatch') return { dot: '◆', color: '#06b6d4', label: 'Keyword w treści — kilkukrotnie (score 5–11)' };
-      if (s === 'mention')      return { dot: '◆', color: '#facc15', label: 'Wzmianka w treści — poboczna (score 1–4)' };
+      if (s === 'keytopic')     return { dot: '◆', color: '#22c55e', label: 'Główny temat (score 12+)' };
+      if (s === 'contentmatch') return { dot: '◆', color: '#818cf8', label: 'W treści (score 5–11)' };
+      if (s === 'mention')      return { dot: '◆', color: '#fb923c', label: 'Wzmianka (score 1–4)' };
       if (s === 'teasermatch')  return { dot: '◇', color: '#9ca3af', label: 'Keyword tylko w polecanych artykułach — nie w treści głównej' };
       if (s === 'wrongcountry') return { dot: '●', color: '#f97316', label: 'Keyword w URL, ale wskazuje inny kraj' };
       if (s === 'opened')       return { dot: '●', color: '#a78bfa', label: 'Otwarty — w trakcie weryfikacji' };
@@ -8583,9 +8603,9 @@ function showOnboarding(onComplete) {
       if (!richEl) return;
       function _esc(s) { return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-      var _statusColors = { keytopic: '#22c55e', contentmatch: '#a78bfa', mention: '#60a5fa', teasermatch: '#9ca3af', blocked: '#9ca3af', opened: '#818cf8' };
-      var _statusBgs    = { keytopic: 'rgba(34,197,94,0.12)', contentmatch: 'rgba(167,139,250,0.12)', mention: 'rgba(96,165,250,0.12)', teasermatch: 'rgba(107,114,128,0.10)', blocked: 'rgba(107,114,128,0.10)', opened: 'rgba(99,102,241,0.10)' };
-      var _statusLabels = { keytopic: 'kluczowy temat', contentmatch: 'content match', mention: 'wzmianka', teasermatch: 'w polecanych', blocked: 'zablokowany', opened: 'otwarty' };
+      var _statusColors = { keytopic: '#22c55e', contentmatch: '#818cf8', mention: '#fb923c', teasermatch: '#9ca3af', blocked: '#9ca3af', opened: '#818cf8' };
+      var _statusBgs    = { keytopic: 'rgba(34,197,94,0.12)', contentmatch: 'rgba(129,140,248,0.12)', mention: 'rgba(251,146,60,0.12)', teasermatch: 'rgba(107,114,128,0.10)', blocked: 'rgba(107,114,128,0.10)', opened: 'rgba(99,102,241,0.10)' };
+      var _statusLabels = { keytopic: 'Główny temat', contentmatch: 'W treści', mention: 'Wzmianka', teasermatch: 'w polecanych', blocked: 'zablokowany', opened: 'otwarty' };
       var _sc = _statusColors[entry.status] || '#9ca3af';
       var _sb = _statusBgs[entry.status]    || 'rgba(107,114,128,0.10)';
       var _sl = _statusLabels[entry.status] || entry.status || '';
@@ -8943,8 +8963,8 @@ function showOnboarding(onComplete) {
       var doneMsg = '✓ ' + deduped.length + ' URL' + (deduped.length !== 1 ? 'i' : '');
       if (dupeCount > 0) doneMsg += ' (−' + dupeCount + ' dup.)';
       doneMsg += ' — ' + matchCount + ' URL match';
-      if (keytopicCount > 0) doneMsg += ', ' + keytopicCount + ' gł. temat';
-      if (cmCount > 0)       doneMsg += ', ' + cmCount + ' kontekst';
+      if (keytopicCount > 0) doneMsg += ', ' + keytopicCount + ' gł. temat' + (keytopicCount > 1 ? 'y' : '');
+      if (cmCount > 0)       doneMsg += ', ' + cmCount + ' w treści';
       if (mentionCount > 0)  doneMsg += ', ' + mentionCount + ' wzmiank' + (mentionCount === 1 ? 'a' : 'i');
       if (blockedCount > 0)  doneMsg += ', ' + blockedCount + ' nieprzeskanowanych';
       if (importInfo) { importInfo.textContent = doneMsg; importInfo.style.display = ''; importInfo.style.color = '#22c55e'; }
@@ -9259,6 +9279,19 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.48",
+      "date": "2026-04-17",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "News — nowe nazwy wskaźników: mention→Wzmianka (🟠), contentmatch→W treści (🟣), keytopic→Główny temat (🟢)"},
+        {"type": "feat", "text": "News — ujednolicone kolory wskaźników w liście URLi i rich preview card"},
+        {"type": "feat", "text": "News — chip '🤖 AI' w headerze panelu gdy AI skonfigurowane i aktywne"},
+        {"type": "feat", "text": "News — dolny przycisk importu: '↑ Wczytaj URLe' z tooltipem (odróżnienie od górnego)"},
+        {"type": "feat", "text": "News — detekcja daty z widocznego tekstu ('Published: 12 April 2025') gdy meta/JSON-LD zawodzi"}
+      ]
+    },
+    {
       "version": "0.23.47",
       "date": "2026-04-17",
       "label": "fix",
@@ -9355,18 +9388,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#6b7280",
       "changes": [
         {"type": "chore", "text": "usunięcie martwego kodu — legacy sendFeedbackToSlack, refreshTagStats, deleteMentionsByTag, buildAutoDeleteKey, exportReport, exportPartitions"}
-      ]
-    },
-    {
-      "version": "0.23.38",
-      "date": "2026-04-16",
-      "label": "ui",
-      "labelColor": "#8b5cf6",
-      "changes": [
-        {"type": "ui", "text": "header — BETA chip bezpośrednio przy TAGGER, wersja przeniesiona pod nazwę jako klikalna linia (klik = sprawdź aktualizacje)"},
-        {"type": "ui", "text": "toggle dark/light przeniesiony z headera do ⚙ Ustawień"},
-        {"type": "ui", "text": "subbar usunięty — token, dwie ikonki (📋 Changelog, 💬 Feedback) i timer w jednej meta-bar"},
-        {"type": "ui", "text": "Changelog i Feedback rozdzielone na osobne modale; ikonki z opóźnionym tooltipem"}
       ]
     },
   ];

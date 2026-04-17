@@ -1,5 +1,19 @@
 [
   {
+    "version": "0.23.46",
+    "date": "2026-04-17",
+    "label": "feat",
+    "changes": [
+      "feat: AI News Scoring (krok 2) — ocena relevancji artykułów przez Claude po content scan",
+      "feat: keywordContexts w _newsParseContent — fragmenty tekstu wokół każdego słowa kluczowego",
+      "feat: _newsAiAnalyze — GM_xmlhttpRequest + Anthropic API + prompt caching (ephemeral)",
+      "feat: badge AI w liście URLi — ⏳ pending / 🤖 Relevant / 🤖 Not relevant + tooltip z uzasadnieniem",
+      "feat: pole 'Opis marki' w modalu importu — persystuje per projekt w localStorage",
+      "feat: prompt uniwersalny z placeholderami {PROJECT_NAME} i {BRAND_CONTEXT}",
+      "feat: dropdown wyboru promptu News w ustawieniach AI"
+    ]
+  },
+  {
     "version": "0.23.45",
     "date": "2026-04-17",
     "label": "fix",

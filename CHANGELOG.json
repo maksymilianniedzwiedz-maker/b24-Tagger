@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.23.48",
+    "date": "2026-04-17",
+    "label": "feat",
+    "changes": [
+      "feat: News — nowe nazwy wskaźników relevancji: mention→Wzmianka (🟠), contentmatch→W treści (🟣), keytopic→Główny temat (🟢)",
+      "feat: News — ujednolicone kolory wskaźników w liście URLi i rich preview card",
+      "feat: News — chip '🤖 AI' w headerze panelu gdy AI skonfigurowane i aktywne",
+      "feat: News — dolny przycisk importu zmieniony na '↑ Wczytaj URLe' z tooltipem",
+      "feat: News — detekcja daty z widocznego tekstu (Published: 12 April 2025) jako fallback gdy meta/JSON-LD zawodzi"
+    ]
+  },
+  {
     "version": "0.23.47",
     "date": "2026-04-17",
     "label": "fix",

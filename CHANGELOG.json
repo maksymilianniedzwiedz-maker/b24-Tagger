@@ -1,5 +1,76 @@
 [
   {
+    "version": "0.23.60",
+    "date": "2026-04-18",
+    "label": "redesign",
+    "changes": [
+      "redesign: News submit btn — linear-gradient(#6366f1,#8b5cf6) → var(--b24t-accent-grad)",
+      "redesign: lang map modal — wszystkie hardcoded dark colors → CSS vars (bg, border, text, primary)",
+      "redesign: onboarding bubble — #111118 → var(--b24t-bg), teksty → CSS vars, zachowane purple accenty",
+      "polish: ikona expand loga ⛶ → ↗",
+      "anim: b24t-section-reveal (opacity + translateY(-4px)) — mapping/partition sekcje"
+    ]
+  },
+  {
+    "version": "0.23.59",
+    "date": "2026-04-18",
+    "label": "fix",
+    "changes": [
+      "fix: annotator panel, tab, overlaye — Inter → Geist (10 miejsc)",
+      "fix: audit report wrongHtml — #f87171/#4ade80 → CSS vars (err/ok)",
+      "fix: buildAllProjectsPanel — font-family inherit Geist"
+    ]
+  },
+  {
+    "version": "0.23.58",
+    "date": "2026-04-18",
+    "label": "fix",
+    "changes": [
+      "fix: log panel theme-aware — CSS vars zamiast hardcoded dark colors (#252540, #3d3d6b, #0f0f1e, rgba(255,255,255,0.04))",
+      "fix: _appendLogPanelEntry — kolory semantyczne przez CSS vars (ok/warn/err/faint)"
+    ]
+  },
+  {
+    "version": "0.23.57",
+    "date": "2026-04-18",
+    "label": "ui",
+    "changes": [
+      "redesign: action bar — separacja run controls (Pauza/Stop) i narzędzi diagnostycznych (Match/Audit/Export)",
+      "CSS: nowy .b24t-btn-tool — mniejszy, transparent, subtelny"
+    ]
+  },
+  {
+    "version": "0.23.56",
+    "date": "2026-04-18",
+    "label": "ui",
+    "changes": [
+      "UX: hierarchia sekcji — primary (Postęp), tertiary (Log, Ustawienia)",
+      "UX: sekcja Ustawienia zwijana — domyślnie rozwinięta, stan w localStorage",
+      "CSS: modyfikatory .b24t-section-label.primary i .tertiary"
+    ]
+  },
+  {
+    "version": "0.23.55",
+    "date": "2026-04-18",
+    "label": "ui",
+    "changes": [
+      "redesign: stats kompaktowe rows zamiast hero metric kart (b24t-stats-row-list)",
+      "fix: _statsCard() — row layout zamiast kafelków z bgColor",
+      "fix: renderOverallStatsData — column layout zamiast grid w kafelkach overall stats",
+      "fix: help zone selector .b24t-stats-grid → .b24t-stats-row-list"
+    ]
+  },
+  {
+    "version": "0.23.54",
+    "date": "2026-04-18",
+    "label": "ui",
+    "changes": [
+      "fix: ujednolicenie fontów — Geist wszędzie (usunięcie Inter z 16 miejsc: toasty, log panel, news, onboarding, modals)",
+      "fix: CSS vars zamiast hardcoded kolorów — log panel, audit report, What's New modal",
+      "fix: toast border-top zamiast border-left stripe (banned pattern)"
+    ]
+  },
+  {
     "version": "0.23.53",
     "date": "2026-04-18",
     "label": "ui",

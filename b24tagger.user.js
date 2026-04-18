@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.58
+// @version      0.23.59
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.58';
+  const VERSION = '0.23.59';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -262,7 +262,7 @@
     if (document.getElementById('b24t-prompt-lib-modal')) return;
     var modal = document.createElement('div');
     modal.id = 'b24t-prompt-lib-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;backdrop-filter:blur(4px);animation:b24t-fadein 0.2s ease;';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;backdrop-filter:blur(4px);animation:b24t-fadein 0.2s ease;';
     modal.innerHTML =
       '<div style="background:#fff;border:1px solid #e0e0e0;border-radius:16px;width:480px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,0.22);animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);">' +
         '<div style="padding:14px 20px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:16px 16px 0 0;display:flex;align-items:center;gap:10px;flex-shrink:0;">' +
@@ -6501,7 +6501,7 @@ function showOnboarding(onComplete) {
       result.taggedWrong.slice(0,5).forEach(function(e) {
         wrongHtml += '<div style="font-size:9px;color:var(--b24t-text-faint);padding:3px 0;border-bottom:1px solid var(--b24t-border-sub);">' +
           e.url.substring(0,50) + '<br>' +
-          '<span style="color:#f87171;">✗ ma: ' + e.actual + '</span> <span style="color:#4ade80;">\u2192 powinien: ' + e.expected + '</span></div>';
+          '<span style="color:var(--b24t-err);">✗ ma: ' + e.actual + '</span> <span style="color:var(--b24t-ok);">\u2192 powinien: ' + e.expected + '</span></div>';
       });
     }
     content.innerHTML =
@@ -9476,6 +9476,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.59",
+      "date": "2026-04-18",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "annotator panel, tab, overlaye — Inter → Geist (10 miejsc)"},
+        {"type": "fix", "text": "audit report wrongHtml — hardcoded #f87171/#4ade80 → CSS vars"},
+        {"type": "fix", "text": "buildAllProjectsPanel — font-family Geist"}
+      ]
+    },
+    {
       "version": "0.23.58",
       "date": "2026-04-18",
       "label": "fix",
@@ -9575,19 +9586,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "iframe fallback — detekcja pustego contentDocument po blokadzie X-Frame-Options; auto-switch na rich card"}
       ]
     },
-    {
-      "version": "0.23.49",
-      "date": "2026-04-17",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "News AI — obsługa błędów 429/5xx/timeout/parse z komunikatem per URL"},
-        {"type": "feat", "text": "News AI — badge błędu w liście URLi (🤖 limit API / timeout / błąd parsowania)"},
-        {"type": "feat", "text": "News — fallback iframe→rich card gdy iframe rzuca onerror"},
-        {"type": "feat", "text": "News — rich preview: autor, liczba słów, strefy artykułu, badge iframe"},
-        {"type": "feat", "text": "News — legenda oznaczeń: przycisk ? w headerze, overlay z opisami wszystkich badży"}
-      ]
-    },
   ];
 
   function _fetchChangelog(onDone) {
@@ -9648,7 +9646,7 @@ function showOnboarding(onComplete) {
 
     var modal = document.createElement('div');
     modal.id = 'b24t-welcome-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;';
 
     modal.innerHTML =
       '<div style="background:#0f0f13;border:1px solid #2a2a35;border-radius:14px;width:500px;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.9);">' +
@@ -9909,7 +9907,7 @@ function showOnboarding(onComplete) {
         html +=
           '<div style="margin-bottom:' + (idx < entries.length - 1 ? '20' : '0') + 'px;">' +
             '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
-              '<span style="font-size:15px;font-weight:700;color:var(--b24t-text);font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;">v' + v.version + '</span>' +
+              '<span style="font-size:15px;font-weight:700;color:var(--b24t-text);font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;">v' + v.version + '</span>' +
               '<span style="font-size:12px;font-weight:600;background:' + lc + '22;color:' + lc + ';padding:2px 10px;border-radius:99px;">' + v.label + '</span>' +
               '<span style="font-size:11px;color:var(--b24t-text-faint);margin-left:auto;">' + v.date + '</span>' +
             '</div>' +
@@ -9961,7 +9959,7 @@ function showOnboarding(onComplete) {
 
     const modal = document.createElement('div');
     modal.id = 'b24t-whats-new-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;';
 
     modal.innerHTML =
       // Outer container - wider, flex column
@@ -10060,7 +10058,7 @@ function showOnboarding(onComplete) {
     if (document.getElementById('b24t-feedback-modal')) return;
     const modal = document.createElement('div');
     modal.id = 'b24t-feedback-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;animation:b24t-fadein 0.2s ease;';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;animation:b24t-fadein 0.2s ease;';
 
     modal.innerHTML =
       '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:440px;max-height:86vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);">' +
@@ -10353,7 +10351,7 @@ function showOnboarding(onComplete) {
 
     const modal = document.createElement('div');
     modal.id = 'b24t-features-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;backdrop-filter:blur(4px);animation:b24t-fadein 0.2s ease;';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;backdrop-filter:blur(4px);animation:b24t-fadein 0.2s ease;';
 
     const _currentChannel = lsGet(LS.UPDATE_CHANNEL, 'stable');
     const channelHtml =
@@ -10979,7 +10977,7 @@ function showOnboarding(onComplete) {
     var tab = document.createElement('div');
     tab.id = 'b24t-annotator-tab';
     tab.setAttribute('data-b24t-theme', currentTheme);
-    tab.style.cssText = 'position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:2147483640;border-right:none;border-radius:10px 0 0 10px;padding:18px 13px;cursor:pointer;display:none;flex-direction:column;align-items:center;gap:7px;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;font-size:14px;font-weight:600;letter-spacing:0.04em;user-select:none;transition:transform 0.2s,box-shadow 0.2s,background 0.3s,border-color 0.3s,color 0.3s;';
+    tab.style.cssText = 'position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:2147483640;border-right:none;border-radius:10px 0 0 10px;padding:18px 13px;cursor:pointer;display:none;flex-direction:column;align-items:center;gap:7px;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;font-size:14px;font-weight:600;letter-spacing:0.04em;user-select:none;transition:transform 0.2s,box-shadow 0.2s,background 0.3s,border-color 0.3s,color 0.3s;';
     // inline colors that adapt via JS (CSS vars not available in inline style)
     tab.innerHTML = '<span style="writing-mode:vertical-rl;text-orientation:mixed;letter-spacing:.08em;font-size:13px;font-weight:600;">Annotators Tab</span><span style="font-size:18px;line-height:1;">‹</span>';
     tab.title = 'Otwórz Annotators';
@@ -10990,7 +10988,7 @@ function showOnboarding(onComplete) {
     var panel = document.createElement('div');
     panel.id = 'b24t-annotator-panel';
     panel.setAttribute('data-b24t-theme', currentTheme);
-    panel.style.cssText = 'position:fixed;right:12px;top:80px;width:420px;height:auto;max-height:calc(100vh - 100px);z-index:2147483641;border-radius:14px;display:none;flex-direction:column;overflow:hidden;animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;font-size:15px;';
+    panel.style.cssText = 'position:fixed;right:12px;top:80px;width:420px;height:auto;max-height:calc(100vh - 100px);z-index:2147483641;border-radius:14px;display:none;flex-direction:column;overflow:hidden;animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;font-size:15px;';
 
     panel.innerHTML =
       // Header with gradient
@@ -11913,7 +11911,7 @@ function showOnboarding(onComplete) {
       'z-index:2147483646',
       'display:none',
       'flex-direction:column',
-      'font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif',
+      'font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif',
       'overflow:hidden',
       'animation:b24t-slidein 0.28s cubic-bezier(0.34,1.56,0.64,1)',
     ].join(';');
@@ -12224,7 +12222,7 @@ To jest NIEODWRACALNE.`)) return;
     var isNew = !existingGroup;
     var currentGroup = existingGroup ? JSON.parse(JSON.stringify(existingGroup)) : { id: generateGroupId(), name: '', projectIds: [], relevantTagId: null };
     var overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483648;display:flex;align-items:center;justify-content:center;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483648;display:flex;align-items:center;justify-content:center;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;';
     var projCheckboxes = knownProjects.length ? knownProjects.map(function(p) {
       var checked = currentGroup.projectIds.includes(p.id);
       return '<label style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:7px;cursor:pointer;background:' + (checked ? 'var(--b24t-primary-bg)' : 'var(--b24t-bg-input)') + ';border:1px solid ' + (checked ? 'color-mix(in srgb,var(--b24t-primary) 40%,transparent)' : 'var(--b24t-border)') + ';transition:background 0.15s,border-color 0.15s;">' +
@@ -12654,7 +12652,7 @@ To jest NIEODWRACALNE.`)) return;
   function showOverallStatsSettings(group) {
     if (!group) return;
     var overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483648;display:flex;align-items:center;justify-content:center;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483648;display:flex;align-items:center;justify-content:center;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;';
     var tagOptions = Object.entries(state.tags).map(function(entry) {
       return '<option value="' + entry[1] + '"' + (entry[1] === group.relevantTagId ? ' selected' : '') + '>' + entry[0] + ' (ID: ' + entry[1] + ')</option>';
     }).join('');

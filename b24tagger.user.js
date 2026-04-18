@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.53
+// @version      0.23.60
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.53';
+  const VERSION = '0.23.60';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -262,7 +262,7 @@
     if (document.getElementById('b24t-prompt-lib-modal')) return;
     var modal = document.createElement('div');
     modal.id = 'b24t-prompt-lib-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;backdrop-filter:blur(4px);animation:b24t-fadein 0.2s ease;';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;backdrop-filter:blur(4px);animation:b24t-fadein 0.2s ease;';
     modal.innerHTML =
       '<div style="background:#fff;border:1px solid #e0e0e0;border-radius:16px;width:480px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,0.22);animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);">' +
         '<div style="padding:14px 20px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:16px 16px 0 0;display:flex;align-items:center;gap:10px;flex-shrink:0;">' +
@@ -2812,6 +2812,10 @@
       @keyframes b24t-fadein {
         from { opacity: 0; } to { opacity: 1; }
       }
+      @keyframes b24t-section-reveal {
+        from { opacity: 0; transform: translateY(-4px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
       @keyframes b24t-pulse-ring {
         0%   { box-shadow: 0 0 0 0 var(--b24t-primary-glow); }
         70%  { box-shadow: 0 0 0 6px transparent; }
@@ -3023,7 +3027,7 @@
         opacity: 0; pointer-events: none;
         transition: opacity 0.15s 0.4s;
         box-shadow: 0 2px 8px rgba(0,0,0,0.25);
-        font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+        font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
         z-index: 10;
       }
       .b24t-meta-btn-wrap:hover .b24t-meta-tooltip { opacity: 1; }
@@ -3094,6 +3098,8 @@
         text-transform: uppercase; letter-spacing: 0.14em;
         margin-bottom: 10px;
       }
+      .b24t-section-label.primary { font-size: 10px; color: var(--b24t-text-meta); letter-spacing: 0.08em; }
+      .b24t-section-label.tertiary { font-size: 8px; opacity: 0.7; }
       .b24t-project-name { font-size: 15px; font-weight: 700; color: var(--b24t-text); }
       .b24t-project-meta { font-size: 12px; color: var(--b24t-text-meta); margin-top: 3px; }
 
@@ -3178,25 +3184,17 @@
       #b24t-progress-action { font-size: 11px; color: var(--b24t-text-meta); margin-top: 2px; }
 
       /* ── STATS ── */
-      .b24t-stats-grid {
-        display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px;
+      .b24t-stats-row-list { display: flex; flex-direction: column; gap: 3px; }
+      .b24t-stat-row {
+        display: flex; align-items: baseline; justify-content: space-between;
+        padding: 4px 0; border-bottom: 1px solid var(--b24t-border-sub);
       }
-      .b24t-stat-card {
-        background: var(--b24t-section-grad-d); border: 1px solid var(--b24t-border);
-        border-radius: 8px; padding: 8px 10px;
-        transition: background 0.3s, border-color 0.3s, transform 0.15s, box-shadow 0.15s;
-        position: relative; overflow: hidden;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.10);
-      }
-      .b24t-stat-card:hover { transform: translateY(-2px); border-color: var(--b24t-border-strong); box-shadow: var(--b24t-shadow-h); }
-      .b24t-stat-card:has(.b24t-stat-value.ok)   { background: var(--b24t-ok-bg) !important; border-color: color-mix(in srgb, var(--b24t-ok) 30%, transparent) !important; }
-      .b24t-stat-card:has(.b24t-stat-value.warn) { background: var(--b24t-warn-bg) !important; border-color: color-mix(in srgb, var(--b24t-warn) 30%, transparent) !important; }
-      .b24t-stat-card:has(.b24t-stat-value.ok)::after   { background: var(--b24t-ok); opacity: 0.5; }
-      .b24t-stat-card:has(.b24t-stat-value.warn)::after { background: var(--b24t-warn); opacity: 0.5; }
-      .b24t-stat-label { font-size: 11px; color: var(--b24t-text-meta); margin-bottom: 3px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; }
-      .b24t-stat-value { font-size: 20px; font-weight: 800; color: var(--b24t-text); }
-      .b24t-stat-value.ok   { color: var(--b24t-ok); }
-      .b24t-stat-value.warn { color: var(--b24t-warn); }
+      .b24t-stat-row:last-child { border-bottom: none; }
+      .b24t-stat-row-label { font-size: 12px; color: var(--b24t-text-faint); font-weight: 400; }
+      .b24t-stat-row-value { font-size: 14px; font-weight: 600; color: var(--b24t-text); font-variant-numeric: tabular-nums; }
+      .b24t-stat-row-value.ok   { color: var(--b24t-ok); }
+      .b24t-stat-row-value.warn { color: var(--b24t-warn); }
+      .b24t-stat-row-value.err  { color: var(--b24t-err); }
 
       /* ── LOG ── */
       #b24t-log {
@@ -3262,6 +3260,16 @@
         transition: background 0.15s, transform 0.1s;
       }
       .b24t-btn-danger:hover { filter: brightness(0.9); transform: translateY(-1px); }
+      .b24t-btn-tool {
+        font-size: 10px !important; padding: 5px 8px !important;
+        color: var(--b24t-text-faint) !important;
+        background: transparent !important;
+        border-color: var(--b24t-border) !important;
+      }
+      .b24t-btn-tool:hover {
+        color: var(--b24t-text) !important;
+        background: var(--b24t-bg-elevated) !important;
+      }
       .b24t-btn-warn {
         background: var(--b24t-warn-bg); color: var(--b24t-warn-text);
         border: 1px solid color-mix(in srgb, var(--b24t-warn) 30%, transparent); border-radius: 7px; padding: 6px 12px;
@@ -3427,7 +3435,7 @@
       #b24t-setup {
         position: fixed; inset: 0; background: rgba(0,0,0,0.7);
         display: flex; align-items: center; justify-content: center;
-        z-index: 2147483647; font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+        z-index: 2147483647; font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
         backdrop-filter: blur(6px);
       }
       .b24t-setup-card {
@@ -3470,7 +3478,7 @@
         z-index: 2147483645; border-radius: 0 10px 10px 0; border: none;
         padding: 18px 11px; cursor: pointer; display: none;
         flex-direction: column; align-items: center; gap: 7px;
-        font-family: 'Inter','Segoe UI',system-ui,sans-serif;
+        font-family: 'Geist','Segoe UI',system-ui,-apple-system,sans-serif;
         font-size: 12px; font-weight: 700; letter-spacing: 0.06em;
         color: #fff; user-select: none; background: #6366f1;
         animation: b24t-tab-pulse 2.5s ease-in-out infinite;
@@ -3483,7 +3491,7 @@
         z-index: 2147483639; border-radius: 10px 0 0 10px; border: 1px solid var(--b24t-border); border-right: none;
         padding: 14px 10px; cursor: pointer; display: none;
         flex-direction: column; align-items: center; gap: 5px;
-        font-family: 'Inter','Segoe UI',system-ui,sans-serif;
+        font-family: 'Geist','Segoe UI',system-ui,-apple-system,sans-serif;
         font-size: 11px; font-weight: 700; letter-spacing: 0.05em;
         color: var(--b24t-primary); user-select: none;
         background: var(--b24t-bg-elevated); box-shadow: var(--b24t-shadow);
@@ -3514,7 +3522,7 @@
         z-index: 2147483645;
         display: flex;
         flex-direction: column;
-        font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+        font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
         transition: width 0.32s cubic-bezier(0.4,0,0.2,1), right 0.32s cubic-bezier(0.4,0,0.2,1);
       }
       #b24t-xproject-panel.open { width: 320px; }
@@ -3641,7 +3649,7 @@
         border: 1px solid rgba(108,108,255,0.45);
         border-radius: 10px;
         padding: 9px 18px;
-        font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+        font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
         font-size: 11px; color: #9090ff;
         cursor: pointer;
         z-index: 2147483530;
@@ -3696,9 +3704,9 @@
         z-index: 2147483647; pointer-events: none;
       }
       .b24t-toast {
-        font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+        font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
         font-size: 13px; padding: 10px 16px;
-        border-radius: 8px; border-left: 3px solid;
+        border-radius: 8px; border: 1px solid; border-top: 2px solid;
         box-shadow: 0 4px 20px rgba(0,0,0,0.45);
         animation: b24t-toast-in 0.22s cubic-bezier(0.34,1.56,0.64,1) forwards;
         pointer-events: all; max-width: 320px; line-height: 1.4;
@@ -3856,58 +3864,63 @@
 
         <!-- USTAWIENIA -->
         <div class="b24t-section" id="b24t-settings-section" style="display:none">
-          <div class="b24t-section-label">Ustawienia</div>
-
-          <div class="b24t-toggle-row">
-            <span class="b24t-toggle-label">Tryb:</span>
-            <div class="b24t-radio-group">
-              <label class="b24t-radio"><input type="radio" name="b24t-run-mode" value="real" checked> <span>Właściwy</span></label>
-              <label class="b24t-radio"><input type="radio" name="b24t-run-mode" value="test"> <span>Test Run</span></label>
-            </div>
+          <div class="b24t-section-label tertiary" id="b24t-settings-toggle" style="cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;">
+            <span>Ustawienia</span>
+            <span id="b24t-settings-arrow" style="transition:transform 0.18s;">▸</span>
           </div>
 
-          <div class="b24t-toggle-row" style="margin-top:6px;">
-            <span class="b24t-toggle-label">Mapa wzmianek:</span>
-            <div class="b24t-radio-group">
-              <label class="b24t-radio"><input type="radio" name="b24t-map-mode" value="untagged" checked> <span>Untagged</span></label>
-              <label class="b24t-radio"><input type="radio" name="b24t-map-mode" value="full"> <span>Pełna</span></label>
+          <div id="b24t-settings-content">
+            <div class="b24t-toggle-row">
+              <span class="b24t-toggle-label">Tryb:</span>
+              <div class="b24t-radio-group">
+                <label class="b24t-radio"><input type="radio" name="b24t-run-mode" value="real" checked> <span>Właściwy</span></label>
+                <label class="b24t-radio"><input type="radio" name="b24t-run-mode" value="test"> <span>Test Run</span></label>
+              </div>
             </div>
-          </div>
 
-          <!-- Konflikty — tylko w trybie pełnym -->
-          <div id="b24t-conflict-section" style="display:none;margin-top:8px;">
-            <div class="b24t-section-label" style="margin-bottom:4px;">Konflikty tagów</div>
-            <div class="b24t-radio-group" style="flex-direction:column;gap:4px;">
-              <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="ignore" checked> <span>Ignoruj — zachowaj istniejący tag</span></label>
-              <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="ask"> <span>Zatrzymaj i zapytaj</span></label>
-              <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="overwrite"> <span>Nadpisz — zamień tag</span></label>
-              <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="multitag"> <span>Multitag — dodaj obok istniejących tagów</span></label>
+            <div class="b24t-toggle-row" style="margin-top:6px;">
+              <span class="b24t-toggle-label">Mapa wzmianek:</span>
+              <div class="b24t-radio-group">
+                <label class="b24t-radio"><input type="radio" name="b24t-map-mode" value="untagged" checked> <span>Untagged</span></label>
+                <label class="b24t-radio"><input type="radio" name="b24t-map-mode" value="full"> <span>Pełna</span></label>
+              </div>
             </div>
-          </div>
 
-          <!-- Po zakończeniu — tylko gdy jest label "Inny" -->
-          <div id="b24t-switchview-section" style="display:none;margin-top:8px;">
+            <!-- Konflikty — tylko w trybie pełnym -->
+            <div id="b24t-conflict-section" style="display:none;margin-top:8px;">
+              <div class="b24t-section-label" style="margin-bottom:4px;">Konflikty tagów</div>
+              <div class="b24t-radio-group" style="flex-direction:column;gap:4px;">
+                <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="ignore" checked> <span>Ignoruj — zachowaj istniejący tag</span></label>
+                <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="ask"> <span>Zatrzymaj i zapytaj</span></label>
+                <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="overwrite"> <span>Nadpisz — zamień tag</span></label>
+                <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="multitag"> <span>Multitag — dodaj obok istniejących tagów</span></label>
+              </div>
+            </div>
+
+            <!-- Po zakończeniu — tylko gdy jest label "Inny" -->
+            <div id="b24t-switchview-section" style="display:none;margin-top:8px;">
+              <div class="b24t-checkbox-row">
+                <input type="checkbox" id="b24t-switch-view">
+                <label for="b24t-switch-view">Po zakończeniu przełącz widok na:</label>
+              </div>
+              <select class="b24t-select" id="b24t-switch-view-tag" style="margin-top:4px;"></select>
+            </div>
+
+            <!-- AUTO DELETE — injected by JS -->
+            <div id="b24t-auto-delete-placeholder"></div>
+
+            <div style="height:1px;background:var(--b24t-border);margin:8px 0;"></div>
             <div class="b24t-checkbox-row">
-              <input type="checkbox" id="b24t-switch-view">
-              <label for="b24t-switch-view">Po zakończeniu przełącz widok na:</label>
+              <input type="checkbox" id="b24t-sound-cb">
+              <label for="b24t-sound-cb">Dźwięk po zakończeniu sesji</label>
             </div>
-            <select class="b24t-select" id="b24t-switch-view-tag" style="margin-top:4px;"></select>
-          </div>
-
-          <!-- AUTO DELETE — injected by JS -->
-          <div id="b24t-auto-delete-placeholder"></div>
-
-          <div style="height:1px;background:var(--b24t-border);margin:8px 0;"></div>
-          <div class="b24t-checkbox-row">
-            <input type="checkbox" id="b24t-sound-cb">
-            <label for="b24t-sound-cb">Dźwięk po zakończeniu sesji</label>
           </div>
 
         </div>
 
         <!-- POSTĘP -->
         <div class="b24t-section" id="b24t-progress-section">
-          <div class="b24t-section-label">Postęp</div>
+          <div class="b24t-section-label primary">Postęp</div>
           <div id="b24t-progress-label" style="font-size:12px;color:var(--b24t-text-meta);">Gotowy do startu</div>
           <div class="b24t-progress-bar-track"><div id="b24t-progress-bar"></div></div>
           <div id="b24t-progress-action" style="font-size:10px;color:var(--b24t-text-faint);"></div>
@@ -3916,28 +3929,28 @@
         <!-- STATYSTYKI -->
         <div class="b24t-section">
           <div class="b24t-section-label">Statystyki sesji</div>
-          <div class="b24t-stats-grid">
-            <div class="b24t-stat-card">
-              <div class="b24t-stat-label">Otagowano</div>
-              <div class="b24t-stat-value ok" id="b24t-stat-tagged">0</div>
+          <div class="b24t-stats-row-list">
+            <div class="b24t-stat-row">
+              <span class="b24t-stat-row-label">Otagowano</span>
+              <span class="b24t-stat-row-value ok" id="b24t-stat-tagged">0</span>
             </div>
-            <div class="b24t-stat-card">
-              <div class="b24t-stat-label">Pominięto</div>
-              <div class="b24t-stat-value warn" id="b24t-stat-skipped" style="cursor:pointer" title="Kliknij aby zobaczyć listę">0</div>
+            <div class="b24t-stat-row">
+              <span class="b24t-stat-row-label">Pominięto</span>
+              <span class="b24t-stat-row-value warn" id="b24t-stat-skipped" style="cursor:pointer" title="Kliknij aby zobaczyć listę">0</span>
             </div>
-            <div class="b24t-stat-card">
-              <div class="b24t-stat-label">Pozostało</div>
-              <div class="b24t-stat-value" id="b24t-stat-remaining">0</div>
+            <div class="b24t-stat-row">
+              <span class="b24t-stat-row-label">Pozostało</span>
+              <span class="b24t-stat-row-value" id="b24t-stat-remaining">0</span>
             </div>
           </div>
         </div>
 
         <!-- LOG -->
         <div class="b24t-section" id="b24t-log-section">
-          <div class="b24t-section-label">
+          <div class="b24t-section-label tertiary">
             Log
             <button class="b24t-log-clear" id="b24t-log-clear">wyczyść</button>
-            <button class="b24t-log-expand" id="b24t-log-expand" title="Pełny widok loga">⛶</button>
+            <button class="b24t-log-expand" id="b24t-log-expand" title="Pełny widok loga">↗</button>
           </div>
           <div id="b24t-log"></div>
         </div>
@@ -3960,12 +3973,14 @@
       <!-- ACTION BAR -->
       <div id="b24t-actions" style="flex-direction:column;gap:6px;">
         <button class="b24t-btn-primary" id="b24t-btn-start" style="width:100%;">▶ Start</button>
-        <div style="display:flex;gap:6px;width:100%;">
-          <button class="b24t-btn-secondary" id="b24t-btn-preview" title="Match Preview — sprawdź dopasowanie bez tagowania" style="flex:1;font-size:11px;">Match</button>
-          <button class="b24t-btn-secondary" id="b24t-btn-audit" title="Audit Mode — porównaj bez tagowania" style="flex:1;font-size:11px;color:var(--b24t-primary);">Audit</button>
+        <div id="b24t-run-controls" style="display:flex;gap:6px;width:100%;">
           <button class="b24t-btn-secondary" id="b24t-btn-pause" disabled style="flex:1;font-size:11px;">⏸ Pauza</button>
           <button class="b24t-btn-danger" id="b24t-btn-stop" style="flex:1;font-size:11px;">⏹ Stop</button>
-          <button class="b24t-btn-secondary" id="b24t-btn-export" title="Eksport raportu CSV" style="flex:0 0 34px;font-size:12px;">↓</button>
+        </div>
+        <div id="b24t-diag-controls" style="display:flex;gap:6px;width:100%;">
+          <button class="b24t-btn-secondary b24t-btn-tool" id="b24t-btn-preview" title="Match Preview — sprawdź dopasowanie bez tagowania" style="flex:1;">Match</button>
+          <button class="b24t-btn-secondary b24t-btn-tool" id="b24t-btn-audit" title="Audit Mode — porównaj bez tagowania" style="flex:1;">Audit</button>
+          <button class="b24t-btn-secondary b24t-btn-tool" id="b24t-btn-export" title="Eksport raportu CSV" style="flex:0 0 34px;">↓</button>
         </div>
       </div>
 
@@ -4391,6 +4406,25 @@
       state.soundEnabled = e.target.checked;
     });
 
+    // Settings collapse toggle
+    (function() {
+      var settingsToggle = document.getElementById('b24t-settings-toggle');
+      var settingsContent = document.getElementById('b24t-settings-content');
+      var settingsArrow = document.getElementById('b24t-settings-arrow');
+      if (!settingsToggle || !settingsContent) return;
+      var collapsed = localStorage.getItem('b24tagger_settings_collapsed') === '1';
+      function applyCollapsed(c) {
+        settingsContent.style.display = c ? 'none' : '';
+        if (settingsArrow) settingsArrow.style.transform = c ? 'rotate(0deg)' : 'rotate(90deg)';
+        localStorage.setItem('b24tagger_settings_collapsed', c ? '1' : '0');
+      }
+      applyCollapsed(collapsed);
+      settingsToggle.addEventListener('click', function() {
+        collapsed = !collapsed;
+        applyCollapsed(collapsed);
+      });
+    })();
+
     // Log clear
     panel.querySelector('#b24t-log-clear').addEventListener('click', () => {
       document.getElementById('b24t-log').innerHTML = '';
@@ -4584,7 +4618,7 @@
       if (partitions.length > 1) {
         const ps = document.getElementById('b24t-partition-section');
         ps.style.display = 'block';
-        ps.style.animation = 'none'; void ps.offsetHeight; ps.style.animation = 'b24t-fadein 0.25s ease';
+        ps.style.animation = 'none'; void ps.offsetHeight; ps.style.animation = 'b24t-section-reveal 0.18s ease-out';
         document.getElementById('b24t-partition-info').textContent =
           `${partitions.length} partycji · max ${state.partitionLimit} wzmianek/partycja`;
       }
@@ -4595,7 +4629,7 @@
         if (!el) return;
         el.style.display = 'block';
         el.style.animation = 'none'; void el.offsetHeight;
-        el.style.animation = 'b24t-fadein 0.25s ease';
+        el.style.animation = 'b24t-section-reveal 0.18s ease-out';
       });
 
       // Check for saved schema
@@ -5275,7 +5309,7 @@
     if (sticky) {
       tip.style.pointerEvents = 'all';
       var closeX = document.createElement('button');
-      closeX.style.cssText = 'position:absolute;top:5px;right:8px;background:none;border:none;color:#555577;cursor:pointer;font-size:14px;line-height:1;padding:0;';
+      closeX.style.cssText = 'position:absolute;top:5px;right:8px;background:none;border:none;color:var(--b24t-text-faint);cursor:pointer;font-size:14px;line-height:1;padding:0;';
       closeX.textContent = '×';
       closeX.addEventListener('click', function() { helpStickyTip = false; hideHelpTip(); });
       tip.appendChild(closeX);
@@ -5352,8 +5386,8 @@ function injectOnboardingStyles() {
       z-index: 2147483647;
       max-width: 320px;
       min-width: 240px;
-      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
-      background: #111118;
+      font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--b24t-bg);
       border: 1px solid rgba(108,108,255,0.4);
       border-radius: 16px;
       padding: 18px 20px 14px;
@@ -5376,7 +5410,7 @@ function injectOnboardingStyles() {
       content: '';
       position: absolute;
       width: 11px; height: 11px;
-      background: #111118;
+      background: var(--b24t-bg);
       border: 1px solid rgba(108,108,255,0.4);
       transform: rotate(45deg);
       z-index: -1;
@@ -5408,14 +5442,14 @@ function injectOnboardingStyles() {
     }
     .ob-bubble-title {
       font-size: 14px; font-weight: 700;
-      color: #eeeef4;
+      color: var(--b24t-text);
       margin-bottom: 8px; line-height: 1.3;
     }
     .ob-bubble-body {
-      font-size: 12px; color: #a0a0c0;
+      font-size: 12px; color: var(--b24t-text-muted);
       line-height: 1.7; margin-bottom: 14px;
     }
-    .ob-bubble-body strong { color: #eeeef4; }
+    .ob-bubble-body strong { color: var(--b24t-text); }
     .ob-bubble-body .ob-tag {
       display: inline-block;
       background: rgba(108,108,255,0.14);
@@ -5449,14 +5483,14 @@ function injectOnboardingStyles() {
     .ob-btn-next:hover { opacity: 0.88; }
     .ob-btn-next:active { transform: scale(0.95); }
     .ob-btn-back {
-      background: rgba(255,255,255,0.05); color: #7878aa;
+      background: rgba(255,255,255,0.05); color: var(--b24t-text-faint);
       border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
       padding: 8px 14px; font-size: 12px;
       font-family: inherit; cursor: pointer;
       transition: background 0.15s;
     }
     .ob-btn-back:hover { background: rgba(255,255,255,0.1); }
-    .ob-step-counter { font-size: 10px; color: #444466; letter-spacing: 0.05em; }
+    .ob-step-counter { font-size: 10px; color: var(--b24t-text-faint); letter-spacing: 0.05em; }
 
     @keyframes ob-pulse {
       0%, 100% { outline-color: rgba(108,108,255,0.7); }
@@ -6007,8 +6041,8 @@ function showOnboarding(onComplete) {
           desc: 'Start — uruchamia/wznawia tagowanie. Pause — bezpieczna pauza. Test Run — symulacja bez zapisu (zawsze sprawdź najpierw!). Match Preview — sprawdza % dopasowania URL.',
         },
         {
-          selector: '.b24t-stats-grid',
-          title: 'Kafelki statystyk',
+          selector: '.b24t-stats-row-list',
+          title: 'Statystyki sesji',
           desc: 'Otagowano — liczba wzmianek którym nadano tag. Pominięto — wzmianki bez dopasowania URL lub bez oceny. Brak matcha — URL z pliku nieznaleziony w Brand24.',
         },
         {
@@ -6471,14 +6505,14 @@ function showOnboarding(onComplete) {
       result.taggedWrong.slice(0,5).forEach(function(e) {
         wrongHtml += '<div style="font-size:9px;color:var(--b24t-text-faint);padding:3px 0;border-bottom:1px solid var(--b24t-border-sub);">' +
           e.url.substring(0,50) + '<br>' +
-          '<span style="color:#f87171;">✗ ma: ' + e.actual + '</span> <span style="color:#4ade80;">\u2192 powinien: ' + e.expected + '</span></div>';
+          '<span style="color:var(--b24t-err);">✗ ma: ' + e.actual + '</span> <span style="color:var(--b24t-ok);">\u2192 powinien: ' + e.expected + '</span></div>';
       });
     }
     content.innerHTML =
-      '<h3 style="color:#6c6cff;font-size:14px;margin-bottom:16px;">🔍 Raport Audit Mode</h3>' +
-      '<div class="b24t-report-row"><span>✓ Prawidłowo otagowane</span><strong style="color:#4ade80;">' + result.alreadyTagged.length + '</strong></div>' +
-      '<div class="b24t-report-row"><span>⚠ Nieztagowane</span><strong style="color:#facc15;">' + result.untagged.length + '</strong></div>' +
-      '<div class="b24t-report-row"><span>✗ Błędny tag</span><strong style="color:#f87171;">' + result.taggedWrong.length + '</strong></div>' +
+      '<h3 style="color:var(--b24t-primary);font-size:14px;margin-bottom:16px;">🔍 Raport Audit Mode</h3>' +
+      '<div class="b24t-report-row"><span>✓ Prawidłowo otagowane</span><strong style="color:var(--b24t-ok);">' + result.alreadyTagged.length + '</strong></div>' +
+      '<div class="b24t-report-row"><span>⚠ Nieztagowane</span><strong style="color:var(--b24t-warn);">' + result.untagged.length + '</strong></div>' +
+      '<div class="b24t-report-row"><span>✗ Błędny tag</span><strong style="color:var(--b24t-err);">' + result.taggedWrong.length + '</strong></div>' +
       '<div class="b24t-report-row"><span>? Nie znaleziono w Brand24</span><strong style="color:var(--b24t-text-faint);">' + result.notFound.length + '</strong></div>' +
       '<div class="b24t-report-row"><span>~ W Brand24, brak w pliku</span><strong>' + result.notInFile + '</strong></div>' +
       wrongHtml +
@@ -7728,7 +7762,7 @@ function showOnboarding(onComplete) {
     // ─── IMPORT MODAL ───
     var modal = document.createElement('div');
     modal.id = 'b24t-news-import-modal';
-    modal.style.cssText = 'display:none;position:fixed;inset:0;z-index:2147483645;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;font-family:Inter,Segoe UI,system-ui,sans-serif;';
+    modal.style.cssText = 'display:none;position:fixed;inset:0;z-index:2147483645;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;font-family:Geist,\'Segoe UI\',system-ui,sans-serif;';
     var modalInner = document.createElement('div');
     modalInner.style.cssText = 'background:' + t.bg + ';border:1px solid ' + t.border + ';border-radius:14px;padding:20px;width:500px;max-width:calc(100vw - 40px);max-height:88vh;overflow-y:auto;box-shadow:' + t.shadow + ';color:' + t.text + ';';
     modalInner.innerHTML = [
@@ -7785,7 +7819,7 @@ function showOnboarding(onComplete) {
     // ─── MAIN OVERLAY ───
     var overlay = document.createElement('div');
     overlay.id = 'b24t-news-overlay';
-    overlay.style.cssText = 'display:flex;position:fixed;inset:0;z-index:2147483632;background:rgba(0,0,0,0.55);align-items:center;justify-content:center;font-family:Inter,Segoe UI,system-ui,sans-serif;animation:b24t-fadein 0.2s ease both;';
+    overlay.style.cssText = 'display:flex;position:fixed;inset:0;z-index:2147483632;background:rgba(0,0,0,0.55);align-items:center;justify-content:center;font-family:Geist,\'Segoe UI\',system-ui,sans-serif;animation:b24t-fadein 0.2s ease both;';
 
     var panelMain = document.createElement('div');
     panelMain.id = 'b24t-news-panel-main';
@@ -7947,7 +7981,7 @@ function showOnboarding(onComplete) {
         '</div>' +
         '<div id="b24t-news-tag-list" style="display:none;flex-wrap:wrap;gap:5px;padding:0 10px 8px;max-height:160px;overflow-y:auto;"></div>' +
       '</div>',
-      '<button id="b24t-news-submit-btn" style="flex-shrink:0;padding:9px;border-radius:9px;border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:12px;font-weight:700;cursor:pointer;width:100%;letter-spacing:0.03em;transition:opacity 0.15s;">✚ Dodaj wzmiankę do Brand24</button>',
+      '<button id="b24t-news-submit-btn" style="flex-shrink:0;padding:9px;border-radius:9px;border:none;background:var(--b24t-accent-grad);color:#fff;font-size:12px;font-weight:700;cursor:pointer;width:100%;letter-spacing:0.03em;transition:opacity 0.15s;">✚ Dodaj wzmiankę do Brand24</button>',
       '<div id="b24t-news-submit-status" style="font-size:10px;text-align:center;min-height:14px;font-weight:500;flex-shrink:0;"></div>',
     ].join('');
 
@@ -8048,7 +8082,7 @@ function showOnboarding(onComplete) {
     _newsRefillTags();
   }
   function _newsInputCss(t) {
-    return 'width:100%;box-sizing:border-box;font-size:11px;padding:6px 8px;border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-family:Inter,Segoe UI,system-ui,sans-serif;outline:none;transition:border-color 0.15s;';
+    return 'width:100%;box-sizing:border-box;font-size:11px;padding:6px 8px;border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-family:Geist,\'Segoe UI\',system-ui,sans-serif;outline:none;transition:border-color 0.15s;';
   }
 
   function _newsFormRow(label, inputHtml, required, display) {
@@ -9369,30 +9403,30 @@ function showOnboarding(onComplete) {
       var rows = keys.length ? keys.map(function(cc) {
         var langs = (map[cc] || []).join(', ');
         return '<tr>' +
-          '<td style="padding:5px 8px;font-weight:700;font-size:12px;color:#e2e8f0;">' + cc + '</td>' +
-          '<td style="padding:5px 8px;"><input data-cc="' + cc + '" class="b24t-lm-inp" type="text" value="' + langs + '" style="background:#1e1e2e;border:1px solid #3a3a4a;border-radius:5px;color:#e2e8f0;font-size:10px;padding:3px 7px;width:130px;"></td>' +
-          '<td style="padding:5px 8px;"><button data-cc="' + cc + '" class="b24t-lm-del" style="font-size:9px;padding:2px 7px;border-radius:4px;border:1px solid #ef444455;background:transparent;color:#f87171;cursor:pointer;">Usuń</button></td>' +
+          '<td style="padding:5px 8px;font-weight:700;font-size:12px;color:var(--b24t-text);">' + cc + '</td>' +
+          '<td style="padding:5px 8px;"><input data-cc="' + cc + '" class="b24t-lm-inp" type="text" value="' + langs + '" style="background:var(--b24t-bg-input);border:1px solid var(--b24t-border);border-radius:5px;color:var(--b24t-text);font-size:10px;padding:3px 7px;width:130px;"></td>' +
+          '<td style="padding:5px 8px;"><button data-cc="' + cc + '" class="b24t-lm-del" style="font-size:9px;padding:2px 7px;border-radius:4px;border:1px solid color-mix(in srgb,var(--b24t-err) 33%,transparent);background:transparent;color:var(--b24t-err);cursor:pointer;">Usuń</button></td>' +
         '</tr>';
-      }).join('') : '<tr><td colspan="3" style="padding:16px;text-align:center;font-size:11px;color:#6b7280;">Mapa jest pusta. Zostanie uzupełniona automatycznie z Twojej pracy.</td></tr>';
+      }).join('') : '<tr><td colspan="3" style="padding:16px;text-align:center;font-size:11px;color:var(--b24t-text-faint);">Mapa jest pusta. Zostanie uzupełniona automatycznie z Twojej pracy.</td></tr>';
 
-      return '<div style="background:#16161f;border:1px solid #2e2e48;border-radius:14px;padding:20px;min-width:360px;max-width:440px;max-height:80vh;overflow-y:auto;color:#e2e8f0;font-family:Inter,Segoe UI,sans-serif;">' +
+      return '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;padding:20px;min-width:360px;max-width:440px;max-height:80vh;overflow-y:auto;color:var(--b24t-text);font-family:Geist,\'Segoe UI\',sans-serif;">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
           '<span style="font-size:14px;font-weight:700;">⚙ Mapa projekt → języki</span>' +
-          '<button id="b24t-lm-close" style="background:transparent;border:none;color:#9ca3af;cursor:pointer;font-size:18px;">✕</button>' +
+          '<button id="b24t-lm-close" style="background:transparent;border:none;color:var(--b24t-text-faint);cursor:pointer;font-size:18px;">✕</button>' +
         '</div>' +
-        '<p style="font-size:10px;color:#9ca3af;margin:0 0 12px;line-height:1.6;">Mapa buduje się automatycznie gdy otwierasz strony z nowych krajów. Możesz ją ręcznie edytować. Jeśli kraj nie ma wpisów — sprawdzanie języka jest pomijane.</p>' +
+        '<p style="font-size:10px;color:var(--b24t-text-faint);margin:0 0 12px;line-height:1.6;">Mapa buduje się automatycznie gdy otwierasz strony z nowych krajów. Możesz ją ręcznie edytować. Jeśli kraj nie ma wpisów — sprawdzanie języka jest pomijane.</p>' +
         '<table style="width:100%;border-collapse:collapse;"><thead><tr>' +
-          '<th style="font-size:9px;text-transform:uppercase;color:#6b7280;text-align:left;padding:2px 8px;">Kraj</th>' +
-          '<th style="font-size:9px;text-transform:uppercase;color:#6b7280;text-align:left;padding:2px 8px;">Języki (kody, przecinkami)</th>' +
+          '<th style="font-size:9px;text-transform:uppercase;color:var(--b24t-text-faint);text-align:left;padding:2px 8px;">Kraj</th>' +
+          '<th style="font-size:9px;text-transform:uppercase;color:var(--b24t-text-faint);text-align:left;padding:2px 8px;">Języki (kody, przecinkami)</th>' +
           '<th></th>' +
         '</tr></thead><tbody id="b24t-lm-tbody">' + rows + '</tbody></table>' +
         '<div style="display:flex;gap:6px;margin-top:14px;align-items:center;">' +
-          '<input id="b24t-lm-cc" type="text" placeholder="Kraj (np. TR)" maxlength="3" style="background:#1e1e2e;border:1px solid #3a3a4a;border-radius:5px;color:#e2e8f0;font-size:10px;padding:4px 7px;width:70px;">' +
-          '<input id="b24t-lm-langs" type="text" placeholder="Języki (np. tr, az)" style="background:#1e1e2e;border:1px solid #3a3a4a;border-radius:5px;color:#e2e8f0;font-size:10px;padding:4px 7px;flex:1;">' +
-          '<button id="b24t-lm-add" style="font-size:11px;padding:4px 10px;border-radius:6px;border:none;background:#6366f1;color:#fff;cursor:pointer;">Dodaj</button>' +
+          '<input id="b24t-lm-cc" type="text" placeholder="Kraj (np. TR)" maxlength="3" style="background:var(--b24t-bg-input);border:1px solid var(--b24t-border);border-radius:5px;color:var(--b24t-text);font-size:10px;padding:4px 7px;width:70px;">' +
+          '<input id="b24t-lm-langs" type="text" placeholder="Języki (np. tr, az)" style="background:var(--b24t-bg-input);border:1px solid var(--b24t-border);border-radius:5px;color:var(--b24t-text);font-size:10px;padding:4px 7px;flex:1;">' +
+          '<button id="b24t-lm-add" style="font-size:11px;padding:4px 10px;border-radius:6px;border:none;background:var(--b24t-primary);color:#fff;cursor:pointer;">Dodaj</button>' +
         '</div>' +
         '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">' +
-          '<button id="b24t-lm-save" style="font-size:12px;padding:6px 16px;border-radius:8px;border:none;background:#6366f1;color:#fff;cursor:pointer;font-weight:600;">Zapisz</button>' +
+          '<button id="b24t-lm-save" style="font-size:12px;padding:6px 16px;border-radius:8px;border:none;background:var(--b24t-primary);color:#fff;cursor:pointer;font-weight:600;">Zapisz</button>' +
         '</div>' +
       '</div>';
     }
@@ -9446,6 +9480,83 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.60",
+      "date": "2026-04-18",
+      "label": "redesign",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "redesign", "text": "News submit btn — gradient → var(--b24t-accent-grad)"},
+        {"type": "redesign", "text": "lang map modal — hardcoded dark → CSS vars (bg, border, text, primary)"},
+        {"type": "redesign", "text": "onboarding bubble — #111118 → var(--b24t-bg), teksty → CSS vars"},
+        {"type": "polish", "text": "ikona expand loga ⛶ → ↗"},
+        {"type": "anim", "text": "b24t-section-reveal — mapping/partition sekcje z translateY fade"}
+      ]
+    },
+    {
+      "version": "0.23.59",
+      "date": "2026-04-18",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "annotator panel, tab, overlaye — Inter → Geist (10 miejsc)"},
+        {"type": "fix", "text": "audit report wrongHtml — hardcoded #f87171/#4ade80 → CSS vars"},
+        {"type": "fix", "text": "buildAllProjectsPanel — font-family Geist"}
+      ]
+    },
+    {
+      "version": "0.23.58",
+      "date": "2026-04-18",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "log panel theme-aware — CSS vars zamiast hardcoded dark colors"},
+        {"type": "fix", "text": "_appendLogPanelEntry — kolory semantyczne przez CSS vars (ok/warn/err/faint)"}
+      ]
+    },
+    {
+      "version": "0.23.57",
+      "date": "2026-04-18",
+      "label": "ui",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "ui", "text": "action bar — separacja run controls (Pauza/Stop) i narzędzi diagnostycznych (Match/Audit/Export)"},
+        {"type": "ui", "text": "CSS: nowy .b24t-btn-tool — mniejszy, transparent, subtelny"}
+      ]
+    },
+    {
+      "version": "0.23.56",
+      "date": "2026-04-18",
+      "label": "ui",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "ui", "text": "hierarchia sekcji — primary (Postęp), tertiary (Log, Ustawienia)"},
+        {"type": "ui", "text": "sekcja Ustawienia zwijana — domyślnie rozwinięta, stan w localStorage"},
+        {"type": "ui", "text": "CSS: modyfikatory .b24t-section-label.primary i .tertiary"}
+      ]
+    },
+    {
+      "version": "0.23.55",
+      "date": "2026-04-18",
+      "label": "ui",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "ui", "text": "stats kompaktowe rows zamiast hero metric kart (b24t-stats-row-list)"},
+        {"type": "fix", "text": "_statsCard() — row layout zamiast kafelków z bgColor"},
+        {"type": "fix", "text": "renderOverallStatsData — column layout zamiast grid w kafelkach overall stats"}
+      ]
+    },
+    {
+      "version": "0.23.54",
+      "date": "2026-04-18",
+      "label": "ui",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "ui", "text": "ujednolicenie fontów — Geist wszędzie (usunięcie Inter z 16 miejsc)"},
+        {"type": "ui", "text": "CSS vars zamiast hardcoded kolorów — log panel, audit report, What's New modal"},
+        {"type": "ui", "text": "toast border-top zamiast border-left stripe (banned pattern)"}
+      ]
+    },
+    {
       "version": "0.23.53",
       "date": "2026-04-18",
       "label": "ui",
@@ -9480,90 +9591,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "feat", "text": "News — lista URLi przeprojektowana na karty: status badge z etykietą + badże w górnym wierszu, URL pełnej szerokości (11px, bez limitu 42 znaków)"},
         {"type": "feat", "text": "News — status jako kolorowy badge z krótką etykietą (Wzmianka / W treści / Główny temat itp.) zamiast samego kropki"}
-      ]
-    },
-    {
-      "version": "0.23.50",
-      "date": "2026-04-18",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "skanowanie News nie zawiesza się w połowie — try/catch w onload chroni przed wyjątkiem w _newsParseContent"},
-        {"type": "fix", "text": "iframe fallback — detekcja pustego contentDocument po blokadzie X-Frame-Options; auto-switch na rich card"}
-      ]
-    },
-    {
-      "version": "0.23.49",
-      "date": "2026-04-17",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "News AI — obsługa błędów 429/5xx/timeout/parse z komunikatem per URL"},
-        {"type": "feat", "text": "News AI — badge błędu w liście URLi (🤖 limit API / timeout / błąd parsowania)"},
-        {"type": "feat", "text": "News — fallback iframe→rich card gdy iframe rzuca onerror"},
-        {"type": "feat", "text": "News — rich preview: autor, liczba słów, strefy artykułu, badge iframe"},
-        {"type": "feat", "text": "News — legenda oznaczeń: przycisk ? w headerze, overlay z opisami wszystkich badży"}
-      ]
-    },
-    {
-      "version": "0.23.48",
-      "date": "2026-04-17",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "News — nowe nazwy wskaźników: mention→Wzmianka (🟠), contentmatch→W treści (🟣), keytopic→Główny temat (🟢)"},
-        {"type": "feat", "text": "News — ujednolicone kolory wskaźników w liście URLi i rich preview card"},
-        {"type": "feat", "text": "News — chip '🤖 AI' w headerze panelu gdy AI skonfigurowane i aktywne"},
-        {"type": "feat", "text": "News — dolny przycisk importu: '↑ Wczytaj URLe' z tooltipem (odróżnienie od górnego)"},
-        {"type": "feat", "text": "News — detekcja daty z widocznego tekstu ('Published: 12 April 2025') gdy meta/JSON-LD zawodzi"}
-      ]
-    },
-    {
-      "version": "0.23.47",
-      "date": "2026-04-17",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "usunięto hardcoded system prompt z kodu wtyczki"},
-        {"type": "fix", "text": "AI News nie startuje gdy brak wybranego promptu w bibliotece"},
-        {"type": "fix", "text": "dropdown promptu News: '— domyślny —' → '— wybierz z biblioteki —'"}
-      ]
-    },
-    {
-      "version": "0.23.46",
-      "date": "2026-04-17",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "AI News Scoring (krok 2) — ocena relevancji artykułów przez Claude po content scan"},
-        {"type": "feat", "text": "keywordContexts w _newsParseContent — fragmenty tekstu wokół każdego słowa kluczowego"},
-        {"type": "feat", "text": "badge AI w liście URLi — ⏳ pending / 🤖 Relevant / 🤖 Not relevant + tooltip z uzasadnieniem"},
-        {"type": "feat", "text": "pole 'Opis marki' w modalu importu — persystuje per projekt, placeholdery {PROJECT_NAME} i {BRAND_CONTEXT}"},
-        {"type": "feat", "text": "dropdown wyboru promptu News w ustawieniach AI"}
-      ]
-    },
-    {
-      "version": "0.23.45",
-      "date": "2026-04-17",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Ustawienia AI — klucz API bez autofill hasła (type=text + autocomplete=off)"},
-        {"type": "fix", "text": "dropdown modelu — hardcoded kolory, czytelny na białym tle (color-scheme:light)"},
-        {"type": "feat", "text": "wybór modelu osobno dla News i Tagowania"},
-        {"type": "feat", "text": "Biblioteka promptów przeniesiona do osobnego modalu"},
-        {"type": "fix", "text": "usunięty limit dzienny wywołań AI"},
-        {"type": "fix", "text": "modal ⚙ — max-height:90vh + scroll (overflow przy wielu elementach)"}
-      ]
-    },
-    {
-      "version": "0.23.44",
-      "date": "2026-04-17",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Ustawienia AI przeniesione do modalu ⚙ — dostępne bez wczytywania pliku"},
-        {"type": "fix", "text": "News — przycisk 'Następny relevantny' zastąpiony 'Importuj URLe'"}
       ]
     },
   ];
@@ -9626,7 +9653,7 @@ function showOnboarding(onComplete) {
 
     var modal = document.createElement('div');
     modal.id = 'b24t-welcome-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;';
 
     modal.innerHTML =
       '<div style="background:#0f0f13;border:1px solid #2a2a35;border-radius:14px;width:500px;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.9);">' +
@@ -9887,7 +9914,7 @@ function showOnboarding(onComplete) {
         html +=
           '<div style="margin-bottom:' + (idx < entries.length - 1 ? '20' : '0') + 'px;">' +
             '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
-              '<span style="font-size:15px;font-weight:700;color:var(--b24t-text);font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;">v' + v.version + '</span>' +
+              '<span style="font-size:15px;font-weight:700;color:var(--b24t-text);font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;">v' + v.version + '</span>' +
               '<span style="font-size:12px;font-weight:600;background:' + lc + '22;color:' + lc + ';padding:2px 10px;border-radius:99px;">' + v.label + '</span>' +
               '<span style="font-size:11px;color:var(--b24t-text-faint);margin-left:auto;">' + v.date + '</span>' +
             '</div>' +
@@ -9939,7 +9966,7 @@ function showOnboarding(onComplete) {
 
     const modal = document.createElement('div');
     modal.id = 'b24t-whats-new-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;';
 
     modal.innerHTML =
       // Outer container - wider, flex column
@@ -9988,7 +10015,7 @@ function showOnboarding(onComplete) {
           '</div>' +
           // Prawa strona: Gotowe
           '<button id="b24t-wnm-ok" ' +
-            'style="background:#6c6cff;color:#fff;border:none;border-radius:7px;padding:8px 24px;' +
+            'style="background:var(--b24t-primary);color:#fff;border:none;border-radius:7px;padding:8px 24px;' +
             'font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;flex-shrink:0;">Gotowe</button>' +
         '</div>' +
 
@@ -10038,7 +10065,7 @@ function showOnboarding(onComplete) {
     if (document.getElementById('b24t-feedback-modal')) return;
     const modal = document.createElement('div');
     modal.id = 'b24t-feedback-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;animation:b24t-fadein 0.2s ease;';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;animation:b24t-fadein 0.2s ease;';
 
     modal.innerHTML =
       '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:440px;max-height:86vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);">' +
@@ -10219,7 +10246,7 @@ function showOnboarding(onComplete) {
       'padding:16px',
       'box-shadow:var(--b24t-shadow-h)',
       'z-index:2147483646',
-      'font-family:Inter,Segoe UI,system-ui,sans-serif',
+      'font-family:Geist,\'Segoe UI\',system-ui,sans-serif',
       'animation:b24t-slide-in 0.35s cubic-bezier(0.34,1.56,0.64,1)',
     ].join(';');
 
@@ -10331,7 +10358,7 @@ function showOnboarding(onComplete) {
 
     const modal = document.createElement('div');
     modal.id = 'b24t-features-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;backdrop-filter:blur(4px);animation:b24t-fadein 0.2s ease;';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;backdrop-filter:blur(4px);animation:b24t-fadein 0.2s ease;';
 
     const _currentChannel = lsGet(LS.UPDATE_CHANNEL, 'stable');
     const channelHtml =
@@ -10957,7 +10984,7 @@ function showOnboarding(onComplete) {
     var tab = document.createElement('div');
     tab.id = 'b24t-annotator-tab';
     tab.setAttribute('data-b24t-theme', currentTheme);
-    tab.style.cssText = 'position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:2147483640;border-right:none;border-radius:10px 0 0 10px;padding:18px 13px;cursor:pointer;display:none;flex-direction:column;align-items:center;gap:7px;font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;font-size:14px;font-weight:600;letter-spacing:0.04em;user-select:none;transition:transform 0.2s,box-shadow 0.2s,background 0.3s,border-color 0.3s,color 0.3s;';
+    tab.style.cssText = 'position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:2147483640;border-right:none;border-radius:10px 0 0 10px;padding:18px 13px;cursor:pointer;display:none;flex-direction:column;align-items:center;gap:7px;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;font-size:14px;font-weight:600;letter-spacing:0.04em;user-select:none;transition:transform 0.2s,box-shadow 0.2s,background 0.3s,border-color 0.3s,color 0.3s;';
     // inline colors that adapt via JS (CSS vars not available in inline style)
     tab.innerHTML = '<span style="writing-mode:vertical-rl;text-orientation:mixed;letter-spacing:.08em;font-size:13px;font-weight:600;">Annotators Tab</span><span style="font-size:18px;line-height:1;">‹</span>';
     tab.title = 'Otwórz Annotators';
@@ -10968,7 +10995,7 @@ function showOnboarding(onComplete) {
     var panel = document.createElement('div');
     panel.id = 'b24t-annotator-panel';
     panel.setAttribute('data-b24t-theme', currentTheme);
-    panel.style.cssText = 'position:fixed;right:12px;top:80px;width:420px;height:auto;max-height:calc(100vh - 100px);z-index:2147483641;border-radius:14px;display:none;flex-direction:column;overflow:hidden;animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif;font-size:15px;';
+    panel.style.cssText = 'position:fixed;right:12px;top:80px;width:420px;height:auto;max-height:calc(100vh - 100px);z-index:2147483641;border-radius:14px;display:none;flex-direction:column;overflow:hidden;animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;font-size:15px;';
 
     panel.innerHTML =
       // Header with gradient
@@ -11606,15 +11633,15 @@ function showOnboarding(onComplete) {
   function _appendLogPanelEntry(panel, entry) {
     var body = document.getElementById('b24t-logp-body');
     if (!body) return;
-    var colors = { info: '#9ca3af', success: '#4ade80', warn: '#fbbf24', error: '#f87171' };
-    var msgColor = colors[entry.type] || '#9ca3af';
+    var colors = { info: 'var(--b24t-text-muted)', success: 'var(--b24t-ok)', warn: 'var(--b24t-warn)', error: 'var(--b24t-err)' };
+    var msgColor = colors[entry.type] || 'var(--b24t-text-muted)';
     var msgHtml = entry.message;
     var row = document.createElement('div');
     row.dataset.logType = entry.type;
-    row.style.cssText = 'display:flex;gap:8px;padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px;line-height:1.5;';
+    row.style.cssText = 'display:flex;gap:8px;padding:2px 0;border-bottom:1px solid var(--b24t-border-sub);font-size:12px;line-height:1.5;';
     row.innerHTML =
-      '<span style="color:#6b7280;flex-shrink:0;font-size:11px;">' + entry.time + '</span>' +
-      '<span style="color:#4b5563;flex-shrink:0;font-size:10px;padding-top:2px;min-width:42px;">[' + entry.type.toUpperCase() + ']</span>' +
+      '<span style="color:var(--b24t-text-faint);flex-shrink:0;font-size:11px;">' + entry.time + '</span>' +
+      '<span style="color:var(--b24t-text-faint);flex-shrink:0;font-size:10px;padding-top:2px;min-width:42px;">[' + entry.type.toUpperCase() + ']</span>' +
       '<span style="color:' + msgColor + ';flex:1;word-break:break-word;">' + msgHtml + '</span>';
     body.appendChild(row);
   }
@@ -11640,36 +11667,37 @@ function showOnboarding(onComplete) {
     el.style.cssText = [
       'position:fixed', 'top:50%', 'left:50%', 'transform:translate(-50%,-50%)',
       'width:720px', 'max-width:95vw', 'height:520px', 'max-height:90vh',
-      'background:#1a1a2e', 'border:1px solid #2d2d4e',
+      'background:var(--b24t-bg)', 'border:1px solid var(--b24t-border)',
       'border-radius:12px', 'box-shadow:0 16px 48px rgba(0,0,0,0.6)',
       'z-index:2147483647', 'display:none', 'flex-direction:column',
-      'font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif',
+      'font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif',
+      'color:var(--b24t-text)',
       'overflow:hidden', 'resize:both',
     ].join(';');
 
     el.innerHTML =
       // Header z gradientem
-      '<div id="b24t-logp-header" style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:linear-gradient(135deg,#1e1e3f,#16213e);flex-shrink:0;cursor:move;user-select:none;border-bottom:1px solid #2d2d4e;">' +
+      '<div id="b24t-logp-header" style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--b24t-bg-deep);flex-shrink:0;cursor:move;user-select:none;border-bottom:1px solid var(--b24t-border);">' +
         '<div style="display:flex;align-items:center;gap:8px;">' +
-          '<span style="font-size:14px;font-weight:700;color:#e2e8f0;">📋 Log sesji</span>' +
-          '<span id="b24t-logp-count" style="font-size:10px;color:#6b7280;background:#0f0f1e;border-radius:99px;padding:1px 7px;"></span>' +
+          '<span style="font-size:14px;font-weight:700;color:var(--b24t-text);">📋 Log sesji</span>' +
+          '<span id="b24t-logp-count" style="font-size:10px;color:var(--b24t-text-faint);background:var(--b24t-bg-elevated);border-radius:99px;padding:1px 7px;"></span>' +
         '</div>' +
-        '<button id="b24t-logp-close" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);color:#e2e8f0;border-radius:5px;padding:2px 10px;cursor:pointer;font-size:15px;line-height:1;">×</button>' +
+        '<button id="b24t-logp-close" style="background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);color:var(--b24t-text);border-radius:5px;padding:2px 10px;cursor:pointer;font-size:15px;line-height:1;">×</button>' +
       '</div>' +
       // Toolbar — filtry + przyciski
-      '<div style="display:flex;align-items:center;gap:8px;padding:8px 16px;background:#13131f;border-bottom:1px solid #252540;flex-shrink:0;flex-wrap:wrap;">' +
-        '<span style="font-size:10px;color:#6b7280;margin-right:2px;">Filtr:</span>' +
+      '<div style="display:flex;align-items:center;gap:8px;padding:8px 16px;background:var(--b24t-bg-elevated);border-bottom:1px solid var(--b24t-border-sub);flex-shrink:0;flex-wrap:wrap;">' +
+        '<span style="font-size:10px;color:var(--b24t-text-faint);margin-right:2px;">Filtr:</span>' +
         _logpFilterChk('info',    '#9ca3af', 'info')    +
         _logpFilterChk('success', '#4ade80', 'success') +
         _logpFilterChk('warn',    '#fbbf24', 'warn')    +
         _logpFilterChk('error',   '#f87171', 'error')   +
         _logpFilterChk('diag',    '#f87171', 'diag')    +
         '<div style="flex:1;"></div>' +
-        '<button id="b24t-logp-copy" style="background:#252540;border:1px solid #3d3d6b;color:#c4c4e0;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;">📋 Kopiuj</button>' +
-        '<button id="b24t-logp-csv" style="background:#252540;border:1px solid #3d3d6b;color:#c4c4e0;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;">⬇ CSV</button>' +
+        '<button id="b24t-logp-copy" style="background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;">📋 Kopiuj</button>' +
+        '<button id="b24t-logp-csv" style="background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;">⬇ CSV</button>' +
       '</div>' +
       // Treść loga
-      '<div id="b24t-logp-body" style="flex:1;overflow-y:auto;padding:8px 16px;background:#0f0f1e;">' +
+      '<div id="b24t-logp-body" style="flex:1;overflow-y:auto;padding:8px 16px;background:var(--b24t-bg-deep);">' +
       '</div>';
 
     document.body.appendChild(el);
@@ -11890,7 +11918,7 @@ function showOnboarding(onComplete) {
       'z-index:2147483646',
       'display:none',
       'flex-direction:column',
-      'font-family:\'Inter\', \'Segoe UI\', system-ui, sans-serif',
+      'font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif',
       'overflow:hidden',
       'animation:b24t-slidein 0.28s cubic-bezier(0.34,1.56,0.64,1)',
     ].join(';');
@@ -12201,7 +12229,7 @@ To jest NIEODWRACALNE.`)) return;
     var isNew = !existingGroup;
     var currentGroup = existingGroup ? JSON.parse(JSON.stringify(existingGroup)) : { id: generateGroupId(), name: '', projectIds: [], relevantTagId: null };
     var overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483648;display:flex;align-items:center;justify-content:center;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483648;display:flex;align-items:center;justify-content:center;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;';
     var projCheckboxes = knownProjects.length ? knownProjects.map(function(p) {
       var checked = currentGroup.projectIds.includes(p.id);
       return '<label style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:7px;cursor:pointer;background:' + (checked ? 'var(--b24t-primary-bg)' : 'var(--b24t-bg-input)') + ';border:1px solid ' + (checked ? 'color-mix(in srgb,var(--b24t-primary) 40%,transparent)' : 'var(--b24t-border)') + ';transition:background 0.15s,border-color 0.15s;">' +
@@ -12475,9 +12503,9 @@ To jest NIEODWRACALNE.`)) return;
   }
 
   function _statsCard(label, value, color, bgColor) {
-    return '<div style="background:' + bgColor + ';border:1px solid var(--b24t-border);border-radius:8px;padding:10px;text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,0.10);transition:background 0.3s,border-color 0.3s;">' +
-      '<div style="font-size:11px;color:' + color + ';margin-bottom:4px;font-weight:600;">' + label + '</div>' +
-      '<div style="font-size:22px;font-weight:800;color:' + color + ';">' + (value != null ? value : '—') + '</div>' +
+    return '<div style="display:flex;align-items:baseline;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--b24t-border-sub);">' +
+      '<span style="font-size:11px;color:var(--b24t-text-faint);">' + label + '</span>' +
+      '<span style="font-size:13px;font-weight:600;color:' + color + ';font-variant-numeric:tabular-nums;">' + (value != null ? value : '—') + '</span>' +
     '</div>';
   }
 
@@ -12555,22 +12583,20 @@ To jest NIEODWRACALNE.`)) return;
       thREL = '<th style="padding:6px 8px;font-size:10px;color:var(--b24t-ok);text-align:right;font-weight:600;">REL</th>';
       colCount = 4;
       cards =
-        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px;">' +
-          _statsCard('Wszystkie',  totalAll,       'var(--b24t-text-muted)', 'var(--b24t-bg-elevated)') +
-          _statsCard('Relevantne', totalRelevant,  'var(--b24t-ok)',  'var(--b24t-ok-bg)') +
-          _statsCard('Pozostało',  totalRemaining, 'var(--b24t-primary)', 'var(--b24t-primary-bg)') +
-        '</div>' +
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">' +
-          _statsCard('Do weryfikacji', totalReqVer,   'var(--b24t-warn)', 'var(--b24t-warn-bg)') +
-          _statsCard('Do usunięcia',   totalToDelete, 'var(--b24t-err)',  'var(--b24t-err-bg)') +
+        '<div style="display:flex;flex-direction:column;margin-bottom:10px;">' +
+          _statsCard('Wszystkie',      totalAll,       'var(--b24t-text-muted)', 'var(--b24t-bg-elevated)') +
+          _statsCard('Relevantne',     totalRelevant,  'var(--b24t-ok)',         'var(--b24t-ok-bg)') +
+          _statsCard('Pozostało',      totalRemaining, 'var(--b24t-primary)',    'var(--b24t-primary-bg)') +
+          _statsCard('Do weryfikacji', totalReqVer,    'var(--b24t-warn)',       'var(--b24t-warn-bg)') +
+          _statsCard('Do usunięcia',   totalToDelete,  'var(--b24t-err)',        'var(--b24t-err-bg)') +
         '</div>';
     } else {
       colCount = 3;
       cards =
-        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;">' +
+        '<div style="display:flex;flex-direction:column;margin-bottom:10px;">' +
           _statsCard('Wszystkie',      totalAll,      'var(--b24t-text-muted)', 'var(--b24t-bg-elevated)') +
-          _statsCard('Do weryfikacji', totalReqVer,   'var(--b24t-warn)', 'var(--b24t-warn-bg)') +
-          _statsCard('Do usunięcia',   totalToDelete, 'var(--b24t-err)',  'var(--b24t-err-bg)') +
+          _statsCard('Do weryfikacji', totalReqVer,   'var(--b24t-warn)',       'var(--b24t-warn-bg)') +
+          _statsCard('Do usunięcia',   totalToDelete, 'var(--b24t-err)',        'var(--b24t-err-bg)') +
         '</div>';
     }
     var warnHtml = !hasRelevant
@@ -12633,7 +12659,7 @@ To jest NIEODWRACALNE.`)) return;
   function showOverallStatsSettings(group) {
     if (!group) return;
     var overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483648;display:flex;align-items:center;justify-content:center;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483648;display:flex;align-items:center;justify-content:center;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;';
     var tagOptions = Object.entries(state.tags).map(function(entry) {
       return '<option value="' + entry[1] + '"' + (entry[1] === group.relevantTagId ? ' selected' : '') + '>' + entry[0] + ' (ID: ' + entry[1] + ')</option>';
     }).join('');
@@ -12782,7 +12808,7 @@ To jest NIEODWRACALNE.`)) return;
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div id="b24t-del-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;flex:1;"></div>
-          <div id="b24t-del-timer" style="font-size:11px;color:var(--b24t-text-faint);font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
+          <div id="b24t-del-timer" style="font-size:11px;color:var(--b24t-text-faint);font-family:'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
         </div>
 
         <!-- Run button -->
@@ -12830,7 +12856,7 @@ To jest NIEODWRACALNE.`)) return;
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div id="b24t-delview-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;flex:1;"></div>
-          <div id="b24t-delview-timer" style="font-size:11px;color:var(--b24t-text-faint);font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
+          <div id="b24t-delview-timer" style="font-size:11px;color:var(--b24t-text-faint);font-family:'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
         </div>
 
         <!-- Run button -->
@@ -13368,7 +13394,7 @@ Tej operacji nie można cofnąć.`)) {
         <!-- Status + timer -->
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div id="b24t-qt-status" class="b24t-qt-status" style="font-size:12px;color:var(--b24t-text-muted);min-height:16px;flex:1;"></div>
-          <div id="b24t-qt-timer" style="font-size:13px;color:var(--b24t-text-muted);font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;font-weight:500;">00:00</div>
+          <div id="b24t-qt-timer" style="font-size:13px;color:var(--b24t-text-muted);font-family:'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;font-weight:500;">00:00</div>
         </div>
 
         <!-- Run button -->

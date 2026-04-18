@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.59
+// @version      0.23.60
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.59';
+  const VERSION = '0.23.60';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2812,6 +2812,10 @@
       @keyframes b24t-fadein {
         from { opacity: 0; } to { opacity: 1; }
       }
+      @keyframes b24t-section-reveal {
+        from { opacity: 0; transform: translateY(-4px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
       @keyframes b24t-pulse-ring {
         0%   { box-shadow: 0 0 0 0 var(--b24t-primary-glow); }
         70%  { box-shadow: 0 0 0 6px transparent; }
@@ -3946,7 +3950,7 @@
           <div class="b24t-section-label tertiary">
             Log
             <button class="b24t-log-clear" id="b24t-log-clear">wyczyść</button>
-            <button class="b24t-log-expand" id="b24t-log-expand" title="Pełny widok loga">⛶</button>
+            <button class="b24t-log-expand" id="b24t-log-expand" title="Pełny widok loga">↗</button>
           </div>
           <div id="b24t-log"></div>
         </div>
@@ -4614,7 +4618,7 @@
       if (partitions.length > 1) {
         const ps = document.getElementById('b24t-partition-section');
         ps.style.display = 'block';
-        ps.style.animation = 'none'; void ps.offsetHeight; ps.style.animation = 'b24t-fadein 0.25s ease';
+        ps.style.animation = 'none'; void ps.offsetHeight; ps.style.animation = 'b24t-section-reveal 0.18s ease-out';
         document.getElementById('b24t-partition-info').textContent =
           `${partitions.length} partycji · max ${state.partitionLimit} wzmianek/partycja`;
       }
@@ -4625,7 +4629,7 @@
         if (!el) return;
         el.style.display = 'block';
         el.style.animation = 'none'; void el.offsetHeight;
-        el.style.animation = 'b24t-fadein 0.25s ease';
+        el.style.animation = 'b24t-section-reveal 0.18s ease-out';
       });
 
       // Check for saved schema
@@ -5305,7 +5309,7 @@
     if (sticky) {
       tip.style.pointerEvents = 'all';
       var closeX = document.createElement('button');
-      closeX.style.cssText = 'position:absolute;top:5px;right:8px;background:none;border:none;color:#555577;cursor:pointer;font-size:14px;line-height:1;padding:0;';
+      closeX.style.cssText = 'position:absolute;top:5px;right:8px;background:none;border:none;color:var(--b24t-text-faint);cursor:pointer;font-size:14px;line-height:1;padding:0;';
       closeX.textContent = '×';
       closeX.addEventListener('click', function() { helpStickyTip = false; hideHelpTip(); });
       tip.appendChild(closeX);
@@ -5383,7 +5387,7 @@ function injectOnboardingStyles() {
       max-width: 320px;
       min-width: 240px;
       font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
-      background: #111118;
+      background: var(--b24t-bg);
       border: 1px solid rgba(108,108,255,0.4);
       border-radius: 16px;
       padding: 18px 20px 14px;
@@ -5406,7 +5410,7 @@ function injectOnboardingStyles() {
       content: '';
       position: absolute;
       width: 11px; height: 11px;
-      background: #111118;
+      background: var(--b24t-bg);
       border: 1px solid rgba(108,108,255,0.4);
       transform: rotate(45deg);
       z-index: -1;
@@ -5438,14 +5442,14 @@ function injectOnboardingStyles() {
     }
     .ob-bubble-title {
       font-size: 14px; font-weight: 700;
-      color: #eeeef4;
+      color: var(--b24t-text);
       margin-bottom: 8px; line-height: 1.3;
     }
     .ob-bubble-body {
-      font-size: 12px; color: #a0a0c0;
+      font-size: 12px; color: var(--b24t-text-muted);
       line-height: 1.7; margin-bottom: 14px;
     }
-    .ob-bubble-body strong { color: #eeeef4; }
+    .ob-bubble-body strong { color: var(--b24t-text); }
     .ob-bubble-body .ob-tag {
       display: inline-block;
       background: rgba(108,108,255,0.14);
@@ -5479,14 +5483,14 @@ function injectOnboardingStyles() {
     .ob-btn-next:hover { opacity: 0.88; }
     .ob-btn-next:active { transform: scale(0.95); }
     .ob-btn-back {
-      background: rgba(255,255,255,0.05); color: #7878aa;
+      background: rgba(255,255,255,0.05); color: var(--b24t-text-faint);
       border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
       padding: 8px 14px; font-size: 12px;
       font-family: inherit; cursor: pointer;
       transition: background 0.15s;
     }
     .ob-btn-back:hover { background: rgba(255,255,255,0.1); }
-    .ob-step-counter { font-size: 10px; color: #444466; letter-spacing: 0.05em; }
+    .ob-step-counter { font-size: 10px; color: var(--b24t-text-faint); letter-spacing: 0.05em; }
 
     @keyframes ob-pulse {
       0%, 100% { outline-color: rgba(108,108,255,0.7); }
@@ -7977,7 +7981,7 @@ function showOnboarding(onComplete) {
         '</div>' +
         '<div id="b24t-news-tag-list" style="display:none;flex-wrap:wrap;gap:5px;padding:0 10px 8px;max-height:160px;overflow-y:auto;"></div>' +
       '</div>',
-      '<button id="b24t-news-submit-btn" style="flex-shrink:0;padding:9px;border-radius:9px;border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:12px;font-weight:700;cursor:pointer;width:100%;letter-spacing:0.03em;transition:opacity 0.15s;">✚ Dodaj wzmiankę do Brand24</button>',
+      '<button id="b24t-news-submit-btn" style="flex-shrink:0;padding:9px;border-radius:9px;border:none;background:var(--b24t-accent-grad);color:#fff;font-size:12px;font-weight:700;cursor:pointer;width:100%;letter-spacing:0.03em;transition:opacity 0.15s;">✚ Dodaj wzmiankę do Brand24</button>',
       '<div id="b24t-news-submit-status" style="font-size:10px;text-align:center;min-height:14px;font-weight:500;flex-shrink:0;"></div>',
     ].join('');
 
@@ -9399,30 +9403,30 @@ function showOnboarding(onComplete) {
       var rows = keys.length ? keys.map(function(cc) {
         var langs = (map[cc] || []).join(', ');
         return '<tr>' +
-          '<td style="padding:5px 8px;font-weight:700;font-size:12px;color:#e2e8f0;">' + cc + '</td>' +
-          '<td style="padding:5px 8px;"><input data-cc="' + cc + '" class="b24t-lm-inp" type="text" value="' + langs + '" style="background:#1e1e2e;border:1px solid #3a3a4a;border-radius:5px;color:#e2e8f0;font-size:10px;padding:3px 7px;width:130px;"></td>' +
-          '<td style="padding:5px 8px;"><button data-cc="' + cc + '" class="b24t-lm-del" style="font-size:9px;padding:2px 7px;border-radius:4px;border:1px solid #ef444455;background:transparent;color:#f87171;cursor:pointer;">Usuń</button></td>' +
+          '<td style="padding:5px 8px;font-weight:700;font-size:12px;color:var(--b24t-text);">' + cc + '</td>' +
+          '<td style="padding:5px 8px;"><input data-cc="' + cc + '" class="b24t-lm-inp" type="text" value="' + langs + '" style="background:var(--b24t-bg-input);border:1px solid var(--b24t-border);border-radius:5px;color:var(--b24t-text);font-size:10px;padding:3px 7px;width:130px;"></td>' +
+          '<td style="padding:5px 8px;"><button data-cc="' + cc + '" class="b24t-lm-del" style="font-size:9px;padding:2px 7px;border-radius:4px;border:1px solid color-mix(in srgb,var(--b24t-err) 33%,transparent);background:transparent;color:var(--b24t-err);cursor:pointer;">Usuń</button></td>' +
         '</tr>';
-      }).join('') : '<tr><td colspan="3" style="padding:16px;text-align:center;font-size:11px;color:#6b7280;">Mapa jest pusta. Zostanie uzupełniona automatycznie z Twojej pracy.</td></tr>';
+      }).join('') : '<tr><td colspan="3" style="padding:16px;text-align:center;font-size:11px;color:var(--b24t-text-faint);">Mapa jest pusta. Zostanie uzupełniona automatycznie z Twojej pracy.</td></tr>';
 
-      return '<div style="background:#16161f;border:1px solid #2e2e48;border-radius:14px;padding:20px;min-width:360px;max-width:440px;max-height:80vh;overflow-y:auto;color:#e2e8f0;font-family:Geist,\'Segoe UI\',sans-serif;">' +
+      return '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;padding:20px;min-width:360px;max-width:440px;max-height:80vh;overflow-y:auto;color:var(--b24t-text);font-family:Geist,\'Segoe UI\',sans-serif;">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
           '<span style="font-size:14px;font-weight:700;">⚙ Mapa projekt → języki</span>' +
-          '<button id="b24t-lm-close" style="background:transparent;border:none;color:#9ca3af;cursor:pointer;font-size:18px;">✕</button>' +
+          '<button id="b24t-lm-close" style="background:transparent;border:none;color:var(--b24t-text-faint);cursor:pointer;font-size:18px;">✕</button>' +
         '</div>' +
-        '<p style="font-size:10px;color:#9ca3af;margin:0 0 12px;line-height:1.6;">Mapa buduje się automatycznie gdy otwierasz strony z nowych krajów. Możesz ją ręcznie edytować. Jeśli kraj nie ma wpisów — sprawdzanie języka jest pomijane.</p>' +
+        '<p style="font-size:10px;color:var(--b24t-text-faint);margin:0 0 12px;line-height:1.6;">Mapa buduje się automatycznie gdy otwierasz strony z nowych krajów. Możesz ją ręcznie edytować. Jeśli kraj nie ma wpisów — sprawdzanie języka jest pomijane.</p>' +
         '<table style="width:100%;border-collapse:collapse;"><thead><tr>' +
-          '<th style="font-size:9px;text-transform:uppercase;color:#6b7280;text-align:left;padding:2px 8px;">Kraj</th>' +
-          '<th style="font-size:9px;text-transform:uppercase;color:#6b7280;text-align:left;padding:2px 8px;">Języki (kody, przecinkami)</th>' +
+          '<th style="font-size:9px;text-transform:uppercase;color:var(--b24t-text-faint);text-align:left;padding:2px 8px;">Kraj</th>' +
+          '<th style="font-size:9px;text-transform:uppercase;color:var(--b24t-text-faint);text-align:left;padding:2px 8px;">Języki (kody, przecinkami)</th>' +
           '<th></th>' +
         '</tr></thead><tbody id="b24t-lm-tbody">' + rows + '</tbody></table>' +
         '<div style="display:flex;gap:6px;margin-top:14px;align-items:center;">' +
-          '<input id="b24t-lm-cc" type="text" placeholder="Kraj (np. TR)" maxlength="3" style="background:#1e1e2e;border:1px solid #3a3a4a;border-radius:5px;color:#e2e8f0;font-size:10px;padding:4px 7px;width:70px;">' +
-          '<input id="b24t-lm-langs" type="text" placeholder="Języki (np. tr, az)" style="background:#1e1e2e;border:1px solid #3a3a4a;border-radius:5px;color:#e2e8f0;font-size:10px;padding:4px 7px;flex:1;">' +
-          '<button id="b24t-lm-add" style="font-size:11px;padding:4px 10px;border-radius:6px;border:none;background:#6366f1;color:#fff;cursor:pointer;">Dodaj</button>' +
+          '<input id="b24t-lm-cc" type="text" placeholder="Kraj (np. TR)" maxlength="3" style="background:var(--b24t-bg-input);border:1px solid var(--b24t-border);border-radius:5px;color:var(--b24t-text);font-size:10px;padding:4px 7px;width:70px;">' +
+          '<input id="b24t-lm-langs" type="text" placeholder="Języki (np. tr, az)" style="background:var(--b24t-bg-input);border:1px solid var(--b24t-border);border-radius:5px;color:var(--b24t-text);font-size:10px;padding:4px 7px;flex:1;">' +
+          '<button id="b24t-lm-add" style="font-size:11px;padding:4px 10px;border-radius:6px;border:none;background:var(--b24t-primary);color:#fff;cursor:pointer;">Dodaj</button>' +
         '</div>' +
         '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">' +
-          '<button id="b24t-lm-save" style="font-size:12px;padding:6px 16px;border-radius:8px;border:none;background:#6366f1;color:#fff;cursor:pointer;font-weight:600;">Zapisz</button>' +
+          '<button id="b24t-lm-save" style="font-size:12px;padding:6px 16px;border-radius:8px;border:none;background:var(--b24t-primary);color:#fff;cursor:pointer;font-weight:600;">Zapisz</button>' +
         '</div>' +
       '</div>';
     }
@@ -9475,6 +9479,19 @@ function showOnboarding(onComplete) {
 
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
+    {
+      "version": "0.23.60",
+      "date": "2026-04-18",
+      "label": "redesign",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "redesign", "text": "News submit btn — gradient → var(--b24t-accent-grad)"},
+        {"type": "redesign", "text": "lang map modal — hardcoded dark → CSS vars (bg, border, text, primary)"},
+        {"type": "redesign", "text": "onboarding bubble — #111118 → var(--b24t-bg), teksty → CSS vars"},
+        {"type": "polish", "text": "ikona expand loga ⛶ → ↗"},
+        {"type": "anim", "text": "b24t-section-reveal — mapping/partition sekcje z translateY fade"}
+      ]
+    },
     {
       "version": "0.23.59",
       "date": "2026-04-18",
@@ -9574,16 +9591,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "feat", "text": "News — lista URLi przeprojektowana na karty: status badge z etykietą + badże w górnym wierszu, URL pełnej szerokości (11px, bez limitu 42 znaków)"},
         {"type": "feat", "text": "News — status jako kolorowy badge z krótką etykietą (Wzmianka / W treści / Główny temat itp.) zamiast samego kropki"}
-      ]
-    },
-    {
-      "version": "0.23.50",
-      "date": "2026-04-18",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "skanowanie News nie zawiesza się w połowie — try/catch w onload chroni przed wyjątkiem w _newsParseContent"},
-        {"type": "fix", "text": "iframe fallback — detekcja pustego contentDocument po blokadzie X-Frame-Options; auto-switch na rich card"}
       ]
     },
   ];

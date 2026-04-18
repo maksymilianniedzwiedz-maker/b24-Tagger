@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.54
+// @version      0.23.55
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.54';
+  const VERSION = '0.23.55';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3178,25 +3178,17 @@
       #b24t-progress-action { font-size: 11px; color: var(--b24t-text-meta); margin-top: 2px; }
 
       /* ── STATS ── */
-      .b24t-stats-grid {
-        display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px;
+      .b24t-stats-row-list { display: flex; flex-direction: column; gap: 3px; }
+      .b24t-stat-row {
+        display: flex; align-items: baseline; justify-content: space-between;
+        padding: 4px 0; border-bottom: 1px solid var(--b24t-border-sub);
       }
-      .b24t-stat-card {
-        background: var(--b24t-section-grad-d); border: 1px solid var(--b24t-border);
-        border-radius: 8px; padding: 8px 10px;
-        transition: background 0.3s, border-color 0.3s, transform 0.15s, box-shadow 0.15s;
-        position: relative; overflow: hidden;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.10);
-      }
-      .b24t-stat-card:hover { transform: translateY(-2px); border-color: var(--b24t-border-strong); box-shadow: var(--b24t-shadow-h); }
-      .b24t-stat-card:has(.b24t-stat-value.ok)   { background: var(--b24t-ok-bg) !important; border-color: color-mix(in srgb, var(--b24t-ok) 30%, transparent) !important; }
-      .b24t-stat-card:has(.b24t-stat-value.warn) { background: var(--b24t-warn-bg) !important; border-color: color-mix(in srgb, var(--b24t-warn) 30%, transparent) !important; }
-      .b24t-stat-card:has(.b24t-stat-value.ok)::after   { background: var(--b24t-ok); opacity: 0.5; }
-      .b24t-stat-card:has(.b24t-stat-value.warn)::after { background: var(--b24t-warn); opacity: 0.5; }
-      .b24t-stat-label { font-size: 11px; color: var(--b24t-text-meta); margin-bottom: 3px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; }
-      .b24t-stat-value { font-size: 20px; font-weight: 800; color: var(--b24t-text); }
-      .b24t-stat-value.ok   { color: var(--b24t-ok); }
-      .b24t-stat-value.warn { color: var(--b24t-warn); }
+      .b24t-stat-row:last-child { border-bottom: none; }
+      .b24t-stat-row-label { font-size: 12px; color: var(--b24t-text-faint); font-weight: 400; }
+      .b24t-stat-row-value { font-size: 14px; font-weight: 600; color: var(--b24t-text); font-variant-numeric: tabular-nums; }
+      .b24t-stat-row-value.ok   { color: var(--b24t-ok); }
+      .b24t-stat-row-value.warn { color: var(--b24t-warn); }
+      .b24t-stat-row-value.err  { color: var(--b24t-err); }
 
       /* ── LOG ── */
       #b24t-log {
@@ -3916,18 +3908,18 @@
         <!-- STATYSTYKI -->
         <div class="b24t-section">
           <div class="b24t-section-label">Statystyki sesji</div>
-          <div class="b24t-stats-grid">
-            <div class="b24t-stat-card">
-              <div class="b24t-stat-label">Otagowano</div>
-              <div class="b24t-stat-value ok" id="b24t-stat-tagged">0</div>
+          <div class="b24t-stats-row-list">
+            <div class="b24t-stat-row">
+              <span class="b24t-stat-row-label">Otagowano</span>
+              <span class="b24t-stat-row-value ok" id="b24t-stat-tagged">0</span>
             </div>
-            <div class="b24t-stat-card">
-              <div class="b24t-stat-label">Pominięto</div>
-              <div class="b24t-stat-value warn" id="b24t-stat-skipped" style="cursor:pointer" title="Kliknij aby zobaczyć listę">0</div>
+            <div class="b24t-stat-row">
+              <span class="b24t-stat-row-label">Pominięto</span>
+              <span class="b24t-stat-row-value warn" id="b24t-stat-skipped" style="cursor:pointer" title="Kliknij aby zobaczyć listę">0</span>
             </div>
-            <div class="b24t-stat-card">
-              <div class="b24t-stat-label">Pozostało</div>
-              <div class="b24t-stat-value" id="b24t-stat-remaining">0</div>
+            <div class="b24t-stat-row">
+              <span class="b24t-stat-row-label">Pozostało</span>
+              <span class="b24t-stat-row-value" id="b24t-stat-remaining">0</span>
             </div>
           </div>
         </div>
@@ -6007,8 +5999,8 @@ function showOnboarding(onComplete) {
           desc: 'Start — uruchamia/wznawia tagowanie. Pause — bezpieczna pauza. Test Run — symulacja bez zapisu (zawsze sprawdź najpierw!). Match Preview — sprawdza % dopasowania URL.',
         },
         {
-          selector: '.b24t-stats-grid',
-          title: 'Kafelki statystyk',
+          selector: '.b24t-stats-row-list',
+          title: 'Statystyki sesji',
           desc: 'Otagowano — liczba wzmianek którym nadano tag. Pominięto — wzmianki bez dopasowania URL lub bez oceny. Brak matcha — URL z pliku nieznaleziony w Brand24.',
         },
         {
@@ -9446,6 +9438,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.55",
+      "date": "2026-04-18",
+      "label": "ui",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "ui", "text": "stats kompaktowe rows zamiast hero metric kart (b24t-stats-row-list)"},
+        {"type": "fix", "text": "_statsCard() — row layout zamiast kafelków z bgColor"},
+        {"type": "fix", "text": "renderOverallStatsData — column layout zamiast grid w kafelkach overall stats"}
+      ]
+    },
+    {
       "version": "0.23.54",
       "date": "2026-04-18",
       "label": "ui",
@@ -9565,16 +9568,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "Biblioteka promptów przeniesiona do osobnego modalu"},
         {"type": "fix", "text": "usunięty limit dzienny wywołań AI"},
         {"type": "fix", "text": "modal ⚙ — max-height:90vh + scroll (overflow przy wielu elementach)"}
-      ]
-    },
-    {
-      "version": "0.23.44",
-      "date": "2026-04-17",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Ustawienia AI przeniesione do modalu ⚙ — dostępne bez wczytywania pliku"},
-        {"type": "fix", "text": "News — przycisk 'Następny relevantny' zastąpiony 'Importuj URLe'"}
       ]
     },
   ];
@@ -12487,9 +12480,9 @@ To jest NIEODWRACALNE.`)) return;
   }
 
   function _statsCard(label, value, color, bgColor) {
-    return '<div style="background:' + bgColor + ';border:1px solid var(--b24t-border);border-radius:8px;padding:10px;text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,0.10);transition:background 0.3s,border-color 0.3s;">' +
-      '<div style="font-size:11px;color:' + color + ';margin-bottom:4px;font-weight:600;">' + label + '</div>' +
-      '<div style="font-size:22px;font-weight:800;color:' + color + ';">' + (value != null ? value : '—') + '</div>' +
+    return '<div style="display:flex;align-items:baseline;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--b24t-border-sub);">' +
+      '<span style="font-size:11px;color:var(--b24t-text-faint);">' + label + '</span>' +
+      '<span style="font-size:13px;font-weight:600;color:' + color + ';font-variant-numeric:tabular-nums;">' + (value != null ? value : '—') + '</span>' +
     '</div>';
   }
 
@@ -12567,22 +12560,20 @@ To jest NIEODWRACALNE.`)) return;
       thREL = '<th style="padding:6px 8px;font-size:10px;color:var(--b24t-ok);text-align:right;font-weight:600;">REL</th>';
       colCount = 4;
       cards =
-        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px;">' +
-          _statsCard('Wszystkie',  totalAll,       'var(--b24t-text-muted)', 'var(--b24t-bg-elevated)') +
-          _statsCard('Relevantne', totalRelevant,  'var(--b24t-ok)',  'var(--b24t-ok-bg)') +
-          _statsCard('Pozostało',  totalRemaining, 'var(--b24t-primary)', 'var(--b24t-primary-bg)') +
-        '</div>' +
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">' +
-          _statsCard('Do weryfikacji', totalReqVer,   'var(--b24t-warn)', 'var(--b24t-warn-bg)') +
-          _statsCard('Do usunięcia',   totalToDelete, 'var(--b24t-err)',  'var(--b24t-err-bg)') +
+        '<div style="display:flex;flex-direction:column;margin-bottom:10px;">' +
+          _statsCard('Wszystkie',      totalAll,       'var(--b24t-text-muted)', 'var(--b24t-bg-elevated)') +
+          _statsCard('Relevantne',     totalRelevant,  'var(--b24t-ok)',         'var(--b24t-ok-bg)') +
+          _statsCard('Pozostało',      totalRemaining, 'var(--b24t-primary)',    'var(--b24t-primary-bg)') +
+          _statsCard('Do weryfikacji', totalReqVer,    'var(--b24t-warn)',       'var(--b24t-warn-bg)') +
+          _statsCard('Do usunięcia',   totalToDelete,  'var(--b24t-err)',        'var(--b24t-err-bg)') +
         '</div>';
     } else {
       colCount = 3;
       cards =
-        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;">' +
+        '<div style="display:flex;flex-direction:column;margin-bottom:10px;">' +
           _statsCard('Wszystkie',      totalAll,      'var(--b24t-text-muted)', 'var(--b24t-bg-elevated)') +
-          _statsCard('Do weryfikacji', totalReqVer,   'var(--b24t-warn)', 'var(--b24t-warn-bg)') +
-          _statsCard('Do usunięcia',   totalToDelete, 'var(--b24t-err)',  'var(--b24t-err-bg)') +
+          _statsCard('Do weryfikacji', totalReqVer,   'var(--b24t-warn)',       'var(--b24t-warn-bg)') +
+          _statsCard('Do usunięcia',   totalToDelete, 'var(--b24t-err)',        'var(--b24t-err-bg)') +
         '</div>';
     }
     var warnHtml = !hasRelevant

@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.23.52",
+    "date": "2026-04-18",
+    "label": "ui",
+    "changes": [
+      "ui: szybsze animacje — modal 0.22s, log entries 0.08s, progress bar 0.25s, stat-pop 0.22s, `:active` 0.08s ease-out",
+      "ui: side tab — animacja tylko box-shadow (GPU-safe), usunięte animowanie background",
+      "ui: stagger kart URLi w News (30ms×idx, tylko gdy nie skanuje) i toastów (+40ms per kolejny)",
+      "ui: box-shadow przy hover na stat-card i file-zone (głębia), silniejszy shadow na btn-primary",
+      "ui: usunięto transform:translateY z hover zakładek, usunięto animation z .b24t-section",
+      "ui: focus-visible na wszystkich przyciskach i zakładkach, transform-origin na help-tip"
+    ]
+  },
+  {
     "version": "0.23.51",
     "date": "2026-04-18",
     "label": "feat",

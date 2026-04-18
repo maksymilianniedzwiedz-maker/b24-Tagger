@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.23.53",
+    "date": "2026-04-18",
+    "label": "ui",
+    "changes": [
+      "ui: font Inter → Geist (Google Fonts)",
+      "ui: dark mode — primary color fiolet → teal (oklch), accent-grad, shadows zaktualizowane",
+      "ui: usunięto side stripe (::before) z sekcji — banned pattern",
+      "ui: usunięto border-left z wpisów logu — banned pattern; zastąpione border-radius",
+      "ui: primary button — gradient → solid var(--b24t-primary)",
+      "ui: stat-card — usunięto dekoracyjny pasek ::after (accent-grad)"
+    ]
+  },
+  {
     "version": "0.23.52",
     "date": "2026-04-18",
     "label": "ui",

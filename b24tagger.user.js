@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.53
+// @version      0.23.54
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.53';
+  const VERSION = '0.23.54';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3023,7 +3023,7 @@
         opacity: 0; pointer-events: none;
         transition: opacity 0.15s 0.4s;
         box-shadow: 0 2px 8px rgba(0,0,0,0.25);
-        font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+        font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
         z-index: 10;
       }
       .b24t-meta-btn-wrap:hover .b24t-meta-tooltip { opacity: 1; }
@@ -3427,7 +3427,7 @@
       #b24t-setup {
         position: fixed; inset: 0; background: rgba(0,0,0,0.7);
         display: flex; align-items: center; justify-content: center;
-        z-index: 2147483647; font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+        z-index: 2147483647; font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
         backdrop-filter: blur(6px);
       }
       .b24t-setup-card {
@@ -3470,7 +3470,7 @@
         z-index: 2147483645; border-radius: 0 10px 10px 0; border: none;
         padding: 18px 11px; cursor: pointer; display: none;
         flex-direction: column; align-items: center; gap: 7px;
-        font-family: 'Inter','Segoe UI',system-ui,sans-serif;
+        font-family: 'Geist','Segoe UI',system-ui,-apple-system,sans-serif;
         font-size: 12px; font-weight: 700; letter-spacing: 0.06em;
         color: #fff; user-select: none; background: #6366f1;
         animation: b24t-tab-pulse 2.5s ease-in-out infinite;
@@ -3483,7 +3483,7 @@
         z-index: 2147483639; border-radius: 10px 0 0 10px; border: 1px solid var(--b24t-border); border-right: none;
         padding: 14px 10px; cursor: pointer; display: none;
         flex-direction: column; align-items: center; gap: 5px;
-        font-family: 'Inter','Segoe UI',system-ui,sans-serif;
+        font-family: 'Geist','Segoe UI',system-ui,-apple-system,sans-serif;
         font-size: 11px; font-weight: 700; letter-spacing: 0.05em;
         color: var(--b24t-primary); user-select: none;
         background: var(--b24t-bg-elevated); box-shadow: var(--b24t-shadow);
@@ -3514,7 +3514,7 @@
         z-index: 2147483645;
         display: flex;
         flex-direction: column;
-        font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+        font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
         transition: width 0.32s cubic-bezier(0.4,0,0.2,1), right 0.32s cubic-bezier(0.4,0,0.2,1);
       }
       #b24t-xproject-panel.open { width: 320px; }
@@ -3641,7 +3641,7 @@
         border: 1px solid rgba(108,108,255,0.45);
         border-radius: 10px;
         padding: 9px 18px;
-        font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+        font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
         font-size: 11px; color: #9090ff;
         cursor: pointer;
         z-index: 2147483530;
@@ -3696,9 +3696,9 @@
         z-index: 2147483647; pointer-events: none;
       }
       .b24t-toast {
-        font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+        font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
         font-size: 13px; padding: 10px 16px;
-        border-radius: 8px; border-left: 3px solid;
+        border-radius: 8px; border: 1px solid; border-top: 2px solid;
         box-shadow: 0 4px 20px rgba(0,0,0,0.45);
         animation: b24t-toast-in 0.22s cubic-bezier(0.34,1.56,0.64,1) forwards;
         pointer-events: all; max-width: 320px; line-height: 1.4;
@@ -5352,7 +5352,7 @@ function injectOnboardingStyles() {
       z-index: 2147483647;
       max-width: 320px;
       min-width: 240px;
-      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
       background: #111118;
       border: 1px solid rgba(108,108,255,0.4);
       border-radius: 16px;
@@ -6475,10 +6475,10 @@ function showOnboarding(onComplete) {
       });
     }
     content.innerHTML =
-      '<h3 style="color:#6c6cff;font-size:14px;margin-bottom:16px;">🔍 Raport Audit Mode</h3>' +
-      '<div class="b24t-report-row"><span>✓ Prawidłowo otagowane</span><strong style="color:#4ade80;">' + result.alreadyTagged.length + '</strong></div>' +
-      '<div class="b24t-report-row"><span>⚠ Nieztagowane</span><strong style="color:#facc15;">' + result.untagged.length + '</strong></div>' +
-      '<div class="b24t-report-row"><span>✗ Błędny tag</span><strong style="color:#f87171;">' + result.taggedWrong.length + '</strong></div>' +
+      '<h3 style="color:var(--b24t-primary);font-size:14px;margin-bottom:16px;">🔍 Raport Audit Mode</h3>' +
+      '<div class="b24t-report-row"><span>✓ Prawidłowo otagowane</span><strong style="color:var(--b24t-ok);">' + result.alreadyTagged.length + '</strong></div>' +
+      '<div class="b24t-report-row"><span>⚠ Nieztagowane</span><strong style="color:var(--b24t-warn);">' + result.untagged.length + '</strong></div>' +
+      '<div class="b24t-report-row"><span>✗ Błędny tag</span><strong style="color:var(--b24t-err);">' + result.taggedWrong.length + '</strong></div>' +
       '<div class="b24t-report-row"><span>? Nie znaleziono w Brand24</span><strong style="color:var(--b24t-text-faint);">' + result.notFound.length + '</strong></div>' +
       '<div class="b24t-report-row"><span>~ W Brand24, brak w pliku</span><strong>' + result.notInFile + '</strong></div>' +
       wrongHtml +
@@ -7728,7 +7728,7 @@ function showOnboarding(onComplete) {
     // ─── IMPORT MODAL ───
     var modal = document.createElement('div');
     modal.id = 'b24t-news-import-modal';
-    modal.style.cssText = 'display:none;position:fixed;inset:0;z-index:2147483645;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;font-family:Inter,Segoe UI,system-ui,sans-serif;';
+    modal.style.cssText = 'display:none;position:fixed;inset:0;z-index:2147483645;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;font-family:Geist,\'Segoe UI\',system-ui,sans-serif;';
     var modalInner = document.createElement('div');
     modalInner.style.cssText = 'background:' + t.bg + ';border:1px solid ' + t.border + ';border-radius:14px;padding:20px;width:500px;max-width:calc(100vw - 40px);max-height:88vh;overflow-y:auto;box-shadow:' + t.shadow + ';color:' + t.text + ';';
     modalInner.innerHTML = [
@@ -7785,7 +7785,7 @@ function showOnboarding(onComplete) {
     // ─── MAIN OVERLAY ───
     var overlay = document.createElement('div');
     overlay.id = 'b24t-news-overlay';
-    overlay.style.cssText = 'display:flex;position:fixed;inset:0;z-index:2147483632;background:rgba(0,0,0,0.55);align-items:center;justify-content:center;font-family:Inter,Segoe UI,system-ui,sans-serif;animation:b24t-fadein 0.2s ease both;';
+    overlay.style.cssText = 'display:flex;position:fixed;inset:0;z-index:2147483632;background:rgba(0,0,0,0.55);align-items:center;justify-content:center;font-family:Geist,\'Segoe UI\',system-ui,sans-serif;animation:b24t-fadein 0.2s ease both;';
 
     var panelMain = document.createElement('div');
     panelMain.id = 'b24t-news-panel-main';
@@ -8048,7 +8048,7 @@ function showOnboarding(onComplete) {
     _newsRefillTags();
   }
   function _newsInputCss(t) {
-    return 'width:100%;box-sizing:border-box;font-size:11px;padding:6px 8px;border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-family:Inter,Segoe UI,system-ui,sans-serif;outline:none;transition:border-color 0.15s;';
+    return 'width:100%;box-sizing:border-box;font-size:11px;padding:6px 8px;border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-family:Geist,\'Segoe UI\',system-ui,sans-serif;outline:none;transition:border-color 0.15s;';
   }
 
   function _newsFormRow(label, inputHtml, required, display) {
@@ -9375,7 +9375,7 @@ function showOnboarding(onComplete) {
         '</tr>';
       }).join('') : '<tr><td colspan="3" style="padding:16px;text-align:center;font-size:11px;color:#6b7280;">Mapa jest pusta. Zostanie uzupełniona automatycznie z Twojej pracy.</td></tr>';
 
-      return '<div style="background:#16161f;border:1px solid #2e2e48;border-radius:14px;padding:20px;min-width:360px;max-width:440px;max-height:80vh;overflow-y:auto;color:#e2e8f0;font-family:Inter,Segoe UI,sans-serif;">' +
+      return '<div style="background:#16161f;border:1px solid #2e2e48;border-radius:14px;padding:20px;min-width:360px;max-width:440px;max-height:80vh;overflow-y:auto;color:#e2e8f0;font-family:Geist,\'Segoe UI\',sans-serif;">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
           '<span style="font-size:14px;font-weight:700;">⚙ Mapa projekt → języki</span>' +
           '<button id="b24t-lm-close" style="background:transparent;border:none;color:#9ca3af;cursor:pointer;font-size:18px;">✕</button>' +
@@ -9445,6 +9445,17 @@ function showOnboarding(onComplete) {
 
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
+    {
+      "version": "0.23.54",
+      "date": "2026-04-18",
+      "label": "ui",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "ui", "text": "ujednolicenie fontów — Geist wszędzie (usunięcie Inter z 16 miejsc)"},
+        {"type": "ui", "text": "CSS vars zamiast hardcoded kolorów — log panel, audit report, What's New modal"},
+        {"type": "ui", "text": "toast border-top zamiast border-left stripe (banned pattern)"}
+      ]
+    },
     {
       "version": "0.23.53",
       "date": "2026-04-18",
@@ -9988,7 +9999,7 @@ function showOnboarding(onComplete) {
           '</div>' +
           // Prawa strona: Gotowe
           '<button id="b24t-wnm-ok" ' +
-            'style="background:#6c6cff;color:#fff;border:none;border-radius:7px;padding:8px 24px;' +
+            'style="background:var(--b24t-primary);color:#fff;border:none;border-radius:7px;padding:8px 24px;' +
             'font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;flex-shrink:0;">Gotowe</button>' +
         '</div>' +
 
@@ -10219,7 +10230,7 @@ function showOnboarding(onComplete) {
       'padding:16px',
       'box-shadow:var(--b24t-shadow-h)',
       'z-index:2147483646',
-      'font-family:Inter,Segoe UI,system-ui,sans-serif',
+      'font-family:Geist,\'Segoe UI\',system-ui,sans-serif',
       'animation:b24t-slide-in 0.35s cubic-bezier(0.34,1.56,0.64,1)',
     ].join(';');
 
@@ -11640,25 +11651,26 @@ function showOnboarding(onComplete) {
     el.style.cssText = [
       'position:fixed', 'top:50%', 'left:50%', 'transform:translate(-50%,-50%)',
       'width:720px', 'max-width:95vw', 'height:520px', 'max-height:90vh',
-      'background:#1a1a2e', 'border:1px solid #2d2d4e',
+      'background:var(--b24t-bg)', 'border:1px solid var(--b24t-border)',
       'border-radius:12px', 'box-shadow:0 16px 48px rgba(0,0,0,0.6)',
       'z-index:2147483647', 'display:none', 'flex-direction:column',
-      'font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif',
+      'font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif',
+      'color:var(--b24t-text)',
       'overflow:hidden', 'resize:both',
     ].join(';');
 
     el.innerHTML =
       // Header z gradientem
-      '<div id="b24t-logp-header" style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:linear-gradient(135deg,#1e1e3f,#16213e);flex-shrink:0;cursor:move;user-select:none;border-bottom:1px solid #2d2d4e;">' +
+      '<div id="b24t-logp-header" style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--b24t-bg-deep);flex-shrink:0;cursor:move;user-select:none;border-bottom:1px solid var(--b24t-border);">' +
         '<div style="display:flex;align-items:center;gap:8px;">' +
-          '<span style="font-size:14px;font-weight:700;color:#e2e8f0;">📋 Log sesji</span>' +
-          '<span id="b24t-logp-count" style="font-size:10px;color:#6b7280;background:#0f0f1e;border-radius:99px;padding:1px 7px;"></span>' +
+          '<span style="font-size:14px;font-weight:700;color:var(--b24t-text);">📋 Log sesji</span>' +
+          '<span id="b24t-logp-count" style="font-size:10px;color:var(--b24t-text-faint);background:var(--b24t-bg-elevated);border-radius:99px;padding:1px 7px;"></span>' +
         '</div>' +
-        '<button id="b24t-logp-close" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);color:#e2e8f0;border-radius:5px;padding:2px 10px;cursor:pointer;font-size:15px;line-height:1;">×</button>' +
+        '<button id="b24t-logp-close" style="background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);color:var(--b24t-text);border-radius:5px;padding:2px 10px;cursor:pointer;font-size:15px;line-height:1;">×</button>' +
       '</div>' +
       // Toolbar — filtry + przyciski
-      '<div style="display:flex;align-items:center;gap:8px;padding:8px 16px;background:#13131f;border-bottom:1px solid #252540;flex-shrink:0;flex-wrap:wrap;">' +
-        '<span style="font-size:10px;color:#6b7280;margin-right:2px;">Filtr:</span>' +
+      '<div style="display:flex;align-items:center;gap:8px;padding:8px 16px;background:var(--b24t-bg-elevated);border-bottom:1px solid var(--b24t-border-sub);flex-shrink:0;flex-wrap:wrap;">' +
+        '<span style="font-size:10px;color:var(--b24t-text-faint);margin-right:2px;">Filtr:</span>' +
         _logpFilterChk('info',    '#9ca3af', 'info')    +
         _logpFilterChk('success', '#4ade80', 'success') +
         _logpFilterChk('warn',    '#fbbf24', 'warn')    +
@@ -12782,7 +12794,7 @@ To jest NIEODWRACALNE.`)) return;
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div id="b24t-del-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;flex:1;"></div>
-          <div id="b24t-del-timer" style="font-size:11px;color:var(--b24t-text-faint);font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
+          <div id="b24t-del-timer" style="font-size:11px;color:var(--b24t-text-faint);font-family:'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
         </div>
 
         <!-- Run button -->
@@ -12830,7 +12842,7 @@ To jest NIEODWRACALNE.`)) return;
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div id="b24t-delview-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;flex:1;"></div>
-          <div id="b24t-delview-timer" style="font-size:11px;color:var(--b24t-text-faint);font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
+          <div id="b24t-delview-timer" style="font-size:11px;color:var(--b24t-text-faint);font-family:'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;">00:00</div>
         </div>
 
         <!-- Run button -->
@@ -13368,7 +13380,7 @@ Tej operacji nie można cofnąć.`)) {
         <!-- Status + timer -->
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div id="b24t-qt-status" class="b24t-qt-status" style="font-size:12px;color:var(--b24t-text-muted);min-height:16px;flex:1;"></div>
-          <div id="b24t-qt-timer" style="font-size:13px;color:var(--b24t-text-muted);font-family:'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;font-weight:500;">00:00</div>
+          <div id="b24t-qt-timer" style="font-size:13px;color:var(--b24t-text-muted);font-family:'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;margin-left:8px;font-weight:500;">00:00</div>
         </div>
 
         <!-- Run button -->

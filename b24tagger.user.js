@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.55
+// @version      0.23.56
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.55';
+  const VERSION = '0.23.56';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3094,6 +3094,8 @@
         text-transform: uppercase; letter-spacing: 0.14em;
         margin-bottom: 10px;
       }
+      .b24t-section-label.primary { font-size: 10px; color: var(--b24t-text-meta); letter-spacing: 0.08em; }
+      .b24t-section-label.tertiary { font-size: 8px; opacity: 0.7; }
       .b24t-project-name { font-size: 15px; font-weight: 700; color: var(--b24t-text); }
       .b24t-project-meta { font-size: 12px; color: var(--b24t-text-meta); margin-top: 3px; }
 
@@ -3848,58 +3850,63 @@
 
         <!-- USTAWIENIA -->
         <div class="b24t-section" id="b24t-settings-section" style="display:none">
-          <div class="b24t-section-label">Ustawienia</div>
-
-          <div class="b24t-toggle-row">
-            <span class="b24t-toggle-label">Tryb:</span>
-            <div class="b24t-radio-group">
-              <label class="b24t-radio"><input type="radio" name="b24t-run-mode" value="real" checked> <span>Właściwy</span></label>
-              <label class="b24t-radio"><input type="radio" name="b24t-run-mode" value="test"> <span>Test Run</span></label>
-            </div>
+          <div class="b24t-section-label tertiary" id="b24t-settings-toggle" style="cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;">
+            <span>Ustawienia</span>
+            <span id="b24t-settings-arrow" style="transition:transform 0.18s;">▸</span>
           </div>
 
-          <div class="b24t-toggle-row" style="margin-top:6px;">
-            <span class="b24t-toggle-label">Mapa wzmianek:</span>
-            <div class="b24t-radio-group">
-              <label class="b24t-radio"><input type="radio" name="b24t-map-mode" value="untagged" checked> <span>Untagged</span></label>
-              <label class="b24t-radio"><input type="radio" name="b24t-map-mode" value="full"> <span>Pełna</span></label>
+          <div id="b24t-settings-content">
+            <div class="b24t-toggle-row">
+              <span class="b24t-toggle-label">Tryb:</span>
+              <div class="b24t-radio-group">
+                <label class="b24t-radio"><input type="radio" name="b24t-run-mode" value="real" checked> <span>Właściwy</span></label>
+                <label class="b24t-radio"><input type="radio" name="b24t-run-mode" value="test"> <span>Test Run</span></label>
+              </div>
             </div>
-          </div>
 
-          <!-- Konflikty — tylko w trybie pełnym -->
-          <div id="b24t-conflict-section" style="display:none;margin-top:8px;">
-            <div class="b24t-section-label" style="margin-bottom:4px;">Konflikty tagów</div>
-            <div class="b24t-radio-group" style="flex-direction:column;gap:4px;">
-              <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="ignore" checked> <span>Ignoruj — zachowaj istniejący tag</span></label>
-              <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="ask"> <span>Zatrzymaj i zapytaj</span></label>
-              <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="overwrite"> <span>Nadpisz — zamień tag</span></label>
-              <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="multitag"> <span>Multitag — dodaj obok istniejących tagów</span></label>
+            <div class="b24t-toggle-row" style="margin-top:6px;">
+              <span class="b24t-toggle-label">Mapa wzmianek:</span>
+              <div class="b24t-radio-group">
+                <label class="b24t-radio"><input type="radio" name="b24t-map-mode" value="untagged" checked> <span>Untagged</span></label>
+                <label class="b24t-radio"><input type="radio" name="b24t-map-mode" value="full"> <span>Pełna</span></label>
+              </div>
             </div>
-          </div>
 
-          <!-- Po zakończeniu — tylko gdy jest label "Inny" -->
-          <div id="b24t-switchview-section" style="display:none;margin-top:8px;">
+            <!-- Konflikty — tylko w trybie pełnym -->
+            <div id="b24t-conflict-section" style="display:none;margin-top:8px;">
+              <div class="b24t-section-label" style="margin-bottom:4px;">Konflikty tagów</div>
+              <div class="b24t-radio-group" style="flex-direction:column;gap:4px;">
+                <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="ignore" checked> <span>Ignoruj — zachowaj istniejący tag</span></label>
+                <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="ask"> <span>Zatrzymaj i zapytaj</span></label>
+                <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="overwrite"> <span>Nadpisz — zamień tag</span></label>
+                <label class="b24t-radio"><input type="radio" name="b24t-conflict" value="multitag"> <span>Multitag — dodaj obok istniejących tagów</span></label>
+              </div>
+            </div>
+
+            <!-- Po zakończeniu — tylko gdy jest label "Inny" -->
+            <div id="b24t-switchview-section" style="display:none;margin-top:8px;">
+              <div class="b24t-checkbox-row">
+                <input type="checkbox" id="b24t-switch-view">
+                <label for="b24t-switch-view">Po zakończeniu przełącz widok na:</label>
+              </div>
+              <select class="b24t-select" id="b24t-switch-view-tag" style="margin-top:4px;"></select>
+            </div>
+
+            <!-- AUTO DELETE — injected by JS -->
+            <div id="b24t-auto-delete-placeholder"></div>
+
+            <div style="height:1px;background:var(--b24t-border);margin:8px 0;"></div>
             <div class="b24t-checkbox-row">
-              <input type="checkbox" id="b24t-switch-view">
-              <label for="b24t-switch-view">Po zakończeniu przełącz widok na:</label>
+              <input type="checkbox" id="b24t-sound-cb">
+              <label for="b24t-sound-cb">Dźwięk po zakończeniu sesji</label>
             </div>
-            <select class="b24t-select" id="b24t-switch-view-tag" style="margin-top:4px;"></select>
-          </div>
-
-          <!-- AUTO DELETE — injected by JS -->
-          <div id="b24t-auto-delete-placeholder"></div>
-
-          <div style="height:1px;background:var(--b24t-border);margin:8px 0;"></div>
-          <div class="b24t-checkbox-row">
-            <input type="checkbox" id="b24t-sound-cb">
-            <label for="b24t-sound-cb">Dźwięk po zakończeniu sesji</label>
           </div>
 
         </div>
 
         <!-- POSTĘP -->
         <div class="b24t-section" id="b24t-progress-section">
-          <div class="b24t-section-label">Postęp</div>
+          <div class="b24t-section-label primary">Postęp</div>
           <div id="b24t-progress-label" style="font-size:12px;color:var(--b24t-text-meta);">Gotowy do startu</div>
           <div class="b24t-progress-bar-track"><div id="b24t-progress-bar"></div></div>
           <div id="b24t-progress-action" style="font-size:10px;color:var(--b24t-text-faint);"></div>
@@ -3926,7 +3933,7 @@
 
         <!-- LOG -->
         <div class="b24t-section" id="b24t-log-section">
-          <div class="b24t-section-label">
+          <div class="b24t-section-label tertiary">
             Log
             <button class="b24t-log-clear" id="b24t-log-clear">wyczyść</button>
             <button class="b24t-log-expand" id="b24t-log-expand" title="Pełny widok loga">⛶</button>
@@ -4382,6 +4389,25 @@
     panel.querySelector('#b24t-sound-cb')?.addEventListener('change', (e) => {
       state.soundEnabled = e.target.checked;
     });
+
+    // Settings collapse toggle
+    (function() {
+      var settingsToggle = document.getElementById('b24t-settings-toggle');
+      var settingsContent = document.getElementById('b24t-settings-content');
+      var settingsArrow = document.getElementById('b24t-settings-arrow');
+      if (!settingsToggle || !settingsContent) return;
+      var collapsed = localStorage.getItem('b24tagger_settings_collapsed') === '1';
+      function applyCollapsed(c) {
+        settingsContent.style.display = c ? 'none' : '';
+        if (settingsArrow) settingsArrow.style.transform = c ? 'rotate(0deg)' : 'rotate(90deg)';
+        localStorage.setItem('b24tagger_settings_collapsed', c ? '1' : '0');
+      }
+      applyCollapsed(collapsed);
+      settingsToggle.addEventListener('click', function() {
+        collapsed = !collapsed;
+        applyCollapsed(collapsed);
+      });
+    })();
 
     // Log clear
     panel.querySelector('#b24t-log-clear').addEventListener('click', () => {
@@ -9438,6 +9464,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.56",
+      "date": "2026-04-18",
+      "label": "ui",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "ui", "text": "hierarchia sekcji — primary (Postęp), tertiary (Log, Ustawienia)"},
+        {"type": "ui", "text": "sekcja Ustawienia zwijana — domyślnie rozwinięta, stan w localStorage"},
+        {"type": "ui", "text": "CSS: modyfikatory .b24t-section-label.primary i .tertiary"}
+      ]
+    },
+    {
       "version": "0.23.55",
       "date": "2026-04-18",
       "label": "ui",
@@ -9541,33 +9578,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "usunięto hardcoded system prompt z kodu wtyczki"},
         {"type": "fix", "text": "AI News nie startuje gdy brak wybranego promptu w bibliotece"},
         {"type": "fix", "text": "dropdown promptu News: '— domyślny —' → '— wybierz z biblioteki —'"}
-      ]
-    },
-    {
-      "version": "0.23.46",
-      "date": "2026-04-17",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "AI News Scoring (krok 2) — ocena relevancji artykułów przez Claude po content scan"},
-        {"type": "feat", "text": "keywordContexts w _newsParseContent — fragmenty tekstu wokół każdego słowa kluczowego"},
-        {"type": "feat", "text": "badge AI w liście URLi — ⏳ pending / 🤖 Relevant / 🤖 Not relevant + tooltip z uzasadnieniem"},
-        {"type": "feat", "text": "pole 'Opis marki' w modalu importu — persystuje per projekt, placeholdery {PROJECT_NAME} i {BRAND_CONTEXT}"},
-        {"type": "feat", "text": "dropdown wyboru promptu News w ustawieniach AI"}
-      ]
-    },
-    {
-      "version": "0.23.45",
-      "date": "2026-04-17",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Ustawienia AI — klucz API bez autofill hasła (type=text + autocomplete=off)"},
-        {"type": "fix", "text": "dropdown modelu — hardcoded kolory, czytelny na białym tle (color-scheme:light)"},
-        {"type": "feat", "text": "wybór modelu osobno dla News i Tagowania"},
-        {"type": "feat", "text": "Biblioteka promptów przeniesiona do osobnego modalu"},
-        {"type": "fix", "text": "usunięty limit dzienny wywołań AI"},
-        {"type": "fix", "text": "modal ⚙ — max-height:90vh + scroll (overflow przy wielu elementach)"}
       ]
     },
   ];

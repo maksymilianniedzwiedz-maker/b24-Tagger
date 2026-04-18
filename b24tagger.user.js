@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.51
+// @version      0.23.52
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.51';
+  const VERSION = '0.23.52';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2055,10 +2055,12 @@
     var toast = document.createElement('div');
     toast.className = 'b24t-toast b24t-toast-' + type;
     toast.textContent = message;
+    var existingCount = container.querySelectorAll('.b24t-toast').length;
+    if (existingCount > 0) toast.style.animationDelay = (existingCount * 40) + 'ms';
     container.appendChild(toast);
     setTimeout(function() {
       toast.classList.add('b24t-toast-out');
-      setTimeout(function() { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 220);
+      setTimeout(function() { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 160);
     }, duration);
   }
 
@@ -2847,7 +2849,7 @@
         overflow: hidden;
         display: flex;
         flex-direction: column;
-        transition: box-shadow 0.25s ease, background 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+        transition: box-shadow 0.25s ease, background 0.3s ease, border-color 0.3s ease;
         /* animation removed — was causing glitch on Plik tab */
       }
       #b24t-panel:hover { box-shadow: var(--b24t-shadow-h); }
@@ -2991,11 +2993,11 @@
         color: #fff;
         cursor: pointer; padding: 3px 6px; border-radius: 5px;
         font-size: 13px; line-height: 1;
-        transition: background 0.15s, color 0.15s, transform 0.1s;
+        transition: background 0.15s, color 0.15s, transform 0.08s ease-out;
         box-shadow: 0 1px 4px rgba(0,0,0,0.3);
       }
-      .b24t-icon-btn:hover { background: rgba(255,255,255,0.4); color: #fff; transform: scale(1.05); }
-      .b24t-icon-btn:active { transform: scale(0.95); }
+      .b24t-icon-btn:hover { background: rgba(255,255,255,0.4); color: #fff; transform: scale(1.03); }
+      .b24t-icon-btn:active { transform: scale(0.93); }
 
       /* ── TOKEN STATUS BAR ── */
       #b24t-meta-bar {
@@ -3081,7 +3083,6 @@
         padding: 12px 14px;
         border-bottom: 2px solid var(--b24t-border);
         transition: border-color 0.3s, background 0.3s;
-        animation: b24t-fadein 0.25s ease;
         position: relative;
       }
       /* Alternating section backgrounds for visual rhythm */
@@ -3111,7 +3112,7 @@
         background: var(--b24t-section-grad-d);
         transition: border-color 0.2s, background 0.2s, transform 0.15s;
       }
-      .b24t-file-zone:hover { border-color: var(--b24t-primary); background: var(--b24t-primary-bg); transform: translateY(-1px); }
+      .b24t-file-zone:hover { border-color: var(--b24t-primary); background: var(--b24t-primary-bg); transform: translateY(-1px); box-shadow: 0 4px 12px var(--b24t-primary-glow); }
       .b24t-file-zone.b24t-dragover { border-color: var(--b24t-primary); border-style: solid; background: var(--b24t-primary-bg); transform: scale(1.015); box-shadow: 0 0 0 3px var(--b24t-primary-glow); }
       .b24t-file-icon { font-size: 18px; flex-shrink: 0; }
       .b24t-file-name { font-size: 13px; color: var(--b24t-text); font-weight: 600; }
@@ -3178,7 +3179,7 @@
         height: 100%;
         background: var(--b24t-accent-grad);
         border-radius: 99px; width: 0%;
-        transition: width 0.4s cubic-bezier(0.4,0,0.2,1);
+        transition: width 0.25s ease-out;
       }
       #b24t-progress-label { font-size: 12px; color: var(--b24t-text); font-weight: 500; }
       #b24t-progress-action { font-size: 11px; color: var(--b24t-text-meta); margin-top: 2px; }
@@ -3198,7 +3199,7 @@
         content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
         background: var(--b24t-accent-grad); opacity: 0.4;
       }
-      .b24t-stat-card:hover { transform: translateY(-2px); border-color: var(--b24t-border-strong); }
+      .b24t-stat-card:hover { transform: translateY(-2px); border-color: var(--b24t-border-strong); box-shadow: var(--b24t-shadow-h); }
       .b24t-stat-card:has(.b24t-stat-value.ok)   { background: var(--b24t-ok-bg) !important; border-color: color-mix(in srgb, var(--b24t-ok) 30%, transparent) !important; }
       .b24t-stat-card:has(.b24t-stat-value.warn) { background: var(--b24t-warn-bg) !important; border-color: color-mix(in srgb, var(--b24t-warn) 30%, transparent) !important; }
       .b24t-stat-card:has(.b24t-stat-value.ok)::after   { background: var(--b24t-ok); opacity: 0.5; }
@@ -3218,7 +3219,7 @@
       }
       #b24t-log::-webkit-scrollbar { width: 3px; }
       #b24t-log::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
-      .b24t-log-entry { display: flex; gap: 6px; padding: 2px 6px; border-left: 2px solid transparent; animation: b24t-fadein 0.15s ease; }
+      .b24t-log-entry { display: flex; gap: 6px; padding: 2px 6px; border-left: 2px solid transparent; animation: b24t-fadein 0.08s ease; }
       .b24t-log-time    { color: var(--b24t-text-faint); flex-shrink: 0; }
       .b24t-log-msg     { color: var(--b24t-text-muted); flex: 1; }
       .b24t-log-elapsed { color: var(--b24t-text-faint); font-size: 10px; flex-shrink: 0; }
@@ -3249,18 +3250,18 @@
         border: none; border-radius: 7px; padding: 9px 0;
         font-size: 12px; font-weight: 700; cursor: pointer;
         font-family: inherit;
-        transition: opacity 0.15s, transform 0.1s, box-shadow 0.15s;
+        transition: opacity 0.15s, transform 0.08s ease-out, box-shadow 0.15s;
         box-shadow: 0 2px 8px var(--b24t-primary-glow);
         letter-spacing: 0.02em;
       }
-      .b24t-btn-primary:hover { opacity: 0.88; box-shadow: 0 4px 16px var(--b24t-primary-glow); transform: translateY(-1px); }
+      .b24t-btn-primary:hover { opacity: 0.88; box-shadow: 0 6px 20px var(--b24t-primary-glow); transform: translateY(-1px); }
       .b24t-btn-primary:active { transform: scale(0.97); }
       .b24t-btn-primary:disabled { background: var(--b24t-bg-input); color: var(--b24t-text-faint); box-shadow: none; cursor: not-allowed; }
       .b24t-btn-secondary {
         flex: 1; background: var(--b24t-section-grad-d); color: var(--b24t-text);
         border: 1px solid var(--b24t-border); border-radius: 7px; padding: 9px 0;
         font-size: 12px; cursor: pointer; font-family: inherit; font-weight: 500;
-        transition: background 0.15s, transform 0.1s, border-color 0.15s;
+        transition: background 0.15s, transform 0.08s ease-out, border-color 0.15s;
       }
       .b24t-btn-secondary:hover { background: var(--b24t-section-grad-c); border-color: var(--b24t-border-strong); transform: translateY(-1px); }
       .b24t-btn-secondary:active { transform: scale(0.97); }
@@ -3279,6 +3280,17 @@
         transition: filter 0.15s;
       }
       .b24t-btn-warn:hover { filter: brightness(0.9); }
+
+      /* ── FOCUS VISIBLE ── */
+      .b24t-btn-primary:focus-visible,
+      .b24t-btn-secondary:focus-visible,
+      .b24t-btn-danger:focus-visible,
+      .b24t-btn-warn:focus-visible,
+      .b24t-tab:focus-visible,
+      .b24t-icon-btn:focus-visible {
+        outline: 2px solid var(--b24t-primary);
+        outline-offset: 2px;
+      }
 
       /* ── CRASH BANNER ── */
       #b24t-crash-banner {
@@ -3330,7 +3342,6 @@
         color: var(--b24t-text-muted);
         background: color-mix(in srgb, var(--b24t-primary) 8%, transparent);
         border-color: color-mix(in srgb, var(--b24t-primary) 20%, transparent);
-        transform: translateY(-1px);
       }
       .b24t-tab:active { transform: scale(0.97); }
 
@@ -3382,7 +3393,7 @@
         border-radius: 14px; padding: 20px; width: 320px;
         font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
         box-shadow: var(--b24t-shadow-h);
-        animation: b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);
+        animation: b24t-slidein 0.22s cubic-bezier(0.34,1.56,0.64,1);
         transition: background 0.3s, border-color 0.3s;
       }
       .b24t-modal-title { font-size: 13px; font-weight: 700; color: var(--b24t-warn); margin-bottom: 12px; }
@@ -3402,7 +3413,7 @@
         border-radius: 14px; padding: 24px; width: 280px;
         font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
         box-shadow: var(--b24t-shadow-h);
-        animation: b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);
+        animation: b24t-slidein 0.22s cubic-bezier(0.34,1.56,0.64,1);
       }
       .b24t-report-content h3 { font-size: 14px; color: var(--b24t-primary); margin-bottom: 16px; }
       .b24t-report-row {
@@ -3435,7 +3446,7 @@
         border-radius: 18px; width: 480px; max-height: 90vh;
         overflow-y: auto; padding: 28px;
         box-shadow: var(--b24t-shadow-h);
-        animation: b24t-slidein 0.4s cubic-bezier(0.34,1.56,0.64,1);
+        animation: b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);
       }
       .b24t-setup-card::-webkit-scrollbar { width: 3px; }
       .b24t-setup-card::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); }
@@ -3458,11 +3469,11 @@
 
       /* ── SIDE TAB PULSE ANIMATION ── */
       @keyframes b24t-tab-pulse {
-        0%   { background: #6366f1; box-shadow: 3px 0 14px rgba(99,102,241,0.7); }
-        25%  { background: #8b5cf6; box-shadow: 3px 0 20px rgba(139,92,246,0.85); }
-        50%  { background: #ec4899; box-shadow: 3px 0 20px rgba(236,72,153,0.85); }
-        75%  { background: #8b5cf6; box-shadow: 3px 0 20px rgba(139,92,246,0.85); }
-        100% { background: #6366f1; box-shadow: 3px 0 14px rgba(99,102,241,0.7); }
+        0%   { box-shadow: 3px 0 14px rgba(99,102,241,0.7); }
+        25%  { box-shadow: 3px 0 20px rgba(139,92,246,0.85); }
+        50%  { box-shadow: 3px 0 20px rgba(236,72,153,0.85); }
+        75%  { box-shadow: 3px 0 20px rgba(139,92,246,0.85); }
+        100% { box-shadow: 3px 0 14px rgba(99,102,241,0.7); }
       }
       /* ── MAIN PANEL SIDE TAB ── */
       #b24t-panel-side-tab {
@@ -3472,7 +3483,7 @@
         flex-direction: column; align-items: center; gap: 7px;
         font-family: 'Inter','Segoe UI',system-ui,sans-serif;
         font-size: 12px; font-weight: 700; letter-spacing: 0.06em;
-        color: #fff; user-select: none;
+        color: #fff; user-select: none; background: #6366f1;
         animation: b24t-tab-pulse 2.5s ease-in-out infinite;
         transition: transform 0.15s;
       }
@@ -3597,7 +3608,7 @@
         background: rgba(108,108,255,0.06);
         transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
         box-sizing: border-box;
-        animation: b24t-help-pulse 2s ease-in-out infinite;
+        animation: b24t-help-pulse 2.5s ease-in-out infinite;
       }
       @keyframes b24t-help-pulse {
         0%, 100% { border-color: rgba(108,108,255,0.45); box-shadow: 0 0 0 0 rgba(108,108,255,0.15); }
@@ -3623,6 +3634,7 @@
         line-height: 1.6;
         box-shadow: var(--b24t-shadow-h);
         pointer-events: none;
+        transform-origin: bottom center;
         animation: b24t-slidein 0.2s cubic-bezier(0.34,1.56,0.64,1);
       }
       .b24t-help-tip strong { color: var(--b24t-text); display: block; margin-bottom: 4px; font-size: 12px; }
@@ -3664,7 +3676,7 @@
         45%  { transform: scale(1.22); }
         100% { transform: scale(1); }
       }
-      .b24t-stat-pop { animation: b24t-stat-pop 0.32s cubic-bezier(0.34,1.56,0.64,1) !important; }
+      .b24t-stat-pop { animation: b24t-stat-pop 0.22s cubic-bezier(0.34,1.56,0.64,1) !important; }
 
       /* ── PROGRESS BAR PULSE WHEN RUNNING ── */
       @keyframes b24t-bar-pulse {
@@ -3673,7 +3685,7 @@
       }
       #b24t-progress-bar.b24t-running,
       .b24t-bar-active {
-        animation: b24t-bar-pulse 1.3s ease-in-out infinite;
+        animation: b24t-bar-pulse 1.1s ease-in-out infinite;
       }
 
       /* ── BADGE ERROR FLASH ── */
@@ -3702,7 +3714,7 @@
         animation: b24t-toast-in 0.22s cubic-bezier(0.34,1.56,0.64,1) forwards;
         pointer-events: all; max-width: 320px; line-height: 1.4;
       }
-      .b24t-toast.b24t-toast-out { animation: b24t-toast-out 0.2s ease forwards; }
+      .b24t-toast.b24t-toast-out { animation: b24t-toast-out 0.15s cubic-bezier(0.4,0,1,1) forwards; }
       .b24t-toast-success { background: rgba(10,22,15,0.97); border-color: #4ade80; color: #d1fae5; }
       .b24t-toast-error   { background: rgba(25,8,8,0.97);   border-color: #f87171; color: #fee2e2; }
       .b24t-toast-info    { background: rgba(10,10,22,0.97); border-color: #7c6fff; color: #e8e8ff; }
@@ -8501,6 +8513,9 @@ function showOnboarding(onComplete) {
           'opacity:' + (isIrrelevant ? '0.4' : isTeaserMatch ? '0.5' : isStale ? '0.55' : (isBlocked || isScanning) ? '0.6' : '1') + ';',
           'transition:background 0.1s,border-color 0.1s;',
         ].join('');
+        if (!newsState.scanning) {
+          row.style.animation = 'b24t-fadein 0.15s ease ' + Math.min(idx * 30, 240) + 'ms both';
+        }
         if (isBlocked) row.title = 'Wtyczka nie mogła przeskanować — kliknij aby sprawdzić ręcznie';
 
         var displayUrl = entry.url.replace(/^https?:\/\//, '');
@@ -9442,6 +9457,19 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.52",
+      "date": "2026-04-18",
+      "label": "ui",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "ui", "text": "szybsze animacje — modal 0.22s, log entries 0.08s, progress bar 0.25s, stat-pop 0.22s, `:active` 0.08s ease-out"},
+        {"type": "ui", "text": "side tab — tylko box-shadow animowane (GPU-safe), bez animowania background"},
+        {"type": "ui", "text": "stagger kart URLi w News (30ms×idx) i toastów (+40ms per kolejny)"},
+        {"type": "ui", "text": "box-shadow przy hover na stat-card i file-zone, silniejszy shadow na btn-primary"},
+        {"type": "ui", "text": "focus-visible na wszystkich przyciskach i zakładkach, transform-origin na help-tip"}
+      ]
+    },
+    {
       "version": "0.23.51",
       "date": "2026-04-18",
       "label": "feat",
@@ -9542,15 +9570,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#06b6d4",
       "changes": [
         {"type": "feat", "text": "Ustawienia AI — klucz API Anthropic, wybór modelu (Haiku 4.5 / Sonnet 4.6), biblioteka promptów z edytorem, toggle AI scoring w module News"}
-      ]
-    },
-    {
-      "version": "0.23.42",
-      "date": "2026-04-17",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "scroll panelu głównego przywrócony po załadowaniu pliku (regresja z v0.23.37)"}
       ]
     },
   ];

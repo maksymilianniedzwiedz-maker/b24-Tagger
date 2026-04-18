@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.56
+// @version      0.23.57
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.56';
+  const VERSION = '0.23.57';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3256,6 +3256,16 @@
         transition: background 0.15s, transform 0.1s;
       }
       .b24t-btn-danger:hover { filter: brightness(0.9); transform: translateY(-1px); }
+      .b24t-btn-tool {
+        font-size: 10px !important; padding: 5px 8px !important;
+        color: var(--b24t-text-faint) !important;
+        background: transparent !important;
+        border-color: var(--b24t-border) !important;
+      }
+      .b24t-btn-tool:hover {
+        color: var(--b24t-text) !important;
+        background: var(--b24t-bg-elevated) !important;
+      }
       .b24t-btn-warn {
         background: var(--b24t-warn-bg); color: var(--b24t-warn-text);
         border: 1px solid color-mix(in srgb, var(--b24t-warn) 30%, transparent); border-radius: 7px; padding: 6px 12px;
@@ -3959,12 +3969,14 @@
       <!-- ACTION BAR -->
       <div id="b24t-actions" style="flex-direction:column;gap:6px;">
         <button class="b24t-btn-primary" id="b24t-btn-start" style="width:100%;">▶ Start</button>
-        <div style="display:flex;gap:6px;width:100%;">
-          <button class="b24t-btn-secondary" id="b24t-btn-preview" title="Match Preview — sprawdź dopasowanie bez tagowania" style="flex:1;font-size:11px;">Match</button>
-          <button class="b24t-btn-secondary" id="b24t-btn-audit" title="Audit Mode — porównaj bez tagowania" style="flex:1;font-size:11px;color:var(--b24t-primary);">Audit</button>
+        <div id="b24t-run-controls" style="display:flex;gap:6px;width:100%;">
           <button class="b24t-btn-secondary" id="b24t-btn-pause" disabled style="flex:1;font-size:11px;">⏸ Pauza</button>
           <button class="b24t-btn-danger" id="b24t-btn-stop" style="flex:1;font-size:11px;">⏹ Stop</button>
-          <button class="b24t-btn-secondary" id="b24t-btn-export" title="Eksport raportu CSV" style="flex:0 0 34px;font-size:12px;">↓</button>
+        </div>
+        <div id="b24t-diag-controls" style="display:flex;gap:6px;width:100%;">
+          <button class="b24t-btn-secondary b24t-btn-tool" id="b24t-btn-preview" title="Match Preview — sprawdź dopasowanie bez tagowania" style="flex:1;">Match</button>
+          <button class="b24t-btn-secondary b24t-btn-tool" id="b24t-btn-audit" title="Audit Mode — porównaj bez tagowania" style="flex:1;">Audit</button>
+          <button class="b24t-btn-secondary b24t-btn-tool" id="b24t-btn-export" title="Eksport raportu CSV" style="flex:0 0 34px;">↓</button>
         </div>
       </div>
 
@@ -9464,6 +9476,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.57",
+      "date": "2026-04-18",
+      "label": "ui",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "ui", "text": "action bar — separacja run controls (Pauza/Stop) i narzędzi diagnostycznych (Match/Audit/Export)"},
+        {"type": "ui", "text": "CSS: nowy .b24t-btn-tool — mniejszy, transparent, subtelny"}
+      ]
+    },
+    {
       "version": "0.23.56",
       "date": "2026-04-18",
       "label": "ui",
@@ -9567,17 +9589,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "News — chip '🤖 AI' w headerze panelu gdy AI skonfigurowane i aktywne"},
         {"type": "feat", "text": "News — dolny przycisk importu: '↑ Wczytaj URLe' z tooltipem (odróżnienie od górnego)"},
         {"type": "feat", "text": "News — detekcja daty z widocznego tekstu ('Published: 12 April 2025') gdy meta/JSON-LD zawodzi"}
-      ]
-    },
-    {
-      "version": "0.23.47",
-      "date": "2026-04-17",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "usunięto hardcoded system prompt z kodu wtyczki"},
-        {"type": "fix", "text": "AI News nie startuje gdy brak wybranego promptu w bibliotece"},
-        {"type": "fix", "text": "dropdown promptu News: '— domyślny —' → '— wybierz z biblioteki —'"}
       ]
     },
   ];

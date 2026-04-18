@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.52
+// @version      0.23.53
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.52';
+  const VERSION = '0.23.53';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2673,12 +2673,12 @@
   // ───────────────────────────────────────────
 
   function injectStyles() {
-    // Wczytaj Inter z Google Fonts (jeśli jeszcze nie ma)
-    if (!document.getElementById('b24t-inter-font')) {
+    // Wczytaj Geist z Google Fonts (jeśli jeszcze nie ma)
+    if (!document.getElementById('b24t-geist-font')) {
       const link = document.createElement('link');
-      link.id = 'b24t-inter-font';
+      link.id = 'b24t-geist-font';
       link.rel = 'stylesheet';
-      link.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap';
+      link.href = 'https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&display=swap';
       document.head.appendChild(link);
     }
     const style = document.createElement('style');
@@ -2767,12 +2767,12 @@
         --b24t-text-label:  #a0a8f0;
         --b24t-text-meta:   #8888c0;
 
-        --b24t-primary:     #7c6fff;
-        --b24t-primary-h:   #a090ff;
-        --b24t-primary-glow: rgba(124,111,255,0.28);
-        --b24t-primary-bg:  rgba(124,111,255,0.12);
+        --b24t-primary:     oklch(65% 0.12 200);
+        --b24t-primary-h:   oklch(72% 0.12 200);
+        --b24t-primary-glow: oklch(65% 0.12 200 / 0.28);
+        --b24t-primary-bg:  oklch(65% 0.12 200 / 0.12);
 
-        --b24t-accent-grad: linear-gradient(135deg, #6c5fff 0%, #9b6bff 50%, #c060ff 100%);
+        --b24t-accent-grad: linear-gradient(135deg, #1a7a8a 0%, #0ea895 50%, #0d9488 100%);
         --b24t-panel-grad:  linear-gradient(180deg, #0d0d14 0%, #0f0f1a 50%, #111120 100%);
         --b24t-section-grad-a: linear-gradient(135deg, #0d0d14 0%, #0f0f1c 100%);
         --b24t-section-grad-b: linear-gradient(135deg, #101018 0%, #141428 100%);
@@ -2793,8 +2793,8 @@
         --b24t-info-text:   #93c5fd;
 
         --b24t-shadow:      0 8px 32px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04);
-        --b24t-shadow-h:    0 12px 40px rgba(0,0,0,0.8), 0 0 20px rgba(124,111,255,0.08), 0 0 0 1px rgba(255,255,255,0.06);
-        --b24t-shadow-drag: 0 20px 60px rgba(0,0,0,0.9), 0 0 30px rgba(124,111,255,0.12);
+        --b24t-shadow-h:    0 12px 40px rgba(0,0,0,0.8), 0 0 20px rgba(13,148,136,0.10), 0 0 0 1px rgba(255,255,255,0.06);
+        --b24t-shadow-drag: 0 20px 60px rgba(0,0,0,0.9), 0 0 30px rgba(13,148,136,0.14);
 
         --b24t-scrollbar:   #282840;
         --b24t-badge-idle-bg:  #1a1a2e; --b24t-badge-idle-fg: #c0c0e0;
@@ -2840,7 +2840,7 @@
         background: var(--b24t-panel-grad);
         border: 1px solid var(--b24t-border);
         border-radius: 14px;
-        font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+        font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
         font-size: 13px;
         color: var(--b24t-text);
         z-index: 2147483647;
@@ -3088,14 +3088,7 @@
       /* Alternating section backgrounds for visual rhythm */
       .b24t-section:nth-child(odd)  { background: var(--b24t-section-grad-a); }
       .b24t-section:nth-child(even) { background: var(--b24t-section-grad-b); }
-      /* Section left accent stripe */
-      .b24t-section::before {
-        content: '';
-        position: absolute; left: 0; top: 6px; bottom: 6px;
-        width: 3px; border-radius: 0 3px 3px 0;
-        background: var(--b24t-accent-grad);
-        opacity: 0.5;
-      }
+
       .b24t-section-label {
         font-size: 10px; font-weight: 700; color: var(--b24t-text-label);
         text-transform: uppercase; letter-spacing: 0.14em;
@@ -3195,10 +3188,6 @@
         position: relative; overflow: hidden;
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.10);
       }
-      .b24t-stat-card::after {
-        content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
-        background: var(--b24t-accent-grad); opacity: 0.4;
-      }
       .b24t-stat-card:hover { transform: translateY(-2px); border-color: var(--b24t-border-strong); box-shadow: var(--b24t-shadow-h); }
       .b24t-stat-card:has(.b24t-stat-value.ok)   { background: var(--b24t-ok-bg) !important; border-color: color-mix(in srgb, var(--b24t-ok) 30%, transparent) !important; }
       .b24t-stat-card:has(.b24t-stat-value.warn) { background: var(--b24t-warn-bg) !important; border-color: color-mix(in srgb, var(--b24t-warn) 30%, transparent) !important; }
@@ -3219,13 +3208,13 @@
       }
       #b24t-log::-webkit-scrollbar { width: 3px; }
       #b24t-log::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
-      .b24t-log-entry { display: flex; gap: 6px; padding: 2px 6px; border-left: 2px solid transparent; animation: b24t-fadein 0.08s ease; }
+      .b24t-log-entry { display: flex; gap: 6px; padding: 2px 8px; animation: b24t-fadein 0.08s ease; }
       .b24t-log-time    { color: var(--b24t-text-faint); flex-shrink: 0; }
       .b24t-log-msg     { color: var(--b24t-text-muted); flex: 1; }
       .b24t-log-elapsed { color: var(--b24t-text-faint); font-size: 10px; flex-shrink: 0; }
-      .b24t-log-success { border-left-color: var(--b24t-ok);  background: var(--b24t-ok-bg); }
-      .b24t-log-error   { border-left-color: var(--b24t-err); background: var(--b24t-err-bg); }
-      .b24t-log-warn    { border-left-color: var(--b24t-warn); background: var(--b24t-warn-bg); }
+      .b24t-log-success { background: var(--b24t-ok-bg); border-radius: 3px; }
+      .b24t-log-error   { background: var(--b24t-err-bg); border-radius: 3px; }
+      .b24t-log-warn    { background: var(--b24t-warn-bg); border-radius: 3px; }
       .b24t-log-success .b24t-log-msg { color: var(--b24t-ok); font-weight: 500; }
       .b24t-log-error   .b24t-log-msg { color: var(--b24t-err); font-weight: 500; }
       .b24t-log-warn    .b24t-log-msg { color: var(--b24t-warn); }
@@ -3246,7 +3235,7 @@
         transition: background 0.3s, border-color 0.3s;
       }
       .b24t-btn-primary {
-        flex: 1; background: var(--b24t-accent-grad); color: #fff;
+        flex: 1; background: var(--b24t-primary); color: #fff;
         border: none; border-radius: 7px; padding: 9px 0;
         font-size: 12px; font-weight: 700; cursor: pointer;
         font-family: inherit;
@@ -3391,7 +3380,7 @@
       .b24t-modal {
         background: var(--b24t-bg); border: 1px solid var(--b24t-border);
         border-radius: 14px; padding: 20px; width: 320px;
-        font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+        font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
         box-shadow: var(--b24t-shadow-h);
         animation: b24t-slidein 0.22s cubic-bezier(0.34,1.56,0.64,1);
         transition: background 0.3s, border-color 0.3s;
@@ -3411,7 +3400,7 @@
       .b24t-report-content {
         background: var(--b24t-bg); border: 1px solid var(--b24t-border);
         border-radius: 14px; padding: 24px; width: 280px;
-        font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+        font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
         box-shadow: var(--b24t-shadow-h);
         animation: b24t-slidein 0.22s cubic-bezier(0.34,1.56,0.64,1);
       }
@@ -3628,7 +3617,7 @@
         border: 1px solid color-mix(in srgb, var(--b24t-primary) 40%, transparent);
         border-radius: 10px;
         padding: 10px 14px;
-        font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+        font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
         font-size: 11px;
         color: var(--b24t-text-muted);
         line-height: 1.6;
@@ -3717,7 +3706,7 @@
       .b24t-toast.b24t-toast-out { animation: b24t-toast-out 0.15s cubic-bezier(0.4,0,1,1) forwards; }
       .b24t-toast-success { background: rgba(10,22,15,0.97); border-color: #4ade80; color: #d1fae5; }
       .b24t-toast-error   { background: rgba(25,8,8,0.97);   border-color: #f87171; color: #fee2e2; }
-      .b24t-toast-info    { background: rgba(10,10,22,0.97); border-color: #7c6fff; color: #e8e8ff; }
+      .b24t-toast-info    { background: rgba(5,18,20,0.97); border-color: #0d9488; color: #ccfaf5; }
       .b24t-toast-warn    { background: rgba(24,18,4,0.97);  border-color: #facc15; color: #fef9c3; }
       @keyframes b24t-toast-in {
         from { opacity: 0; transform: translateX(28px) scale(0.93); }
@@ -9457,6 +9446,20 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.53",
+      "date": "2026-04-18",
+      "label": "ui",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "ui", "text": "font Inter → Geist (Google Fonts)"},
+        {"type": "ui", "text": "dark mode — primary teal zamiast fioletu (oklch), gradient i shadows zaktualizowane"},
+        {"type": "ui", "text": "usunięto side stripe (::before) z sekcji — banned pattern"},
+        {"type": "ui", "text": "usunięto border-left z wpisów logu — banned pattern; zastąpione border-radius"},
+        {"type": "ui", "text": "primary button — solid color zamiast gradientu"},
+        {"type": "ui", "text": "stat-card — usunięto dekoracyjny pasek ::after"}
+      ]
+    },
+    {
       "version": "0.23.52",
       "date": "2026-04-18",
       "label": "ui",
@@ -9561,15 +9564,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "Ustawienia AI przeniesione do modalu ⚙ — dostępne bez wczytywania pliku"},
         {"type": "fix", "text": "News — przycisk 'Następny relevantny' zastąpiony 'Importuj URLe'"}
-      ]
-    },
-    {
-      "version": "0.23.43",
-      "date": "2026-04-17",
-      "label": "feat",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "feat", "text": "Ustawienia AI — klucz API Anthropic, wybór modelu (Haiku 4.5 / Sonnet 4.6), biblioteka promptów z edytorem, toggle AI scoring w module News"}
       ]
     },
   ];

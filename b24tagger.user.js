@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.57
+// @version      0.23.58
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.57';
+  const VERSION = '0.23.58';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -9476,6 +9476,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.58",
+      "date": "2026-04-18",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "log panel theme-aware — CSS vars zamiast hardcoded dark colors"},
+        {"type": "fix", "text": "_appendLogPanelEntry — kolory semantyczne przez CSS vars (ok/warn/err/faint)"}
+      ]
+    },
+    {
       "version": "0.23.57",
       "date": "2026-04-18",
       "label": "ui",
@@ -9576,19 +9586,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "News — fallback iframe→rich card gdy iframe rzuca onerror"},
         {"type": "feat", "text": "News — rich preview: autor, liczba słów, strefy artykułu, badge iframe"},
         {"type": "feat", "text": "News — legenda oznaczeń: przycisk ? w headerze, overlay z opisami wszystkich badży"}
-      ]
-    },
-    {
-      "version": "0.23.48",
-      "date": "2026-04-17",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "News — nowe nazwy wskaźników: mention→Wzmianka (🟠), contentmatch→W treści (🟣), keytopic→Główny temat (🟢)"},
-        {"type": "feat", "text": "News — ujednolicone kolory wskaźników w liście URLi i rich preview card"},
-        {"type": "feat", "text": "News — chip '🤖 AI' w headerze panelu gdy AI skonfigurowane i aktywne"},
-        {"type": "feat", "text": "News — dolny przycisk importu: '↑ Wczytaj URLe' z tooltipem (odróżnienie od górnego)"},
-        {"type": "feat", "text": "News — detekcja daty z widocznego tekstu ('Published: 12 April 2025') gdy meta/JSON-LD zawodzi"}
       ]
     },
   ];
@@ -11631,15 +11628,15 @@ function showOnboarding(onComplete) {
   function _appendLogPanelEntry(panel, entry) {
     var body = document.getElementById('b24t-logp-body');
     if (!body) return;
-    var colors = { info: '#9ca3af', success: '#4ade80', warn: '#fbbf24', error: '#f87171' };
-    var msgColor = colors[entry.type] || '#9ca3af';
+    var colors = { info: 'var(--b24t-text-muted)', success: 'var(--b24t-ok)', warn: 'var(--b24t-warn)', error: 'var(--b24t-err)' };
+    var msgColor = colors[entry.type] || 'var(--b24t-text-muted)';
     var msgHtml = entry.message;
     var row = document.createElement('div');
     row.dataset.logType = entry.type;
-    row.style.cssText = 'display:flex;gap:8px;padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px;line-height:1.5;';
+    row.style.cssText = 'display:flex;gap:8px;padding:2px 0;border-bottom:1px solid var(--b24t-border-sub);font-size:12px;line-height:1.5;';
     row.innerHTML =
-      '<span style="color:#6b7280;flex-shrink:0;font-size:11px;">' + entry.time + '</span>' +
-      '<span style="color:#4b5563;flex-shrink:0;font-size:10px;padding-top:2px;min-width:42px;">[' + entry.type.toUpperCase() + ']</span>' +
+      '<span style="color:var(--b24t-text-faint);flex-shrink:0;font-size:11px;">' + entry.time + '</span>' +
+      '<span style="color:var(--b24t-text-faint);flex-shrink:0;font-size:10px;padding-top:2px;min-width:42px;">[' + entry.type.toUpperCase() + ']</span>' +
       '<span style="color:' + msgColor + ';flex:1;word-break:break-word;">' + msgHtml + '</span>';
     body.appendChild(row);
   }
@@ -11691,11 +11688,11 @@ function showOnboarding(onComplete) {
         _logpFilterChk('error',   '#f87171', 'error')   +
         _logpFilterChk('diag',    '#f87171', 'diag')    +
         '<div style="flex:1;"></div>' +
-        '<button id="b24t-logp-copy" style="background:#252540;border:1px solid #3d3d6b;color:#c4c4e0;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;">📋 Kopiuj</button>' +
-        '<button id="b24t-logp-csv" style="background:#252540;border:1px solid #3d3d6b;color:#c4c4e0;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;">⬇ CSV</button>' +
+        '<button id="b24t-logp-copy" style="background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;">📋 Kopiuj</button>' +
+        '<button id="b24t-logp-csv" style="background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;">⬇ CSV</button>' +
       '</div>' +
       // Treść loga
-      '<div id="b24t-logp-body" style="flex:1;overflow-y:auto;padding:8px 16px;background:#0f0f1e;">' +
+      '<div id="b24t-logp-body" style="flex:1;overflow-y:auto;padding:8px 16px;background:var(--b24t-bg-deep);">' +
       '</div>';
 
     document.body.appendChild(el);

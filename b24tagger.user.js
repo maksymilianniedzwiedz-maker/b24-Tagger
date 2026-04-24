@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.65
+// @version      0.23.66
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.65';
+  const VERSION = '0.23.66';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -9295,11 +9295,11 @@ function showOnboarding(onComplete) {
             entry.status = 'blocked';
           }
           if (entry.status === 'mention' || entry.status === 'contentmatch' || entry.status === 'keytopic') {
-            _newsAiAnalyze(entry);
+            try { _newsAiAnalyze(entry); } catch(e) {}
           }
           newsState.scanDone++;
           if (importBtn) importBtn.textContent = '⟳ Skanowanie ' + newsState.scanDone + '/' + newsState.scanTotal + '...';
-          renderUrlList();
+          try { renderUrlList(); } catch(e) {}
         }
       }
       await Promise.all(Array.from({ length: NEWS_CONTENT_SCAN_CONCURRENCY }, _scanWorker));
@@ -9638,6 +9638,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.66",
+      "date": "2026-04-24",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News — freeze skanowania powracał (_newsAiAnalyze + renderUrlList poza try/catch zabijały workera)"}
+      ]
+    },
+    {
       "version": "0.23.65",
       "date": "2026-04-24",
       "label": "fix",
@@ -9732,17 +9741,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "ui", "text": "action bar — separacja run controls (Pauza/Stop) i narzędzi diagnostycznych (Match/Audit/Export)"},
         {"type": "ui", "text": "CSS: nowy .b24t-btn-tool — mniejszy, transparent, subtelny"}
-      ]
-    },
-    {
-      "version": "0.23.56",
-      "date": "2026-04-18",
-      "label": "ui",
-      "labelColor": "#a78bfa",
-      "changes": [
-        {"type": "ui", "text": "hierarchia sekcji — primary (Postęp), tertiary (Log, Ustawienia)"},
-        {"type": "ui", "text": "sekcja Ustawienia zwijana — domyślnie rozwinięta, stan w localStorage"},
-        {"type": "ui", "text": "CSS: modyfikatory .b24t-section-label.primary i .tertiary"}
       ]
     },
   ];

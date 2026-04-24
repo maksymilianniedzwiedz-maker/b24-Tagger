@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.63",
+    "date": "2026-04-24",
+    "label": "fix",
+    "changes": [
+      "fix: cross-delete — przycisk 'Usuń z wszystkich projektów' nie reagował (błąd _tagCount); state.status idle przerywał pętlę usuwania po pierwszym batchu"
+    ]
+  },
+  {
     "version": "0.23.62",
     "date": "2026-04-24",
     "label": "fix",

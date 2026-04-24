@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.62",
+    "date": "2026-04-24",
+    "label": "fix",
+    "changes": [
+      "fix: zmniejszenie rozmiaru batcha (500→50) i zwiększenie równoległości (2→4) — lokalny fallback przy błędzie batcha teraz na max 50 wzmianek zamiast 500"
+    ]
+  },
+  {
     "version": "0.23.61",
     "date": "2026-04-24",
     "label": "feature",

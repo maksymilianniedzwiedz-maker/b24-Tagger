@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.60
+// @version      0.23.61
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.60';
+  const VERSION = '0.23.61';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -948,6 +948,10 @@
     });
     if (textCol) detected.text = textCol;
 
+    // Project ID column for multi-project tagging
+    const projectIdCol = headers.find(h => /^proje[ck]t[_\s-]?id$/i.test(h.trim()));
+    if (projectIdCol) detected.projectId = projectIdCol;
+
     return detected;
   }
 
@@ -1187,6 +1191,88 @@
   // MAIN TAGGING FLOW
   // ───────────────────────────────────────────
 
+  async function runMultiProjectTagging(partition) {
+    var colMap = state.file.colMap;
+    var savedProjectId = state.projectId;
+    var savedTags = state.tags;
+    var savedMapping = state.mapping;
+    var savedUntaggedId = state.untaggedId;
+
+    // Group rows by projectId
+    var projectGroups = {};
+    partition.rows.forEach(function(row) {
+      var pid = (row[colMap.projectId] || '').toString().trim();
+      if (!pid) return;
+      if (!projectGroups[pid]) projectGroups[pid] = [];
+      projectGroups[pid].push(row);
+    });
+
+    var projectIds = Object.keys(projectGroups);
+    addLog('ℹ Multi-projekt: ' + projectIds.length + ' projektów w pliku — przetwarzam sekwencyjnie', 'info');
+
+    var overallStats = {};
+    var savedProjects = lsGet(LS.PROJECTS, {});
+
+    for (var _pIdx = 0; _pIdx < projectIds.length; _pIdx++) {
+      var projectId = projectIds[_pIdx];
+      var projectData = savedProjects[projectId];
+      if (!projectData) {
+        addLog('⚠ Projekt ' + projectId + ' nieznany lokalnie — pomijam. Odwiedź projekt w Brand24 i spróbuj ponownie.', 'warn');
+        continue;
+      }
+
+      var projectName = _pnResolve(projectId);
+      var projectRows = projectGroups[projectId];
+      addLog('\n══ Projekt: ' + projectName + ' (' + projectId + ') — ' + projectRows.length + ' wierszy ══', 'info');
+
+      // Resolve mapping for this project by tag name
+      var projectTags = projectData.tagIds || {};
+      var projectMapping = {};
+      Object.entries(savedMapping).forEach(function(_entry) {
+        var label = _entry[0], m = _entry[1];
+        var tagId = projectTags[m.tagName];
+        if (tagId) {
+          projectMapping[label] = { tagId: tagId, tagName: m.tagName, type: m.type };
+        } else {
+          addLog('⚠ Tag "' + m.tagName + '" nieznany w projekcie ' + projectName + ' — ocena "' + label + '" zostanie pominięta', 'warn');
+        }
+      });
+
+      // Swap state for this project
+      state.projectId = parseInt(projectId);
+      state.tags = projectTags;
+      state.mapping = projectMapping;
+      state.untaggedId = projectData.untaggedId || savedUntaggedId;
+
+      var statsBefore = { tagged: state.stats.tagged, skipped: state.stats.skipped };
+      try {
+        await runTagging({ dateFrom: partition.dateFrom, dateTo: partition.dateTo, rows: projectRows }, true);
+      } catch (e) {
+        addLog('✕ Błąd tagowania projektu ' + projectName + ': ' + e.message, 'error');
+      }
+      overallStats[projectId] = {
+        name: projectName,
+        tagged: state.stats.tagged - statsBefore.tagged,
+        skipped: state.stats.skipped - statsBefore.skipped,
+      };
+    }
+
+    // Restore original state
+    state.projectId = savedProjectId;
+    state.tags = savedTags;
+    state.mapping = savedMapping;
+    state.untaggedId = savedUntaggedId;
+
+    // Overall report
+    var lines = ['\n═══ RAPORT MULTI-PROJEKT ═══'];
+    Object.entries(overallStats).forEach(function(_e) {
+      var pid = _e[0], s = _e[1];
+      lines.push((s.tagged > 0 ? '✓' : '○') + ' ' + s.name + ' (' + pid + '): ' + s.tagged + ' otagowano, ' + s.skipped + ' pominięto');
+    });
+    lines.push('════════════════════════════');
+    addLog(lines.join('\n'), 'info');
+  }
+
   function validateInputSchema(rows, colMap) {
     const issues = [];
 
@@ -1218,7 +1304,11 @@
     return sciUrls === 0;
   }
 
-  async function runTagging(partition) {
+  async function runTagging(partition, _isSubCall) {
+    if (!_isSubCall && state.file && state.file.colMap && state.file.colMap.projectId) {
+      return runMultiProjectTagging(partition);
+    }
+
     const { dateFrom, dateTo, rows } = partition;
 
     // Build URL map
@@ -3820,6 +3910,9 @@
         <!-- FILE VALIDATION -->
         <div id="b24t-file-validation" style="display:none;margin-top:8px;background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:6px;padding:8px 10px;"></div>
 
+        <!-- MULTI-PROJEKT -->
+        <div id="b24t-multiproject-section" style="display:none;margin-top:8px;"></div>
+
         <!-- COLUMN OVERRIDE -->
         <div id="b24t-column-override-section" style="display:none;margin-top:6px;">
           <button id="b24t-col-override-toggle" style="font-size:10px;color:var(--b24t-text-faint);background:none;border:none;cursor:pointer;padding:2px 0;">⚙ Zmień wykryte kolumny ▾</button>
@@ -4642,8 +4735,16 @@
       renderAssessmentColBar(rows, colMap);
       updateStatsUI();
       addLog(`✓ Plik załadowany: ${meta.totalRows} wierszy, ${Object.keys(meta.assessments).length} typów labelek`, 'success');
-      addLog(`→ Wykryte kolumny: url="${colMap.url || 'BRAK!'}" | assessment="${colMap.assessment || 'BRAK!'}" | date="${colMap.date || 'BRAK!'}"`, 'info');
+      addLog(`→ Wykryte kolumny: url="${colMap.url || 'BRAK!'}" | assessment="${colMap.assessment || 'BRAK!'}" | date="${colMap.date || 'BRAK!'}"`+ (colMap.projectId ? ` | project_id="${colMap.projectId}"` : ''), 'info');
       showToast(`✓ Plik załadowany: ${meta.totalRows} wierszy`, 'success');
+
+      if (colMap.projectId) {
+        addLog(`→ Multi-projekt: wykryto kolumnę projektów "${colMap.projectId}"`, 'info');
+        renderMultiProjectWidget(rows, colMap);
+      } else {
+        const mpEl = document.getElementById('b24t-multiproject-section');
+        if (mpEl) { mpEl.style.display = 'none'; delete mpEl.dataset.blocked; }
+      }
 
       // Walidacja krytyczna — blokuje Start jeśli brak URL/dat
       const fileWarnings = validateFile(rows, colMap);
@@ -4685,11 +4786,11 @@
     if (clearBtn) clearBtn.style.display = 'none';
 
     // Hide dependent sections
-    const sectionsToHide = ['b24t-file-validation','b24t-mapping-section','b24t-settings-section',
+    const sectionsToHide = ['b24t-file-validation','b24t-multiproject-section','b24t-mapping-section','b24t-settings-section',
                             'b24t-partition-section','b24t-match-preview','b24t-column-override-section'];
     sectionsToHide.forEach(function(id) {
       const el = document.getElementById(id);
-      if (el) { el.style.display = 'none'; if (el.dataset) el.dataset.hasErrors = ''; }
+      if (el) { el.style.display = 'none'; if (el.dataset) { el.dataset.hasErrors = ''; el.dataset.blocked = ''; } }
     });
 
     // Reset validation block and re-enable start buttons
@@ -4701,6 +4802,43 @@
 
     updateStatsUI();
     addLog('🗑 Plik usunięty. Wgraj nowy plik.', 'info');
+  }
+
+  function renderMultiProjectWidget(rows, colMap) {
+    var el = document.getElementById('b24t-multiproject-section');
+    if (!el) return;
+    var savedProjects = lsGet(LS.PROJECTS, {});
+    var projectCounts = {};
+    rows.forEach(function(row) {
+      var pid = (row[colMap.projectId] || '').toString().trim();
+      if (!pid) return;
+      projectCounts[pid] = (projectCounts[pid] || 0) + 1;
+    });
+    var projectIds = Object.keys(projectCounts);
+    var hasUnknown = projectIds.some(function(pid) { return !savedProjects[pid]; });
+    el.style.display = 'block';
+    el.dataset.blocked = hasUnknown ? '1' : '';
+    var borderColor = hasUnknown ? '#f87171' : 'var(--b24t-border)';
+    var rows_html = projectIds.map(function(pid) {
+      var known = !!savedProjects[pid];
+      var name = known ? _pnResolve(pid) : null;
+      var count = projectCounts[pid];
+      var icon = known ? '✓' : '✕';
+      var iconColor = known ? '#4ade80' : '#f87171';
+      return '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px;">' +
+        '<span style="color:' + iconColor + ';flex-shrink:0;">' + icon + '</span>' +
+        '<span style="color:var(--b24t-text);font-family:monospace;font-size:10px;">' + pid + '</span>' +
+        (name ? '<span style="color:var(--b24t-text-meta);">' + name + '</span>' : '') +
+        '<span style="color:var(--b24t-text-faint);margin-left:auto;">' + count + ' wierszy</span>' +
+        (!known ? '<span style="color:#f87171;font-size:10px;">— odwiedź projekt w Brand24 najpierw</span>' : '') +
+        '</div>';
+    }).join('');
+    el.innerHTML = '<div style="background:var(--b24t-bg-elevated);border:1px solid ' + borderColor + ';border-radius:6px;padding:8px 10px;">' +
+      '<div style="font-size:10px;font-weight:600;color:var(--b24t-text-faint);margin-bottom:6px;letter-spacing:.04em;">WYKRYTE PROJEKTY (' + projectIds.length + ')</div>' +
+      rows_html +
+      (hasUnknown ? '<div style="margin-top:6px;font-size:10px;color:#f87171;font-weight:600;">⛔ Start zablokowany — odwiedź nieznane projekty w Brand24 aby załadować ich tagi.</div>' : '') +
+      '</div>';
+    _updateStartBtnBlock();
   }
 
   async function parseXLSXFile(file) {
@@ -4879,6 +5017,17 @@
     });
 
     updateMappingState(container);
+
+    // Multi-project note
+    var existingNote = document.getElementById('b24t-multiproject-mapping-note');
+    if (existingNote) existingNote.remove();
+    if (state.file && state.file.colMap && state.file.colMap.projectId) {
+      var mpNote = document.createElement('div');
+      mpNote.id = 'b24t-multiproject-mapping-note';
+      mpNote.style.cssText = 'margin-top:8px;font-size:10px;color:var(--b24t-text-faint);padding:6px 8px;background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:5px;';
+      mpNote.textContent = 'ℹ Tryb multi-projekt: mapowanie działa po nazwie tagu — nazwa musi być identyczna we wszystkich projektach.';
+      container.parentNode.insertBefore(mpNote, container.nextSibling);
+    }
   }
 
   function updateMappingState(container) {
@@ -6426,7 +6575,8 @@ function showOnboarding(onComplete) {
     var previewBtn = document.getElementById('b24t-btn-preview');
     var auditBtn = document.getElementById('b24t-btn-audit');
     var el = document.getElementById('b24t-file-validation');
-    var blocked = !!(el && el.dataset.hasErrors === '1');
+    var mpEl = document.getElementById('b24t-multiproject-section');
+    var blocked = !!(el && el.dataset.hasErrors === '1') || !!(mpEl && mpEl.dataset.blocked === '1');
     if (startBtn) {
       startBtn.disabled = blocked;
       startBtn.title = blocked ? 'Zablokowany — plik ma błędy krytyczne (brak URL lub daty)' : '';
@@ -9480,6 +9630,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.61",
+      "date": "2026-04-24",
+      "label": "feature",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "multi-projektowe tagowanie z pliku — kolumna project_id/projekt_id"},
+        {"type": "feat", "text": "widget 'Wykryte projekty' — zielony ✓ / czerwony ✕, blokada Start dla nieznanych projektów"},
+        {"type": "feat", "text": "mapowanie po nazwie tagu — tagId rozwiązywany per projekt; ostrzeżenie gdy tag brak"},
+        {"type": "feat", "text": "sekwencyjny run per projekt z osobnymi logami i zbiorczym raportem"}
+      ]
+    },
+    {
       "version": "0.23.60",
       "date": "2026-04-18",
       "label": "redesign",
@@ -9581,16 +9743,6 @@ function showOnboarding(onComplete) {
         {"type": "ui", "text": "stagger kart URLi w News (30ms×idx) i toastów (+40ms per kolejny)"},
         {"type": "ui", "text": "box-shadow przy hover na stat-card i file-zone, silniejszy shadow na btn-primary"},
         {"type": "ui", "text": "focus-visible na wszystkich przyciskach i zakładkach, transform-origin na help-tip"}
-      ]
-    },
-    {
-      "version": "0.23.51",
-      "date": "2026-04-18",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "News — lista URLi przeprojektowana na karty: status badge z etykietą + badże w górnym wierszu, URL pełnej szerokości (11px, bez limitu 42 znaków)"},
-        {"type": "feat", "text": "News — status jako kolorowy badge z krótką etykietą (Wzmianka / W treści / Główny temat itp.) zamiast samego kropki"}
       ]
     },
   ];

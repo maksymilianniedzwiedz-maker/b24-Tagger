@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.23.65",
+    "date": "2026-04-24",
+    "label": "fix",
+    "changes": [
+      "fix: News — artykuły oznaczane jako blocked (timeout przywrócony 5→8s)",
+      "fix: News — _newsAiAnalyze wewnątrz try/catch nadpisywało status na blocked przy błędzie AI"
+    ]
+  },
+  {
     "version": "0.23.64",
     "date": "2026-04-24",
     "label": "fix",

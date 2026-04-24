@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.62
+// @version      0.23.63
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.62';
+  const VERSION = '0.23.63';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -9630,6 +9630,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.63",
+      "date": "2026-04-24",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "cross-delete: przycisk 'Usuń z wszystkich projektów' nie reagował — błąd _tagCount na obiektach getKnownProjects()"},
+        {"type": "fix", "text": "cross-delete: state.status idle przerywał pętlę usuwania po pierwszym batchu"},
+        {"type": "fix", "text": "cross-delete: pasek postępu i status aktualizowane podczas usuwania ze wszystkich projektów"}
+      ]
+    },
+    {
       "version": "0.23.62",
       "date": "2026-04-24",
       "label": "fix",
@@ -9725,20 +9736,6 @@ function showOnboarding(onComplete) {
         {"type": "ui", "text": "ujednolicenie fontów — Geist wszędzie (usunięcie Inter z 16 miejsc)"},
         {"type": "ui", "text": "CSS vars zamiast hardcoded kolorów — log panel, audit report, What's New modal"},
         {"type": "ui", "text": "toast border-top zamiast border-left stripe (banned pattern)"}
-      ]
-    },
-    {
-      "version": "0.23.53",
-      "date": "2026-04-18",
-      "label": "ui",
-      "labelColor": "#a78bfa",
-      "changes": [
-        {"type": "ui", "text": "font Inter → Geist (Google Fonts)"},
-        {"type": "ui", "text": "dark mode — primary teal zamiast fioletu (oklch), gradient i shadows zaktualizowane"},
-        {"type": "ui", "text": "usunięto side stripe (::before) z sekcji — banned pattern"},
-        {"type": "ui", "text": "usunięto border-left z wpisów logu — banned pattern; zastąpione border-radius"},
-        {"type": "ui", "text": "primary button — solid color zamiast gradientu"},
-        {"type": "ui", "text": "stat-card — usunięto dekoracyjny pasek ::after"}
       ]
     },
   ];
@@ -11726,7 +11723,7 @@ function showOnboarding(onComplete) {
     const BATCH = _deleteBatch;
     let deleted = 0;
     for (let i = 0; i < allIds.length; i += BATCH) {
-      if (state.status === 'paused' || state.status === 'idle') break;
+      if (state.status === 'paused') break;
       const chunk = allIds.slice(i, i + BATCH);
       await Promise.all(chunk.map(id => deleteMention(id)));
       deleted += chunk.length;
@@ -12151,23 +12148,34 @@ function showOnboarding(onComplete) {
       const tagName = Object.entries(state.tags).find(([,id]) => id === tagId)?.[0] || String(tagId);
       const confirmed = await confirmDeleteWarning();
       if (!confirmed) return;
-      const projects = getKnownProjects().filter(p => p._tagCount > 0);
-      if (!projects.length) { addLog('Brak projektów z tym tagiem.', 'warn'); return; }
-      const total = projects.reduce((s, p) => s + p._tagCount, 0);
-      if (!confirm(`Usunąć ${total} wzmianek z tagiem "${tagName}" ze wszystkich ${projects.length} projektów?
+      const cached = bgCache.allProjects[tagId];
+      const results = (cached && cached.results || []).filter(function(r) { return r.count > 0; });
+      if (!results.length) { addLog('Brak projektów z tym tagiem. Otwórz panel "Wszystkie projekty" i poczekaj na załadowanie danych.', 'warn'); return; }
+      const total = results.reduce(function(s, r) { return s + r.count; }, 0);
+      if (!confirm(`Usunąć ${total} wzmianek z tagiem "${tagName}" ze wszystkich ${results.length} projektów?
 
 To jest NIEODWRACALNE.`)) return;
       const btn = document.getElementById('b24t-ap-delete-all');
+      const statusEl = document.getElementById('b24t-del-status');
+      const progressEl = document.getElementById('b24t-del-progress');
       if (btn) { btn.disabled = true; btn.textContent = '⏳ Usuwam...'; }
-      for (const p of projects) {
-        addLog(`→ Usuwam "${tagName}" z projektu ${p.name} (${p._tagCount} wzmianek)...`, 'info');
-        // Przekaż projectId explicite — runDeleteByTag nie może używać state.projectId
+      if (progressEl) { progressEl.style.width = '0%'; progressEl.classList.add('b24t-bar-active'); }
+      let doneProjects = 0;
+      for (const r of results) {
+        const p = r.p;
+        addLog(`→ Usuwam "${tagName}" z projektu ${p.name} (${r.count} wzmianek)...`, 'info');
+        if (statusEl) statusEl.textContent = `${p.name}: zbieram...`;
         await runDeleteByTag(tagId, tagName, p._dateFrom, p._dateTo, (phase, cur, tot) => {
           if (btn) btn.textContent = `⏳ ${p.name}: ${phase === 'collect' ? 'zbieram' : cur + '/' + tot}`;
+          if (statusEl) statusEl.textContent = `${p.name}: ${phase === 'collect' ? 'zbieram str. ' + cur : cur + '/' + tot}`;
         }, p.id);
+        doneProjects++;
+        if (progressEl) progressEl.style.width = Math.round(doneProjects / results.length * 100) + '%';
         addLog(`✓ ${p.name}: gotowe`, 'success');
       }
       if (btn) { btn.disabled = false; btn.textContent = '🗑 Usuń z wszystkich projektów'; }
+      if (progressEl) { progressEl.style.width = '100%'; progressEl.classList.remove('b24t-bar-active'); }
+      if (statusEl) { statusEl.textContent = '✓ Usunięto ze wszystkich projektów'; statusEl.style.color = '#4ade80'; }
       addLog('✅ Usuwanie ze wszystkich projektów zakończone.', 'success');
       // Invaliduj cache — dane się zmieniły
       bgCache.allProjects = {};

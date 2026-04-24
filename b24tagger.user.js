@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.63
+// @version      0.23.64
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.63';
+  const VERSION = '0.23.64';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7008,8 +7008,8 @@ function showOnboarding(onComplete) {
   //   keytopic    → 12+ pkt   (keyword w tytule — artykuł o marce)
   //   teasermatch → 0 pkt     (keyword tylko w sekcji polecanych artykułów, nie w głównej treści)
 
-  var NEWS_CONTENT_SCAN_CONCURRENCY = 5;
-  var NEWS_CONTENT_SCAN_TIMEOUT_MS  = 8000;
+  var NEWS_CONTENT_SCAN_CONCURRENCY = 8;
+  var NEWS_CONTENT_SCAN_TIMEOUT_MS  = 5000;
 
   var NEWS_NOISE_SELECTORS = [
     'script','style','noscript','svg','iframe',
@@ -8900,10 +8900,14 @@ function showOnboarding(onComplete) {
         });
       }
 
+      iframeEl.onload = null;
+      iframeEl.onerror = null;
       if (entry.iframeable === true) {
         richEl.style.display = 'none';
         iframeEl.style.display = 'block';
         var _iframeFallback = function() {
+          iframeEl.onload = null;
+          iframeEl.onerror = null;
           entry.iframeable = false;
           iframeEl.style.display = 'none';
           iframeEl.src = '';
@@ -9244,54 +9248,58 @@ function showOnboarding(onComplete) {
           var i = nextScanIdx++;
           if (i >= toScan.length) break;
           var entry = toScan[i];
-          var result = await _newsContentScan(entry.url, chips);
-          // Bug #4: jeśli URL sygnalizuje obcy kraj → nadpisz wynik content scan
-          if (result.status !== 'nomatch' && result.status !== 'blocked' && pc) {
-            var _urlCountries = _newsCountriesInUrl(entry.url);
-            var _urlCountryKeys = Object.keys(_urlCountries);
-            if (_urlCountryKeys.length > 0 && !_urlCountries[pc]) {
-              result.status = 'wrongcountry';
+          try {
+            var result = await _newsContentScan(entry.url, chips);
+            // Bug #4: jeśli URL sygnalizuje obcy kraj → nadpisz wynik content scan
+            if (result.status !== 'nomatch' && result.status !== 'blocked' && pc) {
+              var _urlCountries = _newsCountriesInUrl(entry.url);
+              var _urlCountryKeys = Object.keys(_urlCountries);
+              if (_urlCountryKeys.length > 0 && !_urlCountries[pc]) {
+                result.status = 'wrongcountry';
+              }
             }
-          }
-          // Język strony vs kraj projektu — język musi się zgadzać dokładnie
-          if (result.status !== 'nomatch' && result.status !== 'blocked' &&
-              result.status !== 'wrongcountry' && result.pageLang && pc) {
-            var _expLangs = (_NEWS_LANG_MAP[pc.toLowerCase()] || []);
-            if (_expLangs.length > 0 && _expLangs.indexOf(result.pageLang) === -1) {
-              result.status = 'wrongcountry';
+            // Język strony vs kraj projektu — język musi się zgadzać dokładnie
+            if (result.status !== 'nomatch' && result.status !== 'blocked' &&
+                result.status !== 'wrongcountry' && result.pageLang && pc) {
+              var _expLangs = (_NEWS_LANG_MAP[pc.toLowerCase()] || []);
+              if (_expLangs.length > 0 && _expLangs.indexOf(result.pageLang) === -1) {
+                result.status = 'wrongcountry';
+              }
             }
+            // Staleness — data publikacji vs dziś (próg: 60 dni)
+            var _isStale = false;
+            if (result.articleDate) {
+              var _diffDays = (Date.now() - new Date(result.articleDate).getTime()) / 86400000;
+              _isStale = _diffDays > 60;
+            }
+            entry.status             = result.status;
+            entry.score              = result.score;
+            entry.snippet            = result.snippet;
+            entry.title              = result.title || '';
+            entry.matchedChips       = result.matchedChips || [];
+            entry.secondaryZoneOnly  = result.secondaryZoneOnly || false;
+            entry.zoneHints          = result.zoneHints || [];
+            entry.teaserMatchOnly    = result.teaserMatchOnly || false;
+            entry.teaserChips        = result.teaserChips || [];
+            entry.pageType           = result.pageType || 'unknown';
+            entry.pageTypeSignals    = result.pageTypeSignals || [];
+            entry.pageLang           = result.pageLang || '';
+            entry.articleDate        = result.articleDate || null;
+            entry.isStale            = _isStale;
+            entry.isPaywall          = result.isPaywall || false;
+            entry.keywordContexts    = result.keywordContexts || {};
+            entry.author             = result.author || '';
+            entry.wordCount          = result.wordCount || 0;
+            if (result.iframeable !== undefined) entry.iframeable = result.iframeable;
+            if (result.status === 'mention' || result.status === 'contentmatch' || result.status === 'keytopic') {
+              _newsAiAnalyze(entry);
+            }
+          } catch(e) {
+            entry.status = 'blocked';
           }
-          // Staleness — data publikacji vs dziś (próg: 60 dni)
-          var _isStale = false;
-          if (result.articleDate) {
-            var _diffDays = (Date.now() - new Date(result.articleDate).getTime()) / 86400000;
-            _isStale = _diffDays > 60;
-          }
-          entry.status             = result.status;
-          entry.score              = result.score;
-          entry.snippet            = result.snippet;
-          entry.title              = result.title || '';
-          entry.matchedChips       = result.matchedChips || [];
-          entry.secondaryZoneOnly  = result.secondaryZoneOnly || false;
-          entry.zoneHints          = result.zoneHints || [];
-          entry.teaserMatchOnly    = result.teaserMatchOnly || false;
-          entry.teaserChips        = result.teaserChips || [];
-          entry.pageType           = result.pageType || 'unknown';
-          entry.pageTypeSignals    = result.pageTypeSignals || [];
-          entry.pageLang           = result.pageLang || '';
-          entry.articleDate        = result.articleDate || null;
-          entry.isStale            = _isStale;
-          entry.isPaywall          = result.isPaywall || false;
-          entry.keywordContexts    = result.keywordContexts || {};
-          entry.author             = result.author || '';
-          entry.wordCount          = result.wordCount || 0;
-          if (result.iframeable !== undefined) entry.iframeable = result.iframeable;
           newsState.scanDone++;
           if (importBtn) importBtn.textContent = '⟳ Skanowanie ' + newsState.scanDone + '/' + newsState.scanTotal + '...';
-          renderUrlList(); // aktualizacja na żywo — wpada do listy w momencie rozpoznania
-          if (result.status === 'mention' || result.status === 'contentmatch' || result.status === 'keytopic') {
-            _newsAiAnalyze(entry);
-          }
+          renderUrlList();
         }
       }
       await Promise.all(Array.from({ length: NEWS_CONTENT_SCAN_CONCURRENCY }, _scanWorker));
@@ -9630,6 +9638,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.64",
+      "date": "2026-04-24",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News — skanowanie zatrzymywało się w połowie (try/catch w _scanWorker)"},
+        {"type": "fix", "text": "News — kliknięcie rich card zawieszało UI (infinite loop: stary iframe onload triggerował _iframeFallback przy src='')"},
+        {"type": "perf", "text": "News — concurrency skanowania 5→8, timeout 8→5s"}
+      ]
+    },
+    {
       "version": "0.23.63",
       "date": "2026-04-24",
       "label": "fix",
@@ -9725,17 +9744,6 @@ function showOnboarding(onComplete) {
         {"type": "ui", "text": "stats kompaktowe rows zamiast hero metric kart (b24t-stats-row-list)"},
         {"type": "fix", "text": "_statsCard() — row layout zamiast kafelków z bgColor"},
         {"type": "fix", "text": "renderOverallStatsData — column layout zamiast grid w kafelkach overall stats"}
-      ]
-    },
-    {
-      "version": "0.23.54",
-      "date": "2026-04-18",
-      "label": "ui",
-      "labelColor": "#a78bfa",
-      "changes": [
-        {"type": "ui", "text": "ujednolicenie fontów — Geist wszędzie (usunięcie Inter z 16 miejsc)"},
-        {"type": "ui", "text": "CSS vars zamiast hardcoded kolorów — log panel, audit report, What's New modal"},
-        {"type": "ui", "text": "toast border-top zamiast border-left stripe (banned pattern)"}
       ]
     },
   ];

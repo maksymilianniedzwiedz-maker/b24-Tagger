@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.64
+// @version      0.23.65
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.64';
+  const VERSION = '0.23.65';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7009,7 +7009,7 @@ function showOnboarding(onComplete) {
   //   teasermatch → 0 pkt     (keyword tylko w sekcji polecanych artykułów, nie w głównej treści)
 
   var NEWS_CONTENT_SCAN_CONCURRENCY = 8;
-  var NEWS_CONTENT_SCAN_TIMEOUT_MS  = 5000;
+  var NEWS_CONTENT_SCAN_TIMEOUT_MS  = 8000;
 
   var NEWS_NOISE_SELECTORS = [
     'script','style','noscript','svg','iframe',
@@ -9291,11 +9291,11 @@ function showOnboarding(onComplete) {
             entry.author             = result.author || '';
             entry.wordCount          = result.wordCount || 0;
             if (result.iframeable !== undefined) entry.iframeable = result.iframeable;
-            if (result.status === 'mention' || result.status === 'contentmatch' || result.status === 'keytopic') {
-              _newsAiAnalyze(entry);
-            }
           } catch(e) {
             entry.status = 'blocked';
+          }
+          if (entry.status === 'mention' || entry.status === 'contentmatch' || entry.status === 'keytopic') {
+            _newsAiAnalyze(entry);
           }
           newsState.scanDone++;
           if (importBtn) importBtn.textContent = '⟳ Skanowanie ' + newsState.scanDone + '/' + newsState.scanTotal + '...';
@@ -9638,6 +9638,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.65",
+      "date": "2026-04-24",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News — wszystkie artykuły oznaczane jako blocked (timeout przywrócony 5→8s)"},
+        {"type": "fix", "text": "News — _newsAiAnalyze wewnątrz try/catch nadpisywało status blocked przy błędzie AI"}
+      ]
+    },
+    {
       "version": "0.23.64",
       "date": "2026-04-24",
       "label": "fix",
@@ -9733,17 +9743,6 @@ function showOnboarding(onComplete) {
         {"type": "ui", "text": "hierarchia sekcji — primary (Postęp), tertiary (Log, Ustawienia)"},
         {"type": "ui", "text": "sekcja Ustawienia zwijana — domyślnie rozwinięta, stan w localStorage"},
         {"type": "ui", "text": "CSS: modyfikatory .b24t-section-label.primary i .tertiary"}
-      ]
-    },
-    {
-      "version": "0.23.55",
-      "date": "2026-04-18",
-      "label": "ui",
-      "labelColor": "#a78bfa",
-      "changes": [
-        {"type": "ui", "text": "stats kompaktowe rows zamiast hero metric kart (b24t-stats-row-list)"},
-        {"type": "fix", "text": "_statsCard() — row layout zamiast kafelków z bgColor"},
-        {"type": "fix", "text": "renderOverallStatsData — column layout zamiast grid w kafelkach overall stats"}
       ]
     },
   ];

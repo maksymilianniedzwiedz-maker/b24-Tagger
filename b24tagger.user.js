@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.61
+// @version      0.23.62
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.61';
+  const VERSION = '0.23.62';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -144,14 +144,14 @@
     DEL_BATCH_WARNED: 'b24tagger_del_batch_warned',
     AI_SETTINGS:      'b24t_ai_settings',
   };
-  const MAX_BATCH_SIZE = 500;
+  const MAX_BATCH_SIZE = 50;
   const DEL_BATCH_DEFAULT = 25; // domyślny batch równoległych deletów (edytowalny w UI)
   const BASE_PANEL_W = 440; // bazowa szerokość głównego panelu — punkt odniesienia dla zoomu
   let MAP_FETCH_CONCURRENCY = 8; // równoległość pobierania stron w buildUrlMap (fallback: 3)
   const STATS_FETCH_CONCURRENCY = 10; // równoległość pobierania projektów w _fetchOverallStats
   const BG_CONCURRENCY  = 5; // równoległość prefetchu danych annotatorskich w tle
   const QT_CONCURRENCY  = 2; // równoległość batchów w Quick Tag / Quick Untag
-  const TAG_CONCURRENCY = 2; // równoległość batchów bulkTag w runTagging
+  const TAG_CONCURRENCY = 4; // równoległość batchów bulkTag w runTagging
   const HEALTH_CHECK_INTERVAL = 30000;
   const ACTION_TIMEOUT_WARN = 10000;
   const RETRY_DELAYS = [2000, 4000, 8000, 12000, 20000]; // 5 prób — Brand24 API czasem losowo failuje
@@ -9630,6 +9630,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.62",
+      "date": "2026-04-24",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "zmniejszenie rozmiaru batcha 500→50 i równoległości 2→4 — fallback przy błędzie batcha teraz na max 50 wzmianek zamiast 500"}
+      ]
+    },
+    {
       "version": "0.23.61",
       "date": "2026-04-24",
       "label": "feature",
@@ -9730,19 +9739,6 @@ function showOnboarding(onComplete) {
         {"type": "ui", "text": "usunięto border-left z wpisów logu — banned pattern; zastąpione border-radius"},
         {"type": "ui", "text": "primary button — solid color zamiast gradientu"},
         {"type": "ui", "text": "stat-card — usunięto dekoracyjny pasek ::after"}
-      ]
-    },
-    {
-      "version": "0.23.52",
-      "date": "2026-04-18",
-      "label": "ui",
-      "labelColor": "#a78bfa",
-      "changes": [
-        {"type": "ui", "text": "szybsze animacje — modal 0.22s, log entries 0.08s, progress bar 0.25s, stat-pop 0.22s, `:active` 0.08s ease-out"},
-        {"type": "ui", "text": "side tab — tylko box-shadow animowane (GPU-safe), bez animowania background"},
-        {"type": "ui", "text": "stagger kart URLi w News (30ms×idx) i toastów (+40ms per kolejny)"},
-        {"type": "ui", "text": "box-shadow przy hover na stat-card i file-zone, silniejszy shadow na btn-primary"},
-        {"type": "ui", "text": "focus-visible na wszystkich przyciskach i zakładkach, transform-origin na help-tip"}
       ]
     },
   ];

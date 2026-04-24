@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.66",
+    "date": "2026-04-24",
+    "label": "fix",
+    "changes": [
+      "fix: News — freeze skanowania powracał (_newsAiAnalyze + renderUrlList poza try/catch zabijały workera)"
+    ]
+  },
+  {
     "version": "0.23.65",
     "date": "2026-04-24",
     "label": "fix",

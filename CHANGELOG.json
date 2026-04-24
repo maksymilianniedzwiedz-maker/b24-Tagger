@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.23.64",
+    "date": "2026-04-24",
+    "label": "fix",
+    "changes": [
+      "fix: News — skanowanie zatrzymywało się w połowie (try/catch w _scanWorker — worker nie umierał przy wyjątku)",
+      "fix: News — kliknięcie rich card URL zawieszało UI (infinite loop: onload starego iframe triggerował _iframeFallback przy każdym src='')",
+      "perf: News — concurrency skanowania 5→8, timeout 8→5s"
+    ]
+  },
+  {
     "version": "0.23.63",
     "date": "2026-04-24",
     "label": "fix",

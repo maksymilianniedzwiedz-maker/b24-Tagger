@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.61",
+    "date": "2026-04-24",
+    "label": "feature",
+    "changes": [
+      "feature: multi-projektowe tagowanie z pliku — kolumna project_id/projekt_id; widget wykrytych projektów; blokada Start dla nieznanych projektów; mapowanie po nazwie tagu; sekwencyjny run per projekt; zbiorczy raport"
+    ]
+  },
+  {
     "version": "0.23.60",
     "date": "2026-04-18",
     "label": "redesign",

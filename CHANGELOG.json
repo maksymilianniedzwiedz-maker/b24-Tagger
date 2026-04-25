@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.67",
+    "date": "2026-04-25",
+    "label": "ux",
+    "changes": [
+      "ux: paski progresu (main panel, Quick Delete, Quick Tag, News scan) — płynna animacja RAF-lerp zamiast CSS transition"
+    ]
+  },
+  {
     "version": "0.23.66",
     "date": "2026-04-24",
     "label": "fix",

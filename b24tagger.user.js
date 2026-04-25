@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.66
+// @version      0.23.67
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.66';
+  const VERSION = '0.23.67';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2250,15 +2250,47 @@
     if (els.remaining) els.remaining.textContent = Math.max(0, total - done);
   }
 
+  function _makeBarSmoother(getId, lerpFactor) {
+    lerpFactor = lerpFactor || 0.12;
+    var cur = 0, tgt = 0, raf = null;
+    function _apply() {
+      var el = getId();
+      if (el) el.style.width = cur.toFixed(2) + '%';
+    }
+    function tick() {
+      var diff = tgt - cur;
+      if (Math.abs(diff) < 0.15) { cur = tgt; _apply(); raf = null; return; }
+      cur += diff * lerpFactor;
+      _apply();
+      raf = requestAnimationFrame(tick);
+    }
+    return {
+      set: function(pct) {
+        tgt = Math.min(100, Math.max(0, pct));
+        if (!raf) raf = requestAnimationFrame(tick);
+      },
+      reset: function() {
+        if (raf) { cancelAnimationFrame(raf); raf = null; }
+        cur = 0; tgt = 0; _apply();
+      }
+    };
+  }
+
+  var _barMain, _barNews, _barDel, _barDelView, _barQt;
+  function _getBarMain()    { return _barMain    || (_barMain    = _makeBarSmoother(function() { return document.getElementById('b24t-progress-bar'); })); }
+  function _getBarNews()    { return _barNews    || (_barNews    = _makeBarSmoother(function() { return document.getElementById('b24t-news-progress-bar'); })); }
+  function _getBarDel()     { return _barDel     || (_barDel     = _makeBarSmoother(function() { return document.getElementById('b24t-del-progress'); })); }
+  function _getBarDelView() { return _barDelView || (_barDelView = _makeBarSmoother(function() { return document.getElementById('b24t-delview-progress'); })); }
+  function _getBarQt()      { return _barQt      || (_barQt      = _makeBarSmoother(function() { return document.getElementById('b24t-qt-progress'); })); }
+
   function updateProgress(phase, current, total) {
     const label = document.getElementById('b24t-progress-label');
-    const bar = document.getElementById('b24t-progress-bar');
-    if (!label || !bar) return;
+    if (!label) return;
     const pct = total > 0 ? Math.round((current / total) * 100) : 0;
     label.textContent = phase === 'map'
       ? `Budowanie mapy: ${current}/${total}`
       : `Tagowanie: batch ${current}/${total}`;
-    bar.style.width = `${pct}%`;
+    if (current === 0) _getBarMain().reset(); else _getBarMain().set(pct);
   }
 
   function updatePartitionUI(idx) {
@@ -3268,7 +3300,6 @@
         height: 100%;
         background: var(--b24t-accent-grad);
         border-radius: 99px; width: 0%;
-        transition: width 0.25s ease-out;
       }
       #b24t-progress-label { font-size: 12px; color: var(--b24t-text); font-weight: 500; }
       #b24t-progress-action { font-size: 11px; color: var(--b24t-text-meta); margin-top: 2px; }
@@ -8018,7 +8049,7 @@ function showOnboarding(onComplete) {
           '<span id="b24t-news-progress-label">0 / 0</span>',
         '</div>',
         '<div style="height:6px;border-radius:2px;background:' + t.bgDeep + ';overflow:hidden;">',
-          '<div id="b24t-news-progress-bar" style="height:6px;background:var(--b24t-accent-grad);width:0%;transition:width 0.4s ease;border-radius:2px;"></div>',
+          '<div id="b24t-news-progress-bar" style="height:6px;background:var(--b24t-accent-grad);width:0%;border-radius:2px;"></div>',
         '</div>',
       '</div>',
       // Filter bar
@@ -8653,12 +8684,12 @@ function showOnboarding(onComplete) {
         var total = newsState.scanTotal || 1;
         var done  = newsState.scanDone  || 0;
         if (progressLbl) progressLbl.textContent = 'Skanowanie: ' + done + ' / ' + total;
-        if (progressBar) progressBar.style.width = Math.round(done / total * 100) + '%';
+        if (done === 0) _getBarNews().reset(); else _getBarNews().set(Math.round(done / total * 100));
       } else {
         var handled = (counts.added || 0) + (counts.error || 0);
         var workable = (counts.match || 0) + (counts.keytopic || 0) + (counts.contentmatch || 0) + (counts.mention || 0) + (counts.opened || 0) + handled;
         if (progressLbl) progressLbl.textContent = handled + ' / ' + workable + ' relevantnych';
-        if (progressBar) progressBar.style.width = (workable > 0 ? Math.round(handled / workable * 100) : 0) + '%';
+        _getBarNews().set(workable > 0 ? Math.round(handled / workable * 100) : 0);
       }
 
       newsState.urls.forEach(function(entry, idx) {
@@ -9638,6 +9669,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.67",
+      "date": "2026-04-25",
+      "label": "ux",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "ux", "text": "paski progresu (main panel, Quick Delete, Quick Tag, News scan) — płynna animacja RAF-lerp zamiast CSS transition"}
+      ]
+    },
+    {
       "version": "0.23.66",
       "date": "2026-04-24",
       "label": "fix",
@@ -9731,16 +9771,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "log panel theme-aware — CSS vars zamiast hardcoded dark colors"},
         {"type": "fix", "text": "_appendLogPanelEntry — kolory semantyczne przez CSS vars (ok/warn/err/faint)"}
-      ]
-    },
-    {
-      "version": "0.23.57",
-      "date": "2026-04-18",
-      "label": "ui",
-      "labelColor": "#a78bfa",
-      "changes": [
-        {"type": "ui", "text": "action bar — separacja run controls (Pauza/Stop) i narzędzi diagnostycznych (Match/Audit/Export)"},
-        {"type": "ui", "text": "CSS: nowy .b24t-btn-tool — mniejszy, transparent, subtelny"}
       ]
     },
   ];
@@ -12164,7 +12194,8 @@ To jest NIEODWRACALNE.`)) return;
       const statusEl = document.getElementById('b24t-del-status');
       const progressEl = document.getElementById('b24t-del-progress');
       if (btn) { btn.disabled = true; btn.textContent = '⏳ Usuwam...'; }
-      if (progressEl) { progressEl.style.width = '0%'; progressEl.classList.add('b24t-bar-active'); }
+      if (progressEl) progressEl.classList.add('b24t-bar-active');
+      _getBarDel().reset();
       let doneProjects = 0;
       for (const r of results) {
         const p = r.p;
@@ -12175,11 +12206,12 @@ To jest NIEODWRACALNE.`)) return;
           if (statusEl) statusEl.textContent = `${p.name}: ${phase === 'collect' ? 'zbieram str. ' + cur : cur + '/' + tot}`;
         }, p.id);
         doneProjects++;
-        if (progressEl) progressEl.style.width = Math.round(doneProjects / results.length * 100) + '%';
+        _getBarDel().set(Math.round(doneProjects / results.length * 100));
         addLog(`✓ ${p.name}: gotowe`, 'success');
       }
       if (btn) { btn.disabled = false; btn.textContent = '🗑 Usuń z wszystkich projektów'; }
-      if (progressEl) { progressEl.style.width = '100%'; progressEl.classList.remove('b24t-bar-active'); }
+      if (progressEl) progressEl.classList.remove('b24t-bar-active');
+      _getBarDel().set(100);
       if (statusEl) { statusEl.textContent = '✓ Usunięto ze wszystkich projektów'; statusEl.style.color = '#4ade80'; }
       addLog('✅ Usuwanie ze wszystkich projektów zakończone.', 'success');
       // Invaliduj cache — dane się zmieniły
@@ -12965,7 +12997,7 @@ To jest NIEODWRACALNE.`)) return;
 
         <!-- Progress -->
         <div class="b24t-progress-bar-track" style="margin-bottom:6px;">
-          <div id="b24t-del-progress" style="height:100%;background:var(--b24t-err);border-radius:99px;width:0%;transition:width 0.3s;"></div>
+          <div id="b24t-del-progress" style="height:100%;background:var(--b24t-err);border-radius:99px;width:0%;"></div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div id="b24t-del-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;flex:1;"></div>
@@ -13013,7 +13045,7 @@ To jest NIEODWRACALNE.`)) return;
 
         <!-- Progress -->
         <div class="b24t-progress-bar-track" style="margin-bottom:6px;">
-          <div id="b24t-delview-progress" style="height:100%;background:var(--b24t-err);border-radius:99px;width:0%;transition:width 0.3s;"></div>
+          <div id="b24t-delview-progress" style="height:100%;background:var(--b24t-err);border-radius:99px;width:0%;"></div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div id="b24t-delview-status" style="font-size:10px;color:var(--b24t-text-faint);min-height:14px;flex:1;"></div>
@@ -13229,6 +13261,7 @@ To jest NIEODWRACALNE.`)) return;
       const progressEl = document.getElementById('b24t-del-progress');
       if (runBtn) runBtn.disabled = true;
       if (progressEl) progressEl.classList.add('b24t-bar-active');
+      _getBarDel().reset();
       const delTimer = makeTabTimer('b24t-del-timer');
       delTimer.start();
 
@@ -13236,7 +13269,7 @@ To jest NIEODWRACALNE.`)) return;
         if (statusEl) { statusEl.textContent = msg; statusEl.style.color = cls === 'error' ? '#f87171' : cls === 'success' ? '#4ade80' : '#9090aa'; }
       };
       const setProgress = (cur, total) => {
-        if (progressEl && total > 0) progressEl.style.width = `${Math.round(cur / total * 100)}%`;
+        _getBarDel().set(total > 0 ? Math.round(cur / total * 100) : 0);
       };
 
       try {
@@ -13281,8 +13314,7 @@ To jest NIEODWRACALNE.`)) return;
         if (el) { el.textContent = msg; el.style.color = cls === 'error' ? '#f87171' : cls === 'success' ? '#4ade80' : '#9090aa'; }
       };
       const setProgress = (cur, total) => {
-        const el = document.getElementById('b24t-delview-progress');
-        if (el) el.style.width = total > 0 ? `${Math.round(cur / total * 100)}%` : '0%';
+        _getBarDelView().set(total > 0 ? Math.round(cur / total * 100) : 0);
       };
 
       if (!state.projectId) { alert('Przejdź do projektu Brand24.'); return; }
@@ -13292,6 +13324,7 @@ To jest NIEODWRACALNE.`)) return;
 
       if (runBtn) runBtn.disabled = true;
       const delviewProgressEl = document.getElementById('b24t-delview-progress');
+      _getBarDelView().reset();
       if (delviewProgressEl) delviewProgressEl.classList.add('b24t-bar-active');
       const delviewTimer = makeTabTimer('b24t-delview-timer');
       delviewTimer.start();
@@ -13450,10 +13483,11 @@ Tej operacji nie można cofnąć.`)) {
     };
 
     const setProgress = (cur, total) => {
-      if (qtProgress) qtProgress.style.width = total > 0 ? `${Math.round(cur / total * 100)}%` : '0%';
+      _getBarQt().set(total > 0 ? Math.round(cur / total * 100) : 0);
     };
 
     if (qtBtn) qtBtn.disabled = true;
+    _getBarQt().reset();
     const qtTimer = makeTabTimer('b24t-qt-timer');
     qtTimer.start();
     setStatus('Zbieram wzmianki...', 'info');
@@ -13549,7 +13583,7 @@ Tej operacji nie można cofnąć.`)) {
 
         <!-- Progress bar -->
         <div class="b24t-progress-bar-track" style="margin-bottom:6px;">
-          <div id="b24t-qt-progress" style="height:100%;background:var(--b24t-accent-grad);border-radius:99px;width:0%;transition:width 0.3s;"></div>
+          <div id="b24t-qt-progress" style="height:100%;background:var(--b24t-accent-grad);border-radius:99px;width:0%;"></div>
         </div>
 
         <!-- Status + timer -->

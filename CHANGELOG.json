@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.69",
+    "date": "2026-04-26",
+    "label": "feature",
+    "changes": [
+      "analytics: News — GitHub Sync: _naPushSession (GitHub Contents API GET+PUT), _naRetryPending, _naTryPeriodicPush, _naBuildSessionData; wypełnienie stubów visibilitychange i setInterval; push przy zamknięciu panelu; sekcja Analityka w ⚙ Ustawienia (toggle + PAT + repo + status)"
+    ]
+  },
+  {
     "version": "0.23.68",
     "date": "2026-04-26",
     "label": "feature",

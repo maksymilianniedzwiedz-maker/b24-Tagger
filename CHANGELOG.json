@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.70",
+    "date": "2026-04-26",
+    "label": "feature",
+    "changes": [
+      "analytics: News — Sesja 3: _naCompute(filters) — agregacja precision/recall/TP/FP skanera per status i sygnał, score distribution, AI confusion matrix, statystyki sesji; debug bridge naCompute()"
+    ]
+  },
+  {
     "version": "0.23.69",
     "date": "2026-04-26",
     "label": "feature",

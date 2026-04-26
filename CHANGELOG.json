@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.73",
+    "date": "2026-04-26",
+    "label": "feature",
+    "changes": [
+      "ux: przycisk 'Testuj połączenie' w ⚙ Analityka — weryfikuje PAT i uprawnienia do zapisu w repo GitHub (✓ OK / ✗ 401 / ✗ 404 / ⚠ brak uprawnień)"
+    ]
+  },
+  {
     "version": "0.23.72",
     "date": "2026-04-26",
     "label": "feature",

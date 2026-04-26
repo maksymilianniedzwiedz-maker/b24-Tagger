@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.67
+// @version      0.23.68
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.67';
+  const VERSION = '0.23.68';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -143,6 +143,9 @@
     DEL_BATCH:        'b24tagger_del_batch',
     DEL_BATCH_WARNED: 'b24tagger_del_batch_warned',
     AI_SETTINGS:      'b24t_ai_settings',
+    NA_RECORDS:       'b24t_na_records',
+    NA_PENDING:       'b24t_na_pending',
+    NA_CONSENT:       'b24t_na_consent',
   };
   const MAX_BATCH_SIZE = 50;
   const DEL_BATCH_DEFAULT = 25; // domyślny batch równoległych deletów (edytowalny w UI)
@@ -2769,6 +2772,12 @@
             ontimeout: function() { console.log('[B24T] Raw fetch: TIMEOUT'); resolve({ error: 'timeout' }); },
           });
         });
+      },
+      naDebug: function() {
+        var records = lsGet(LS.NA_RECORDS, []);
+        console.log('[B24T_NA] Session:', newsState.sessionId || 'brak', '| Rekordy w LS:', records.length);
+        if (console.table) console.table(records.slice(-20));
+        return records;
       },
     },
     exportReport,
@@ -7518,6 +7527,115 @@ function showOnboarding(onComplete) {
     };
   }
 
+  // ── NEWS ANALYTICS ──
+
+  function _naIsPositive(s) {
+    return s === 'keytopic' || s === 'contentmatch' || s === 'mention' || s === 'match';
+  }
+
+  function _naRecord(entry, outcome) {
+    if (lsGet(LS.NA_CONSENT) !== '1') return;
+    if (!newsState.sessionId) return;
+    var records = lsGet(LS.NA_RECORDS, []);
+    records.push({
+      date:          _localDateStr(new Date()),
+      country:       newsState.detectedCountry || _newsProjectCountry() || '',
+      projectId:     String(state.projectId || ''),
+      scanStatus:    (entry && entry.status)         || '',
+      score:         (entry && entry.score)          || 0,
+      chipCount:     entry && entry.matchedChips ? entry.matchedChips.length : 0,
+      secondaryZone: !!(entry && entry.secondaryZoneOnly),
+      pageType:      (entry && entry.pageType)       || '',
+      lang:          (entry && entry.lang)           || '',
+      isStale:       !!(entry && entry.isStale),
+      isPaywall:     !!(entry && entry.isPaywall),
+      wordCount:     (entry && entry.wordCount)      || 0,
+      aiStatus:      (entry && entry.aiStatus)       || '',
+      aiRelevant:    !!(entry && entry.aiRelevant),
+      outcome:       outcome,
+    });
+    if (entry) entry.naRecorded = true;
+    lsSet(LS.NA_RECORDS, records);
+  }
+
+  function _naNewSession(country) {
+    if (lsGet(LS.NA_CONSENT) !== '1') return;
+    newsState.sessionId = 'ses_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    newsState.naSessionStart = Date.now();
+    if (newsState.naVisChangeHandler) {
+      document.removeEventListener('visibilitychange', newsState.naVisChangeHandler);
+    }
+    newsState.naVisChangeHandler = function() {
+      if (document.visibilityState === 'hidden' && newsState.sessionId) {
+        _naFlushSkipped();
+        // Session 2: _naPushSession() tutaj
+      }
+    };
+    document.addEventListener('visibilitychange', newsState.naVisChangeHandler);
+    if (newsState.naFlushInterval) clearInterval(newsState.naFlushInterval);
+    newsState.naFlushInterval = setInterval(function() {
+      if (newsState.sessionId) {
+        _naFlushSkipped();
+        // Session 2: _naPushSession() tutaj
+      }
+    }, 5 * 60 * 1000);
+  }
+
+  function _naFlushSkipped() {
+    if (lsGet(LS.NA_CONSENT) !== '1') return;
+    if (!newsState.sessionId) return;
+    (newsState.urls || []).forEach(function(e) {
+      if (_naIsPositive(e.status) && !e.naRecorded) _naRecord(e, 'skipped');
+    });
+  }
+
+  function _naFinalizeSession() {
+    if (!newsState.sessionId) return;
+    if (newsState.naFlushInterval) { clearInterval(newsState.naFlushInterval); newsState.naFlushInterval = null; }
+    if (newsState.naVisChangeHandler) {
+      document.removeEventListener('visibilitychange', newsState.naVisChangeHandler);
+      newsState.naVisChangeHandler = null;
+    }
+    newsState.sessionId = null;
+  }
+
+  function _naShowConsentIfNeeded() {
+    var consent = lsGet(LS.NA_CONSENT);
+    if (consent === '1' || consent === '0') return;
+    var dark = typeof _newsIsDark === 'function' ? _newsIsDark() : true;
+    var bg          = dark ? '#1e1e2e' : '#ffffff';
+    var colorText   = dark ? '#e2e8f0' : '#1e293b';
+    var colorMuted  = dark ? '#94a3b8' : '#64748b';
+    var colorBorder = dark ? '#334155' : '#e2e8f0';
+    var pop = document.createElement('div');
+    pop.id = 'b24t-na-consent';
+    pop.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;';
+    pop.innerHTML =
+      '<div style="background:' + bg + ';border:1px solid ' + colorBorder + ';border-radius:16px;padding:24px 28px;max-width:400px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.4);">' +
+        '<div style="font-size:15px;font-weight:700;color:' + colorText + ';margin-bottom:12px;">📊 Analityka skanowania News</div>' +
+        '<div style="font-size:12px;color:' + colorMuted + ';line-height:1.6;margin-bottom:8px;">Wtyczka zbiera anonimowe dane statystyczne z modułu News:</div>' +
+        '<ul style="font-size:12px;color:' + colorMuted + ';line-height:1.8;margin:0 0 12px 0;padding-left:18px;">' +
+          '<li>Wyniki skanowania (statusy, score, typ strony, język)</li>' +
+          '<li>Decyzja annotatora (dodano / pominięto)</li>' +
+          '<li>Ocena AI (jeśli włączona)</li>' +
+        '</ul>' +
+        '<div style="font-size:11px;color:' + colorMuted + ';margin-bottom:20px;">Dane <strong style="color:' + colorText + ';">NIE</strong> zawierają adresów URL ani żadnych treści artykułów. Są zapisywane na firmowym GitHub i służą poprawie trafności skanera.</div>' +
+        '<div style="display:flex;gap:10px;">' +
+          '<button id="b24t-na-consent-yes" style="flex:1;padding:9px;border-radius:9px;border:none;background:linear-gradient(135deg,#14b8a6,#6366f1);color:#fff;font-size:12px;font-weight:700;cursor:pointer;">Rozumiem, kontynuuj</button>' +
+          '<button id="b24t-na-consent-no" style="padding:9px 14px;border-radius:9px;border:1px solid ' + colorBorder + ';background:transparent;color:' + colorMuted + ';font-size:12px;cursor:pointer;">Wyłącz</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(pop);
+    document.getElementById('b24t-na-consent-yes').addEventListener('click', function() {
+      lsSet(LS.NA_CONSENT, '1');
+      pop.remove();
+    });
+    document.getElementById('b24t-na-consent-no').addEventListener('click', function() {
+      lsSet(LS.NA_CONSENT, '0');
+      pop.remove();
+    });
+  }
+
   // ── NEWS AI SCORING ──
 
   function _newsAiGetBrandCtx(projectId) {
@@ -7925,6 +8043,8 @@ function showOnboarding(onComplete) {
 
 
   function closeNewsPanels() {
+    _naFlushSkipped();
+    _naFinalizeSession();
     var overlay = document.getElementById('b24t-news-overlay');
     if (overlay) overlay.style.display = 'none';
     var modal = document.getElementById('b24t-news-import-modal');
@@ -8348,6 +8468,7 @@ function showOnboarding(onComplete) {
 
   // ── WIRE LOGIC ──
   function _wireNewsPanels() {
+    _naShowConsentIfNeeded();
     var projectCountry = _newsProjectCountry();
 
     // ─── CLOSE ALL ───
@@ -9198,6 +9319,8 @@ function showOnboarding(onComplete) {
       var pc = _newsProjectCountry();
       var cc = detected || 'DEFAULT';
       var chips = _newsGetKeywords(cc);
+      _naFlushSkipped();
+      _naNewSession(cc);
 
       // Country badge + warn
       var badgeEl = document.getElementById('b24t-news-country-badge');
@@ -9502,6 +9625,7 @@ function showOnboarding(onComplete) {
             var isOk = resp.status >= 200 && resp.status < 400 && !isDuplicate;
             if (isDuplicate) {
               _newsMarkSessionUrl(fUrl);
+              _naRecord(newsState.urls.find(function(e) { return e.url === fUrl; }) || { status: 'error', score: 0, matchedChips: [] }, 'duplicate');
               if (subStatus) { subStatus.textContent = '⚠ Brand24: taka wzmianka już istnieje.'; subStatus.style.color = '#f59e0b'; }
               if (newsState.activeIdx >= 0) newsState.urls[newsState.activeIdx].status = 'error';
               var tcD = document.getElementById('b24t-news-f-content');
@@ -9514,6 +9638,8 @@ function showOnboarding(onComplete) {
               if (diD) diD.style.display = 'none';
             } else if (isOk) {
               _newsMarkSessionUrl(fUrl);
+              var _naE = newsState.urls.find(function(e) { return e.url === fUrl; });
+              _naRecord(_naE || { status: '', score: 0, matchedChips: [] }, _naE ? 'added' : 'manual_add');
               if (subStatus) { subStatus.textContent = '✓ Dodano do Brand24!'; subStatus.style.color = '#22c55e'; }
               if (newsState.activeIdx >= 0) newsState.urls[newsState.activeIdx].status = 'added';
               var tc = document.getElementById('b24t-news-f-content');
@@ -9527,6 +9653,7 @@ function showOnboarding(onComplete) {
             } else {
               if (subStatus) { subStatus.textContent = '✗ Błąd HTTP ' + resp.status; subStatus.style.color = '#ef4444'; }
               if (newsState.activeIdx >= 0) newsState.urls[newsState.activeIdx].status = 'error';
+              _naRecord(newsState.urls.find(function(e) { return e.url === fUrl; }) || { status: 'error', score: 0, matchedChips: [] }, 'error');
             }
             renderUrlList();
           },
@@ -9669,6 +9796,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.68",
+      "date": "2026-04-26",
+      "label": "feature",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "News Analytics — popup zgody, zbieranie metryk (added/skipped/duplicate/error/manual_add), visibilitychange + auto-flush co 5 min"}
+      ]
+    },
+    {
       "version": "0.23.67",
       "date": "2026-04-25",
       "label": "ux",
@@ -9761,16 +9897,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "annotator panel, tab, overlaye — Inter → Geist (10 miejsc)"},
         {"type": "fix", "text": "audit report wrongHtml — hardcoded #f87171/#4ade80 → CSS vars"},
         {"type": "fix", "text": "buildAllProjectsPanel — font-family Geist"}
-      ]
-    },
-    {
-      "version": "0.23.58",
-      "date": "2026-04-18",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "log panel theme-aware — CSS vars zamiast hardcoded dark colors"},
-        {"type": "fix", "text": "_appendLogPanelEntry — kolory semantyczne przez CSS vars (ok/warn/err/faint)"}
       ]
     },
   ];

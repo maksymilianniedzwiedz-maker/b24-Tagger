@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.72",
+    "date": "2026-04-26",
+    "label": "feature",
+    "changes": [
+      "analytics: News — Sesja 5: eksport danych — przyciski ↓ CSV (surowe rekordy z LS + pending) i ↓ JSON (output _naCompute z aktywnym filtrem) w zakładce Statystyki"
+    ]
+  },
+  {
     "version": "0.23.71",
     "date": "2026-04-26",
     "label": "feature",

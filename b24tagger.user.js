@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.69
+// @version      0.23.70
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.69';
+  const VERSION = '0.23.70';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2779,6 +2779,11 @@
         console.log('[B24T_NA] Session:', newsState.sessionId || 'brak', '| Rekordy w LS:', records.length);
         if (console.table) console.table(records.slice(-20));
         return records;
+      },
+      naCompute: function(filters) {
+        var result = _naCompute(filters);
+        console.log('[B24T_NA] _naCompute result:', result);
+        return result;
       },
     },
     exportReport,
@@ -7773,6 +7778,138 @@ function showOnboarding(onComplete) {
     _naPushSession(sd, null);
   }
 
+  function _naCompute(filters) {
+    var f = filters || {};
+    var allRecords = lsGet(LS.NA_RECORDS, []).slice();
+    var allSessions = [];
+    var pending = lsGet(LS.NA_PENDING, []);
+    pending.forEach(function(item) {
+      if (item.sessionData && item.sessionData.records)  allRecords  = allRecords.concat(item.sessionData.records);
+      if (item.sessionData && item.sessionData.session)  allSessions.push(item.sessionData.session);
+    });
+    if (newsState.sessionId) {
+      var curSd = _naBuildSessionData();
+      if (curSd && curSd.session) allSessions.push(curSd.session);
+    }
+
+    function passFilter(r) {
+      if (f.dateFrom  && r.date      < f.dateFrom)            return false;
+      if (f.dateTo    && r.date      > f.dateTo)              return false;
+      if (f.country   && r.country   !== f.country)           return false;
+      if (f.projectId && r.projectId !== String(f.projectId)) return false;
+      return true;
+    }
+    var records  = allRecords.filter(passFilter);
+    var sessions = allSessions.filter(function(s) {
+      if (f.dateFrom  && s.date      < f.dateFrom)            return false;
+      if (f.dateTo    && s.date      > f.dateTo)              return false;
+      if (f.country   && s.country   !== f.country)           return false;
+      if (f.projectId && s.projectId !== String(f.projectId)) return false;
+      return true;
+    });
+
+    var positive = records.filter(function(r) { return _naIsPositive(r.scanStatus); });
+
+    function mkCM(recs) {
+      var _tp = 0, _fp = 0;
+      recs.forEach(function(r) {
+        if (r.outcome === 'added')   _tp++;
+        else if (r.outcome === 'skipped') _fp++;
+      });
+      return { tp: _tp, fp: _fp, precision: (_tp + _fp) > 0 ? _tp / (_tp + _fp) : null };
+    }
+
+    var byStatus = {};
+    ['keytopic', 'contentmatch', 'mention', 'match'].forEach(function(st) {
+      byStatus[st] = mkCM(positive.filter(function(r) { return r.scanStatus === st; }));
+    });
+
+    var bySignal = {
+      paywall:       mkCM(positive.filter(function(r) { return r.isPaywall; })),
+      stale:         mkCM(positive.filter(function(r) { return r.isStale; })),
+      secondaryZone: mkCM(positive.filter(function(r) { return r.secondaryZone; })),
+      nonArticle:    mkCM(positive.filter(function(r) { return r.pageType === 'nonArticle'; })),
+    };
+
+    var byWordCount = {
+      lt300: mkCM(positive.filter(function(r) { return r.wordCount < 300; })),
+      mid:   mkCM(positive.filter(function(r) { return r.wordCount >= 300 && r.wordCount <= 800; })),
+      gt800: mkCM(positive.filter(function(r) { return r.wordCount > 800; })),
+    };
+
+    function scoreBucket(score) { return score < 5 ? 'lt5' : score < 12 ? 'mid' : 'hi'; }
+    function distrib(recs) {
+      var d = { lt5: 0, mid: 0, hi: 0 };
+      recs.forEach(function(r) { d[scoreBucket(r.score)]++; });
+      return d;
+    }
+    var scoreDistrib = {
+      added:   distrib(positive.filter(function(r) { return r.outcome === 'added'; })),
+      skipped: distrib(positive.filter(function(r) { return r.outcome === 'skipped'; })),
+    };
+
+    var cm = mkCM(positive);
+
+    var aiRecs = records.filter(function(r) { return r.aiStatus === 'done'; });
+    var aiTP = 0, aiFP = 0, aiFN = 0, aiTN = 0;
+    aiRecs.forEach(function(r) {
+      var rel = r.aiRelevant, add = r.outcome === 'added';
+      if (rel && add)   aiTP++;
+      else if (rel)     aiFP++;
+      else if (add)     aiFN++;
+      else              aiTN++;
+    });
+    var aiErrCount = records.filter(function(r) { return r.aiStatus === 'error'; }).length;
+
+    var sessN = sessions.length;
+    var sessTotalDur = 0, sessAiEnabled = 0;
+    sessions.forEach(function(s) {
+      sessTotalDur += (s.duration_s || 0);
+      if (s.aiEnabled) sessAiEnabled++;
+    });
+
+    var dates = records.map(function(r) { return r.date; }).filter(Boolean).sort();
+    var countries = [], projects = [];
+    records.forEach(function(r) {
+      if (r.country   && countries.indexOf(r.country)   < 0) countries.push(r.country);
+      if (r.projectId && projects.indexOf(r.projectId)  < 0) projects.push(r.projectId);
+    });
+
+    return {
+      scanner: {
+        tp: cm.tp, fp: cm.fp, precision: cm.precision,
+        byStatus: byStatus,
+        bySignal: bySignal,
+        byWordCount: byWordCount,
+        scoreDistrib: scoreDistrib,
+        manualAddCount: records.filter(function(r) { return r.outcome === 'manual_add'; }).length,
+      },
+      ai: {
+        tp: aiTP, fp: aiFP, tn: aiTN, fn: aiFN,
+        precision:    (aiTP + aiFP) > 0       ? aiTP / (aiTP + aiFP)       : null,
+        recall:       (aiTP + aiFN) > 0       ? aiTP / (aiTP + aiFN)       : null,
+        accuracy:     aiRecs.length > 0        ? (aiTP + aiTN) / aiRecs.length : null,
+        overrideRate: (aiFN + aiTN) > 0        ? aiFN / (aiFN + aiTN)       : null,
+        errorRate:    records.length > 0        ? aiErrCount / records.length : null,
+      },
+      sessions: {
+        total:        sessN,
+        totalUrls:    sessions.reduce(function(a, s) { return a + (s.totalUrls    || 0); }, 0),
+        totalAdded:   sessions.reduce(function(a, s) { return a + (s.addedCount   || 0); }, 0),
+        totalSkipped: sessions.reduce(function(a, s) { return a + (s.skippedCount || 0); }, 0),
+        totalBlocked: sessions.reduce(function(a, s) { return a + (s.blockedCount || 0); }, 0),
+        avgDuration_s:  sessN > 0 ? Math.round(sessTotalDur / sessN) : 0,
+        aiEnabledRate:  sessN > 0 ? sessAiEnabled / sessN            : null,
+      },
+      meta: {
+        recordCount: records.length,
+        dateRange:   dates.length ? { from: dates[0], to: dates[dates.length - 1] } : null,
+        countries:   countries,
+        projects:    projects,
+      },
+    };
+  }
+
   // ── NEWS AI SCORING ──
 
   function _newsAiGetBrandCtx(projectId) {
@@ -9936,6 +10073,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.70",
+      "date": "2026-04-26",
+      "label": "feature",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "News Analytics — _naCompute(filters): precision/recall skanera per status i sygnał, score distribution, AI confusion matrix, statystyki sesji; debug bridge naCompute()"}
+      ]
+    },
+    {
       "version": "0.23.69",
       "date": "2026-04-26",
       "label": "feature",
@@ -10022,19 +10168,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "widget 'Wykryte projekty' — zielony ✓ / czerwony ✕, blokada Start dla nieznanych projektów"},
         {"type": "feat", "text": "mapowanie po nazwie tagu — tagId rozwiązywany per projekt; ostrzeżenie gdy tag brak"},
         {"type": "feat", "text": "sekwencyjny run per projekt z osobnymi logami i zbiorczym raportem"}
-      ]
-    },
-    {
-      "version": "0.23.60",
-      "date": "2026-04-18",
-      "label": "redesign",
-      "labelColor": "#a78bfa",
-      "changes": [
-        {"type": "redesign", "text": "News submit btn — gradient → var(--b24t-accent-grad)"},
-        {"type": "redesign", "text": "lang map modal — hardcoded dark → CSS vars (bg, border, text, primary)"},
-        {"type": "redesign", "text": "onboarding bubble — #111118 → var(--b24t-bg), teksty → CSS vars"},
-        {"type": "polish", "text": "ikona expand loga ⛶ → ↗"},
-        {"type": "anim", "text": "b24t-section-reveal — mapping/partition sekcje z translateY fade"}
       ]
     },
   ];

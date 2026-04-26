@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.68
+// @version      0.23.69
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.68';
+  const VERSION = '0.23.69';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -146,6 +146,7 @@
     NA_RECORDS:       'b24t_na_records',
     NA_PENDING:       'b24t_na_pending',
     NA_CONSENT:       'b24t_na_consent',
+    NA_SETTINGS:      'b24t_na_settings',
   };
   const MAX_BATCH_SIZE = 50;
   const DEL_BATCH_DEFAULT = 25; // domyślny batch równoległych deletów (edytowalny w UI)
@@ -7568,17 +7569,14 @@ function showOnboarding(onComplete) {
     newsState.naVisChangeHandler = function() {
       if (document.visibilityState === 'hidden' && newsState.sessionId) {
         _naFlushSkipped();
-        // Session 2: _naPushSession() tutaj
+        var _visSD = _naBuildSessionData();
+        _naFinalizeSession();
+        _naPushSession(_visSD, null);
       }
     };
     document.addEventListener('visibilitychange', newsState.naVisChangeHandler);
     if (newsState.naFlushInterval) clearInterval(newsState.naFlushInterval);
-    newsState.naFlushInterval = setInterval(function() {
-      if (newsState.sessionId) {
-        _naFlushSkipped();
-        // Session 2: _naPushSession() tutaj
-      }
-    }, 5 * 60 * 1000);
+    newsState.naFlushInterval = setInterval(_naTryPeriodicPush, 5 * 60 * 1000);
   }
 
   function _naFlushSkipped() {
@@ -7634,6 +7632,145 @@ function showOnboarding(onComplete) {
       lsSet(LS.NA_CONSENT, '0');
       pop.remove();
     });
+  }
+
+  function _naGetSettings() {
+    return lsGet(LS.NA_SETTINGS, { enabled: false, pat: '', repo: 'i24dev/i24_analytics', lastPush: null });
+  }
+
+  function _naSaveSettings(s) {
+    lsSet(LS.NA_SETTINGS, s);
+  }
+
+  function _naBuildSessionData() {
+    var records = lsGet(LS.NA_RECORDS, []);
+    return {
+      session: {
+        date:        _localDateStr(new Date()),
+        country:     newsState.detectedCountry || _newsProjectCountry() || '',
+        projectId:   String(state.projectId || ''),
+        sessionId:   newsState.sessionId || ('ses_' + Date.now().toString(36)),
+        duration_s:  newsState.naSessionStart ? Math.round((Date.now() - newsState.naSessionStart) / 1000) : 0,
+        totalUrls:   (newsState.urls || []).length,
+        scannedUrls: (newsState.urls || []).filter(function(e) { return e.status && e.status !== 'pending'; }).length,
+        addedCount:  records.filter(function(r) { return r.outcome === 'added'; }).length,
+        skippedCount: records.filter(function(r) { return r.outcome === 'skipped'; }).length,
+        blockedCount: (newsState.urls || []).filter(function(e) { return e.status === 'blocked'; }).length,
+        aiEnabled:   _newsAiShouldRun(),
+      },
+      records: records,
+    };
+  }
+
+  function _naAddPending(sessionData) {
+    var sid = sessionData.session && sessionData.session.sessionId;
+    var pending = lsGet(LS.NA_PENDING, []);
+    if (!pending.some(function(p) { return p.sessionId === sid; })) {
+      pending.push({ sessionId: sid, sessionData: sessionData });
+      lsSet(LS.NA_PENDING, pending);
+    }
+  }
+
+  function _naPushSession(sessionData, onDone) {
+    var ns = _naGetSettings();
+    if (!ns.enabled || !ns.pat || lsGet(LS.NA_CONSENT) !== '1') {
+      if (onDone) onDone('skip');
+      return;
+    }
+    var repo    = ns.repo || 'i24dev/i24_analytics';
+    var country = (sessionData.session && sessionData.session.country) || 'XX';
+    var date    = (sessionData.session && sessionData.session.date) || _localDateStr(new Date());
+    var path    = 'Tagger/statistics/' + date + '_' + country + '.json';
+    var apiUrl  = 'https://api.github.com/repos/' + repo + '/contents/' + path;
+    var auth    = 'token ' + ns.pat;
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: apiUrl,
+      headers: { 'Authorization': auth, 'Accept': 'application/vnd.github+json' },
+      onload: function(getR) {
+        var sha = null;
+        var existing = { sessions: [], records: [] };
+        if (getR.status === 200) {
+          try {
+            var j = JSON.parse(getR.responseText);
+            sha = j.sha;
+            var dec = JSON.parse(atob(j.content.replace(/\n/g, '')));
+            existing.sessions = dec.sessions || [];
+            existing.records  = dec.records  || [];
+          } catch(e) { /* use empty */ }
+        } else if (getR.status !== 404) {
+          _naAddPending(sessionData); if (onDone) onDone('error'); return;
+        }
+        var merged = {
+          sessions: existing.sessions.concat([sessionData.session]),
+          records:  existing.records.concat(sessionData.records || []),
+        };
+        var putBodyObj = {
+          message: 'analytics: ' + date + '_' + country,
+          content: btoa(unescape(encodeURIComponent(JSON.stringify(merged)))),
+        };
+        if (sha) putBodyObj.sha = sha;
+        GM_xmlhttpRequest({
+          method: 'PUT',
+          url: apiUrl,
+          headers: { 'Authorization': auth, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' },
+          data: JSON.stringify(putBodyObj),
+          onload: function(putR) {
+            if (putR.status === 200 || putR.status === 201) {
+              var upd = _naGetSettings(); upd.lastPush = Date.now(); _naSaveSettings(upd);
+              lsSet(LS.NA_RECORDS, []);
+              if (onDone) onDone('ok');
+            } else {
+              _naAddPending(sessionData); if (onDone) onDone('error');
+            }
+          },
+          onerror: function() { _naAddPending(sessionData); if (onDone) onDone('error'); },
+        });
+      },
+      onerror: function() { _naAddPending(sessionData); if (onDone) onDone('error'); },
+    });
+  }
+
+  function _naRetryPending() {
+    if (lsGet(LS.NA_CONSENT) !== '1') return;
+    var pending = lsGet(LS.NA_PENDING, []);
+    if (!pending.length) return;
+    lsSet(LS.NA_PENDING, []);
+    pending.forEach(function(item) {
+      _naPushSession(item.sessionData, function(result) {
+        if (result !== 'ok') {
+          var curr = lsGet(LS.NA_PENDING, []);
+          if (!curr.some(function(p) { return p.sessionId === item.sessionId; })) {
+            curr.push(item);
+            lsSet(LS.NA_PENDING, curr);
+          }
+        }
+      });
+    });
+  }
+
+  function _naTryPeriodicPush() {
+    if (!newsState.sessionId) return;
+    var records = lsGet(LS.NA_RECORDS, []);
+    if (!records.length) return;
+    var sd = {
+      session: {
+        date:        _localDateStr(new Date()),
+        country:     newsState.detectedCountry || _newsProjectCountry() || '',
+        projectId:   String(state.projectId || ''),
+        sessionId:   newsState.sessionId + '_p' + Date.now().toString(36),
+        duration_s:  newsState.naSessionStart ? Math.round((Date.now() - newsState.naSessionStart) / 1000) : 0,
+        totalUrls:   (newsState.urls || []).length,
+        scannedUrls: (newsState.urls || []).filter(function(e) { return e.status && e.status !== 'pending'; }).length,
+        addedCount:  records.filter(function(r) { return r.outcome === 'added'; }).length,
+        skippedCount: records.filter(function(r) { return r.outcome === 'skipped'; }).length,
+        blockedCount: (newsState.urls || []).filter(function(e) { return e.status === 'blocked'; }).length,
+        aiEnabled:   _newsAiShouldRun(),
+        partial:     true,
+      },
+      records: records,
+    };
+    _naPushSession(sd, null);
   }
 
   // ── NEWS AI SCORING ──
@@ -8044,7 +8181,9 @@ function showOnboarding(onComplete) {
 
   function closeNewsPanels() {
     _naFlushSkipped();
+    var _naSD = newsState.sessionId ? _naBuildSessionData() : null;
     _naFinalizeSession();
+    if (_naSD) _naPushSession(_naSD, null);
     var overlay = document.getElementById('b24t-news-overlay');
     if (overlay) overlay.style.display = 'none';
     var modal = document.getElementById('b24t-news-import-modal');
@@ -8469,6 +8608,7 @@ function showOnboarding(onComplete) {
   // ── WIRE LOGIC ──
   function _wireNewsPanels() {
     _naShowConsentIfNeeded();
+    _naRetryPending();
     var projectCountry = _newsProjectCountry();
 
     // ─── CLOSE ALL ───
@@ -9796,6 +9936,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.69",
+      "date": "2026-04-26",
+      "label": "feature",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "News Analytics — GitHub Sync: _naPushSession (GET+PUT), _naRetryPending, _naTryPeriodicPush; push przy zamknięciu panelu i visibilitychange; sekcja Analityka w ⚙ (toggle + PAT + repo)"}
+      ]
+    },
+    {
       "version": "0.23.68",
       "date": "2026-04-26",
       "label": "feature",
@@ -9886,17 +10035,6 @@ function showOnboarding(onComplete) {
         {"type": "redesign", "text": "onboarding bubble — #111118 → var(--b24t-bg), teksty → CSS vars"},
         {"type": "polish", "text": "ikona expand loga ⛶ → ↗"},
         {"type": "anim", "text": "b24t-section-reveal — mapping/partition sekcje z translateY fade"}
-      ]
-    },
-    {
-      "version": "0.23.59",
-      "date": "2026-04-18",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "annotator panel, tab, overlaye — Inter → Geist (10 miejsc)"},
-        {"type": "fix", "text": "audit report wrongHtml — hardcoded #f87171/#4ade80 → CSS vars"},
-        {"type": "fix", "text": "buildAllProjectsPanel — font-family Geist"}
       ]
     },
   ];
@@ -10712,6 +10850,34 @@ function showOnboarding(onComplete) {
         '</div>' +
       '</div>';
 
+    var _naS = _naGetSettings();
+    var _naPendCount = lsGet(LS.NA_PENDING, []).length;
+    var _naLastPushStr = _naS.lastPush ? (new Date(_naS.lastPush)).toLocaleDateString('pl-PL') : null;
+    var _naStatusStr = !_naS.pat ? 'Skonfiguruj GitHub PAT, aby włączyć push.' :
+      (_naLastPushStr ? 'Ostatni push: ' + _naLastPushStr + (_naPendCount ? ' · ' + _naPendCount + ' w kolejce' : '') :
+      'PAT ustawiony — nie pushowano jeszcze.' + (_naPendCount ? ' · ' + _naPendCount + ' w kolejce' : ''));
+    var analyticsHtml =
+      '<div style="padding:12px 20px 16px;border-top:1px solid var(--b24t-border-sub);">' +
+        '<div style="font-size:11px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Analityka</div>' +
+        '<label style="display:flex;gap:10px;align-items:center;cursor:pointer;padding:4px 0;margin-bottom:8px;">' +
+          '<input type="checkbox" id="b24t-na-enabled" ' + (_naS.enabled ? 'checked' : '') + ' style="accent-color:var(--b24t-primary);width:14px;height:14px;flex-shrink:0;cursor:pointer;">' +
+          '<div>' +
+            '<div style="font-size:12px;font-weight:600;color:var(--b24t-text);">Zapisuj metryki na GitHub</div>' +
+            '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Anonimowe metryki skanowania News — wyniki, decyzje annotatorów</div>' +
+          '</div>' +
+        '</label>' +
+        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:7px;">' +
+          '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">GitHub PAT:</span>' +
+          '<input type="password" id="b24t-na-pat" autocomplete="off" spellcheck="false" placeholder="ghp_..." style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:monospace;">' +
+          '<button id="b24t-na-pat-toggle" title="Pokaż/ukryj" style="padding:3px 7px;flex-shrink:0;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;cursor:pointer;font-size:13px;">👁</button>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' +
+          '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">Repozytorium:</span>' +
+          '<input type="text" id="b24t-na-repo" autocomplete="off" spellcheck="false" placeholder="i24dev/i24_analytics" style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:monospace;">' +
+        '</div>' +
+        '<div id="b24t-na-status" style="font-size:10px;color:var(--b24t-text-faint);margin-top:6px;">' + _naStatusStr + '</div>' +
+      '</div>';
+
     modal.innerHTML =
       '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:16px;width:400px;max-height:90vh;overflow-y:auto;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);">' +
         '<div style="padding:14px 0;background:var(--b24t-accent-grad);border-radius:16px 16px 0 0;display:flex;align-items:center;gap:10px;padding:14px 20px;">' +
@@ -10768,6 +10934,7 @@ function showOnboarding(onComplete) {
           '</div>' +
           '<button id="b24t-ai-open-prompts" style="width:100%;box-sizing:border-box;padding:7px 12px;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:8px;cursor:pointer;font-family:inherit;font-size:11px;display:flex;align-items:center;justify-content:space-between;">📚 Biblioteka promptów<span style="font-size:10px;opacity:0.6;">→</span></button>' +
         '</div>' +
+        analyticsHtml +
         '<div style="padding:14px 20px;border-top:1px solid var(--b24t-border-sub);text-align:right;">' +
           '<button id="b24t-features-save" style="background:var(--b24t-accent-grad);color:#fff;border:none;border-radius:8px;padding:9px 24px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px var(--b24t-primary-glow);transition:opacity 0.15s;">Zapisz</button>' +
         '</div>' +
@@ -10845,6 +11012,41 @@ function showOnboarding(onComplete) {
       }
       var openPromptsBtn = document.getElementById('b24t-ai-open-prompts');
       if (openPromptsBtn) openPromptsBtn.addEventListener('click', function() { _showPromptLibraryModal(); });
+    })();
+
+    // Analytics wiring
+    (function() {
+      var naEnabledCb  = document.getElementById('b24t-na-enabled');
+      var naPatInput   = document.getElementById('b24t-na-pat');
+      var naPatToggle  = document.getElementById('b24t-na-pat-toggle');
+      var naRepoInput  = document.getElementById('b24t-na-repo');
+      var naStatusEl   = document.getElementById('b24t-na-status');
+      var naS = _naGetSettings();
+      if (naPatInput)  naPatInput.value  = naS.pat  || '';
+      if (naRepoInput) naRepoInput.value = naS.repo || 'i24dev/i24_analytics';
+      if (naEnabledCb) {
+        naEnabledCb.addEventListener('change', function() {
+          var cfg = _naGetSettings(); cfg.enabled = naEnabledCb.checked; _naSaveSettings(cfg);
+        });
+      }
+      if (naPatInput) {
+        naPatInput.addEventListener('change', function() {
+          var cfg = _naGetSettings(); cfg.pat = naPatInput.value.trim(); _naSaveSettings(cfg);
+          if (naStatusEl) naStatusEl.textContent = cfg.pat ? 'PAT ustawiony — nie pushowano jeszcze.' : 'Skonfiguruj GitHub PAT, aby włączyć push.';
+        });
+      }
+      if (naPatToggle && naPatInput) {
+        naPatToggle.addEventListener('click', function() {
+          naPatInput.type = naPatInput.type === 'password' ? 'text' : 'password';
+        });
+      }
+      if (naRepoInput) {
+        naRepoInput.addEventListener('change', function() {
+          var cfg = _naGetSettings();
+          cfg.repo = naRepoInput.value.trim() || 'i24dev/i24_analytics';
+          _naSaveSettings(cfg);
+        });
+      }
     })();
 
     document.getElementById('b24t-theme-track')?.addEventListener('click', function() {

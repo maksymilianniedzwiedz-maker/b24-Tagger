@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.68",
+    "date": "2026-04-26",
+    "label": "feature",
+    "changes": [
+      "analytics: News — sekcja NEWS ANALYTICS: popup zgody, _naRecord, _naNewSession, _naFlushSkipped, _naFinalizeSession; hooki danych (added/skipped/duplicate/error/manual_add); visibilitychange + auto-flush co 5 min"
+    ]
+  },
+  {
     "version": "0.23.67",
     "date": "2026-04-25",
     "label": "ux",

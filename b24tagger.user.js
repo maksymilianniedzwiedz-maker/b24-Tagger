@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.71
+// @version      0.23.72
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.71';
+  const VERSION = '0.23.72';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8068,6 +8068,32 @@ function showOnboarding(onComplete) {
     ].join('');
   }
 
+  function _naExportCsv() {
+    var allRecords = lsGet(LS.NA_RECORDS, []).slice();
+    var pending = lsGet(LS.NA_PENDING, []);
+    pending.forEach(function(item) {
+      if (item.sessionData && item.sessionData.records) allRecords = allRecords.concat(item.sessionData.records);
+    });
+    var headers = ['date','country','projectId','scanStatus','score','chipCount','secondaryZone','pageType','lang','isStale','isPaywall','wordCount','aiStatus','aiRelevant','outcome'];
+    var csv = [headers].concat(allRecords.map(function(r) {
+      return headers.map(function(k) { return '"' + String(r[k] == null ? '' : r[k]).replace(/"/g, '""') + '"'; });
+    })).map(function(r) { return r.join(','); }).join('\n');
+    var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = 'b24t_news_analytics_' + _localDateStr(new Date()) + '.csv';
+    a.click(); URL.revokeObjectURL(url);
+  }
+
+  function _naExportJson(filters) {
+    var data = _naCompute(filters || {});
+    var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = 'b24t_news_stats_' + _localDateStr(new Date()) + '.json';
+    a.click(); URL.revokeObjectURL(url);
+  }
+
   // ── NEWS AI SCORING ──
 
   function _newsAiGetBrandCtx(projectId) {
@@ -8778,6 +8804,8 @@ function showOnboarding(onComplete) {
         '<select id="b24t-news-stats-country" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';cursor:pointer;">',
           '<option value="">Wszystkie kraje</option>',
         '</select>',
+        '<button id="b24t-news-stats-csv" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textMuted + ';cursor:pointer;" title="Eksportuj surowe rekordy (CSV)">↓ CSV</button>',
+        '<button id="b24t-news-stats-json" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textMuted + ';cursor:pointer;" title="Eksportuj statystyki z aktywnym filtrem (JSON)">↓ JSON</button>',
         '<button id="b24t-news-stats-close" style="background:transparent;border:1px solid ' + t.border + ';color:' + t.textMuted + ';cursor:pointer;font-size:17px;line-height:1;padding:1px 7px;border-radius:5px;">×</button>',
       '</div>',
       '<div id="b24t-news-stats-content"></div>',
@@ -9015,6 +9043,19 @@ function showOnboarding(onComplete) {
     if (statsCloseBtn  && statsOvrl)  statsCloseBtn.addEventListener('click', function() { statsOvrl.style.display = 'none'; });
     if (statsPeriodSel)  statsPeriodSel.addEventListener('change',  _naRefreshStats);
     if (statsCountrySel) statsCountrySel.addEventListener('change', _naRefreshStats);
+    var statsCsvBtn  = document.getElementById('b24t-news-stats-csv');
+    var statsJsonBtn = document.getElementById('b24t-news-stats-json');
+    if (statsCsvBtn)  statsCsvBtn.addEventListener('click', _naExportCsv);
+    if (statsJsonBtn) statsJsonBtn.addEventListener('click', function() {
+      var periodSel  = document.getElementById('b24t-news-stats-period');
+      var countrySel = document.getElementById('b24t-news-stats-country');
+      var days = periodSel ? parseInt(periodSel.value, 10) : 0;
+      var country = countrySel ? countrySel.value : '';
+      var filters = {};
+      if (days > 0) { var d = new Date(); d.setDate(d.getDate() - days); filters.dateFrom = _localDateStr(d); }
+      if (country) filters.country = country;
+      _naExportJson(filters);
+    });
     // Wire Statystyki tab (narrow mode) — tab click shows overlay and populates it
     var statsTabEl = document.querySelector('#b24t-news-tabs [data-tab="stats"]');
     if (statsTabEl) statsTabEl.addEventListener('click', _naDoOpenStats);
@@ -10307,6 +10348,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.72",
+      "date": "2026-04-26",
+      "label": "feature",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "News Analytics — Sesja 5: eksport ↓ CSV (surowe rekordy z LS + pending) i ↓ JSON (output _naCompute z aktywnym filtrem) w zakładce Statystyki"}
+      ]
+    },
+    {
       "version": "0.23.71",
       "date": "2026-04-26",
       "label": "feature",
@@ -10390,15 +10440,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "cross-delete: przycisk 'Usuń z wszystkich projektów' nie reagował — błąd _tagCount na obiektach getKnownProjects()"},
         {"type": "fix", "text": "cross-delete: state.status idle przerywał pętlę usuwania po pierwszym batchu"},
         {"type": "fix", "text": "cross-delete: pasek postępu i status aktualizowane podczas usuwania ze wszystkich projektów"}
-      ]
-    },
-    {
-      "version": "0.23.62",
-      "date": "2026-04-24",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "zmniejszenie rozmiaru batcha 500→50 i równoległości 2→4 — fallback przy błędzie batcha teraz na max 50 wzmianek zamiast 500"}
       ]
     },
   ];

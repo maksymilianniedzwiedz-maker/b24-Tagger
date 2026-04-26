@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.71",
+    "date": "2026-04-26",
+    "label": "feature",
+    "changes": [
+      "analytics: News — Sesja 4: zakładka 📊 Statystyki w panelu News (_naRenderStats, _naStatCard, statsOverlay, przycisk 📊 w headerze, zakładka Statystyki w trybie mobilnym, filtry: okres + kraj)"
+    ]
+  },
+  {
     "version": "0.23.70",
     "date": "2026-04-26",
     "label": "feature",

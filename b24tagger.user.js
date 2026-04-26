@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.70
+// @version      0.23.71
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.70';
+  const VERSION = '0.23.71';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7910,6 +7910,164 @@ function showOnboarding(onComplete) {
     };
   }
 
+  function _naStatCard(label, value, sub, t) {
+    return '<div style="flex:1;min-width:100px;padding:10px 14px;border-radius:9px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';">' +
+      '<div style="font-size:9px;font-weight:700;color:' + t.textMuted + ';letter-spacing:0.06em;margin-bottom:4px;">' + label.toUpperCase() + '</div>' +
+      '<div style="font-size:20px;font-weight:700;color:' + t.text + ';line-height:1.2;">' + value + '</div>' +
+      '<div style="font-size:9px;color:' + t.textFaint + ';margin-top:2px;">' + sub + '</div>' +
+    '</div>';
+  }
+
+  function _naRenderStats(container, filters) {
+    var t = _newsThemeVars();
+    var data = _naCompute(filters || {});
+    var sc = data.scanner;
+    var ai = data.ai;
+    var sess = data.sessions;
+    var meta = data.meta;
+
+    function pct(v) { return v === null ? '—' : Math.round(v * 100) + '%'; }
+    function precBar(v, color) {
+      var w = v === null ? 0 : Math.round(v * 100);
+      return '<div style="height:5px;border-radius:3px;background:' + t.bgDeep + ';overflow:hidden;flex:1;min-width:60px;">' +
+        '<div style="height:5px;width:' + w + '%;background:' + (color || 'var(--b24t-primary)') + ';border-radius:3px;transition:width 0.3s;"></div>' +
+      '</div>';
+    }
+    function statusColor(st) {
+      return st === 'keytopic' ? '#22c55e' : st === 'contentmatch' ? '#818cf8' : st === 'mention' ? '#fb923c' : '#6b7280';
+    }
+    function statusLabel(st) {
+      return st === 'keytopic' ? 'Główny temat' : st === 'contentmatch' ? 'W treści' : st === 'mention' ? 'Wzmianka' : 'URL match';
+    }
+
+    if (meta.recordCount === 0) {
+      container.innerHTML = '<div style="padding:40px;text-align:center;">' +
+        '<div style="font-size:32px;margin-bottom:10px;">📊</div>' +
+        '<div style="font-size:13px;font-weight:600;color:' + t.text + ';margin-bottom:6px;">Brak danych</div>' +
+        '<div style="font-size:11px;color:' + t.textFaint + ';line-height:1.8;">Przeskanuj URLe i dodaj wzmianki, żeby zbierać metryki.<br>Upewnij się że Analityka jest włączona w <strong>⚙ Ustawieniach</strong>.</div>' +
+      '</div>';
+      return;
+    }
+
+    var statusRows = ['keytopic', 'contentmatch', 'mention', 'match'].map(function(st) {
+      var cm = sc.byStatus[st];
+      var total = cm.tp + cm.fp;
+      return '<tr style="border-top:1px solid ' + t.borderSub + ';">' +
+        '<td style="padding:6px 8px;">' +
+          '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:' + statusColor(st) + ';margin-right:6px;vertical-align:middle;"></span>' +
+          '<span style="font-size:11px;font-weight:600;color:' + t.text + ';">' + statusLabel(st) + '</span>' +
+        '</td>' +
+        '<td style="padding:6px 8px;text-align:center;font-size:11px;font-weight:600;color:#22c55e;">' + cm.tp + '</td>' +
+        '<td style="padding:6px 8px;text-align:center;font-size:11px;font-weight:600;color:#ef4444;">' + cm.fp + '</td>' +
+        '<td style="padding:6px 8px;width:120px;">' + (total > 0 ? precBar(cm.precision, statusColor(st)) : '') + '</td>' +
+        '<td style="padding:6px 12px 6px 4px;text-align:right;font-size:12px;font-weight:700;color:' + t.text + ';">' + pct(cm.precision) + '</td>' +
+      '</tr>';
+    }).join('');
+
+    function signalBadge(label, cm) {
+      var total = cm.tp + cm.fp;
+      return '<div style="flex:1;min-width:80px;display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';">' +
+        '<span style="font-size:9px;font-weight:700;color:' + t.textMuted + ';letter-spacing:0.06em;">' + label.toUpperCase() + '</span>' +
+        '<span style="font-size:18px;font-weight:700;color:' + t.text + ';line-height:1.2;">' + (total > 0 ? pct(cm.precision) : '—') + '</span>' +
+        '<span style="font-size:9px;color:' + t.textFaint + ';">n=' + total + '</span>' +
+      '</div>';
+    }
+
+    function scoreRow(label, d) {
+      var total = d.lt5 + d.mid + d.hi;
+      function sw(v) { return total > 0 ? (v / total * 100).toFixed(1) : '0'; }
+      return '<div style="display:flex;align-items:center;gap:8px;">' +
+        '<span style="font-size:10px;color:' + t.textMuted + ';width:64px;flex-shrink:0;">' + label + '</span>' +
+        '<div style="flex:1;display:flex;height:14px;border-radius:4px;overflow:hidden;">' +
+          '<div style="width:' + sw(d.lt5) + '%;background:#6b7280;" title="0–4: ' + d.lt5 + '"></div>' +
+          '<div style="width:' + sw(d.mid) + '%;background:#818cf8;" title="5–11: ' + d.mid + '"></div>' +
+          '<div style="width:' + sw(d.hi)  + '%;background:#22c55e;" title="12+: '  + d.hi  + '"></div>' +
+        '</div>' +
+        '<span style="font-size:9px;color:' + t.textFaint + ';flex-shrink:0;white-space:nowrap;">0–4: ' + d.lt5 + ' · 5–11: ' + d.mid + ' · 12+: ' + d.hi + '</span>' +
+      '</div>';
+    }
+
+    var aiTotal = ai.tp + ai.fp + ai.tn + ai.fn;
+    var hasAi = aiTotal > 0;
+    var sec = 'margin-bottom:16px;';
+    var hd  = 'font-size:10px;font-weight:700;color:' + t.textMuted + ';letter-spacing:0.06em;margin-bottom:6px;';
+
+    container.innerHTML = [
+      '<div style="' + sec + 'display:flex;gap:8px;flex-wrap:wrap;">',
+        _naStatCard('Precision skanera', pct(sc.precision), 'n=' + (sc.tp + sc.fp), t),
+        _naStatCard('Dodane łącznie', String(sc.tp), 'z pozytywnych URL', t),
+        _naStatCard('Rekordy w bazie', String(meta.recordCount), meta.dateRange ? meta.dateRange.from + ' – ' + meta.dateRange.to : '—', t),
+        _naStatCard('Sesje', String(sess.total), 'śr. ' + Math.round(sess.avgDuration_s / 60) + ' min', t),
+      '</div>',
+
+      '<div style="' + sec + '">',
+        '<div style="' + hd + '">SKANER — precision per status</div>',
+        '<div style="border:1px solid ' + t.borderSub + ';border-radius:8px;overflow:hidden;">',
+        '<table style="width:100%;border-collapse:collapse;">',
+          '<thead><tr style="background:' + t.bgDeep + ';">',
+            '<th style="text-align:left;font-size:9px;font-weight:700;color:' + t.textFaint + ';padding:5px 8px;letter-spacing:0.06em;">STATUS</th>',
+            '<th style="text-align:center;font-size:9px;font-weight:700;color:#22c55e;padding:5px 8px;">TP</th>',
+            '<th style="text-align:center;font-size:9px;font-weight:700;color:#ef4444;padding:5px 8px;">FP</th>',
+            '<th style="padding:5px 8px;"></th>',
+            '<th style="text-align:right;font-size:9px;font-weight:700;color:' + t.textFaint + ';padding:5px 12px;">PRECISION</th>',
+          '</tr></thead>',
+          '<tbody>' + statusRows + '</tbody>',
+        '</table>',
+        '</div>',
+      '</div>',
+
+      '<div style="' + sec + '">',
+        '<div style="' + hd + '">SYGNAŁY — wpływ na precision</div>',
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;">',
+          signalBadge('Paywall', sc.bySignal.paywall),
+          signalBadge('Stale', sc.bySignal.stale),
+          signalBadge('Non-art.', sc.bySignal.nonArticle),
+          signalBadge('Strefa boczna', sc.bySignal.secondaryZone),
+        '</div>',
+        sc.manualAddCount > 0 ? '<div style="margin-top:6px;font-size:10px;color:' + t.textMuted + ';">+ ' + sc.manualAddCount + ' manual_add (FN proxy)</div>' : '',
+      '</div>',
+
+      '<div style="' + sec + '">',
+        '<div style="' + hd + '">ROZKŁAD SCORE</div>',
+        '<div style="display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';">',
+          scoreRow('Dodane', sc.scoreDistrib.added),
+          scoreRow('Pominięte', sc.scoreDistrib.skipped),
+          '<div style="font-size:9px;color:' + t.textFaint + ';margin-top:2px;"><span style="color:#6b7280;">■</span> 0–4 &nbsp;<span style="color:#818cf8;">■</span> 5–11 &nbsp;<span style="color:#22c55e;">■</span> 12+</div>',
+        '</div>',
+      '</div>',
+
+      hasAi ? [
+        '<div style="' + sec + '">',
+          '<div style="' + hd + '">AI — confusion matrix (' + aiTotal + ' rekordów)</div>',
+          '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">',
+            _naStatCard('Precision AI', pct(ai.precision), 'TP=' + ai.tp + ' FP=' + ai.fp, t),
+            _naStatCard('Recall AI', pct(ai.recall), 'TP=' + ai.tp + ' FN=' + ai.fn, t),
+            _naStatCard('Accuracy AI', pct(ai.accuracy), 'n=' + aiTotal, t),
+          '</div>',
+          '<div style="font-size:10px;color:' + t.textMuted + ';line-height:1.8;">' +
+            'Override AI=false: <strong style="color:' + t.text + ';">' + ai.fn + '</strong> (' + pct(ai.overrideRate) + ')' +
+            ' &nbsp;·&nbsp; ' +
+            'Błędy AI: <strong style="color:' + t.text + ';">' + pct(ai.errorRate) + '</strong>' +
+          '</div>',
+        '</div>',
+      ].join('') : '<div style="' + sec + 'font-size:10px;color:' + t.textFaint + ';padding:4px 0;">Brak danych AI — włącz AI News i przeskanuj URLe.</div>',
+
+      sess.total > 0 ? [
+        '<div style="' + sec + '">',
+          '<div style="' + hd + '">SESJE</div>',
+          '<div style="font-size:11px;color:' + t.textMuted + ';line-height:1.9;padding:8px 12px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';">' +
+            'URLe: <strong style="color:' + t.text + ';">' + sess.totalUrls + '</strong> &nbsp;·&nbsp; ' +
+            'Dodane: <strong style="color:#22c55e;">' + sess.totalAdded + '</strong> &nbsp;·&nbsp; ' +
+            'Pominięte: <strong style="color:' + t.text + ';">' + sess.totalSkipped + '</strong> &nbsp;·&nbsp; ' +
+            'Niedostępne: <strong style="color:' + t.text + ';">' + sess.totalBlocked + '</strong><br>' +
+            'AI włączone: <strong style="color:' + t.text + ';">' + pct(sess.aiEnabledRate) + '</strong> sesji' +
+            (meta.countries.length ? ' &nbsp;·&nbsp; Kraje: <strong style="color:' + t.text + ';">' + meta.countries.join(', ') + '</strong>' : '') +
+          '</div>',
+        '</div>',
+      ].join('') : '',
+    ].join('');
+  }
+
   // ── NEWS AI SCORING ──
 
   function _newsAiGetBrandCtx(projectId) {
@@ -8412,6 +8570,7 @@ function showOnboarding(onComplete) {
       '<span style="font-size:13px;font-weight:700;color:#fff;flex:1;text-shadow:0 1px 3px rgba(0,0,0,0.2);">📰 News</span>',
       _aiChipHtml,
       '<button id="b24t-news-legend-btn" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:12px;font-weight:700;padding:3px 8px;border-radius:6px;flex-shrink:0;" title="Legenda oznaczeń">?</button>',
+      '<button id="b24t-news-stats-btn" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:12px;font-weight:600;padding:3px 8px;border-radius:6px;flex-shrink:0;" title="Statystyki skanowania">📊</button>',
       '<button id="b24t-news-langmap-btn" style="background:rgba(255,255,255,0.20);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:11px;padding:3px 9px;border-radius:6px;flex-shrink:0;" title="Mapa języków">⚙ Języki</button>',
       '<button id="b24t-news-modal-open-btn" style="background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.55);color:#fff;cursor:pointer;font-size:12px;font-weight:700;padding:5px 14px;border-radius:7px;flex-shrink:0;letter-spacing:0.01em;">+ Importuj URLe</button>',
       '<span id="b24t-news-cms-dot" class="b24t-cms-checking" style="font-size:11px;font-weight:700;flex-shrink:0;cursor:default;color:rgba(255,255,255,0.5);" title="Sprawdzanie CMS...">● CMS</span>',
@@ -8426,6 +8585,7 @@ function showOnboarding(onComplete) {
       '<button class="b24t-news-tab b24t-news-tab-active" data-tab="list" style="padding:8px 16px;border:none;background:transparent;font-size:12px;font-weight:600;color:var(--b24t-primary);cursor:pointer;border-bottom:2px solid var(--b24t-primary);">Lista</button>',
       '<button class="b24t-news-tab" data-tab="preview" style="padding:8px 16px;border:none;background:transparent;font-size:12px;font-weight:500;color:' + t.textMuted + ';cursor:pointer;border-bottom:2px solid transparent;">Podgląd</button>',
       '<button class="b24t-news-tab" data-tab="form" style="padding:8px 16px;border:none;background:transparent;font-size:12px;font-weight:500;color:' + t.textMuted + ';cursor:pointer;border-bottom:2px solid transparent;">Formularz</button>',
+      '<button class="b24t-news-tab" data-tab="stats" style="padding:8px 16px;border:none;background:transparent;font-size:12px;font-weight:500;color:' + t.textMuted + ';cursor:pointer;border-bottom:2px solid transparent;">Statystyki</button>',
     ].join('');
 
     // Columns container
@@ -8602,10 +8762,32 @@ function showOnboarding(onComplete) {
       }).join('') +
       '</div>';
 
+    // Stats overlay — full-panel, z-index:10, shown by 📊 button or Statystyki tab
+    var statsOverlay = document.createElement('div');
+    statsOverlay.id = 'b24t-news-stats-overlay';
+    statsOverlay.style.cssText = 'display:none;position:absolute;inset:0;z-index:10;background:' + t.bg + ';border-radius:16px;overflow-y:auto;padding:20px 24px;color:' + t.text + ';';
+    statsOverlay.innerHTML = [
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap;">',
+        '<span style="font-size:14px;font-weight:700;color:' + t.text + ';flex:1;">📊 Statystyki skanowania</span>',
+        '<select id="b24t-news-stats-period" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';cursor:pointer;">',
+          '<option value="7">Ostatnie 7 dni</option>',
+          '<option value="30">Ostatnie 30 dni</option>',
+          '<option value="90" selected>Ostatnie 90 dni</option>',
+          '<option value="0">Wszystko</option>',
+        '</select>',
+        '<select id="b24t-news-stats-country" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';cursor:pointer;">',
+          '<option value="">Wszystkie kraje</option>',
+        '</select>',
+        '<button id="b24t-news-stats-close" style="background:transparent;border:1px solid ' + t.border + ';color:' + t.textMuted + ';cursor:pointer;font-size:17px;line-height:1;padding:1px 7px;border-radius:5px;">×</button>',
+      '</div>',
+      '<div id="b24t-news-stats-content"></div>',
+    ].join('');
+
     panelMain.appendChild(header);
     panelMain.appendChild(tabsBar);
     panelMain.appendChild(cols);
     panelMain.appendChild(legendOverlay);
+    panelMain.appendChild(statsOverlay);
     overlay.appendChild(panelMain);
     document.body.appendChild(overlay);
 
@@ -8625,9 +8807,12 @@ function showOnboarding(onComplete) {
       } else {
         var activeTab = tabsBar.querySelector('.b24t-news-tab-active');
         var activeTabName = activeTab ? activeTab.dataset.tab : 'list';
+        var isStats = activeTabName === 'stats';
         colList.style.display = activeTabName === 'list' ? 'flex' : 'none';
         colPreview.style.display = activeTabName === 'preview' ? 'flex' : 'none';
         colForm.style.display = activeTabName === 'form' ? 'flex' : 'none';
+        var _sOvrl = document.getElementById('b24t-news-stats-overlay');
+        if (_sOvrl) _sOvrl.style.display = isStats ? '' : 'none';
         colList.style.width = '100%';
         colPreview.style.width = '100%';
         colForm.style.width = '100%';
@@ -8779,11 +8964,60 @@ function showOnboarding(onComplete) {
     var legendOvrl  = document.getElementById('b24t-news-legend-overlay');
     var legendClose = document.getElementById('b24t-news-legend-close');
     if (legendBtn && legendOvrl) {
-      legendBtn.addEventListener('click', function() { legendOvrl.style.display = legendOvrl.style.display === 'none' ? '' : 'none'; });
+      legendBtn.addEventListener('click', function() {
+        var open = legendOvrl.style.display === 'none';
+        legendOvrl.style.display = open ? '' : 'none';
+        if (open) { var _so = document.getElementById('b24t-news-stats-overlay'); if (_so) _so.style.display = 'none'; }
+      });
     }
     if (legendClose && legendOvrl) {
       legendClose.addEventListener('click', function() { legendOvrl.style.display = 'none'; });
     }
+
+    // ─── STATS BUTTON ───
+    var statsBtn  = document.getElementById('b24t-news-stats-btn');
+    var statsOvrl = document.getElementById('b24t-news-stats-overlay');
+    function _naDoOpenStats() {
+      var allData = _naCompute({});
+      var countrySel = document.getElementById('b24t-news-stats-country');
+      if (countrySel && allData.meta.countries.length) {
+        var existing = [];
+        for (var _oi = 0; _oi < countrySel.options.length; _oi++) existing.push(countrySel.options[_oi].value);
+        allData.meta.countries.forEach(function(c) {
+          if (existing.indexOf(c) < 0) { var o = document.createElement('option'); o.value = c; o.text = c; countrySel.appendChild(o); }
+        });
+      }
+      _naRefreshStats();
+    }
+    function _naRefreshStats() {
+      var contentEl  = document.getElementById('b24t-news-stats-content');
+      if (!contentEl) return;
+      var periodSel  = document.getElementById('b24t-news-stats-period');
+      var countrySel = document.getElementById('b24t-news-stats-country');
+      var days = periodSel ? parseInt(periodSel.value, 10) : 0;
+      var country = countrySel ? countrySel.value : '';
+      var filters = {};
+      if (days > 0) { var d = new Date(); d.setDate(d.getDate() - days); filters.dateFrom = _localDateStr(d); }
+      if (country) filters.country = country;
+      _naRenderStats(contentEl, filters);
+    }
+    if (statsBtn && statsOvrl) {
+      statsBtn.addEventListener('click', function() {
+        if (statsOvrl.style.display !== 'none') { statsOvrl.style.display = 'none'; return; }
+        var _lo = document.getElementById('b24t-news-legend-overlay'); if (_lo) _lo.style.display = 'none';
+        _naDoOpenStats();
+        statsOvrl.style.display = '';
+      });
+    }
+    var statsCloseBtn  = document.getElementById('b24t-news-stats-close');
+    var statsPeriodSel = document.getElementById('b24t-news-stats-period');
+    var statsCountrySel = document.getElementById('b24t-news-stats-country');
+    if (statsCloseBtn  && statsOvrl)  statsCloseBtn.addEventListener('click', function() { statsOvrl.style.display = 'none'; });
+    if (statsPeriodSel)  statsPeriodSel.addEventListener('change',  _naRefreshStats);
+    if (statsCountrySel) statsCountrySel.addEventListener('change', _naRefreshStats);
+    // Wire Statystyki tab (narrow mode) — tab click shows overlay and populates it
+    var statsTabEl = document.querySelector('#b24t-news-tabs [data-tab="stats"]');
+    if (statsTabEl) statsTabEl.addEventListener('click', _naDoOpenStats);
 
     // ─── LANG MAP BUTTON ───
     var langMapBtn = document.getElementById('b24t-news-langmap-btn');
@@ -10073,6 +10307,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.71",
+      "date": "2026-04-26",
+      "label": "feature",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "News Analytics — zakładka 📊 Statystyki w panelu News: _naRenderStats, _naStatCard, statsOverlay, przycisk 📊 w headerze, zakładka Statystyki w trybie mobilnym, filtry okres + kraj"}
+      ]
+    },
+    {
       "version": "0.23.70",
       "date": "2026-04-26",
       "label": "feature",
@@ -10156,18 +10399,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "zmniejszenie rozmiaru batcha 500→50 i równoległości 2→4 — fallback przy błędzie batcha teraz na max 50 wzmianek zamiast 500"}
-      ]
-    },
-    {
-      "version": "0.23.61",
-      "date": "2026-04-24",
-      "label": "feature",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "multi-projektowe tagowanie z pliku — kolumna project_id/projekt_id"},
-        {"type": "feat", "text": "widget 'Wykryte projekty' — zielony ✓ / czerwony ✕, blokada Start dla nieznanych projektów"},
-        {"type": "feat", "text": "mapowanie po nazwie tagu — tagId rozwiązywany per projekt; ostrzeżenie gdy tag brak"},
-        {"type": "feat", "text": "sekwencyjny run per projekt z osobnymi logami i zbiorczym raportem"}
       ]
     },
   ];

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.72
+// @version      0.23.73
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.72';
+  const VERSION = '0.23.73';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -10348,6 +10348,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.73",
+      "date": "2026-04-26",
+      "label": "ux",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "ux", "text": "przycisk 'Testuj połączenie' w ⚙ Analityka — weryfikuje PAT i uprawnienia do zapisu w repo GitHub (✓ OK / ✗ 401 / ✗ 404 / ⚠ brak uprawnień)"}
+      ]
+    },
+    {
       "version": "0.23.72",
       "date": "2026-04-26",
       "label": "feature",
@@ -10429,17 +10438,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "News — skanowanie zatrzymywało się w połowie (try/catch w _scanWorker)"},
         {"type": "fix", "text": "News — kliknięcie rich card zawieszało UI (infinite loop: stary iframe onload triggerował _iframeFallback przy src='')"},
         {"type": "perf", "text": "News — concurrency skanowania 5→8, timeout 8→5s"}
-      ]
-    },
-    {
-      "version": "0.23.63",
-      "date": "2026-04-24",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "cross-delete: przycisk 'Usuń z wszystkich projektów' nie reagował — błąd _tagCount na obiektach getKnownProjects()"},
-        {"type": "fix", "text": "cross-delete: state.status idle przerywał pętlę usuwania po pierwszym batchu"},
-        {"type": "fix", "text": "cross-delete: pasek postępu i status aktualizowane podczas usuwania ze wszystkich projektów"}
       ]
     },
   ];
@@ -11280,6 +11278,10 @@ function showOnboarding(onComplete) {
           '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">Repozytorium:</span>' +
           '<input type="text" id="b24t-na-repo" autocomplete="off" spellcheck="false" placeholder="i24dev/i24_analytics" style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:monospace;">' +
         '</div>' +
+        '<div style="display:flex;align-items:center;gap:6px;margin-top:8px;">' +
+          '<button id="b24t-na-test" style="font-size:11px;padding:4px 10px;border-radius:7px;border:1px solid var(--b24t-border);background:transparent;color:var(--b24t-text-muted);cursor:pointer;">Testuj połączenie</button>' +
+          '<span id="b24t-na-test-result" style="font-size:10px;"></span>' +
+        '</div>' +
         '<div id="b24t-na-status" style="font-size:10px;color:var(--b24t-text-faint);margin-top:6px;">' + _naStatusStr + '</div>' +
       '</div>';
 
@@ -11450,6 +11452,48 @@ function showOnboarding(onComplete) {
           var cfg = _naGetSettings();
           cfg.repo = naRepoInput.value.trim() || 'i24dev/i24_analytics';
           _naSaveSettings(cfg);
+        });
+      }
+      var naTestBtn    = document.getElementById('b24t-na-test');
+      var naTestResult = document.getElementById('b24t-na-test-result');
+      if (naTestBtn) {
+        naTestBtn.addEventListener('click', function() {
+          var pat  = (naPatInput  ? naPatInput.value.trim()  : '') || _naGetSettings().pat  || '';
+          var repo = (naRepoInput ? naRepoInput.value.trim() : '') || _naGetSettings().repo || 'i24dev/i24_analytics';
+          if (!pat) { if (naTestResult) { naTestResult.textContent = '✗ Brak PAT'; naTestResult.style.color = '#f87171'; } return; }
+          if (naTestBtn) { naTestBtn.disabled = true; naTestBtn.textContent = '⏳ Sprawdzam…'; }
+          if (naTestResult) { naTestResult.textContent = ''; }
+          GM_xmlhttpRequest({
+            method: 'GET',
+            url: 'https://api.github.com/repos/' + repo,
+            headers: { 'Authorization': 'token ' + pat, 'Accept': 'application/vnd.github.v3+json' },
+            onload: function(r) {
+              naTestBtn.disabled = false; naTestBtn.textContent = 'Testuj połączenie';
+              if (r.status === 200) {
+                try {
+                  var data = JSON.parse(r.responseText);
+                  var canPush = data.permissions && (data.permissions.push || data.permissions.admin);
+                  if (canPush) {
+                    naTestResult.textContent = '✓ OK — dostęp do zapisu';
+                    naTestResult.style.color = '#22c55e';
+                  } else {
+                    naTestResult.textContent = '⚠ Repo znalezione, brak uprawnień do zapisu';
+                    naTestResult.style.color = '#fb923c';
+                  }
+                } catch(e) { naTestResult.textContent = '✓ OK — połączenie działa'; naTestResult.style.color = '#22c55e'; }
+              } else if (r.status === 401) {
+                naTestResult.textContent = '✗ Błąd 401 — zły PAT'; naTestResult.style.color = '#f87171';
+              } else if (r.status === 404) {
+                naTestResult.textContent = '✗ Błąd 404 — nie znaleziono repo'; naTestResult.style.color = '#f87171';
+              } else {
+                naTestResult.textContent = '✗ Błąd ' + r.status; naTestResult.style.color = '#f87171';
+              }
+            },
+            onerror: function() {
+              naTestBtn.disabled = false; naTestBtn.textContent = 'Testuj połączenie';
+              naTestResult.textContent = '✗ Brak połączenia'; naTestResult.style.color = '#f87171';
+            }
+          });
         });
       }
     })();

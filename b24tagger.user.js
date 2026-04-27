@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.73
+// @version      0.23.74
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.73';
+  const VERSION = '0.23.74';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7055,7 +7055,19 @@ function showOnboarding(onComplete) {
   //   teasermatch → 0 pkt     (keyword tylko w sekcji polecanych artykułów, nie w głównej treści)
 
   var NEWS_CONTENT_SCAN_CONCURRENCY = 8;
-  var NEWS_CONTENT_SCAN_TIMEOUT_MS  = 8000;
+  var NEWS_CONTENT_SCAN_TIMEOUT_MS  = 8000; // minimum / fallback
+  var _scanTimings = []; // sliding window: czasy udanych skanów (ms), max 20
+
+  function _getAdaptiveScanTimeout() {
+    if (_scanTimings.length < 4) return NEWS_CONTENT_SCAN_TIMEOUT_MS;
+    var sorted = _scanTimings.slice().sort(function(a, b) { return a - b; });
+    var p90 = sorted[Math.floor(sorted.length * 0.9)];
+    return Math.max(NEWS_CONTENT_SCAN_TIMEOUT_MS, Math.min(p90 * 2, 40000));
+  }
+  function _recordScanTiming(ms) {
+    _scanTimings.push(ms);
+    if (_scanTimings.length > 20) _scanTimings.shift();
+  }
 
   var NEWS_NOISE_SELECTORS = [
     'script','style','noscript','svg','iframe',
@@ -8215,77 +8227,93 @@ function showOnboarding(onComplete) {
 
   // Pobiera stronę przez GM_xmlhttpRequest (pomija CORS) i skanuje jej treść.
   // Dla URL-i które już mają status 'match' nie wywołuj tej funkcji — jest zbędna.
+  // Timeout jest adaptacyjny: rośnie na podstawie historii udanych skanów (p90 * 2, min 8s, max 40s).
+  // Przy pierwszym timeout: jeden retry z 2× timeout. onerror → blocked bez retry (prawdziwy block).
   function _newsContentScan(url, chips) {
     return new Promise(function(resolve) {
       var resolved = false;
-      function _done(result) {
-        if (!resolved) { resolved = true; resolve(result); }
+      var _scanStart = Date.now();
+
+      function _done(result, _success) {
+        if (!resolved) {
+          resolved = true;
+          if (_success) _recordScanTiming(Date.now() - _scanStart);
+          resolve(result);
+        }
       }
 
-      // Zewnętrzny timeout — ochrona gdyby GM_xmlhttpRequest nie wywołał żadnego callbacku
-      var timer = setTimeout(function() {
-        _done({ status: 'blocked', score: 0, snippet: '' });
-      }, NEWS_CONTENT_SCAN_TIMEOUT_MS + 500);
+      function _attempt(timeoutMs, isRetry) {
+        // Zewnętrzny timer — ochrona gdyby GM_xmlhttpRequest nie wywołał żadnego callbacku
+        var timer = setTimeout(function() {
+          _done({ status: 'blocked', score: 0, snippet: '' });
+        }, timeoutMs + 500);
 
-      try {
-        GM_xmlhttpRequest({
-          method:  'GET',
-          url:     url,
-          headers: { 'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8' },
-          timeout: NEWS_CONTENT_SCAN_TIMEOUT_MS,
-          onload: function(resp) {
-            clearTimeout(timer);
-            try {
-              if (resp.status < 200 || resp.status >= 400) {
-                _done({ status: 'blocked', score: 0, snippet: '' });
-                return;
-              }
-              // Odrzuć non-HTML (PDFy, obrazy, feed XML itp.)
-              var ct = (resp.responseHeaders || '').toLowerCase();
-              var isHtml = ct.indexOf('content-type: text/html') !== -1 ||
-                           ct.indexOf('content-type: application/xhtml') !== -1;
-              // Fallback: jeśli brak nagłówka content-type, sprawdź czy odpowiedź zaczyna się od '<'
-              if (!isHtml && (resp.responseText || '').trimStart().charAt(0) !== '<') {
-                _done({ status: 'nomatch', score: 0, snippet: '' });
-                return;
-              }
-              // Iframeable — X-Frame-Options lub CSP frame-ancestors
-              var _rh = ct; // już lowercase
-              var _iframeable = true;
-              var _xfoM = _rh.match(/x-frame-options:\s*([a-z\-]+)/);
-              if (_xfoM && (_xfoM[1] === 'deny' || _xfoM[1] === 'sameorigin')) _iframeable = false;
-              if (_iframeable) {
-                var _cspIdx = _rh.indexOf('content-security-policy:');
-                if (_cspIdx !== -1) {
-                  var _cspEnd = _rh.indexOf('\n', _cspIdx);
-                  var _cspLine = _cspEnd !== -1 ? _rh.slice(_cspIdx, _cspEnd) : _rh.slice(_cspIdx);
-                  var _faIdx = _cspLine.indexOf('frame-ancestors');
-                  if (_faIdx !== -1) {
-                    var _faVal = _cspLine.slice(_faIdx + 15).replace(/^\s+/, '').split(';')[0];
-                    if (_faVal.indexOf('*') === -1) _iframeable = false;
+        try {
+          GM_xmlhttpRequest({
+            method:  'GET',
+            url:     url,
+            headers: { 'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8' },
+            timeout: timeoutMs,
+            onload: function(resp) {
+              clearTimeout(timer);
+              try {
+                if (resp.status < 200 || resp.status >= 400) {
+                  _done({ status: 'blocked', score: 0, snippet: '' });
+                  return;
+                }
+                // Odrzuć non-HTML (PDFy, obrazy, feed XML itp.)
+                var ct = (resp.responseHeaders || '').toLowerCase();
+                var isHtml = ct.indexOf('content-type: text/html') !== -1 ||
+                             ct.indexOf('content-type: application/xhtml') !== -1;
+                // Fallback: jeśli brak nagłówka content-type, sprawdź czy odpowiedź zaczyna się od '<'
+                if (!isHtml && (resp.responseText || '').trimStart().charAt(0) !== '<') {
+                  _done({ status: 'nomatch', score: 0, snippet: '' });
+                  return;
+                }
+                // Iframeable — X-Frame-Options lub CSP frame-ancestors
+                var _rh = ct; // już lowercase
+                var _iframeable = true;
+                var _xfoM = _rh.match(/x-frame-options:\s*([a-z\-]+)/);
+                if (_xfoM && (_xfoM[1] === 'deny' || _xfoM[1] === 'sameorigin')) _iframeable = false;
+                if (_iframeable) {
+                  var _cspIdx = _rh.indexOf('content-security-policy:');
+                  if (_cspIdx !== -1) {
+                    var _cspEnd = _rh.indexOf('\n', _cspIdx);
+                    var _cspLine = _cspEnd !== -1 ? _rh.slice(_cspIdx, _cspEnd) : _rh.slice(_cspIdx);
+                    var _faIdx = _cspLine.indexOf('frame-ancestors');
+                    if (_faIdx !== -1) {
+                      var _faVal = _cspLine.slice(_faIdx + 15).replace(/^\s+/, '').split(';')[0];
+                      if (_faVal.indexOf('*') === -1) _iframeable = false;
+                    }
                   }
                 }
+                var _sr = _newsParseContent(resp.responseText, chips);
+                _sr.iframeable = _iframeable;
+                _done(_sr, true);
+              } catch(e) {
+                _done({ status: 'blocked', score: 0, snippet: '' });
               }
-              var _sr = _newsParseContent(resp.responseText, chips);
-              _sr.iframeable = _iframeable;
-              _done(_sr);
-            } catch(e) {
+            },
+            onerror: function() {
+              clearTimeout(timer);
               _done({ status: 'blocked', score: 0, snippet: '' });
-            }
-          },
-          onerror: function() {
-            clearTimeout(timer);
-            _done({ status: 'blocked', score: 0, snippet: '' });
-          },
-          ontimeout: function() {
-            clearTimeout(timer);
-            _done({ status: 'blocked', score: 0, snippet: '' });
-          },
-        });
-      } catch(e) {
-        clearTimeout(timer);
-        _done({ status: 'blocked', score: 0, snippet: '' });
+            },
+            ontimeout: function() {
+              clearTimeout(timer);
+              if (!isRetry) {
+                _attempt(Math.min(timeoutMs * 2, 40000), true);
+              } else {
+                _done({ status: 'blocked', score: 0, snippet: '' });
+              }
+            },
+          });
+        } catch(e) {
+          clearTimeout(timer);
+          _done({ status: 'blocked', score: 0, snippet: '' });
+        }
       }
+
+      _attempt(_getAdaptiveScanTimeout(), false);
     });
   }
 
@@ -10348,6 +10376,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.74",
+      "date": "2026-04-27",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News — adaptacyjny timeout skanowania (p90 historii × 2, min 8s, max 40s) + retry przy timeout zamiast od razu 'zablokowana'"}
+      ]
+    },
+    {
       "version": "0.23.73",
       "date": "2026-04-26",
       "label": "ux",
@@ -10427,17 +10464,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "News — wszystkie artykuły oznaczane jako blocked (timeout przywrócony 5→8s)"},
         {"type": "fix", "text": "News — _newsAiAnalyze wewnątrz try/catch nadpisywało status blocked przy błędzie AI"}
-      ]
-    },
-    {
-      "version": "0.23.64",
-      "date": "2026-04-24",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News — skanowanie zatrzymywało się w połowie (try/catch w _scanWorker)"},
-        {"type": "fix", "text": "News — kliknięcie rich card zawieszało UI (infinite loop: stary iframe onload triggerował _iframeFallback przy src='')"},
-        {"type": "perf", "text": "News — concurrency skanowania 5→8, timeout 8→5s"}
       ]
     },
   ];

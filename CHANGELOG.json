@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.74",
+    "date": "2026-04-27",
+    "label": "fix",
+    "changes": [
+      "fix: News — adaptacyjny timeout skanowania (p90 historii × 2, min 8s, max 40s) + retry przy timeout zamiast od razu 'zablokowana'"
+    ]
+  },
+  {
     "version": "0.23.73",
     "date": "2026-04-26",
     "label": "feature",

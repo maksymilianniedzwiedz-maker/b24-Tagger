@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.23.76",
+    "date": "2026-04-28",
+    "label": "fix",
+    "changes": [
+      "fix: News Analytics — karta 'Pozytywne URL' (n= keytopic+contentmatch+mention+match) oddzielona od 'Rekordy w bazie' (wszystkie rekordy łącznie z blocked/error)",
+      "fix: News Analytics — retry pending sekwencyjny (nie równoległy) — eliminacja race condition SHA 409 przy słabej sieci",
+      "fix: News Analytics — eksport CSV respektuje aktywny filtr okresu/kraju/projektu (analogicznie do eksportu JSON)"
+    ]
+  },
+  {
     "version": "0.23.75",
     "date": "2026-04-28",
     "label": "fix",

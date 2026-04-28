@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.75
+// @version      0.23.76
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.75';
+  const VERSION = '0.23.76';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7759,7 +7759,9 @@ function showOnboarding(onComplete) {
     var pending = lsGet(LS.NA_PENDING, []);
     if (!pending.length) return;
     lsSet(LS.NA_PENDING, []);
-    pending.forEach(function(item) {
+    function retryNext(items, idx) {
+      if (idx >= items.length) return;
+      var item = items[idx];
       _naPushSession(item.sessionData, function(result) {
         if (result !== 'ok') {
           var curr = lsGet(LS.NA_PENDING, []);
@@ -7768,8 +7770,10 @@ function showOnboarding(onComplete) {
             lsSet(LS.NA_PENDING, curr);
           }
         }
+        retryNext(items, idx + 1);
       });
-    });
+    }
+    retryNext(pending, 0);
   }
 
   function _naTryPeriodicPush() {
@@ -7920,16 +7924,17 @@ function showOnboarding(onComplete) {
         aiEnabledRate:  sessN > 0 ? sessAiEnabled / sessN            : null,
       },
       meta: {
-        recordCount: records.length,
-        dateRange:   dates.length ? { from: dates[0], to: dates[dates.length - 1] } : null,
+        recordCount:   records.length,
+        positiveCount: positive.length,
+        dateRange:     dates.length ? { from: dates[0], to: dates[dates.length - 1] } : null,
         countries:   countries,
         projects:    projects,
       },
     };
   }
 
-  function _naStatCard(label, value, sub, t) {
-    return '<div style="flex:1;min-width:100px;padding:10px 14px;border-radius:9px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';">' +
+  function _naStatCard(label, value, sub, t, tip) {
+    return '<div style="flex:1;min-width:100px;padding:10px 14px;border-radius:9px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';"' + (tip ? ' title="' + tip + '"' : '') + '>' +
       '<div style="font-size:9px;font-weight:700;color:' + t.textMuted + ';letter-spacing:0.06em;margin-bottom:4px;">' + label.toUpperCase() + '</div>' +
       '<div style="font-size:20px;font-weight:700;color:' + t.text + ';line-height:1.2;">' + value + '</div>' +
       '<div style="font-size:9px;color:' + t.textFaint + ';margin-top:2px;">' + sub + '</div>' +
@@ -8014,7 +8019,8 @@ function showOnboarding(onComplete) {
       '<div style="' + sec + 'display:flex;gap:8px;flex-wrap:wrap;">',
         _naStatCard('Precision skanera', pct(sc.precision), 'n=' + (sc.tp + sc.fp), t),
         _naStatCard('Dodane łącznie', String(sc.tp), 'z pozytywnych URL', t),
-        _naStatCard('Rekordy w bazie', String(meta.recordCount), meta.dateRange ? meta.dateRange.from + ' – ' + meta.dateRange.to : '—', t),
+        _naStatCard('Pozytywne URL', String(meta.positiveCount), 'keytopic + contentmatch + mention + match', t),
+        _naStatCard('Rekordy w bazie', String(meta.recordCount), meta.dateRange ? meta.dateRange.from + ' – ' + meta.dateRange.to : '—', t, 'Wszystkie rekordy łącznie z blocked, error i manual_add'),
         _naStatCard('Sesje', String(sess.total), 'śr. ' + Math.round(sess.avgDuration_s / 60) + ' min', t),
       '</div>',
 
@@ -8086,12 +8092,22 @@ function showOnboarding(onComplete) {
     ].join('');
   }
 
-  function _naExportCsv() {
+  function _naExportCsv(filters) {
+    var f = filters || {};
     var allRecords = lsGet(LS.NA_RECORDS_ARCHIVE, []).concat(lsGet(LS.NA_RECORDS, []));
     var pending = lsGet(LS.NA_PENDING, []);
     pending.forEach(function(item) {
       if (item.sessionData && item.sessionData.records) allRecords = allRecords.concat(item.sessionData.records);
     });
+    if (f.dateFrom || f.dateTo || f.country || f.projectId) {
+      allRecords = allRecords.filter(function(r) {
+        if (f.dateFrom  && r.date      < f.dateFrom)            return false;
+        if (f.dateTo    && r.date      > f.dateTo)              return false;
+        if (f.country   && r.country   !== f.country)           return false;
+        if (f.projectId && r.projectId !== String(f.projectId)) return false;
+        return true;
+      });
+    }
     var headers = ['date','country','projectId','scanStatus','score','chipCount','secondaryZone','pageType','lang','isStale','isPaywall','wordCount','aiStatus','aiRelevant','outcome'];
     var csv = [headers].concat(allRecords.map(function(r) {
       return headers.map(function(k) { return '"' + String(r[k] == null ? '' : r[k]).replace(/"/g, '""') + '"'; });
@@ -9109,7 +9125,19 @@ function showOnboarding(onComplete) {
     if (statsRefreshBtn) statsRefreshBtn.addEventListener('click',  _naRefreshStats);
     var statsCsvBtn  = document.getElementById('b24t-news-stats-csv');
     var statsJsonBtn = document.getElementById('b24t-news-stats-json');
-    if (statsCsvBtn)  statsCsvBtn.addEventListener('click', _naExportCsv);
+    if (statsCsvBtn) statsCsvBtn.addEventListener('click', function() {
+      var periodSel  = document.getElementById('b24t-news-stats-period');
+      var countrySel = document.getElementById('b24t-news-stats-country');
+      var projectSel = document.getElementById('b24t-news-stats-project');
+      var days = periodSel ? parseInt(periodSel.value, 10) : 0;
+      var country = countrySel ? countrySel.value : '';
+      var projectId = projectSel ? projectSel.value : '';
+      var filters = {};
+      if (days > 0) { var d = new Date(); d.setDate(d.getDate() - days); filters.dateFrom = _localDateStr(d); }
+      if (country) filters.country = country;
+      if (projectId) filters.projectId = projectId;
+      _naExportCsv(filters);
+    });
     if (statsJsonBtn) statsJsonBtn.addEventListener('click', function() {
       var periodSel  = document.getElementById('b24t-news-stats-period');
       var countrySel = document.getElementById('b24t-news-stats-country');
@@ -10415,6 +10443,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.76",
+      "date": "2026-04-28",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News Analytics — karta 'Pozytywne URL' (n= keytopic+contentmatch+mention+match) oddzielona od 'Rekordy w bazie' (wszystkie rekordy łącznie z blocked/error)"},
+        {"type": "fix", "text": "News Analytics — retry pending sekwencyjny zamiast równoległego — eliminacja race condition SHA 409 przy słabej sieci"},
+        {"type": "fix", "text": "News Analytics — eksport ↓ CSV respektuje aktywny filtr okresu/kraju/projektu (analogicznie do eksportu JSON)"}
+      ]
+    },
+    {
       "version": "0.23.75",
       "date": "2026-04-28",
       "label": "fix",
@@ -10495,15 +10534,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#a78bfa",
       "changes": [
         {"type": "ux", "text": "paski progresu (main panel, Quick Delete, Quick Tag, News scan) — płynna animacja RAF-lerp zamiast CSS transition"}
-      ]
-    },
-    {
-      "version": "0.23.66",
-      "date": "2026-04-24",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News — freeze skanowania powracał (_newsAiAnalyze + renderUrlList poza try/catch zabijały workera)"}
       ]
     },
   ];

@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.23.75",
+    "date": "2026-04-28",
+    "label": "fix",
+    "changes": [
+      "fix: News Analytics — statystyki nie znikają po pushu na GitHub (NA_RECORDS_ARCHIVE, bufor 500 rekordów)",
+      "fix: News Analytics — zmiana zakładki przeglądarki nie kończy sesji analitycznej",
+      "ux: News Analytics — filtr per projekt w zakładce Statystyki (domyślnie bieżący projekt) + przycisk 🔄 Odśwież"
+    ]
+  },
+  {
     "version": "0.23.74",
     "date": "2026-04-27",
     "label": "fix",

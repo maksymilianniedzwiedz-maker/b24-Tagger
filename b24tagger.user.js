@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.74
+// @version      0.23.75
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.74';
+  const VERSION = '0.23.75';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -143,10 +143,11 @@
     DEL_BATCH:        'b24tagger_del_batch',
     DEL_BATCH_WARNED: 'b24tagger_del_batch_warned',
     AI_SETTINGS:      'b24t_ai_settings',
-    NA_RECORDS:       'b24t_na_records',
-    NA_PENDING:       'b24t_na_pending',
-    NA_CONSENT:       'b24t_na_consent',
-    NA_SETTINGS:      'b24t_na_settings',
+    NA_RECORDS:         'b24t_na_records',
+    NA_RECORDS_ARCHIVE: 'b24t_na_records_archive',
+    NA_PENDING:         'b24t_na_pending',
+    NA_CONSENT:         'b24t_na_consent',
+    NA_SETTINGS:        'b24t_na_settings',
   };
   const MAX_BATCH_SIZE = 50;
   const DEL_BATCH_DEFAULT = 25; // domyślny batch równoległych deletów (edytowalny w UI)
@@ -7587,8 +7588,8 @@ function showOnboarding(onComplete) {
       if (document.visibilityState === 'hidden' && newsState.sessionId) {
         _naFlushSkipped();
         var _visSD = _naBuildSessionData();
-        _naFinalizeSession();
         _naPushSession(_visSD, null);
+        // Nie finalizujemy sesji — zmiana zakładki nie kończy pracy
       }
     };
     document.addEventListener('visibilitychange', newsState.naVisChangeHandler);
@@ -7735,6 +7736,11 @@ function showOnboarding(onComplete) {
           onload: function(putR) {
             if (putR.status === 200 || putR.status === 201) {
               var upd = _naGetSettings(); upd.lastPush = Date.now(); _naSaveSettings(upd);
+              var _pushed = lsGet(LS.NA_RECORDS, []);
+              if (_pushed.length) {
+                var _arch = lsGet(LS.NA_RECORDS_ARCHIVE, []).concat(_pushed);
+                lsSet(LS.NA_RECORDS_ARCHIVE, _arch.length > 500 ? _arch.slice(-500) : _arch);
+              }
               lsSet(LS.NA_RECORDS, []);
               if (onDone) onDone('ok');
             } else {
@@ -7792,7 +7798,7 @@ function showOnboarding(onComplete) {
 
   function _naCompute(filters) {
     var f = filters || {};
-    var allRecords = lsGet(LS.NA_RECORDS, []).slice();
+    var allRecords = lsGet(LS.NA_RECORDS_ARCHIVE, []).concat(lsGet(LS.NA_RECORDS, []));
     var allSessions = [];
     var pending = lsGet(LS.NA_PENDING, []);
     pending.forEach(function(item) {
@@ -8081,7 +8087,7 @@ function showOnboarding(onComplete) {
   }
 
   function _naExportCsv() {
-    var allRecords = lsGet(LS.NA_RECORDS, []).slice();
+    var allRecords = lsGet(LS.NA_RECORDS_ARCHIVE, []).concat(lsGet(LS.NA_RECORDS, []));
     var pending = lsGet(LS.NA_PENDING, []);
     pending.forEach(function(item) {
       if (item.sessionData && item.sessionData.records) allRecords = allRecords.concat(item.sessionData.records);
@@ -8829,9 +8835,13 @@ function showOnboarding(onComplete) {
           '<option value="90" selected>Ostatnie 90 dni</option>',
           '<option value="0">Wszystko</option>',
         '</select>',
+        '<select id="b24t-news-stats-project" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';cursor:pointer;max-width:140px;">',
+          '<option value="">Wszystkie projekty</option>',
+        '</select>',
         '<select id="b24t-news-stats-country" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';cursor:pointer;">',
           '<option value="">Wszystkie kraje</option>',
         '</select>',
+        '<button id="b24t-news-stats-refresh" style="font-size:13px;padding:2px 7px;border-radius:6px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textMuted + ';cursor:pointer;" title="Odśwież dane">🔄</button>',
         '<button id="b24t-news-stats-csv" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textMuted + ';cursor:pointer;" title="Eksportuj surowe rekordy (CSV)">↓ CSV</button>',
         '<button id="b24t-news-stats-json" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textMuted + ';cursor:pointer;" title="Eksportuj statystyki z aktywnym filtrem (JSON)">↓ JSON</button>',
         '<button id="b24t-news-stats-close" style="background:transparent;border:1px solid ' + t.border + ';color:' + t.textMuted + ';cursor:pointer;font-size:17px;line-height:1;padding:1px 7px;border-radius:5px;">×</button>',
@@ -9043,6 +9053,25 @@ function showOnboarding(onComplete) {
           if (existing.indexOf(c) < 0) { var o = document.createElement('option'); o.value = c; o.text = c; countrySel.appendChild(o); }
         });
       }
+      var projectSel = document.getElementById('b24t-news-stats-project');
+      if (projectSel && allData.meta.projects.length) {
+        var existingP = [];
+        for (var _pi = 0; _pi < projectSel.options.length; _pi++) existingP.push(projectSel.options[_pi].value);
+        allData.meta.projects.forEach(function(pid) {
+          if (existingP.indexOf(pid) < 0) {
+            var o = document.createElement('option');
+            o.value = pid;
+            o.text = _pnResolve(pid) || pid;
+            projectSel.appendChild(o);
+          }
+        });
+        var curPid = String(state.projectId || '');
+        if (curPid && projectSel.value === '') {
+          for (var _qi = 0; _qi < projectSel.options.length; _qi++) {
+            if (projectSel.options[_qi].value === curPid) { projectSel.value = curPid; break; }
+          }
+        }
+      }
       _naRefreshStats();
     }
     function _naRefreshStats() {
@@ -9050,11 +9079,14 @@ function showOnboarding(onComplete) {
       if (!contentEl) return;
       var periodSel  = document.getElementById('b24t-news-stats-period');
       var countrySel = document.getElementById('b24t-news-stats-country');
+      var projectSel = document.getElementById('b24t-news-stats-project');
       var days = periodSel ? parseInt(periodSel.value, 10) : 0;
       var country = countrySel ? countrySel.value : '';
+      var projectId = projectSel ? projectSel.value : '';
       var filters = {};
       if (days > 0) { var d = new Date(); d.setDate(d.getDate() - days); filters.dateFrom = _localDateStr(d); }
       if (country) filters.country = country;
+      if (projectId) filters.projectId = projectId;
       _naRenderStats(contentEl, filters);
     }
     if (statsBtn && statsOvrl) {
@@ -9065,23 +9097,30 @@ function showOnboarding(onComplete) {
         statsOvrl.style.display = '';
       });
     }
-    var statsCloseBtn  = document.getElementById('b24t-news-stats-close');
-    var statsPeriodSel = document.getElementById('b24t-news-stats-period');
+    var statsCloseBtn   = document.getElementById('b24t-news-stats-close');
+    var statsPeriodSel  = document.getElementById('b24t-news-stats-period');
     var statsCountrySel = document.getElementById('b24t-news-stats-country');
-    if (statsCloseBtn  && statsOvrl)  statsCloseBtn.addEventListener('click', function() { statsOvrl.style.display = 'none'; });
+    var statsProjectSel = document.getElementById('b24t-news-stats-project');
+    var statsRefreshBtn = document.getElementById('b24t-news-stats-refresh');
+    if (statsCloseBtn   && statsOvrl)  statsCloseBtn.addEventListener('click', function() { statsOvrl.style.display = 'none'; });
     if (statsPeriodSel)  statsPeriodSel.addEventListener('change',  _naRefreshStats);
     if (statsCountrySel) statsCountrySel.addEventListener('change', _naRefreshStats);
+    if (statsProjectSel) statsProjectSel.addEventListener('change', _naRefreshStats);
+    if (statsRefreshBtn) statsRefreshBtn.addEventListener('click',  _naRefreshStats);
     var statsCsvBtn  = document.getElementById('b24t-news-stats-csv');
     var statsJsonBtn = document.getElementById('b24t-news-stats-json');
     if (statsCsvBtn)  statsCsvBtn.addEventListener('click', _naExportCsv);
     if (statsJsonBtn) statsJsonBtn.addEventListener('click', function() {
       var periodSel  = document.getElementById('b24t-news-stats-period');
       var countrySel = document.getElementById('b24t-news-stats-country');
+      var projectSel = document.getElementById('b24t-news-stats-project');
       var days = periodSel ? parseInt(periodSel.value, 10) : 0;
       var country = countrySel ? countrySel.value : '';
+      var projectId = projectSel ? projectSel.value : '';
       var filters = {};
       if (days > 0) { var d = new Date(); d.setDate(d.getDate() - days); filters.dateFrom = _localDateStr(d); }
       if (country) filters.country = country;
+      if (projectId) filters.projectId = projectId;
       _naExportJson(filters);
     });
     // Wire Statystyki tab (narrow mode) — tab click shows overlay and populates it
@@ -10376,6 +10415,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.75",
+      "date": "2026-04-28",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News Analytics — statystyki nie znikają po pushu na GitHub (NA_RECORDS_ARCHIVE, bufor 500 rekordów)"},
+        {"type": "fix", "text": "News Analytics — zmiana zakładki przeglądarki nie kończy sesji analitycznej"},
+        {"type": "ux", "text": "News Analytics — filtr per projekt w zakładce Statystyki (domyślnie bieżący projekt) + przycisk 🔄 Odśwież"}
+      ]
+    },
+    {
       "version": "0.23.74",
       "date": "2026-04-27",
       "label": "fix",
@@ -10454,16 +10504,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "News — freeze skanowania powracał (_newsAiAnalyze + renderUrlList poza try/catch zabijały workera)"}
-      ]
-    },
-    {
-      "version": "0.23.65",
-      "date": "2026-04-24",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News — wszystkie artykuły oznaczane jako blocked (timeout przywrócony 5→8s)"},
-        {"type": "fix", "text": "News — _newsAiAnalyze wewnątrz try/catch nadpisywało status blocked przy błędzie AI"}
       ]
     },
   ];

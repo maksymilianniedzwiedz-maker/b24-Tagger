@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.78",
+    "date": "2026-04-30",
+    "label": "ux",
+    "changes": [
+      "ux: testowy push zapisuje realistyczne dane analityczne (przykładowa sesja + 5 rekordów z różnymi statusami) zamiast pustego payloadu"
+    ]
+  },
+  {
     "version": "0.23.77",
     "date": "2026-04-30",
     "label": "ux",

@@ -1,7 +1,7 @@
 {
   "_test": true,
-  "_generated": "2026-04-30T07:40:29.559Z",
-  "_version": "0.23.78",
+  "_generated": "2026-04-30T08:16:33.460Z",
+  "_version": "0.23.79",
   "sessions": [
     {
       "date": "2026-04-30",
@@ -9,99 +9,35 @@
       "projectId": "1397336928",
       "sessionId": "test_ses_example",
       "duration_s": 720,
-      "totalUrls": 35,
-      "scannedUrls": 30,
-      "addedCount": 9,
-      "skippedCount": 5,
-      "blockedCount": 2,
-      "aiEnabled": false
-    }
-  ],
-  "records": [
-    {
-      "date": "2026-04-30",
-      "country": "PL",
-      "projectId": "1397336928",
-      "scanStatus": "keytopic",
-      "score": 18,
-      "chipCount": 4,
-      "secondaryZone": false,
-      "pageType": "article",
-      "lang": "pl",
-      "isStale": false,
-      "isPaywall": false,
-      "wordCount": 820,
-      "aiStatus": "",
-      "aiRelevant": false,
-      "outcome": "added"
-    },
-    {
-      "date": "2026-04-30",
-      "country": "PL",
-      "projectId": "1397336928",
-      "scanStatus": "contentmatch",
-      "score": 9,
-      "chipCount": 2,
-      "secondaryZone": false,
-      "pageType": "article",
-      "lang": "pl",
-      "isStale": false,
-      "isPaywall": false,
-      "wordCount": 410,
-      "aiStatus": "",
-      "aiRelevant": false,
-      "outcome": "added"
-    },
-    {
-      "date": "2026-04-30",
-      "country": "PL",
-      "projectId": "1397336928",
-      "scanStatus": "mention",
-      "score": 4,
-      "chipCount": 1,
-      "secondaryZone": true,
-      "pageType": "article",
-      "lang": "pl",
-      "isStale": false,
-      "isPaywall": false,
-      "wordCount": 290,
-      "aiStatus": "",
-      "aiRelevant": false,
-      "outcome": "skipped"
-    },
-    {
-      "date": "2026-04-30",
-      "country": "PL",
-      "projectId": "1397336928",
-      "scanStatus": "keytopic",
-      "score": 14,
-      "chipCount": 3,
-      "secondaryZone": false,
-      "pageType": "article",
-      "lang": "pl",
-      "isStale": false,
-      "isPaywall": true,
-      "wordCount": 600,
-      "aiStatus": "done",
-      "aiRelevant": true,
-      "outcome": "added"
-    },
-    {
-      "date": "2026-04-30",
-      "country": "PL",
-      "projectId": "1397336928",
-      "scanStatus": "match",
-      "score": 3,
-      "chipCount": 1,
-      "secondaryZone": false,
-      "pageType": "nonArticle",
-      "lang": "pl",
-      "isStale": false,
-      "isPaywall": false,
-      "wordCount": 120,
-      "aiStatus": "done",
-      "aiRelevant": false,
-      "outcome": "skipped"
+      "aiEnabled": true,
+      "scanner": {
+        "keytopic": {
+          "added": 5,
+          "skipped": 2
+        },
+        "contentmatch": {
+          "added": 3,
+          "skipped": 1
+        },
+        "mention": {
+          "added": 1,
+          "skipped": 3
+        },
+        "match": {
+          "added": 0,
+          "skipped": 2
+        }
+      },
+      "manual_add": 1,
+      "blocked": 4,
+      "ai": {
+        "tp": 4,
+        "fp": 1,
+        "fn": 1,
+        "tn": 3,
+        "errors": 1,
+        "ran": 10
+      }
     }
   ]
 }

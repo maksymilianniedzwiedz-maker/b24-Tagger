@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.77
+// @version      0.23.78
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.77';
+  const VERSION = '0.23.78';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7806,7 +7806,24 @@ function showOnboarding(onComplete) {
     var path   = 'Tagger/statistics/_test_push.json';
     var apiUrl = 'https://api.github.com/repos/' + repo + '/contents/' + path;
     var auth   = 'token ' + pat;
-    var payload = { test: true, ts: new Date().toISOString(), version: VERSION };
+    var today = _localDateStr(new Date());
+    var country = newsState.detectedCountry || _newsProjectCountry() || 'PL';
+    var projId  = String(state.projectId || '0');
+    var payload = {
+      _test: true,
+      _generated: new Date().toISOString(),
+      _version: VERSION,
+      sessions: [
+        { date: today, country: country, projectId: projId, sessionId: 'test_ses_example', duration_s: 720, totalUrls: 35, scannedUrls: 30, addedCount: 9, skippedCount: 5, blockedCount: 2, aiEnabled: false },
+      ],
+      records: [
+        { date: today, country: country, projectId: projId, scanStatus: 'keytopic',     score: 18, chipCount: 4, secondaryZone: false, pageType: 'article',    lang: 'pl', isStale: false, isPaywall: false, wordCount: 820, aiStatus: '',     aiRelevant: false, outcome: 'added'   },
+        { date: today, country: country, projectId: projId, scanStatus: 'contentmatch', score: 9,  chipCount: 2, secondaryZone: false, pageType: 'article',    lang: 'pl', isStale: false, isPaywall: false, wordCount: 410, aiStatus: '',     aiRelevant: false, outcome: 'added'   },
+        { date: today, country: country, projectId: projId, scanStatus: 'mention',      score: 4,  chipCount: 1, secondaryZone: true,  pageType: 'article',    lang: 'pl', isStale: false, isPaywall: false, wordCount: 290, aiStatus: '',     aiRelevant: false, outcome: 'skipped' },
+        { date: today, country: country, projectId: projId, scanStatus: 'keytopic',     score: 14, chipCount: 3, secondaryZone: false, pageType: 'article',    lang: 'pl', isStale: false, isPaywall: true,  wordCount: 600, aiStatus: 'done', aiRelevant: true,  outcome: 'added'   },
+        { date: today, country: country, projectId: projId, scanStatus: 'match',        score: 3,  chipCount: 1, secondaryZone: false, pageType: 'nonArticle', lang: 'pl', isStale: false, isPaywall: false, wordCount: 120, aiStatus: 'done', aiRelevant: false, outcome: 'skipped' },
+      ],
+    };
     GM_xmlhttpRequest({
       method: 'GET',
       url: apiUrl,
@@ -10485,6 +10502,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.78",
+      "date": "2026-04-30",
+      "label": "ux",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "ux", "text": "testowy push zapisuje realistyczne dane analityczne (przykładowa sesja + 5 rekordów z różnymi statusami) zamiast pustego payloadu"}
+      ]
+    },
+    {
       "version": "0.23.77",
       "date": "2026-04-30",
       "label": "ux",
@@ -10567,15 +10593,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#6366f1",
       "changes": [
         {"type": "feat", "text": "News Analytics — GitHub Sync: _naPushSession (GET+PUT), _naRetryPending, _naTryPeriodicPush; push przy zamknięciu panelu i visibilitychange; sekcja Analityka w ⚙ (toggle + PAT + repo)"}
-      ]
-    },
-    {
-      "version": "0.23.68",
-      "date": "2026-04-26",
-      "label": "feature",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "News Analytics — popup zgody, zbieranie metryk (added/skipped/duplicate/error/manual_add), visibilitychange + auto-flush co 5 min"}
       ]
     },
   ];

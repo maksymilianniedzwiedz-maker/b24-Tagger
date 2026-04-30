@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.77",
+    "date": "2026-04-30",
+    "label": "ux",
+    "changes": [
+      "ux: przycisk 'Testowy push' w ⚙ Analityka — weryfikuje zapis pliku na GitHub end-to-end (zapisuje Tagger/statistics/_test_push.json)"
+    ]
+  },
+  {
     "version": "0.23.76",
     "date": "2026-04-28",
     "label": "fix",

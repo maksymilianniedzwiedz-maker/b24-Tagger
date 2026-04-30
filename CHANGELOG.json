@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.23.79",
+    "date": "2026-04-30",
+    "label": "fix",
+    "changes": [
+      "refactor: News Analytics — per-sesja confusion matrix zamiast per-rekord (fix wykrywania AI w statystykach)",
+      "ux: zakładka 'News Analytics' (poprzednio 'Statystyki skanowania')"
+    ]
+  },
+  {
     "version": "0.23.78",
     "date": "2026-04-30",
     "label": "ux",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.78
+// @version      0.23.79
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.78';
+  const VERSION = '0.23.79';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -143,8 +143,7 @@
     DEL_BATCH:        'b24tagger_del_batch',
     DEL_BATCH_WARNED: 'b24tagger_del_batch_warned',
     AI_SETTINGS:      'b24t_ai_settings',
-    NA_RECORDS:         'b24t_na_records',
-    NA_RECORDS_ARCHIVE: 'b24t_na_records_archive',
+    NA_SESSION_STATS:   'b24t_na_session_stats',
     NA_PENDING:         'b24t_na_pending',
     NA_CONSENT:         'b24t_na_consent',
     NA_SETTINGS:        'b24t_na_settings',
@@ -2776,10 +2775,12 @@
         });
       },
       naDebug: function() {
-        var records = lsGet(LS.NA_RECORDS, []);
-        console.log('[B24T_NA] Session:', newsState.sessionId || 'brak', '| Rekordy w LS:', records.length);
-        if (console.table) console.table(records.slice(-20));
-        return records;
+        var stats = lsGet(LS.NA_SESSION_STATS, []);
+        var agg = newsState.sessionId ? _naAggSession() : null;
+        console.log('[B24T_NA] Session:', newsState.sessionId || 'brak', '| Sesje w LS:', stats.length);
+        if (agg) console.log('[B24T_NA] Bieżąca sesja (live):', agg);
+        if (console.table && stats.length) console.table(stats);
+        return { savedSessions: stats, currentSession: agg };
       },
       naCompute: function(filters) {
         var result = _naCompute(filters);
@@ -7552,33 +7553,18 @@ function showOnboarding(onComplete) {
     return s === 'keytopic' || s === 'contentmatch' || s === 'mention' || s === 'match';
   }
 
-  function _naRecord(entry, outcome) {
-    if (lsGet(LS.NA_CONSENT) !== '1') return;
-    if (!newsState.sessionId) return;
-    var records = lsGet(LS.NA_RECORDS, []);
-    records.push({
-      date:          _localDateStr(new Date()),
-      country:       newsState.detectedCountry || _newsProjectCountry() || '',
-      projectId:     String(state.projectId || ''),
-      scanStatus:    (entry && entry.status)         || '',
-      score:         (entry && entry.score)          || 0,
-      chipCount:     entry && entry.matchedChips ? entry.matchedChips.length : 0,
-      secondaryZone: !!(entry && entry.secondaryZoneOnly),
-      pageType:      (entry && entry.pageType)       || '',
-      lang:          (entry && entry.lang)           || '',
-      isStale:       !!(entry && entry.isStale),
-      isPaywall:     !!(entry && entry.isPaywall),
-      wordCount:     (entry && entry.wordCount)      || 0,
-      aiStatus:      (entry && entry.aiStatus)       || '',
-      aiRelevant:    !!(entry && entry.aiRelevant),
-      outcome:       outcome,
-    });
-    if (entry) entry.naRecorded = true;
-    lsSet(LS.NA_RECORDS, records);
+  function _naTagOutcome(entry, outcome) {
+    if (entry) entry.naOutcome = outcome;
   }
 
   function _naNewSession(country) {
     if (lsGet(LS.NA_CONSENT) !== '1') return;
+    if (newsState.sessionId) {
+      var prevAgg = _naAggSession();
+      var stats = lsGet(LS.NA_SESSION_STATS, []);
+      stats.push(prevAgg);
+      lsSet(LS.NA_SESSION_STATS, stats);
+    }
     newsState.sessionId = 'ses_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     newsState.naSessionStart = Date.now();
     if (newsState.naVisChangeHandler) {
@@ -7586,23 +7572,13 @@ function showOnboarding(onComplete) {
     }
     newsState.naVisChangeHandler = function() {
       if (document.visibilityState === 'hidden' && newsState.sessionId) {
-        _naFlushSkipped();
-        var _visSD = _naBuildSessionData();
-        _naPushSession(_visSD, null);
+        _naPushSession(_naBuildSessionData(), null);
         // Nie finalizujemy sesji — zmiana zakładki nie kończy pracy
       }
     };
     document.addEventListener('visibilitychange', newsState.naVisChangeHandler);
     if (newsState.naFlushInterval) clearInterval(newsState.naFlushInterval);
     newsState.naFlushInterval = setInterval(_naTryPeriodicPush, 5 * 60 * 1000);
-  }
-
-  function _naFlushSkipped() {
-    if (lsGet(LS.NA_CONSENT) !== '1') return;
-    if (!newsState.sessionId) return;
-    (newsState.urls || []).forEach(function(e) {
-      if (_naIsPositive(e.status) && !e.naRecorded) _naRecord(e, 'skipped');
-    });
   }
 
   function _naFinalizeSession() {
@@ -7660,24 +7636,55 @@ function showOnboarding(onComplete) {
     lsSet(LS.NA_SETTINGS, s);
   }
 
-  function _naBuildSessionData() {
-    var records = lsGet(LS.NA_RECORDS, []);
-    return {
-      session: {
-        date:        _localDateStr(new Date()),
-        country:     newsState.detectedCountry || _newsProjectCountry() || '',
-        projectId:   String(state.projectId || ''),
-        sessionId:   newsState.sessionId || ('ses_' + Date.now().toString(36)),
-        duration_s:  newsState.naSessionStart ? Math.round((Date.now() - newsState.naSessionStart) / 1000) : 0,
-        totalUrls:   (newsState.urls || []).length,
-        scannedUrls: (newsState.urls || []).filter(function(e) { return e.status && e.status !== 'pending'; }).length,
-        addedCount:  records.filter(function(r) { return r.outcome === 'added'; }).length,
-        skippedCount: records.filter(function(r) { return r.outcome === 'skipped'; }).length,
-        blockedCount: (newsState.urls || []).filter(function(e) { return e.status === 'blocked'; }).length,
-        aiEnabled:   _newsAiShouldRun(),
-      },
-      records: records,
+  function _naAggSession() {
+    var scanner = {
+      keytopic:     { added: 0, skipped: 0 },
+      contentmatch: { added: 0, skipped: 0 },
+      mention:      { added: 0, skipped: 0 },
+      match:        { added: 0, skipped: 0 },
     };
+    var manual_add = 0, blocked = 0;
+    var ai = { tp: 0, fp: 0, fn: 0, tn: 0, errors: 0, ran: 0 };
+    (newsState.urls || []).forEach(function(e) {
+      var outcome = e.naOutcome;
+      if (e.status === 'blocked' || e.status === 'error') { blocked++; return; }
+      if (!_naIsPositive(e.status)) {
+        if (outcome === 'added' || outcome === 'manual_add') manual_add++;
+        return;
+      }
+      if (!outcome) return;
+      var bucket = scanner[e.status];
+      if (bucket) {
+        if (outcome === 'added') bucket.added++;
+        else                     bucket.skipped++;
+      }
+      if (e.aiStatus === 'done') {
+        ai.ran++;
+        var rel = !!e.aiRelevant, add = outcome === 'added';
+        if (rel && add)  ai.tp++;
+        else if (rel)    ai.fp++;
+        else if (add)    ai.fn++;
+        else             ai.tn++;
+      } else if (e.aiStatus === 'error') {
+        ai.errors++; ai.ran++;
+      }
+    });
+    return {
+      date:       _localDateStr(new Date()),
+      country:    newsState.detectedCountry || _newsProjectCountry() || '',
+      projectId:  String(state.projectId || ''),
+      sessionId:  newsState.sessionId || ('ses_' + Date.now().toString(36)),
+      duration_s: newsState.naSessionStart ? Math.round((Date.now() - newsState.naSessionStart) / 1000) : 0,
+      aiEnabled:  _newsAiShouldRun(),
+      scanner:    scanner,
+      manual_add: manual_add,
+      blocked:    blocked,
+      ai:         ai,
+    };
+  }
+
+  function _naBuildSessionData() {
+    return { session: _naAggSession() };
   }
 
   function _naAddPending(sessionData) {
@@ -7707,22 +7714,18 @@ function showOnboarding(onComplete) {
       headers: { 'Authorization': auth, 'Accept': 'application/vnd.github+json' },
       onload: function(getR) {
         var sha = null;
-        var existing = { sessions: [], records: [] };
+        var existingSessions = [];
         if (getR.status === 200) {
           try {
             var j = JSON.parse(getR.responseText);
             sha = j.sha;
             var dec = JSON.parse(atob(j.content.replace(/\n/g, '')));
-            existing.sessions = dec.sessions || [];
-            existing.records  = dec.records  || [];
+            existingSessions = dec.sessions || [];
           } catch(e) { /* use empty */ }
         } else if (getR.status !== 404) {
           _naAddPending(sessionData); if (onDone) onDone('error'); return;
         }
-        var merged = {
-          sessions: existing.sessions.concat([sessionData.session]),
-          records:  existing.records.concat(sessionData.records || []),
-        };
+        var merged = { sessions: existingSessions.concat([sessionData.session]) };
         var putBodyObj = {
           message: 'analytics: ' + date + '_' + country,
           content: btoa(unescape(encodeURIComponent(JSON.stringify(merged)))),
@@ -7736,12 +7739,6 @@ function showOnboarding(onComplete) {
           onload: function(putR) {
             if (putR.status === 200 || putR.status === 201) {
               var upd = _naGetSettings(); upd.lastPush = Date.now(); _naSaveSettings(upd);
-              var _pushed = lsGet(LS.NA_RECORDS, []);
-              if (_pushed.length) {
-                var _arch = lsGet(LS.NA_RECORDS_ARCHIVE, []).concat(_pushed);
-                lsSet(LS.NA_RECORDS_ARCHIVE, _arch.length > 500 ? _arch.slice(-500) : _arch);
-              }
-              lsSet(LS.NA_RECORDS, []);
               if (onDone) onDone('ok');
             } else {
               _naAddPending(sessionData); if (onDone) onDone('error');
@@ -7778,26 +7775,13 @@ function showOnboarding(onComplete) {
 
   function _naTryPeriodicPush() {
     if (!newsState.sessionId) return;
-    var records = lsGet(LS.NA_RECORDS, []);
-    if (!records.length) return;
-    var sd = {
-      session: {
-        date:        _localDateStr(new Date()),
-        country:     newsState.detectedCountry || _newsProjectCountry() || '',
-        projectId:   String(state.projectId || ''),
-        sessionId:   newsState.sessionId + '_p' + Date.now().toString(36),
-        duration_s:  newsState.naSessionStart ? Math.round((Date.now() - newsState.naSessionStart) / 1000) : 0,
-        totalUrls:   (newsState.urls || []).length,
-        scannedUrls: (newsState.urls || []).filter(function(e) { return e.status && e.status !== 'pending'; }).length,
-        addedCount:  records.filter(function(r) { return r.outcome === 'added'; }).length,
-        skippedCount: records.filter(function(r) { return r.outcome === 'skipped'; }).length,
-        blockedCount: (newsState.urls || []).filter(function(e) { return e.status === 'blocked'; }).length,
-        aiEnabled:   _newsAiShouldRun(),
-        partial:     true,
-      },
-      records: records,
-    };
-    _naPushSession(sd, null);
+    var agg = _naAggSession();
+    var hasData = ['keytopic','contentmatch','mention','match'].some(function(st) {
+      return agg.scanner[st].added > 0 || agg.scanner[st].skipped > 0;
+    });
+    if (!hasData) return;
+    agg.partial = true;
+    _naPushSession({ session: agg }, null);
   }
 
   function _naTestPush(pat, repo, onDone) {
@@ -7814,14 +7798,18 @@ function showOnboarding(onComplete) {
       _generated: new Date().toISOString(),
       _version: VERSION,
       sessions: [
-        { date: today, country: country, projectId: projId, sessionId: 'test_ses_example', duration_s: 720, totalUrls: 35, scannedUrls: 30, addedCount: 9, skippedCount: 5, blockedCount: 2, aiEnabled: false },
-      ],
-      records: [
-        { date: today, country: country, projectId: projId, scanStatus: 'keytopic',     score: 18, chipCount: 4, secondaryZone: false, pageType: 'article',    lang: 'pl', isStale: false, isPaywall: false, wordCount: 820, aiStatus: '',     aiRelevant: false, outcome: 'added'   },
-        { date: today, country: country, projectId: projId, scanStatus: 'contentmatch', score: 9,  chipCount: 2, secondaryZone: false, pageType: 'article',    lang: 'pl', isStale: false, isPaywall: false, wordCount: 410, aiStatus: '',     aiRelevant: false, outcome: 'added'   },
-        { date: today, country: country, projectId: projId, scanStatus: 'mention',      score: 4,  chipCount: 1, secondaryZone: true,  pageType: 'article',    lang: 'pl', isStale: false, isPaywall: false, wordCount: 290, aiStatus: '',     aiRelevant: false, outcome: 'skipped' },
-        { date: today, country: country, projectId: projId, scanStatus: 'keytopic',     score: 14, chipCount: 3, secondaryZone: false, pageType: 'article',    lang: 'pl', isStale: false, isPaywall: true,  wordCount: 600, aiStatus: 'done', aiRelevant: true,  outcome: 'added'   },
-        { date: today, country: country, projectId: projId, scanStatus: 'match',        score: 3,  chipCount: 1, secondaryZone: false, pageType: 'nonArticle', lang: 'pl', isStale: false, isPaywall: false, wordCount: 120, aiStatus: 'done', aiRelevant: false, outcome: 'skipped' },
+        {
+          date: today, country: country, projectId: projId,
+          sessionId: 'test_ses_example', duration_s: 720, aiEnabled: true,
+          scanner: {
+            keytopic:     { added: 5, skipped: 2 },
+            contentmatch: { added: 3, skipped: 1 },
+            mention:      { added: 1, skipped: 3 },
+            match:        { added: 0, skipped: 2 },
+          },
+          manual_add: 1, blocked: 4,
+          ai: { tp: 4, fp: 1, fn: 1, tn: 3, errors: 1, ran: 10 },
+        },
       ],
     };
     GM_xmlhttpRequest({
@@ -7861,133 +7849,86 @@ function showOnboarding(onComplete) {
 
   function _naCompute(filters) {
     var f = filters || {};
-    var allRecords = lsGet(LS.NA_RECORDS_ARCHIVE, []).concat(lsGet(LS.NA_RECORDS, []));
-    var allSessions = [];
+    var allSessions = lsGet(LS.NA_SESSION_STATS, []);
     var pending = lsGet(LS.NA_PENDING, []);
     pending.forEach(function(item) {
-      if (item.sessionData && item.sessionData.records)  allRecords  = allRecords.concat(item.sessionData.records);
-      if (item.sessionData && item.sessionData.session)  allSessions.push(item.sessionData.session);
+      if (item.sessionData && item.sessionData.session) allSessions.push(item.sessionData.session);
     });
-    if (newsState.sessionId) {
-      var curSd = _naBuildSessionData();
-      if (curSd && curSd.session) allSessions.push(curSd.session);
-    }
+    if (newsState.sessionId) allSessions.push(_naAggSession());
 
-    function passFilter(r) {
-      if (f.dateFrom  && r.date      < f.dateFrom)            return false;
-      if (f.dateTo    && r.date      > f.dateTo)              return false;
-      if (f.country   && r.country   !== f.country)           return false;
-      if (f.projectId && r.projectId !== String(f.projectId)) return false;
-      return true;
-    }
-    var records  = allRecords.filter(passFilter);
-    var sessions = allSessions.filter(function(s) {
+    function passFilter(s) {
       if (f.dateFrom  && s.date      < f.dateFrom)            return false;
       if (f.dateTo    && s.date      > f.dateTo)              return false;
       if (f.country   && s.country   !== f.country)           return false;
       if (f.projectId && s.projectId !== String(f.projectId)) return false;
       return true;
-    });
+    }
+    var sessions = allSessions.filter(passFilter);
 
-    var positive = records.filter(function(r) { return _naIsPositive(r.scanStatus); });
-
-    function mkCM(recs) {
-      var _tp = 0, _fp = 0;
-      recs.forEach(function(r) {
-        if (r.outcome === 'added')   _tp++;
-        else if (r.outcome === 'skipped') _fp++;
+    var scanTotals = { keytopic:{tp:0,fp:0}, contentmatch:{tp:0,fp:0}, mention:{tp:0,fp:0}, match:{tp:0,fp:0} };
+    var aiT = { tp:0, fp:0, fn:0, tn:0, errors:0, ran:0 };
+    var manualAdd = 0, totalDur = 0, aiEnabled = 0;
+    sessions.forEach(function(s) {
+      ['keytopic','contentmatch','mention','match'].forEach(function(st) {
+        if (s.scanner && s.scanner[st]) {
+          scanTotals[st].tp += s.scanner[st].added   || 0;
+          scanTotals[st].fp += s.scanner[st].skipped || 0;
+        }
       });
-      return { tp: _tp, fp: _fp, precision: (_tp + _fp) > 0 ? _tp / (_tp + _fp) : null };
-    }
+      manualAdd  += s.manual_add || 0;
+      totalDur   += s.duration_s || 0;
+      if (s.aiEnabled) aiEnabled++;
+      if (s.ai) {
+        aiT.tp     += s.ai.tp     || 0;
+        aiT.fp     += s.ai.fp     || 0;
+        aiT.fn     += s.ai.fn     || 0;
+        aiT.tn     += s.ai.tn     || 0;
+        aiT.errors += s.ai.errors || 0;
+        aiT.ran    += s.ai.ran    || 0;
+      }
+    });
 
+    function mkCM(tp, fp) { return { tp: tp, fp: fp, precision: (tp+fp) > 0 ? tp/(tp+fp) : null }; }
     var byStatus = {};
-    ['keytopic', 'contentmatch', 'mention', 'match'].forEach(function(st) {
-      byStatus[st] = mkCM(positive.filter(function(r) { return r.scanStatus === st; }));
+    ['keytopic','contentmatch','mention','match'].forEach(function(st) {
+      byStatus[st] = mkCM(scanTotals[st].tp, scanTotals[st].fp);
     });
-
-    var bySignal = {
-      paywall:       mkCM(positive.filter(function(r) { return r.isPaywall; })),
-      stale:         mkCM(positive.filter(function(r) { return r.isStale; })),
-      secondaryZone: mkCM(positive.filter(function(r) { return r.secondaryZone; })),
-      nonArticle:    mkCM(positive.filter(function(r) { return r.pageType === 'nonArticle'; })),
-    };
-
-    var byWordCount = {
-      lt300: mkCM(positive.filter(function(r) { return r.wordCount < 300; })),
-      mid:   mkCM(positive.filter(function(r) { return r.wordCount >= 300 && r.wordCount <= 800; })),
-      gt800: mkCM(positive.filter(function(r) { return r.wordCount > 800; })),
-    };
-
-    function scoreBucket(score) { return score < 5 ? 'lt5' : score < 12 ? 'mid' : 'hi'; }
-    function distrib(recs) {
-      var d = { lt5: 0, mid: 0, hi: 0 };
-      recs.forEach(function(r) { d[scoreBucket(r.score)]++; });
-      return d;
-    }
-    var scoreDistrib = {
-      added:   distrib(positive.filter(function(r) { return r.outcome === 'added'; })),
-      skipped: distrib(positive.filter(function(r) { return r.outcome === 'skipped'; })),
-    };
-
-    var cm = mkCM(positive);
-
-    var aiRecs = records.filter(function(r) { return r.aiStatus === 'done'; });
-    var aiTP = 0, aiFP = 0, aiFN = 0, aiTN = 0;
-    aiRecs.forEach(function(r) {
-      var rel = r.aiRelevant, add = r.outcome === 'added';
-      if (rel && add)   aiTP++;
-      else if (rel)     aiFP++;
-      else if (add)     aiFN++;
-      else              aiTN++;
-    });
-    var aiErrCount = records.filter(function(r) { return r.aiStatus === 'error'; }).length;
+    var allTp = 0, allFp = 0;
+    ['keytopic','contentmatch','mention','match'].forEach(function(st) { allTp += scanTotals[st].tp; allFp += scanTotals[st].fp; });
 
     var sessN = sessions.length;
-    var sessTotalDur = 0, sessAiEnabled = 0;
-    sessions.forEach(function(s) {
-      sessTotalDur += (s.duration_s || 0);
-      if (s.aiEnabled) sessAiEnabled++;
-    });
-
-    var dates = records.map(function(r) { return r.date; }).filter(Boolean).sort();
+    var dates = sessions.map(function(s) { return s.date; }).filter(Boolean).sort();
     var countries = [], projects = [];
-    records.forEach(function(r) {
-      if (r.country   && countries.indexOf(r.country)   < 0) countries.push(r.country);
-      if (r.projectId && projects.indexOf(r.projectId)  < 0) projects.push(r.projectId);
+    sessions.forEach(function(s) {
+      if (s.country   && countries.indexOf(s.country)   < 0) countries.push(s.country);
+      if (s.projectId && projects.indexOf(s.projectId)  < 0) projects.push(s.projectId);
     });
 
     return {
       scanner: {
-        tp: cm.tp, fp: cm.fp, precision: cm.precision,
+        tp: allTp, fp: allFp, precision: (allTp+allFp) > 0 ? allTp/(allTp+allFp) : null,
         byStatus: byStatus,
-        bySignal: bySignal,
-        byWordCount: byWordCount,
-        scoreDistrib: scoreDistrib,
-        manualAddCount: records.filter(function(r) { return r.outcome === 'manual_add'; }).length,
+        manualAddCount: manualAdd,
       },
       ai: {
-        tp: aiTP, fp: aiFP, tn: aiTN, fn: aiFN,
-        precision:    (aiTP + aiFP) > 0       ? aiTP / (aiTP + aiFP)       : null,
-        recall:       (aiTP + aiFN) > 0       ? aiTP / (aiTP + aiFN)       : null,
-        accuracy:     aiRecs.length > 0        ? (aiTP + aiTN) / aiRecs.length : null,
-        overrideRate: (aiFN + aiTN) > 0        ? aiFN / (aiFN + aiTN)       : null,
-        errorRate:    records.length > 0        ? aiErrCount / records.length : null,
+        tp: aiT.tp, fp: aiT.fp, fn: aiT.fn, tn: aiT.tn,
+        precision:    (aiT.tp+aiT.fp) > 0 ? aiT.tp/(aiT.tp+aiT.fp) : null,
+        recall:       (aiT.tp+aiT.fn) > 0 ? aiT.tp/(aiT.tp+aiT.fn) : null,
+        accuracy:     (aiT.tp+aiT.fp+aiT.fn+aiT.tn) > 0 ? (aiT.tp+aiT.tn)/(aiT.tp+aiT.fp+aiT.fn+aiT.tn) : null,
+        overrideRate: (aiT.fn+aiT.tn) > 0 ? aiT.fn/(aiT.fn+aiT.tn) : null,
+        errorRate:    aiT.ran > 0 ? aiT.errors/aiT.ran : null,
       },
       sessions: {
-        total:        sessN,
-        totalUrls:    sessions.reduce(function(a, s) { return a + (s.totalUrls    || 0); }, 0),
-        totalAdded:   sessions.reduce(function(a, s) { return a + (s.addedCount   || 0); }, 0),
-        totalSkipped: sessions.reduce(function(a, s) { return a + (s.skippedCount || 0); }, 0),
-        totalBlocked: sessions.reduce(function(a, s) { return a + (s.blockedCount || 0); }, 0),
-        avgDuration_s:  sessN > 0 ? Math.round(sessTotalDur / sessN) : 0,
-        aiEnabledRate:  sessN > 0 ? sessAiEnabled / sessN            : null,
+        total:         sessN,
+        totalAdded:    allTp + manualAdd,
+        totalBlocked:  sessions.reduce(function(a,s) { return a + (s.blocked || 0); }, 0),
+        avgDuration_s: sessN > 0 ? Math.round(totalDur/sessN) : 0,
+        aiEnabledRate: sessN > 0 ? aiEnabled/sessN : null,
       },
       meta: {
-        recordCount:   records.length,
-        positiveCount: positive.length,
-        dateRange:     dates.length ? { from: dates[0], to: dates[dates.length - 1] } : null,
-        countries:   countries,
-        projects:    projects,
+        dateRange: dates.length ? { from: dates[0], to: dates[dates.length-1] } : null,
+        countries: countries,
+        projects:  projects,
       },
     };
   }
@@ -8022,7 +7963,7 @@ function showOnboarding(onComplete) {
       return st === 'keytopic' ? 'Główny temat' : st === 'contentmatch' ? 'W treści' : st === 'mention' ? 'Wzmianka' : 'URL match';
     }
 
-    if (meta.recordCount === 0) {
+    if (sess.total === 0 && !newsState.sessionId) {
       container.innerHTML = '<div style="padding:40px;text-align:center;">' +
         '<div style="font-size:32px;margin-bottom:10px;">📊</div>' +
         '<div style="font-size:13px;font-weight:600;color:' + t.text + ';margin-bottom:6px;">Brak danych</div>' +
@@ -8046,29 +7987,6 @@ function showOnboarding(onComplete) {
       '</tr>';
     }).join('');
 
-    function signalBadge(label, cm) {
-      var total = cm.tp + cm.fp;
-      return '<div style="flex:1;min-width:80px;display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';">' +
-        '<span style="font-size:9px;font-weight:700;color:' + t.textMuted + ';letter-spacing:0.06em;">' + label.toUpperCase() + '</span>' +
-        '<span style="font-size:18px;font-weight:700;color:' + t.text + ';line-height:1.2;">' + (total > 0 ? pct(cm.precision) : '—') + '</span>' +
-        '<span style="font-size:9px;color:' + t.textFaint + ';">n=' + total + '</span>' +
-      '</div>';
-    }
-
-    function scoreRow(label, d) {
-      var total = d.lt5 + d.mid + d.hi;
-      function sw(v) { return total > 0 ? (v / total * 100).toFixed(1) : '0'; }
-      return '<div style="display:flex;align-items:center;gap:8px;">' +
-        '<span style="font-size:10px;color:' + t.textMuted + ';width:64px;flex-shrink:0;">' + label + '</span>' +
-        '<div style="flex:1;display:flex;height:14px;border-radius:4px;overflow:hidden;">' +
-          '<div style="width:' + sw(d.lt5) + '%;background:#6b7280;" title="0–4: ' + d.lt5 + '"></div>' +
-          '<div style="width:' + sw(d.mid) + '%;background:#818cf8;" title="5–11: ' + d.mid + '"></div>' +
-          '<div style="width:' + sw(d.hi)  + '%;background:#22c55e;" title="12+: '  + d.hi  + '"></div>' +
-        '</div>' +
-        '<span style="font-size:9px;color:' + t.textFaint + ';flex-shrink:0;white-space:nowrap;">0–4: ' + d.lt5 + ' · 5–11: ' + d.mid + ' · 12+: ' + d.hi + '</span>' +
-      '</div>';
-    }
-
     var aiTotal = ai.tp + ai.fp + ai.tn + ai.fn;
     var hasAi = aiTotal > 0;
     var sec = 'margin-bottom:16px;';
@@ -8077,10 +7995,9 @@ function showOnboarding(onComplete) {
     container.innerHTML = [
       '<div style="' + sec + 'display:flex;gap:8px;flex-wrap:wrap;">',
         _naStatCard('Precision skanera', pct(sc.precision), 'n=' + (sc.tp + sc.fp), t),
-        _naStatCard('Dodane łącznie', String(sc.tp), 'z pozytywnych URL', t),
-        _naStatCard('Pozytywne URL', String(meta.positiveCount), 'keytopic + contentmatch + mention + match', t),
-        _naStatCard('Rekordy w bazie', String(meta.recordCount), meta.dateRange ? meta.dateRange.from + ' – ' + meta.dateRange.to : '—', t, 'Wszystkie rekordy łącznie z blocked, error i manual_add'),
+        _naStatCard('Dodane', String(sc.tp + sc.manualAddCount), 'w tym ' + sc.manualAddCount + ' manual_add', t),
         _naStatCard('Sesje', String(sess.total), 'śr. ' + Math.round(sess.avgDuration_s / 60) + ' min', t),
+        meta.dateRange ? _naStatCard('Zakres', meta.dateRange.from, '– ' + meta.dateRange.to, t) : '',
       '</div>',
 
       '<div style="' + sec + '">',
@@ -8099,29 +8016,9 @@ function showOnboarding(onComplete) {
         '</div>',
       '</div>',
 
-      '<div style="' + sec + '">',
-        '<div style="' + hd + '">SYGNAŁY — wpływ na precision</div>',
-        '<div style="display:flex;gap:8px;flex-wrap:wrap;">',
-          signalBadge('Paywall', sc.bySignal.paywall),
-          signalBadge('Stale', sc.bySignal.stale),
-          signalBadge('Non-art.', sc.bySignal.nonArticle),
-          signalBadge('Strefa boczna', sc.bySignal.secondaryZone),
-        '</div>',
-        sc.manualAddCount > 0 ? '<div style="margin-top:6px;font-size:10px;color:' + t.textMuted + ';">+ ' + sc.manualAddCount + ' manual_add (FN proxy)</div>' : '',
-      '</div>',
-
-      '<div style="' + sec + '">',
-        '<div style="' + hd + '">ROZKŁAD SCORE</div>',
-        '<div style="display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';">',
-          scoreRow('Dodane', sc.scoreDistrib.added),
-          scoreRow('Pominięte', sc.scoreDistrib.skipped),
-          '<div style="font-size:9px;color:' + t.textFaint + ';margin-top:2px;"><span style="color:#6b7280;">■</span> 0–4 &nbsp;<span style="color:#818cf8;">■</span> 5–11 &nbsp;<span style="color:#22c55e;">■</span> 12+</div>',
-        '</div>',
-      '</div>',
-
       hasAi ? [
         '<div style="' + sec + '">',
-          '<div style="' + hd + '">AI — confusion matrix (' + aiTotal + ' rekordów)</div>',
+          '<div style="' + hd + '">AI — confusion matrix (n=' + aiTotal + ')</div>',
           '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">',
             _naStatCard('Precision AI', pct(ai.precision), 'TP=' + ai.tp + ' FP=' + ai.fp, t),
             _naStatCard('Recall AI', pct(ai.recall), 'TP=' + ai.tp + ' FN=' + ai.fn, t),
@@ -8129,19 +8026,16 @@ function showOnboarding(onComplete) {
           '</div>',
           '<div style="font-size:10px;color:' + t.textMuted + ';line-height:1.8;">' +
             'Override AI=false: <strong style="color:' + t.text + ';">' + ai.fn + '</strong> (' + pct(ai.overrideRate) + ')' +
-            ' &nbsp;·&nbsp; ' +
-            'Błędy AI: <strong style="color:' + t.text + ';">' + pct(ai.errorRate) + '</strong>' +
+            ' &nbsp;·&nbsp; Błędy AI: <strong style="color:' + t.text + ';">' + pct(ai.errorRate) + '</strong>' +
           '</div>',
         '</div>',
-      ].join('') : '<div style="' + sec + 'font-size:10px;color:' + t.textFaint + ';padding:4px 0;">Brak danych AI — włącz AI News i przeskanuj URLe.</div>',
+      ].join('') : '<div style="' + sec + 'font-size:10px;color:' + t.textFaint + ';padding:4px 0;">Brak danych AI — AI ocenia wzmianki dopiero po zakończeniu sesji.</div>',
 
       sess.total > 0 ? [
         '<div style="' + sec + '">',
           '<div style="' + hd + '">SESJE</div>',
           '<div style="font-size:11px;color:' + t.textMuted + ';line-height:1.9;padding:8px 12px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';">' +
-            'URLe: <strong style="color:' + t.text + ';">' + sess.totalUrls + '</strong> &nbsp;·&nbsp; ' +
             'Dodane: <strong style="color:#22c55e;">' + sess.totalAdded + '</strong> &nbsp;·&nbsp; ' +
-            'Pominięte: <strong style="color:' + t.text + ';">' + sess.totalSkipped + '</strong> &nbsp;·&nbsp; ' +
             'Niedostępne: <strong style="color:' + t.text + ';">' + sess.totalBlocked + '</strong><br>' +
             'AI włączone: <strong style="color:' + t.text + ';">' + pct(sess.aiEnabledRate) + '</strong> sesji' +
             (meta.countries.length ? ' &nbsp;·&nbsp; Kraje: <strong style="color:' + t.text + ';">' + meta.countries.join(', ') + '</strong>' : '') +
@@ -8152,25 +8046,39 @@ function showOnboarding(onComplete) {
   }
 
   function _naExportCsv(filters) {
-    var f = filters || {};
-    var allRecords = lsGet(LS.NA_RECORDS_ARCHIVE, []).concat(lsGet(LS.NA_RECORDS, []));
+    var sessions = lsGet(LS.NA_SESSION_STATS, []);
     var pending = lsGet(LS.NA_PENDING, []);
     pending.forEach(function(item) {
-      if (item.sessionData && item.sessionData.records) allRecords = allRecords.concat(item.sessionData.records);
+      if (item.sessionData && item.sessionData.session) sessions.push(item.sessionData.session);
     });
+    if (newsState.sessionId) sessions.push(_naAggSession());
+    var f = filters || {};
     if (f.dateFrom || f.dateTo || f.country || f.projectId) {
-      allRecords = allRecords.filter(function(r) {
-        if (f.dateFrom  && r.date      < f.dateFrom)            return false;
-        if (f.dateTo    && r.date      > f.dateTo)              return false;
-        if (f.country   && r.country   !== f.country)           return false;
-        if (f.projectId && r.projectId !== String(f.projectId)) return false;
+      sessions = sessions.filter(function(s) {
+        if (f.dateFrom  && s.date      < f.dateFrom)            return false;
+        if (f.dateTo    && s.date      > f.dateTo)              return false;
+        if (f.country   && s.country   !== f.country)           return false;
+        if (f.projectId && s.projectId !== String(f.projectId)) return false;
         return true;
       });
     }
-    var headers = ['date','country','projectId','scanStatus','score','chipCount','secondaryZone','pageType','lang','isStale','isPaywall','wordCount','aiStatus','aiRelevant','outcome'];
-    var csv = [headers].concat(allRecords.map(function(r) {
-      return headers.map(function(k) { return '"' + String(r[k] == null ? '' : r[k]).replace(/"/g, '""') + '"'; });
-    })).map(function(r) { return r.join(','); }).join('\n');
+    var headers = ['date','country','projectId','sessionId','duration_s','aiEnabled','partial',
+      'sc_keytopic_added','sc_keytopic_skipped','sc_contentmatch_added','sc_contentmatch_skipped',
+      'sc_mention_added','sc_mention_skipped','sc_match_added','sc_match_skipped',
+      'manual_add','blocked','ai_tp','ai_fp','ai_fn','ai_tn','ai_errors','ai_ran'];
+    var rows = sessions.map(function(s) {
+      var sc = s.scanner || {};
+      var ai = s.ai || {};
+      function g(st, k) { return sc[st] ? (sc[st][k] || 0) : 0; }
+      return [
+        s.date, s.country, s.projectId, s.sessionId, s.duration_s, s.aiEnabled ? '1' : '0', s.partial ? '1' : '0',
+        g('keytopic','added'), g('keytopic','skipped'), g('contentmatch','added'), g('contentmatch','skipped'),
+        g('mention','added'), g('mention','skipped'), g('match','added'), g('match','skipped'),
+        s.manual_add || 0, s.blocked || 0,
+        ai.tp || 0, ai.fp || 0, ai.fn || 0, ai.tn || 0, ai.errors || 0, ai.ran || 0,
+      ].map(function(v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; });
+    });
+    var csv = [headers].concat(rows).map(function(r) { return r.join(','); }).join('\n');
     var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
@@ -8610,7 +8518,6 @@ function showOnboarding(onComplete) {
 
 
   function closeNewsPanels() {
-    _naFlushSkipped();
     var _naSD = newsState.sessionId ? _naBuildSessionData() : null;
     _naFinalizeSession();
     if (_naSD) _naPushSession(_naSD, null);
@@ -8705,7 +8612,7 @@ function showOnboarding(onComplete) {
       '<span style="font-size:13px;font-weight:700;color:#fff;flex:1;text-shadow:0 1px 3px rgba(0,0,0,0.2);">📰 News</span>',
       _aiChipHtml,
       '<button id="b24t-news-legend-btn" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:12px;font-weight:700;padding:3px 8px;border-radius:6px;flex-shrink:0;" title="Legenda oznaczeń">?</button>',
-      '<button id="b24t-news-stats-btn" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:12px;font-weight:600;padding:3px 8px;border-radius:6px;flex-shrink:0;" title="Statystyki skanowania">📊</button>',
+      '<button id="b24t-news-stats-btn" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:12px;font-weight:600;padding:3px 8px;border-radius:6px;flex-shrink:0;" title="News Analytics">📊</button>',
       '<button id="b24t-news-langmap-btn" style="background:rgba(255,255,255,0.20);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:11px;padding:3px 9px;border-radius:6px;flex-shrink:0;" title="Mapa języków">⚙ Języki</button>',
       '<button id="b24t-news-modal-open-btn" style="background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.55);color:#fff;cursor:pointer;font-size:12px;font-weight:700;padding:5px 14px;border-radius:7px;flex-shrink:0;letter-spacing:0.01em;">+ Importuj URLe</button>',
       '<span id="b24t-news-cms-dot" class="b24t-cms-checking" style="font-size:11px;font-weight:700;flex-shrink:0;cursor:default;color:rgba(255,255,255,0.5);" title="Sprawdzanie CMS...">● CMS</span>',
@@ -8903,7 +8810,7 @@ function showOnboarding(onComplete) {
     statsOverlay.style.cssText = 'display:none;position:absolute;inset:0;z-index:10;background:' + t.bg + ';border-radius:16px;overflow-y:auto;padding:20px 24px;color:' + t.text + ';';
     statsOverlay.innerHTML = [
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap;">',
-        '<span style="font-size:14px;font-weight:700;color:' + t.text + ';flex:1;">📊 Statystyki skanowania</span>',
+        '<span style="font-size:14px;font-weight:700;color:' + t.text + ';flex:1;">📊 News Analytics</span>',
         '<select id="b24t-news-stats-period" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';cursor:pointer;">',
           '<option value="7">Ostatnie 7 dni</option>',
           '<option value="30">Ostatnie 30 dni</option>',
@@ -10025,7 +9932,6 @@ function showOnboarding(onComplete) {
       var pc = _newsProjectCountry();
       var cc = detected || 'DEFAULT';
       var chips = _newsGetKeywords(cc);
-      _naFlushSkipped();
       _naNewSession(cc);
 
       // Country badge + warn
@@ -10331,7 +10237,7 @@ function showOnboarding(onComplete) {
             var isOk = resp.status >= 200 && resp.status < 400 && !isDuplicate;
             if (isDuplicate) {
               _newsMarkSessionUrl(fUrl);
-              _naRecord(newsState.urls.find(function(e) { return e.url === fUrl; }) || { status: 'error', score: 0, matchedChips: [] }, 'duplicate');
+              _naTagOutcome(newsState.urls.find(function(e) { return e.url === fUrl; }), 'duplicate');
               if (subStatus) { subStatus.textContent = '⚠ Brand24: taka wzmianka już istnieje.'; subStatus.style.color = '#f59e0b'; }
               if (newsState.activeIdx >= 0) newsState.urls[newsState.activeIdx].status = 'error';
               var tcD = document.getElementById('b24t-news-f-content');
@@ -10345,7 +10251,7 @@ function showOnboarding(onComplete) {
             } else if (isOk) {
               _newsMarkSessionUrl(fUrl);
               var _naE = newsState.urls.find(function(e) { return e.url === fUrl; });
-              _naRecord(_naE || { status: '', score: 0, matchedChips: [] }, _naE ? 'added' : 'manual_add');
+              _naTagOutcome(_naE, _naE ? 'added' : 'manual_add');
               if (subStatus) { subStatus.textContent = '✓ Dodano do Brand24!'; subStatus.style.color = '#22c55e'; }
               if (newsState.activeIdx >= 0) newsState.urls[newsState.activeIdx].status = 'added';
               var tc = document.getElementById('b24t-news-f-content');
@@ -10359,7 +10265,7 @@ function showOnboarding(onComplete) {
             } else {
               if (subStatus) { subStatus.textContent = '✗ Błąd HTTP ' + resp.status; subStatus.style.color = '#ef4444'; }
               if (newsState.activeIdx >= 0) newsState.urls[newsState.activeIdx].status = 'error';
-              _naRecord(newsState.urls.find(function(e) { return e.url === fUrl; }) || { status: 'error', score: 0, matchedChips: [] }, 'error');
+              _naTagOutcome(newsState.urls.find(function(e) { return e.url === fUrl; }), 'error');
             }
             renderUrlList();
           },
@@ -10502,6 +10408,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.79",
+      "date": "2026-04-30",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News Analytics — per-sesja confusion matrix zamiast per-rekord; fix wykrywania AI w statystykach (aiStatus teraz odczytywany z live entries na koniec sesji)"},
+        {"type": "ux", "text": "zakładka 'News Analytics' (poprzednio 'Statystyki skanowania')"}
+      ]
+    },
+    {
       "version": "0.23.78",
       "date": "2026-04-30",
       "label": "ux",
@@ -10584,15 +10500,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#6366f1",
       "changes": [
         {"type": "feat", "text": "News Analytics — _naCompute(filters): precision/recall skanera per status i sygnał, score distribution, AI confusion matrix, statystyki sesji; debug bridge naCompute()"}
-      ]
-    },
-    {
-      "version": "0.23.69",
-      "date": "2026-04-26",
-      "label": "feature",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "News Analytics — GitHub Sync: _naPushSession (GET+PUT), _naRetryPending, _naTryPeriodicPush; push przy zamknięciu panelu i visibilitychange; sekcja Analityka w ⚙ (toggle + PAT + repo)"}
       ]
     },
   ];

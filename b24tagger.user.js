@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.76
+// @version      0.23.77
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.76';
+  const VERSION = '0.23.77';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7800,6 +7800,48 @@ function showOnboarding(onComplete) {
     _naPushSession(sd, null);
   }
 
+  function _naTestPush(pat, repo, onDone) {
+    if (!pat) { if (onDone) onDone('nopat'); return; }
+    repo = repo || 'i24dev/i24_analytics';
+    var path   = 'Tagger/statistics/_test_push.json';
+    var apiUrl = 'https://api.github.com/repos/' + repo + '/contents/' + path;
+    var auth   = 'token ' + pat;
+    var payload = { test: true, ts: new Date().toISOString(), version: VERSION };
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: apiUrl,
+      headers: { 'Authorization': auth, 'Accept': 'application/vnd.github+json' },
+      onload: function(getR) {
+        var sha = null;
+        if (getR.status === 200) {
+          try { sha = JSON.parse(getR.responseText).sha; } catch(e) {}
+        } else if (getR.status !== 404) {
+          if (onDone) onDone('error', getR.status); return;
+        }
+        var putBody = {
+          message: 'analytics: test push ' + _localDateStr(new Date()),
+          content: btoa(JSON.stringify(payload, null, 2)),
+        };
+        if (sha) putBody.sha = sha;
+        GM_xmlhttpRequest({
+          method: 'PUT',
+          url: apiUrl,
+          headers: { 'Authorization': auth, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' },
+          data: JSON.stringify(putBody),
+          onload: function(putR) {
+            if (putR.status === 200 || putR.status === 201) {
+              if (onDone) onDone('ok', repo, path);
+            } else {
+              if (onDone) onDone('error', putR.status);
+            }
+          },
+          onerror: function() { if (onDone) onDone('error', 0); },
+        });
+      },
+      onerror: function() { if (onDone) onDone('error', 0); },
+    });
+  }
+
   function _naCompute(filters) {
     var f = filters || {};
     var allRecords = lsGet(LS.NA_RECORDS_ARCHIVE, []).concat(lsGet(LS.NA_RECORDS, []));
@@ -10443,6 +10485,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.77",
+      "date": "2026-04-30",
+      "label": "ux",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "ux", "text": "przycisk 'Testowy push' w ⚙ Analityka — weryfikuje zapis pliku na GitHub end-to-end (zapisuje Tagger/statistics/_test_push.json)"}
+      ]
+    },
+    {
       "version": "0.23.76",
       "date": "2026-04-28",
       "label": "fix",
@@ -10525,15 +10576,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#6366f1",
       "changes": [
         {"type": "feat", "text": "News Analytics — popup zgody, zbieranie metryk (added/skipped/duplicate/error/manual_add), visibilitychange + auto-flush co 5 min"}
-      ]
-    },
-    {
-      "version": "0.23.67",
-      "date": "2026-04-25",
-      "label": "ux",
-      "labelColor": "#a78bfa",
-      "changes": [
-        {"type": "ux", "text": "paski progresu (main panel, Quick Delete, Quick Tag, News scan) — płynna animacja RAF-lerp zamiast CSS transition"}
       ]
     },
   ];
@@ -11374,8 +11416,9 @@ function showOnboarding(onComplete) {
           '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">Repozytorium:</span>' +
           '<input type="text" id="b24t-na-repo" autocomplete="off" spellcheck="false" placeholder="i24dev/i24_analytics" style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:monospace;">' +
         '</div>' +
-        '<div style="display:flex;align-items:center;gap:6px;margin-top:8px;">' +
+        '<div style="display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap;">' +
           '<button id="b24t-na-test" style="font-size:11px;padding:4px 10px;border-radius:7px;border:1px solid var(--b24t-border);background:transparent;color:var(--b24t-text-muted);cursor:pointer;">Testuj połączenie</button>' +
+          '<button id="b24t-na-testpush" style="font-size:11px;padding:4px 10px;border-radius:7px;border:1px solid var(--b24t-border);background:transparent;color:var(--b24t-text-muted);cursor:pointer;">Testowy push</button>' +
           '<span id="b24t-na-test-result" style="font-size:10px;"></span>' +
         '</div>' +
         '<div id="b24t-na-status" style="font-size:10px;color:var(--b24t-text-faint);margin-top:6px;">' + _naStatusStr + '</div>' +
@@ -11588,6 +11631,27 @@ function showOnboarding(onComplete) {
             onerror: function() {
               naTestBtn.disabled = false; naTestBtn.textContent = 'Testuj połączenie';
               naTestResult.textContent = '✗ Brak połączenia'; naTestResult.style.color = '#f87171';
+            }
+          });
+        });
+      }
+      var naTestPushBtn = document.getElementById('b24t-na-testpush');
+      if (naTestPushBtn) {
+        naTestPushBtn.addEventListener('click', function() {
+          var pat  = (naPatInput  ? naPatInput.value.trim()  : '') || _naGetSettings().pat  || '';
+          var repo = (naRepoInput ? naRepoInput.value.trim() : '') || _naGetSettings().repo || 'i24dev/i24_analytics';
+          if (!pat) { if (naTestResult) { naTestResult.textContent = '✗ Brak PAT'; naTestResult.style.color = '#f87171'; } return; }
+          naTestPushBtn.disabled = true; naTestPushBtn.textContent = '⏳ Wysyłam…';
+          if (naTestResult) naTestResult.textContent = '';
+          _naTestPush(pat, repo, function(result, repoOrStatus) {
+            naTestPushBtn.disabled = false; naTestPushBtn.textContent = 'Testowy push';
+            if (result === 'ok') {
+              naTestResult.textContent = '✓ Plik zapisany: ' + repoOrStatus + '/Tagger/statistics/_test_push.json';
+              naTestResult.style.color = '#22c55e';
+            } else if (result === 'nopat') {
+              naTestResult.textContent = '✗ Brak PAT'; naTestResult.style.color = '#f87171';
+            } else {
+              naTestResult.textContent = '✗ Błąd ' + (repoOrStatus || ''); naTestResult.style.color = '#f87171';
             }
           });
         });

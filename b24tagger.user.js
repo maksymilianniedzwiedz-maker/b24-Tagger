@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.84
+// @version      0.23.85
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.84';
+  const VERSION = '0.23.85';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8631,7 +8631,7 @@ function showOnboarding(onComplete) {
     // Left column: URL list
     var colList = document.createElement('div');
     colList.id = 'b24t-news-col-list';
-    colList.style.cssText = 'flex:0 0 38.2%;display:flex;flex-direction:column;border-right:1px solid ' + t.border + ';min-height:0;overflow:hidden;';
+    colList.style.cssText = 'flex:0 0 28%;display:flex;flex-direction:column;border-right:1px solid ' + t.border + ';min-height:0;overflow:hidden;';
     colList.innerHTML = [
       // Progress bar (scan + session) — shown when URLs present
       '<div id="b24t-news-progress-wrap" style="display:none;padding:8px 10px 0;flex-shrink:0;">',
@@ -8688,7 +8688,7 @@ function showOnboarding(onComplete) {
     // Right column: mention form
     var colForm = document.createElement('div');
     colForm.id = 'b24t-news-col-form';
-    colForm.style.cssText = 'flex:0 0 23.6%;min-width:290px;max-width:400px;display:flex;flex-direction:column;overflow-y:auto;padding:14px 16px;gap:10px;';
+    colForm.style.cssText = 'flex:0 0 18%;min-width:260px;max-width:340px;display:flex;flex-direction:column;overflow-y:auto;padding:14px 16px;gap:10px;';
 
     colForm.innerHTML = [
       '<div id="b24t-news-cms-warn" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.5;flex-shrink:0;">' +
@@ -8840,7 +8840,7 @@ function showOnboarding(onComplete) {
         colList.style.display = 'flex';
         colPreview.style.display = 'flex';
         colForm.style.display = 'flex';
-        // Szerokości pochodzą z initial CSS (flex:0 0 38.2% list, flex:1 preview, flex:0 0 23.6% form) — nie nadpisuj
+        // Szerokości pochodzą z initial CSS (flex:0 0 28% list, flex:1 preview, flex:0 0 18% form) — nie nadpisuj
         colList.style.width = '';
         colList.style.borderRight = '1px solid ' + t.border;
         colPreview.style.width = '';
@@ -10468,6 +10468,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.85",
+      "date": "2026-05-03",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "cross-project Quick Delete — szerszy zakres dat (od 1. dnia poprzedniego miesiąca do dziś) zamiast wąskiego okna z getAnnotatorDates; wcześniej na początku miesiąca panel pokazywał 0 wzmianek mimo że tag istniał w danych z poprzedniego miesiąca"},
+        {"type": "fix", "text": "Auto-Delete po tagowaniu pliku — jeśli pierwsza próba zwróci 0 wzmianek, retry po 5s z szerszym oknem (prev month → today); zabezpieczenie przed lag indeksu Brand24 lub niezgodnością dat z pliku"},
+        {"type": "ux", "text": "News panel — proporcje kolumn: lista URLi 28% (z 38.2%), formularz 18% (z 23.6%) — środkowa kolumna podglądu zyskuje ~54% szerokości panelu dla wygody czytania artykułów"}
+      ]
+    },
+    {
       "version": "0.23.84",
       "date": "2026-05-03",
       "label": "feature",
@@ -10557,17 +10568,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "News Analytics — karta 'Pozytywne URL' (n= keytopic+contentmatch+mention+match) oddzielona od 'Rekordy w bazie' (wszystkie rekordy łącznie z blocked/error)"},
         {"type": "fix", "text": "News Analytics — retry pending sekwencyjny zamiast równoległego — eliminacja race condition SHA 409 przy słabej sieci"},
         {"type": "fix", "text": "News Analytics — eksport ↓ CSV respektuje aktywny filtr okresu/kraju/projektu (analogicznie do eksportu JSON)"}
-      ]
-    },
-    {
-      "version": "0.23.75",
-      "date": "2026-04-28",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News Analytics — statystyki nie znikają po pushu na GitHub (NA_RECORDS_ARCHIVE, bufor 500 rekordów)"},
-        {"type": "fix", "text": "News Analytics — zmiana zakładki przeglądarki nie kończy sesji analitycznej"},
-        {"type": "ux", "text": "News Analytics — filtr per projekt w zakładce Statystyki (domyślnie bieżący projekt) + przycisk 🔄 Odśwież"}
       ]
     },
   ];
@@ -12010,8 +12010,8 @@ function showOnboarding(onComplete) {
     if (!state.tokenHeaders || !tagId) return;
     var projects = getKnownProjects();
     if (!projects.length) return;
-    // Użyj tej samej logiki dat co reszta narzędzi annotatorskich
-    var dates = getAnnotatorDates();
+    // Cleanup zakres: prev month start → today (covers tagowanie pliku z poprzedniego miesiąca po przekręceniu kalendarza)
+    var dates = _getCleanupDateRange();
     var dateFrom = dates.dateFrom;
     var dateTo   = dates.dateTo;
     var tagName = Object.entries(state.tags || {}).find(function(e){ return e[1] === tagId; })?.[0] || String(tagId);
@@ -12288,6 +12288,19 @@ function showOnboarding(onComplete) {
       daysLeft = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - day;
     }
     return { dateFrom, dateTo, label, daysLeft, day };
+  }
+
+  // Cross-project delete (cleanup) potrzebuje szerszego okna niż statystyki annotatora.
+  // User otaguje TO_DELETE w ramach pracy z plikiem zeszłego miesiąca — taka czyszczenia musi być widoczna
+  // także po przekroczeniu 1. dnia nowego miesiąca, gdy getAnnotatorDates zwraca tylko np. 3 dni.
+  // Zawsze pokrywaj od 1. dnia poprzedniego miesiąca do dziś.
+  function _getCleanupDateRange() {
+    var now = new Date();
+    var prevMonthFirst = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return {
+      dateFrom: _localDateStr(prevMonthFirst),
+      dateTo:   _localDateStr(now),
+    };
   }
 
   async function loadAnnotatorProject() {
@@ -12711,11 +12724,23 @@ function showOnboarding(onComplete) {
       if (el) el.textContent = msg;
     };
 
+    const onProgress = (phase, cur, total) => {
+      if (phase === 'collect') setStatus(`Zbieram: str. ${cur}/${total}...`);
+      else setStatus(`Usuwam: ${cur}/${total}...`);
+    };
+
     try {
-      const deleted = await runDeleteByTag(tagId, tagName, dateFrom, dateTo, (phase, cur, total) => {
-        if (phase === 'collect') setStatus(`Zbieram: str. ${cur}/${total}...`);
-        else setStatus(`Usuwam: ${cur}/${total}...`);
-      });
+      let deleted = await runDeleteByTag(tagId, tagName, dateFrom, dateTo, onProgress);
+      if (deleted === 0) {
+        // Mogło być: indeks Brand24 nie zdążył się zsynchronizować lub daty z pliku nie pokrywają się z createdDate.
+        // Retry po 5s z szerszym oknem (prev month start → today) — bezpieczna sieć awaryjna.
+        addLog(`⚠ Auto-Delete: 0 wzmianek w ${dateFrom}→${dateTo}. Czekam 5s i retry z szerszym oknem...`, 'warn');
+        setStatus(`Brak w ${dateFrom}→${dateTo}, retry za 5s...`);
+        await sleep(5000);
+        const wider = _getCleanupDateRange();
+        addLog(`→ Auto-Delete retry: "${tagName}" (${wider.dateFrom} → ${wider.dateTo})`, 'warn');
+        deleted = await runDeleteByTag(tagId, tagName, wider.dateFrom, wider.dateTo, onProgress);
+      }
       setStatus(`✓ Usunięto ${deleted} wzmianek`);
     } catch (e) {
       addLog(`✕ Auto-Delete błąd: ${e.message}`, 'error');

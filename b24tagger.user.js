@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.80
+// @version      0.23.81
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.80';
+  const VERSION = '0.23.81';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8307,23 +8307,15 @@ function showOnboarding(onComplete) {
   }
 
   // ── NEWS URL OPENER (sized window) ──
-  var NEWS_WIN_SIZES = {
-    '900x700':  { w: 900,  h: 700  },
-    '1100x800': { w: 1100, h: 800  },
-    '800x600':  { w: 800,  h: 600  },
-    'half':     { w: null, h: null }, // dynamic — half screen
-  };
   function _newsOpenUrl(url) {
-    var sizeKey = lsGet(LS.NEWS_WIN_SIZE, '900x700');
-    var sz = NEWS_WIN_SIZES[sizeKey] || NEWS_WIN_SIZES['900x700'];
-    var w = sz.w || Math.round(window.screen.availWidth / 2);
-    var h = sz.h || Math.round(window.screen.availHeight * 0.85);
-    // Position: top-left corner of screen so Brand24 (usually right side) stays visible
-    var left = 0;
-    var top  = Math.round((window.screen.availHeight - h) / 2);
+    var col = document.getElementById('b24t-news-col-preview');
+    var rect = col ? col.getBoundingClientRect() : null;
+    var w = (rect && rect.width  > 100) ? Math.round(rect.width)  : 900;
+    var h = (rect && rect.height > 100) ? Math.round(rect.height) : 700;
+    var left = rect ? Math.round(window.screenX + rect.left) : 0;
+    var top  = rect ? Math.round(window.screenY + rect.top)  : Math.round((window.screen.availHeight - h) / 2);
     var features = 'width=' + w + ',height=' + h + ',left=' + left + ',top=' + top +
                    ',resizable=yes,scrollbars=yes,toolbar=no,menubar=no,location=yes,status=no';
-    // Reuse existing window — open with features only on first call, then just navigate
     var existingWin = window._b24tnewsWin;
     if (existingWin && !existingWin.closed) {
       existingWin.location.href = url;
@@ -8638,7 +8630,7 @@ function showOnboarding(onComplete) {
     // Left column: URL list
     var colList = document.createElement('div');
     colList.id = 'b24t-news-col-list';
-    colList.style.cssText = 'width:270px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid ' + t.border + ';min-height:0;overflow:hidden;';
+    colList.style.cssText = 'flex:0 0 38.2%;display:flex;flex-direction:column;border-right:1px solid ' + t.border + ';min-height:0;overflow:hidden;';
     colList.innerHTML = [
       // Progress bar (scan + session) — shown when URLs present
       '<div id="b24t-news-progress-wrap" style="display:none;padding:8px 10px 0;flex-shrink:0;">',
@@ -8681,7 +8673,7 @@ function showOnboarding(onComplete) {
       '<div id="b24t-news-preview-header" style="display:none;flex-shrink:0;padding:4px 10px;background:' + t.bgDeep + ';border-bottom:1px solid ' + t.borderSub + ';align-items:center;gap:6px;">',
         '<span id="b24t-news-preview-url-label" style="flex:1;font-size:10px;font-family:monospace;color:' + t.textFaint + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>',
         '<button id="b24t-news-preview-switch-rich-btn" style="flex-shrink:0;font-size:10px;padding:2px 8px;border-radius:5px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textMuted + ';cursor:pointer;" title="Przełącz na kartę podglądu">▢ Karta</button>',
-        '<a id="b24t-news-preview-open-link" href="#" target="_blank" rel="noopener noreferrer" style="flex-shrink:0;font-size:10px;padding:2px 8px;border-radius:5px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textMuted + ';text-decoration:none;" title="Otwórz w nowej karcie">↗</a>',
+        '<button id="b24t-news-preview-open-link" style="flex-shrink:0;font-size:10px;padding:2px 8px;border-radius:5px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textMuted + ';cursor:pointer;" title="Otwórz w oknie">↗</button>',
       '</div>',
       '<div id="b24t-news-preview-empty" style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:24px;">',
         '<div style="font-size:30px;margin-bottom:10px;opacity:0.4;">📄</div>',
@@ -9676,7 +9668,13 @@ function showOnboarding(onComplete) {
       var shortUrl = entry.url.replace(/^https?:\/\//, '');
       if (shortUrl.length > 60) shortUrl = shortUrl.substring(0, 60) + '\u2026';
       if (urlLabelEl) urlLabelEl.textContent = shortUrl;
-      if (openLinkEl) openLinkEl.href = entry.url;
+      if (openLinkEl) {
+        openLinkEl.dataset.url = entry.url;
+        if (!openLinkEl.dataset.wired) {
+          openLinkEl.dataset.wired = '1';
+          openLinkEl.addEventListener('click', function() { _newsOpenUrl(openLinkEl.dataset.url); });
+        }
+      }
 
       if (switchBtn && !switchBtn.dataset.wired) {
         switchBtn.dataset.wired = '1';
@@ -9779,10 +9777,12 @@ function showOnboarding(onComplete) {
         (_badges.length > 0 ? '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px;">' + _badges.join('') + '</div>' : '') +
         (_chipHtml ? _chipHtml + '<div style="height:10px;"></div>' : '') +
         (_snippetText ? '<div style="font-size:12px;line-height:1.7;color:' + t.text + ';background:' + t.bgDeep + ';border-radius:8px;padding:10px 12px;border:1px solid ' + t.borderSub + ';margin-bottom:14px;">' + _esc(_snippetText) + '</div>' : '') +
-        '<a href="' + _esc(entry.url) + '" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:7px 16px;border-radius:8px;background:var(--b24t-accent-grad);color:#fff;text-decoration:none;font-weight:600;box-shadow:0 2px 8px rgba(99,102,241,0.2);">\u2197 Otw\u00f3rz w nowej karcie</a>';
+        '<button data-url="' + _esc(entry.url) + '" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:7px 16px;border-radius:8px;background:var(--b24t-accent-grad);color:#fff;border:none;cursor:pointer;font-weight:600;box-shadow:0 2px 8px rgba(99,102,241,0.2);">\u2197 Otw\u00f3rz w oknie</button>';
 
       richEl.style.display = 'flex';
       richEl.style.flexDirection = 'column';
+      var _rob = richEl.querySelector('button[data-url]');
+      if (_rob) _rob.addEventListener('click', function() { _newsOpenUrl(this.dataset.url); });
     }
 
     // ─── FETCH PAGE INFO (lang + date) ───
@@ -10438,6 +10438,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.81",
+      "date": "2026-05-03",
+      "label": "ux",
+      "labelColor": "#a78bfa",
+      "changes": [
+        {"type": "ux", "text": "kolumna URL — szerokość złota proporcja (38.2% panelu, poprzednio 270px stałe)"},
+        {"type": "ux", "text": "otwieranie artykułu — nowe okno w rozmiarze i pozycji kolumny podglądu (zamiast nowej karty)"}
+      ]
+    },
+    {
       "version": "0.23.80",
       "date": "2026-05-03",
       "label": "fix",
@@ -10522,15 +10532,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#6366f1",
       "changes": [
         {"type": "feat", "text": "News Analytics — Sesja 5: eksport ↓ CSV (surowe rekordy z LS + pending) i ↓ JSON (output _naCompute z aktywnym filtrem) w zakładce Statystyki"}
-      ]
-    },
-    {
-      "version": "0.23.71",
-      "date": "2026-04-26",
-      "label": "feature",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "News Analytics — zakładka 📊 Statystyki w panelu News: _naRenderStats, _naStatCard, statsOverlay, przycisk 📊 w headerze, zakładka Statystyki w trybie mobilnym, filtry okres + kraj"}
       ]
     },
   ];

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.85
+// @version      0.23.86
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.85';
+  const VERSION = '0.23.86';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1316,8 +1316,12 @@
 
     const { dateFrom, dateTo, rows } = partition;
 
-    // Build URL map
-    state.urlMap = await buildUrlMap(dateFrom, dateTo, state.mapMode === 'untagged');
+    // Build URL map — overwrite/multitag wymaga pełnej mapy (nie tylko Untagged)
+    const _forceFullMap = state.conflictMode === 'overwrite' || state.conflictMode === 'multitag';
+    if (_forceFullMap && state.mapMode === 'untagged') {
+      addLog('ℹ Tryb overwrite/multitag: buduje mapę ze WSZYSTKICH wzmianek (ignoruje filtr Untagged)', 'info');
+    }
+    state.urlMap = await buildUrlMap(dateFrom, dateTo, !_forceFullMap && state.mapMode === 'untagged');
 
     // Walidacja schematu pliku — blokuje tagowanie przy sci notation URL
     const schemaOk = validateInputSchema(rows, state.file.colMap);
@@ -1335,7 +1339,7 @@
     // ── DIAG: analiza pliku przed matchowaniem ─────────────────────────
     const matchDiag = {
       total: rows.length, noAssessment: 0, noMapping: 0,
-      noMatch: 0, truncated: 0, alreadyTagged: 0, conflict: 0, willTag: 0,
+      noMatch: 0, truncated: 0, alreadyTagged: 0, conflict: 0, willTag: 0, overwrite: 0,
       exactMatch: 0, fuzzyShort: 0,
       mapSize: Object.keys(state.urlMap).length,
       // próbki URL-i z pliku vs z mapy (pierwsze 2 każdej domeny)
@@ -1489,13 +1493,14 @@
 
     // ── DIAG: raport matchowania ────────────────────────────────────────
     matchDiag.willTag    = Object.values(batches).reduce((s, ids) => s + ids.length, 0);
+    matchDiag.overwrite  = Object.values(overwriteBatches).reduce((s, b) => s + b.ids.length, 0);
     matchDiag.alreadyTagged = skipped.filter(s => s.reason === 'ALREADY_TAGGED').length;
     matchDiag.conflict   = skipped.filter(s => s.reason === 'CONFLICT_IGNORED').length;
 
     addLog(
       `ℹ Wyniki matchowania ${matchDiag.total} wierszy vs ${matchDiag.mapSize} wzmianek w mapie:
 ` +
-      `  ✓ do otagowania: ${matchDiag.willTag}
+      `  ✓ do otagowania: ${matchDiag.willTag}${matchDiag.overwrite > 0 ? ' + ' + matchDiag.overwrite + ' (podmiana tagu)' : ''}
 ` +
       `  ✗ NO_MATCH: ${matchDiag.noMatch}
 ` +
@@ -1692,6 +1697,7 @@
       `Konflikty:          ${matchDiag.conflict}`,
       `Już otagowane:      ${matchDiag.alreadyTagged}`,
       `WYKONANO tagowań:   ${matchDiag.willTag}`,
+      ...(matchDiag.overwrite > 0 ? [`Podmieniono tag:    ${matchDiag.overwrite}`] : []),
       `════════════════════════`,
     ].join('\n');
     addLog(_report, 'info');
@@ -10468,6 +10474,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.86",
+      "date": "2026-05-03",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "tryb overwrite/multitag automatycznie buduje mapę ze WSZYSTKICH wzmianek — wcześniej wzmianki z istniejącym tagiem nie trafiały do mapy (NO_MATCH) i były pomijane mimo że overwrite był włączony"},
+        {"type": "feat", "text": "raport tagowania pokazuje 'Podmieniono tag: X' — widoczne w logu diagnostycznym i końcowym RAPORCIE TAGOWANIA gdy użyto trybu overwrite"}
+      ]
+    },
+    {
       "version": "0.23.85",
       "date": "2026-05-03",
       "label": "fix",
@@ -10557,17 +10573,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#a78bfa",
       "changes": [
         {"type": "ux", "text": "przycisk 'Testowy push' w ⚙ Analityka — weryfikuje zapis pliku na GitHub end-to-end (zapisuje Tagger/statistics/_test_push.json)"}
-      ]
-    },
-    {
-      "version": "0.23.76",
-      "date": "2026-04-28",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News Analytics — karta 'Pozytywne URL' (n= keytopic+contentmatch+mention+match) oddzielona od 'Rekordy w bazie' (wszystkie rekordy łącznie z blocked/error)"},
-        {"type": "fix", "text": "News Analytics — retry pending sekwencyjny zamiast równoległego — eliminacja race condition SHA 409 przy słabej sieci"},
-        {"type": "fix", "text": "News Analytics — eksport ↓ CSV respektuje aktywny filtr okresu/kraju/projektu (analogicznie do eksportu JSON)"}
       ]
     },
   ];

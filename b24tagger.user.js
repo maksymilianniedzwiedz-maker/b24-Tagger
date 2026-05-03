@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.83
+// @version      0.23.84
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.83';
+  const VERSION = '0.23.84';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -140,6 +140,7 @@
     WELCOME_SHOWN:    'b24tagger_welcome_shown_v0210',
     UPDATE_CHANNEL:   'b24tagger_update_channel',
     MONTH_CLOSE_DONE: 'b24tagger_month_close_done',
+    OVERALL_ACTIVE_MONTH: 'b24tagger_overall_active_month',
     DEL_BATCH:        'b24tagger_del_batch',
     DEL_BATCH_WARNED: 'b24tagger_del_batch_warned',
     AI_SETTINGS:      'b24t_ai_settings',
@@ -10467,6 +10468,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.84",
+      "date": "2026-05-03",
+      "label": "feature",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "Overall Stats — domykanie miesiąca trzyma się poprzedniego miesiąca dopóki wszystkie projekty z grupy nie zostaną domknięte (zamiast od razu przeskakiwać na bieżący)"},
+        {"type": "ux", "text": "Overall Stats — przyciski ← / → do nawigacji między miesiącami; ↺ Auto przywraca automatyczny wybór"},
+        {"type": "ux", "text": "Overall Stats — 'Zamknij miesiąc' czyści manualny override → auto przeskakuje na następny miesiąc"}
+      ]
+    },
+    {
       "version": "0.23.83",
       "date": "2026-05-03",
       "label": "fix",
@@ -10556,15 +10568,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "News Analytics — statystyki nie znikają po pushu na GitHub (NA_RECORDS_ARCHIVE, bufor 500 rekordów)"},
         {"type": "fix", "text": "News Analytics — zmiana zakładki przeglądarki nie kończy sesji analitycznej"},
         {"type": "ux", "text": "News Analytics — filtr per projekt w zakładce Statystyki (domyślnie bieżący projekt) + przycisk 🔄 Odśwież"}
-      ]
-    },
-    {
-      "version": "0.23.74",
-      "date": "2026-04-27",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News — adaptacyjny timeout skanowania (p90 historii × 2, min 8s, max 40s) + retry przy timeout zamiast od razu 'zablokowana'"}
       ]
     },
   ];
@@ -13430,6 +13433,48 @@ To jest NIEODWRACALNE.`)) return;
     lsSet(LS.MONTH_CLOSE_DONE, done);
   }
 
+  function getOverallActiveMonth(groupId) {
+    var m = lsGet(LS.OVERALL_ACTIVE_MONTH, {});
+    return m[groupId] || null; // 'YYYY-MM' lub null = auto
+  }
+  function setOverallActiveMonth(groupId, monthKey) {
+    var m = lsGet(LS.OVERALL_ACTIVE_MONTH, {});
+    if (monthKey) m[groupId] = monthKey;
+    else delete m[groupId];
+    lsSet(LS.OVERALL_ACTIVE_MONTH, m);
+  }
+
+  // Zwraca okres dat dla grupy: manualny override > auto (poprzedni miesiąc gdy są niedomknięte projekty) > bieżący miesiąc.
+  function _overallGetEffectiveDates(group) {
+    function rangeForMonth(monthKey) {
+      var parts = monthKey.split('-');
+      var y = parseInt(parts[0], 10), m = parseInt(parts[1], 10) - 1;
+      var first = new Date(y, m, 1);
+      var lastDay = new Date(y, m + 1, 0);
+      var now = new Date();
+      var sameMonth = now.getFullYear() === y && now.getMonth() === m;
+      return {
+        dateFrom: _localDateStr(first),
+        dateTo:   sameMonth ? _localDateStr(now) : _localDateStr(lastDay),
+        label:    first.toLocaleString('pl-PL', { month: 'long', year: 'numeric' }),
+        monthKey: monthKey,
+      };
+    }
+    var override = getOverallActiveMonth(group.id);
+    if (override) return Object.assign(rangeForMonth(override), { source: 'manual' });
+    // Auto: bazuj na default z getAnnotatorDates (uwzględnia dzień 1-2 → prev month).
+    // Sprawdź miesiąc PRZED default — jeśli niedomknięty, użyj jego.
+    var d = getAnnotatorDates();
+    var defaultKey = d.dateFrom.slice(0, 7);
+    var defParts = defaultKey.split('-');
+    var prevDate = new Date(parseInt(defParts[0], 10), parseInt(defParts[1], 10) - 2, 1);
+    var prevKey = _localDateStr(prevDate).slice(0, 7);
+    var completed = getMcCompletedPids(prevKey, group.id);
+    var hasUnfinished = group.projectIds.some(function(pid) { return !completed.includes(pid); });
+    if (hasUnfinished) return Object.assign(rangeForMonth(prevKey), { source: 'auto-prev' });
+    return { dateFrom: d.dateFrom, dateTo: d.dateTo, label: d.label, monthKey: defaultKey, source: 'auto-current' };
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // OVERALL STATS (v0.10.0)
   // ─────────────────────────────────────────────────────────────────────────────
@@ -13445,8 +13490,9 @@ To jest NIEODWRACALNE.`)) return;
 
   async function _fetchOverallStats(group, onProgress) {
     var projects = lsGet(LS.PROJECTS, {});
-    // Użyj tej samej logiki dat co zakładka Projekt — current month, wyjątek dla 1-2 dnia
-    var dates = getAnnotatorDates();
+    // Domykanie miesiąca: jeśli poprzedni miesiąc nie jest jeszcze domknięty dla grupy,
+    // pokazuj jego dane zamiast bieżącego (chyba że user wymusił inny przez ←/→).
+    var dates = _overallGetEffectiveDates(group);
     var dateFrom = dates.dateFrom;
     var dateTo   = dates.dateTo;
     var results = [];
@@ -13742,10 +13788,24 @@ To jest NIEODWRACALNE.`)) return;
         '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-err);text-align:right;">'   + (r.toDelete != null ? r.toDelete : '—') + '</td>' +
       '</tr>';
     }).join('');
+    var _navOverride = getOverallActiveMonth(group.id);
+    var _navCurMonth = _localDateStr(new Date()).slice(0, 7);
+    // Limit cofania: 12 miesięcy wstecz od bieżącego miesiąca (chroni przed spamem ←)
+    var _navCurDate = new Date();
+    var _navMinDate = new Date(_navCurDate.getFullYear(), _navCurDate.getMonth() - 12, 1);
+    var _navMinMonth = _localDateStr(_navMinDate).slice(0, 7);
+    var _navCanForward = !!(dataMonth && dataMonth < _navCurMonth);
+    var _navCanBack    = !!(dataMonth && dataMonth > _navMinMonth);
+    var _navBtnCss = 'background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:5px;padding:2px 7px;font-size:11px;font-family:inherit;cursor:pointer;line-height:1;';
+    var _navBtnDisabledCss = 'background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-faint);border-radius:5px;padding:2px 7px;font-size:11px;font-family:inherit;cursor:not-allowed;opacity:0.45;line-height:1;';
     var periodHtml = (dateFrom && dateTo)
-      ? '<div style="display:flex;align-items:center;gap:6px;padding:6px 0;margin-bottom:8px;border-bottom:1px solid var(--b24t-border-sub);">' +
-          '<span style="font-size:11px;color:var(--b24t-text-faint);">📅 Okres:</span>' +
-          '<span style="font-size:11px;font-weight:600;color:var(--b24t-text-muted);">' + (label ? label + ' ' : '') + '(' + dateFrom + ' → ' + dateTo + ')</span>' +
+      ? '<div style="display:flex;align-items:center;gap:6px;padding:6px 0;margin-bottom:8px;border-bottom:1px solid var(--b24t-border-sub);flex-wrap:wrap;">' +
+          '<span style="font-size:11px;color:var(--b24t-text-faint);">📅</span>' +
+          '<button id="b24t-mc-prev" style="' + (_navCanBack ? _navBtnCss : _navBtnDisabledCss) + '" title="Poprzedni miesiąc"' + (_navCanBack ? '' : ' disabled') + '>←</button>' +
+          '<span style="font-size:11px;font-weight:600;color:var(--b24t-text-muted);">' + (label ? label : '') + '</span>' +
+          '<button id="b24t-mc-next" style="' + (_navCanForward ? _navBtnCss : _navBtnDisabledCss) + '" title="Następny miesiąc"' + (_navCanForward ? '' : ' disabled') + '>→</button>' +
+          (_navOverride ? '<button id="b24t-mc-auto" style="' + _navBtnCss + 'margin-left:4px;" title="Wróć do auto-wyboru">↺ Auto</button>' : '') +
+          '<span style="font-size:10px;color:var(--b24t-text-faint);margin-left:4px;">' + dateFrom + ' → ' + dateTo + '</span>' +
         '</div>'
       : '';
     el.innerHTML = periodHtml + progressHtml + monthClosingHtml + warnHtml + cards +
@@ -13762,17 +13822,45 @@ To jest NIEODWRACALNE.`)) return;
         '</table>' +
       '</div>' +
       '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:6px;text-align:right;">' + group.name + ' · ' + results.length + ' projektów</div>';
-    // Przycisk "Zamknij miesiąc"
+    // Przycisk "Zamknij miesiąc" — domyka wyświetlany miesiąc i przeskakuje na auto (zwykle następny)
     var _mcBtn = el.querySelector('#b24t-mc-force-close');
     if (_mcBtn) {
       _mcBtn.addEventListener('click', function() {
         var allPids = results.filter(function(r) { return !r.error; }).map(function(r) { return r.pid; });
         setMcCompletedPids(dataMonth, group.id, allPids);
-        var _c = document.getElementById('b24t-ann-tab-overall-content');
-        var _e = _c && _c.querySelector('#b24t-overall-data');
-        if (_e) renderOverallStatsData(_e, results, group, cached);
+        setOverallActiveMonth(group.id, null); // wyczyść manualny override → auto wybierze następny miesiąc
+        bgCache.overallStats = null;
+        if (typeof loadOverallStats === 'function') loadOverallStats();
       });
     }
+    // Nawigacja miesięczna ← / → / ↺ Auto
+    function _navShiftMonth(monthKey, delta) {
+      var p = monthKey.split('-');
+      var y = parseInt(p[0], 10), m = parseInt(p[1], 10) - 1 + delta;
+      var d = new Date(y, m, 1);
+      return _localDateStr(d).slice(0, 7);
+    }
+    function _navGoTo(monthKey) {
+      setOverallActiveMonth(group.id, monthKey);
+      bgCache.overallStats = null;
+      if (typeof loadOverallStats === 'function') loadOverallStats();
+    }
+    var _prevBtn = el.querySelector('#b24t-mc-prev');
+    if (_prevBtn) _prevBtn.addEventListener('click', function() {
+      if (!dataMonth || !/^\d{4}-\d{2}$/.test(dataMonth) || !_navCanBack) return;
+      _navGoTo(_navShiftMonth(dataMonth, -1));
+    });
+    var _nextBtn = el.querySelector('#b24t-mc-next');
+    if (_nextBtn) _nextBtn.addEventListener('click', function() {
+      if (!dataMonth || !/^\d{4}-\d{2}$/.test(dataMonth) || !_navCanForward) return;
+      _navGoTo(_navShiftMonth(dataMonth, +1));
+    });
+    var _autoBtn = el.querySelector('#b24t-mc-auto');
+    if (_autoBtn) _autoBtn.addEventListener('click', function() {
+      setOverallActiveMonth(group.id, null);
+      bgCache.overallStats = null;
+      if (typeof loadOverallStats === 'function') loadOverallStats();
+    });
   }
 
   function showOverallStatsSettings(group) {

@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.23.80",
+    "date": "2026-05-03",
+    "label": "fix",
+    "changes": [
+      "fix: News scan — concurrency 8→5 (mniej agresywne skanowanie równoległe)",
+      "ux: rozróżnienie przyczyn zablokowania URL — timeout / HTTP 403/429/5xx / błąd sieci / błąd wewnętrzny"
+    ]
+  },
+  {
     "version": "0.23.79",
     "date": "2026-04-30",
     "label": "fix",

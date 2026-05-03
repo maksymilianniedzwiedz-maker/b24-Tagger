@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.81
+// @version      0.23.82
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.81';
+  const VERSION = '0.23.82';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7647,13 +7647,13 @@ function showOnboarding(onComplete) {
     var ai = { tp: 0, fp: 0, fn: 0, tn: 0, errors: 0, ran: 0 };
     (newsState.urls || []).forEach(function(e) {
       var outcome = e.naOutcome;
-      if (e.status === 'blocked' || e.status === 'error') { blocked++; return; }
-      if (!_naIsPositive(e.status)) {
+      var st = e.scanStatus || e.status;
+      if (st === 'blocked' || st === 'error') { blocked++; return; }
+      if (!_naIsPositive(st)) {
         if (outcome === 'added' || outcome === 'manual_add') manual_add++;
         return;
       }
-      if (!outcome) return;
-      var bucket = scanner[e.status];
+      var bucket = scanner[st];
       if (bucket) {
         if (outcome === 'added') bucket.added++;
         else                     bucket.skipped++;
@@ -9993,6 +9993,7 @@ function showOnboarding(onComplete) {
           return {
             url: u,
             status: urlStatus !== 'nomatch' ? urlStatus : 'nomatch',
+            scanStatus: urlStatus,
             opened: false,
             score: 0,
             snippet: '',
@@ -10067,6 +10068,7 @@ function showOnboarding(onComplete) {
               _isStale = _diffDays > 60;
             }
             entry.status             = result.status;
+            entry.scanStatus         = result.status;
             entry.score              = result.score;
             entry.snippet            = result.snippet;
             entry.title              = result.title || '';
@@ -10088,7 +10090,7 @@ function showOnboarding(onComplete) {
             entry.blockReason = result.blockReason || null;
             entry.httpStatus  = result.httpStatus  || null;
           } catch(e) {
-            entry.status = 'blocked'; entry.blockReason = 'exception';
+            entry.status = 'blocked'; entry.blockReason = 'exception'; entry.scanStatus = 'blocked';
           }
           if (entry.status === 'mention' || entry.status === 'contentmatch' || entry.status === 'keytopic') {
             try { _newsAiAnalyze(entry); } catch(e) {}
@@ -10438,6 +10440,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.82",
+      "date": "2026-05-03",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News Analytics — scanStatus zapisuje oryginalny wynik skanera; wcześniej 'opened'/'added' nadpisywały status i wszystkie wpisy trafiały do manual_add zamiast scanner.*"},
+        {"type": "fix", "text": "News Analytics — nieopublikowane wpisy z pozytywnym statusem teraz liczą się jako skipped (FP) w obliczeniu precision"}
+      ]
+    },
+    {
       "version": "0.23.81",
       "date": "2026-05-03",
       "label": "ux",
@@ -10523,15 +10535,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#a78bfa",
       "changes": [
         {"type": "ux", "text": "przycisk 'Testuj połączenie' w ⚙ Analityka — weryfikuje PAT i uprawnienia do zapisu w repo GitHub (✓ OK / ✗ 401 / ✗ 404 / ⚠ brak uprawnień)"}
-      ]
-    },
-    {
-      "version": "0.23.72",
-      "date": "2026-04-26",
-      "label": "feature",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "News Analytics — Sesja 5: eksport ↓ CSV (surowe rekordy z LS + pending) i ↓ JSON (output _naCompute z aktywnym filtrem) w zakładce Statystyki"}
       ]
     },
   ];

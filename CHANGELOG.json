@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.23.81",
+    "date": "2026-05-03",
+    "label": "ux",
+    "changes": [
+      "ux: kolumna URL — szerokość złota proporcja (38.2% panelu, poprzednio 270px stałe)",
+      "ux: otwieranie artykułu — nowe okno w rozmiarze i pozycji kolumny podglądu (zamiast nowej karty)"
+    ]
+  },
+  {
     "version": "0.23.80",
     "date": "2026-05-03",
     "label": "fix",

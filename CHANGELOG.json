@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.23.83",
+    "date": "2026-05-03",
+    "label": "fix",
+    "changes": [
+      "fix: project-check w panelu News wykrywa też URLe z różnym query string (utm_*, fbclid) i obciętym ID — wcześniej wymagał exact match",
+      "ux: szersza kolumna formularza dodawania wzmianki (23.6% z min 290px / max 400px zamiast stałych 285px)",
+      "ux: większe pole 'Treść' w formularzu (rows 3→7, min-height 60→140px)",
+      "fix: regresja z v0.23.81 — _newsApplyResponsive nadpisywała szerokość listy URLi z 38.2% na 270px"
+    ]
+  },
+  {
     "version": "0.23.82",
     "date": "2026-05-03",
     "label": "fix",

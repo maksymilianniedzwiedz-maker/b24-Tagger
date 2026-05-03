@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.23.86",
+    "date": "2026-05-03",
+    "label": "fix",
+    "changes": [
+      "fix: tryb overwrite/multitag automatycznie buduje mapę ze WSZYSTKICH wzmianek — wcześniej wzmianki z istniejącym tagiem nie trafiały do mapy (NO_MATCH) i były pomijane mimo że overwrite był włączony",
+      "feat: raport tagowania pokazuje 'Podmieniono tag: X' — widoczne w logu diagnostycznym i końcowym RAPORCIE TAGOWANIA gdy użyto trybu overwrite"
+    ]
+  },
+  {
     "version": "0.23.85",
     "date": "2026-05-03",
     "label": "fix",

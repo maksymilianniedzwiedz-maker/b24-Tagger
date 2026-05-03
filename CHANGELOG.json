@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.23.82",
+    "date": "2026-05-03",
+    "label": "fix",
+    "changes": [
+      "fix: News Analytics — scanStatus zapisuje oryginalny wynik skanera; wcześniej 'opened'/'added' nadpisywały status i wszystkie wpisy trafiały do manual_add zamiast scanner.*",
+      "fix: News Analytics — nieopublikowane wpisy z pozytywnym statusem teraz liczą się jako skipped (FP) zamiast być pomijane w obliczeniu precision"
+    ]
+  },
+  {
     "version": "0.23.81",
     "date": "2026-05-03",
     "label": "ux",

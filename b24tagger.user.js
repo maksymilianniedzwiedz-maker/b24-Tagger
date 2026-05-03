@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.79
+// @version      0.23.80
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.79';
+  const VERSION = '0.23.80';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7056,7 +7056,7 @@ function showOnboarding(onComplete) {
   //   keytopic    → 12+ pkt   (keyword w tytule — artykuł o marce)
   //   teasermatch → 0 pkt     (keyword tylko w sekcji polecanych artykułów, nie w głównej treści)
 
-  var NEWS_CONTENT_SCAN_CONCURRENCY = 8;
+  var NEWS_CONTENT_SCAN_CONCURRENCY = 5;
   var NEWS_CONTENT_SCAN_TIMEOUT_MS  = 8000; // minimum / fallback
   var _scanTimings = []; // sliding window: czasy udanych skanów (ms), max 20
 
@@ -8234,7 +8234,7 @@ function showOnboarding(onComplete) {
       function _attempt(timeoutMs, isRetry) {
         // Zewnętrzny timer — ochrona gdyby GM_xmlhttpRequest nie wywołał żadnego callbacku
         var timer = setTimeout(function() {
-          _done({ status: 'blocked', score: 0, snippet: '' });
+          _done({ status: 'blocked', blockReason: 'timeout', score: 0, snippet: '' });
         }, timeoutMs + 500);
 
         try {
@@ -8247,7 +8247,7 @@ function showOnboarding(onComplete) {
               clearTimeout(timer);
               try {
                 if (resp.status < 200 || resp.status >= 400) {
-                  _done({ status: 'blocked', score: 0, snippet: '' });
+                  _done({ status: 'blocked', blockReason: 'http', httpStatus: resp.status, score: 0, snippet: '' });
                   return;
                 }
                 // Odrzuć non-HTML (PDFy, obrazy, feed XML itp.)
@@ -8280,25 +8280,25 @@ function showOnboarding(onComplete) {
                 _sr.iframeable = _iframeable;
                 _done(_sr, true);
               } catch(e) {
-                _done({ status: 'blocked', score: 0, snippet: '' });
+                _done({ status: 'blocked', blockReason: 'exception', score: 0, snippet: '' });
               }
             },
             onerror: function() {
               clearTimeout(timer);
-              _done({ status: 'blocked', score: 0, snippet: '' });
+              _done({ status: 'blocked', blockReason: 'error', score: 0, snippet: '' });
             },
             ontimeout: function() {
               clearTimeout(timer);
               if (!isRetry) {
                 _attempt(Math.min(timeoutMs * 2, 40000), true);
               } else {
-                _done({ status: 'blocked', score: 0, snippet: '' });
+                _done({ status: 'blocked', blockReason: 'timeout', score: 0, snippet: '' });
               }
             },
           });
         } catch(e) {
           clearTimeout(timer);
-          _done({ status: 'blocked', score: 0, snippet: '' });
+          _done({ status: 'blocked', blockReason: 'exception', score: 0, snippet: '' });
         }
       }
 
@@ -9196,7 +9196,7 @@ function showOnboarding(onComplete) {
     }
 
     // ─── URL LIST ───
-    function _statusDot(s) {
+    function _statusDot(s, entry) {
       if (s === 'match')        return { dot: '●', color: '#22c55e', label: 'Keyword w URL — relevantny' };
       if (s === 'keytopic')     return { dot: '◆', color: '#22c55e', label: 'Główny temat (score 12+)' };
       if (s === 'contentmatch') return { dot: '◆', color: '#818cf8', label: 'W treści (score 5–11)' };
@@ -9208,7 +9208,16 @@ function showOnboarding(onComplete) {
       if (s === 'error')        return { dot: '✗', color: '#ef4444', label: 'Błąd / duplikat w projekcie' };
       if (s === 'inproject')    return { dot: '●', color: '#64748b', label: 'Już w projekcie (ten miesiąc)' };
       if (s === 'scanning')     return { dot: '◌', color: '#818cf8', label: 'Skanowanie treści...' };
-      if (s === 'blocked')      return { dot: '—', color: '#6b7280', label: 'Nie przeskanowana — kliknij aby sprawdzić ręcznie' };
+      if (s === 'blocked') {
+        var _lbl = 'Nie przeskanowana — kliknij aby sprawdzić ręcznie';
+        if (entry) {
+          if (entry.blockReason === 'timeout')    _lbl = 'Timeout — brak odpowiedzi w wyznaczonym czasie. Kliknij aby otworzyć ręcznie';
+          else if (entry.blockReason === 'error') _lbl = 'Błąd połączenia (DNS, SSL lub connection refused). Kliknij aby otworzyć ręcznie';
+          else if (entry.blockReason === 'http')  _lbl = 'HTTP ' + (entry.httpStatus || '') + ' — serwer odrzucił zapytanie. Kliknij aby otworzyć ręcznie';
+          else if (entry.blockReason === 'exception') _lbl = 'Nieoczekiwany błąd podczas skanowania. Kliknij aby otworzyć ręcznie';
+        }
+        return { dot: '—', color: '#6b7280', label: _lbl };
+      }
       return { dot: '○', color: '#4b5563', label: 'Brak keyword w URL ani treści' };
     }
 
@@ -9431,7 +9440,7 @@ function showOnboarding(onComplete) {
         if (newsState.hideNonArticles && entry.pageType === 'nonArticle') return;
 
         var isActive    = idx === newsState.activeIdx;
-        var sd          = _statusDot(entry.status);
+        var sd          = _statusDot(entry.status, entry);
         var isScanning  = entry.status === 'scanning';
         var isIrrelevant = entry.status === 'nomatch' || entry.status === 'wrongcountry' ||
                            entry.status === 'inproject';
@@ -9454,7 +9463,13 @@ function showOnboarding(onComplete) {
         if (!newsState.scanning) {
           row.style.animation = 'b24t-fadein 0.15s ease ' + Math.min(idx * 30, 240) + 'ms both';
         }
-        if (isBlocked) row.title = 'Wtyczka nie mogła przeskanować — kliknij aby sprawdzić ręcznie';
+        if (isBlocked) {
+          if (entry.blockReason === 'timeout')         row.title = 'Timeout — strona nie odpowiedziała w czasie. Kliknij aby otworzyć ręcznie';
+          else if (entry.blockReason === 'error')      row.title = 'Błąd połączenia (DNS, SSL, connection refused). Kliknij aby otworzyć ręcznie';
+          else if (entry.blockReason === 'http')       row.title = 'HTTP ' + (entry.httpStatus || '') + ' — serwer odrzucił zapytanie. Kliknij aby otworzyć ręcznie';
+          else if (entry.blockReason === 'exception')  row.title = 'Nieoczekiwany błąd podczas skanowania. Kliknij aby otworzyć ręcznie';
+          else                                         row.title = 'Wtyczka nie mogła przeskanować — kliknij aby sprawdzić ręcznie';
+        }
 
         var displayUrl = entry.url.replace(/^https?:\/\//, '');
 
@@ -9466,7 +9481,14 @@ function showOnboarding(onComplete) {
         }
 
         // Status badge — pierwszy w górnym wierszu
-        var _sLabels = { match:'Keyword w URL', keytopic:'G\u0142\u00f3wny temat', contentmatch:'W tre\u015bci', mention:'Wzmianka', teasermatch:'Polecany art.', wrongcountry:'Z\u0142y kraj', opened:'Otwarty', added:'Dodano \u2713', error:'B\u0142\u0105d', inproject:'W projekcie', scanning:'Skanowanie\u2026', blocked:'Zablokowana', nomatch:'Brak keyword' };
+        var _blockedLabel = isBlocked ? (
+          entry.blockReason === 'timeout'   ? 'Timeout' :
+          entry.blockReason === 'error'     ? 'B\u0142\u0105d sieci' :
+          entry.blockReason === 'http'      ? 'HTTP ' + (entry.httpStatus || '') :
+          entry.blockReason === 'exception' ? 'B\u0142\u0105d' :
+          'Zablokowana'
+        ) : 'Zablokowana';
+        var _sLabels = { match:'Keyword w URL', keytopic:'G\u0142\u00f3wny temat', contentmatch:'W tre\u015bci', mention:'Wzmianka', teasermatch:'Polecany art.', wrongcountry:'Z\u0142y kraj', opened:'Otwarty', added:'Dodano \u2713', error:'B\u0142\u0105d', inproject:'W projekcie', scanning:'Skanowanie\u2026', blocked:_blockedLabel, nomatch:'Brak keyword' };
         var _sbStyle;
         if (isScanning) {
           _sbStyle = 'background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.2);color:#818cf8;';
@@ -9723,6 +9745,12 @@ function showOnboarding(onComplete) {
       var _sc = _statusColors[entry.status] || '#9ca3af';
       var _sb = _statusBgs[entry.status]    || 'rgba(107,114,128,0.10)';
       var _sl = _statusLabels[entry.status] || entry.status || '';
+      if (entry.status === 'blocked' && entry.blockReason) {
+        if (entry.blockReason === 'timeout')         _sl = 'timeout';
+        else if (entry.blockReason === 'error')      _sl = 'błąd sieci';
+        else if (entry.blockReason === 'http')       _sl = 'HTTP ' + (entry.httpStatus || '');
+        else if (entry.blockReason === 'exception')  _sl = 'błąd';
+      }
 
       var _badges = [];
       if (_sl) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:' + _sb + ';border:1px solid ' + _sc + '33;color:' + _sc + ';font-weight:600;">' + _esc(_sl) + '</span>');
@@ -10057,8 +10085,10 @@ function showOnboarding(onComplete) {
             entry.author             = result.author || '';
             entry.wordCount          = result.wordCount || 0;
             if (result.iframeable !== undefined) entry.iframeable = result.iframeable;
+            entry.blockReason = result.blockReason || null;
+            entry.httpStatus  = result.httpStatus  || null;
           } catch(e) {
-            entry.status = 'blocked';
+            entry.status = 'blocked'; entry.blockReason = 'exception';
           }
           if (entry.status === 'mention' || entry.status === 'contentmatch' || entry.status === 'keytopic') {
             try { _newsAiAnalyze(entry); } catch(e) {}
@@ -10408,6 +10438,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.80",
+      "date": "2026-05-03",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News scan — concurrency 8→5 (mniej agresywne skanowanie równoległe)"},
+        {"type": "ux", "text": "rozróżnienie przyczyn zablokowania URL — timeout / HTTP 403/429/5xx / błąd sieci / błąd wewnętrzny"}
+      ]
+    },
+    {
       "version": "0.23.79",
       "date": "2026-04-30",
       "label": "fix",
@@ -10491,15 +10531,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#6366f1",
       "changes": [
         {"type": "feat", "text": "News Analytics — zakładka 📊 Statystyki w panelu News: _naRenderStats, _naStatCard, statsOverlay, przycisk 📊 w headerze, zakładka Statystyki w trybie mobilnym, filtry okres + kraj"}
-      ]
-    },
-    {
-      "version": "0.23.70",
-      "date": "2026-04-26",
-      "label": "feature",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "News Analytics — _naCompute(filters): precision/recall skanera per status i sygnał, score distribution, AI confusion matrix, statystyki sesji; debug bridge naCompute()"}
       ]
     },
   ];

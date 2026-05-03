@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.82
+// @version      0.23.83
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.82';
+  const VERSION = '0.23.83';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8687,7 +8687,7 @@ function showOnboarding(onComplete) {
     // Right column: mention form
     var colForm = document.createElement('div');
     colForm.id = 'b24t-news-col-form';
-    colForm.style.cssText = 'width:285px;flex-shrink:0;display:flex;flex-direction:column;overflow-y:auto;padding:14px 16px;gap:10px;min-width:0;';
+    colForm.style.cssText = 'flex:0 0 23.6%;min-width:290px;max-width:400px;display:flex;flex-direction:column;overflow-y:auto;padding:14px 16px;gap:10px;';
 
     colForm.innerHTML = [
       '<div id="b24t-news-cms-warn" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.5;flex-shrink:0;">' +
@@ -8704,7 +8704,7 @@ function showOnboarding(onComplete) {
       _newsFormRow('Tytuł artykułu', '<input id="b24t-news-f-title" type="text" placeholder="Wklej tytuł artykułu..." style="' + _newsInputCss(t) + '">', true),
       '<div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">' +
         '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">TREŚĆ <span style="color:#ef4444;">*</span></label>' +
-        '<textarea id="b24t-news-f-content" rows="3" placeholder="Wklej fragment treści artykułu..." style="' + _newsInputCss(t) + 'resize:vertical;min-height:60px;"></textarea>' +
+        '<textarea id="b24t-news-f-content" rows="7" placeholder="Wklej fragment treści artykułu..." style="' + _newsInputCss(t) + 'resize:vertical;min-height:140px;"></textarea>' +
       '</div>',
       '<div style="display:flex;gap:6px;flex-shrink:0;">',
         '<div style="flex:2;display:flex;flex-direction:column;gap:4px;">',
@@ -8839,11 +8839,12 @@ function showOnboarding(onComplete) {
         colList.style.display = 'flex';
         colPreview.style.display = 'flex';
         colForm.style.display = 'flex';
-        colList.style.width = '270px';
+        // Szerokości pochodzą z initial CSS (flex:0 0 38.2% list, flex:1 preview, flex:0 0 23.6% form) — nie nadpisuj
+        colList.style.width = '';
         colList.style.borderRight = '1px solid ' + t.border;
         colPreview.style.width = '';
         colPreview.style.borderRight = '1px solid ' + t.border;
-        colForm.style.width = '285px';
+        colForm.style.width = '';
       } else {
         var activeTab = tabsBar.querySelector('.b24t-news-tab-active');
         var activeTabName = activeTab ? activeTab.dataset.tab : 'list';
@@ -9309,17 +9310,29 @@ function showOnboarding(onComplete) {
         var now = new Date();
         var dateFrom = _localDateStr(new Date(now.getFullYear(), now.getMonth(), 1));
         var dateTo   = _localDateStr(now);
-        var projectUrls = new Set();
+        var projectUrls = new Set();        // znormalizowane URLe — szybki exact lookup
+        var projectUrlsBase = new Set();    // bez query/hash — fallback na utm_*, fbclid itp.
+        var projectUrlsArr = [];            // do urlsMatch (tolerancja obcięcia ID)
+        var rawCount = 0;
         var page = 1;
         var total = null;
+        var _rxQueryHash = /[?#].*$/;
         while (true) {
           var res = await getMentions(state.projectId, dateFrom, dateTo, [], page);
           if (!res) break;
           if (total === null) total = res.count || 0;
           var results = res.results || [];
           if (results.length === 0) break;
-          results.forEach(function(m) { if (m.url) projectUrls.add(m.url); });
-          if (projectUrls.size >= total) break;
+          results.forEach(function(m) {
+            if (!m.url) return;
+            rawCount++;
+            var n = normalizeUrl(m.url);
+            if (!n || projectUrls.has(n)) return;
+            projectUrls.add(n);
+            projectUrlsArr.push(n);
+            projectUrlsBase.add(n.replace(_rxQueryHash, ''));
+          });
+          if (rawCount >= total) break;
           page++;
           if (page > 50) break; // safety cap
         }
@@ -9329,7 +9342,21 @@ function showOnboarding(onComplete) {
           if (entry.status === 'inproject') entry.status = 'pending'; // reset poprzednich
         });
         newsState.urls.forEach(function(entry) {
-          if (projectUrls.has(entry.url)) {
+          var en = normalizeUrl(entry.url);
+          if (!en) return;
+          var hit = projectUrls.has(en);
+          if (!hit) {
+            // Fallback 1: dopasowanie bez query/hash (utm_*, fbclid itp.)
+            var enBase = en.replace(_rxQueryHash, '');
+            if (projectUrlsBase.has(enBase)) hit = true;
+          }
+          if (!hit) {
+            // Fallback 2: tolerancja obcięcia ID (np. video ID skrócone w XLSX)
+            for (var i = 0; i < projectUrlsArr.length; i++) {
+              if (urlsMatch(en, projectUrlsArr[i])) { hit = true; break; }
+            }
+          }
+          if (hit) {
             entry.status = 'inproject';
             matchedCount++;
           }
@@ -10440,6 +10467,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.83",
+      "date": "2026-05-03",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "project-check w panelu News wykrywa też URLe z różnym query string (utm_*, fbclid) i obciętym ID — wcześniej wymagał exact match"},
+        {"type": "ux", "text": "szersza kolumna formularza dodawania wzmianki (23.6% z min 290px / max 400px zamiast stałych 285px)"},
+        {"type": "ux", "text": "większe pole 'Treść' w formularzu (rows 3→7, min-height 60→140px)"},
+        {"type": "fix", "text": "regresja z v0.23.81 — _newsApplyResponsive nadpisywała szerokość listy URLi z 38.2% na 270px"}
+      ]
+    },
+    {
       "version": "0.23.82",
       "date": "2026-05-03",
       "label": "fix",
@@ -10526,15 +10565,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "News — adaptacyjny timeout skanowania (p90 historii × 2, min 8s, max 40s) + retry przy timeout zamiast od razu 'zablokowana'"}
-      ]
-    },
-    {
-      "version": "0.23.73",
-      "date": "2026-04-26",
-      "label": "ux",
-      "labelColor": "#a78bfa",
-      "changes": [
-        {"type": "ux", "text": "przycisk 'Testuj połączenie' w ⚙ Analityka — weryfikuje PAT i uprawnienia do zapisu w repo GitHub (✓ OK / ✗ 401 / ✗ 404 / ⚠ brak uprawnień)"}
       ]
     },
   ];

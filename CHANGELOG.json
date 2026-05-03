@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.23.85",
+    "date": "2026-05-03",
+    "label": "fix",
+    "changes": [
+      "fix: cross-project Quick Delete — szerszy zakres dat (od 1. dnia poprzedniego miesiąca do dziś) zamiast wąskiego okna z getAnnotatorDates; wcześniej na początku miesiąca panel pokazywał 0 wzmianek mimo że tag istniał w danych z poprzedniego miesiąca",
+      "fix: Auto-Delete po tagowaniu pliku — jeśli pierwsza próba zwróci 0 wzmianek, retry po 5s z szerszym oknem (prev month → today); zabezpieczenie przed lag indeksu Brand24 lub niezgodnością dat z pliku",
+      "ux: News panel — proporcje kolumn: lista URLi 28% (z 38.2%), formularz 18% (z 23.6%) — środkowa kolumna podglądu zyskuje ~54% szerokości panelu dla wygody czytania artykułów"
+    ]
+  },
+  {
     "version": "0.23.84",
     "date": "2026-05-03",
     "label": "feature",

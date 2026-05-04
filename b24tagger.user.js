@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.88
+// @version      0.23.89
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.88';
+  const VERSION = '0.23.89';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8572,6 +8572,14 @@ function showOnboarding(onComplete) {
 
 
   function closeNewsPanels() {
+    if (newsState.sessionId && lsGet(LS.NA_CONSENT) === '1') {
+      var _naClose = _naAggSession();
+      var _naStats = lsGet(LS.NA_SESSION_STATS, []);
+      if (!_naStats.some(function(s) { return s.sessionId === _naClose.sessionId; })) {
+        _naStats.push(_naClose);
+        lsSet(LS.NA_SESSION_STATS, _naStats);
+      }
+    }
     var _naSD = newsState.sessionId ? _naBuildSessionData() : null;
     _naFinalizeSession();
     if (_naSD) _naPushSession(_naSD, null);
@@ -10529,6 +10537,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.89",
+      "date": "2026-05-04",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News Analytics — sesja zamknięta przez X teraz trafia do LS.NA_SESSION_STATS; wcześniej closeNewsPanels nie zapisywał do localStorage (tylko pushował na GitHub), więc po zamknięciu i ponownym otwarciu panelu statystyki pokazywały zera"}
+      ]
+    },
+    {
       "version": "0.23.88",
       "date": "2026-05-04",
       "label": "feat",
@@ -10619,16 +10636,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "News scan — concurrency 8→5 (mniej agresywne skanowanie równoległe)"},
         {"type": "ux", "text": "rozróżnienie przyczyn zablokowania URL — timeout / HTTP 403/429/5xx / błąd sieci / błąd wewnętrzny"}
-      ]
-    },
-    {
-      "version": "0.23.79",
-      "date": "2026-04-30",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News Analytics — per-sesja confusion matrix zamiast per-rekord; fix wykrywania AI w statystykach (aiStatus teraz odczytywany z live entries na koniec sesji)"},
-        {"type": "ux", "text": "zakładka 'News Analytics' (poprzednio 'Statystyki skanowania')"}
       ]
     },
   ];

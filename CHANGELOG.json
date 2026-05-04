@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.88",
+    "date": "2026-05-04",
+    "label": "feat",
+    "changes": [
+      "feat: Network Monitor — floating panel monitorujący cały ruch sieciowy (fetch + XHR); widok real-time z filtrowaniem All/Errors/GQL, ring buffer 200 wpisów, eksport JSON, Pause/Clear; włączany w ustawieniach ⚙"
+    ]
+  },
+  {
     "version": "0.23.87",
     "date": "2026-05-04",
     "label": "fix",

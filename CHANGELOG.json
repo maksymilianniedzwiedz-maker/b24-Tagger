@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.89",
+    "date": "2026-05-04",
+    "label": "fix",
+    "changes": [
+      "fix: News Analytics — sesja zamknięta przez X teraz trafia do LS.NA_SESSION_STATS; wcześniej closeNewsPanels nie zapisywał do localStorage (tylko pushował na GitHub), więc po zamknięciu i ponownym otwarciu panelu statystyki pokazywały zera"
+    ]
+  },
+  {
     "version": "0.23.88",
     "date": "2026-05-04",
     "label": "feat",

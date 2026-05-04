@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.86
+// @version      0.23.87
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.86';
+  const VERSION = '0.23.87';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -9315,7 +9315,7 @@ function showOnboarding(onComplete) {
 
       try {
         var now = new Date();
-        var dateFrom = _localDateStr(new Date(now.getFullYear(), now.getMonth(), 1));
+        var dateFrom = _localDateStr(new Date(now.getFullYear(), now.getMonth() - 2, 1));
         var dateTo   = _localDateStr(now);
         var projectUrls = new Set();        // znormalizowane URLe — szybki exact lookup
         var projectUrlsBase = new Set();    // bez query/hash — fallback na utm_*, fbclid itp.
@@ -9331,9 +9331,9 @@ function showOnboarding(onComplete) {
           var results = res.results || [];
           if (results.length === 0) break;
           results.forEach(function(m) {
-            if (!m.url) return;
+            if (!m.url && !m.openUrl) return;
             rawCount++;
-            var n = normalizeUrl(m.url);
+            var n = normalizeUrl(m.url || m.openUrl);
             if (!n || projectUrls.has(n)) return;
             projectUrls.add(n);
             projectUrlsArr.push(n);
@@ -10474,6 +10474,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.87",
+      "date": "2026-05-04",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News — wykrywanie URLi już w projekcie obejmuje teraz 3 miesiące wstecz zamiast tylko bieżącego miesiąca; URLe z poprzednich miesięcy były niewidoczne jako 'już w projekcie'"},
+        {"type": "fix", "text": "News — sprawdzanie projektu uwzględnia pole openUrl jako fallback (spójnie z buildUrlMap)"}
+      ]
+    },
+    {
       "version": "0.23.86",
       "date": "2026-05-03",
       "label": "fix",
@@ -10564,15 +10574,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#a78bfa",
       "changes": [
         {"type": "ux", "text": "testowy push zapisuje realistyczne dane analityczne (przykładowa sesja + 5 rekordów z różnymi statusami) zamiast pustego payloadu"}
-      ]
-    },
-    {
-      "version": "0.23.77",
-      "date": "2026-04-30",
-      "label": "ux",
-      "labelColor": "#a78bfa",
-      "changes": [
-        {"type": "ux", "text": "przycisk 'Testowy push' w ⚙ Analityka — weryfikuje zapis pliku na GitHub end-to-end (zapisuje Tagger/statistics/_test_push.json)"}
       ]
     },
   ];

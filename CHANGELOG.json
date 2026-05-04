@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.23.87",
+    "date": "2026-05-04",
+    "label": "fix",
+    "changes": [
+      "fix: News — wykrywanie URLi już w projekcie obejmuje teraz 3 miesiące wstecz zamiast tylko bieżącego miesiąca; URLe z poprzednich miesięcy były niewidoczne jako 'już w projekcie'",
+      "fix: News — sprawdzanie projektu uwzględnia pole openUrl jako fallback (spójnie z buildUrlMap)"
+    ]
+  },
+  {
     "version": "0.23.86",
     "date": "2026-05-03",
     "label": "fix",

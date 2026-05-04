@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.87
+// @version      0.23.88
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.87';
+  const VERSION = '0.23.88';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -200,6 +200,8 @@
     _sniffUiTag: false,
     _netMonitor: null,
   };
+
+  var nmState = { enabled: false, paused: false, entries: [], _counter: 0 };
 
   // Batch size dla masowego usuwania — domyślnie DEL_BATCH_DEFAULT, edytowalny przez UI
   let _deleteBatch = DEL_BATCH_DEFAULT;
@@ -492,6 +494,7 @@
   const _win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
   const origFetch = _win.fetch;
   _win.fetch = async function (...args) {
+    const _nmT0 = performance.now();
     const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
     const opts = args[1] || {};
     const bodyStr = typeof opts.body === 'string' ? opts.body : '';
@@ -525,6 +528,15 @@
     }
     const res = await origFetch.apply(this, args);
 
+    if (nmState.enabled && !nmState.paused) {
+      var _dur = Math.round(performance.now() - _nmT0);
+      var _isGql = url.includes('graphql');
+      var _opName = '';
+      if (_isGql && bodyStr) { try { _opName = JSON.parse(bodyStr).operationName || ''; } catch(e) {} }
+      var _nmEnt = _nmNewEntry({ method: (opts.method || 'GET').toUpperCase(), url: url, opName: _opName, status: res.status, duration: _dur, isError: !res.ok, reqSnippet: bodyStr.substring(0, 300) });
+      if (!res.ok) { res.clone().text().then(function(b) { _nmEnt.resSnippet = b.substring(0, 400); _nmRefreshRow(_nmEnt.id); }).catch(function(){}); }
+    }
+
     // [DEV TOOL] NET_MONITOR: monitoruje odpowiedzi getMentions
     // Aktywuj z konsoli: b24tagger.netMonitor(shortcodes)
     if (state._netMonitor && url.includes('graphql') && bodyStr.includes('getMentions')) {
@@ -556,6 +568,32 @@
 
     return res;
   };
+
+  // ── XHR interceptor dla Network Monitor ──
+  (function() {
+    var _OXHR = _win.XMLHttpRequest;
+    function _PatchedXHR() {
+      var xhr = new _OXHR();
+      var _m = 'GET', _u = '', _t0 = 0, _rb = '';
+      var _origOpen = xhr.open; xhr.open = function(m, u) { _m = m; _u = u; return _origOpen.apply(xhr, arguments); };
+      var _origSend = xhr.send; xhr.send = function(body) {
+        if (nmState.enabled && !nmState.paused) {
+          _t0 = performance.now(); _rb = typeof body === 'string' ? body.substring(0, 300) : '';
+          xhr.addEventListener('loadend', function() {
+            if (!nmState.enabled || nmState.paused) return;
+            var dur = Math.round(performance.now() - _t0);
+            var isGql = _u.includes('graphql'); var opName = '';
+            if (isGql && _rb) { try { opName = JSON.parse(_rb).operationName || ''; } catch(e) {} }
+            _nmNewEntry({ method: _m.toUpperCase(), url: _u, opName: opName, status: xhr.status, duration: dur, isError: xhr.status >= 400 || xhr.status === 0, reqSnippet: _rb, resSnippet: (xhr.responseText || '').substring(0, 400) });
+          }, { once: true });
+        }
+        return _origSend.apply(xhr, arguments);
+      };
+      return xhr;
+    }
+    _PatchedXHR.prototype = _OXHR.prototype;
+    _win.XMLHttpRequest = _PatchedXHR;
+  })();
 
   // ───────────────────────────────────────────
   // GRAPHQL HELPERS
@@ -3645,6 +3683,23 @@
       #b24t-news-side-tab:hover { background: var(--b24t-bg-section-c); transform: scale(1.06); }
       #b24t-news-side-tab.active { background: #6366f1; color: #fff; border-color: #4f46e5; }
       #b24t-news-side-tab.active:hover { background: #4f46e5; }
+      /* ── NETWORK MONITOR SIDE TAB ── */
+      #b24t-nm-tab {
+        position: fixed; right: 0; top: calc(50% + 175px);
+        z-index: 2147483639; border-radius: 10px 0 0 10px; border: 1px solid var(--b24t-border); border-right: none;
+        padding: 12px 9px; cursor: pointer; display: none;
+        flex-direction: column; align-items: center; gap: 4px;
+        font-family: 'Geist','Segoe UI',system-ui,-apple-system,sans-serif;
+        font-size: 10px; font-weight: 700; letter-spacing: 0.05em;
+        color: var(--b24t-primary); user-select: none;
+        background: var(--b24t-bg-elevated); box-shadow: var(--b24t-shadow);
+        transition: transform 0.15s, background 0.15s, border-color 0.3s;
+      }
+      #b24t-nm-tab:hover { background: var(--b24t-bg-section-c); transform: scale(1.06); }
+      #b24t-nm-tab.active { background: #0ea5e9; color: #fff; border-color: #0284c7; }
+      #b24t-nm-tab.active:hover { background: #0284c7; }
+      /* ── NETWORK MONITOR PANEL ── */
+      #b24t-nm-panel { transition: background 0.3s, border-color 0.3s, box-shadow 0.3s; }
       /* ── ANNOTATOR FLOATING PANEL ── */
       #b24t-annotator-tab {
         transition: opacity 0.2s, transform 0.2s;
@@ -10474,6 +10529,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.88",
+      "date": "2026-05-04",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "Network Monitor — floating panel monitorujący cały ruch sieciowy (fetch + XHR); widok real-time z filtrowaniem All/Errors/GQL, ring buffer 200 wpisów, eksport JSON, Pause/Clear; włączany w ustawieniach ⚙"}
+      ]
+    },
+    {
       "version": "0.23.87",
       "date": "2026-05-04",
       "label": "fix",
@@ -10565,15 +10629,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "News Analytics — per-sesja confusion matrix zamiast per-rekord; fix wykrywania AI w statystykach (aiStatus teraz odczytywany z live entries na koniec sesji)"},
         {"type": "ux", "text": "zakładka 'News Analytics' (poprzednio 'Statystyki skanowania')"}
-      ]
-    },
-    {
-      "version": "0.23.78",
-      "date": "2026-04-30",
-      "label": "ux",
-      "labelColor": "#a78bfa",
-      "changes": [
-        {"type": "ux", "text": "testowy push zapisuje realistyczne dane analityczne (przykładowa sesja + 5 rekordów z różnymi statusami) zamiast pustego payloadu"}
       ]
     },
   ];
@@ -11301,6 +11356,11 @@ function showOnboarding(onComplete) {
       label: '🛠 Annotators Tab',
       desc: 'Floating panel z narzędziami dla annotatorów: statystyki bieżącego projektu i przegląd wszystkich projektów (REQ VER / TO DELETE).',
     },
+    {
+      id: 'network_monitor',
+      label: '📡 Network Monitor',
+      desc: 'Floating panel monitorujący ruch sieciowy na stronie Brand24 — pomaga diagnozować błędy tagowania i usuwania wzmianek.',
+    },
   ];
 
   function loadFeatures() {
@@ -11333,6 +11393,11 @@ function showOnboarding(onComplete) {
       var _nst2 = document.getElementById('b24t-news-side-tab');
       if (_nst2) _nst2.style.display = 'none';
     }
+
+    // Network Monitor tab
+    var nmTab = document.getElementById('b24t-nm-tab');
+    if (nmTab) nmTab.style.display = features.network_monitor ? 'flex' : 'none';
+    nmState.enabled = !!features.network_monitor;
   }
 
   function showFeaturesModal() {
@@ -14761,6 +14826,246 @@ Tej operacji nie można cofnąć.`)) {
   }
 
   // ───────────────────────────────────────────
+  // NETWORK MONITOR
+  // ───────────────────────────────────────────
+
+  var NM_MAX = 200;
+
+  function _nmNewEntry(opts) {
+    var entry = {
+      id: ++nmState._counter, ts: Date.now(),
+      method: opts.method || 'GET', url: opts.url || '',
+      opName: opts.opName || '', status: opts.status || 0,
+      duration: opts.duration || 0, isError: !!opts.isError,
+      reqSnippet: opts.reqSnippet || '', resSnippet: opts.resSnippet || '',
+    };
+    nmState.entries.unshift(entry);
+    if (nmState.entries.length > NM_MAX) nmState.entries.length = NM_MAX;
+    _nmPushRow(entry);
+    _nmUpdateCount();
+    return entry;
+  }
+
+  function _nmRefreshRow(id) {
+    var entry = nmState.entries.find(function(e) { return e.id === id; });
+    if (!entry) return;
+    var row = document.getElementById('b24t-nm-row-' + id);
+    if (!row) return;
+    var detTr = row._nmDetail;
+    if (!detTr) return;
+    var resEl = detTr.querySelector('.b24t-nm-res');
+    if (resEl) resEl.textContent = entry.resSnippet || '(empty)';
+  }
+
+  function _nmFmtTime(ts) {
+    var d = new Date(ts);
+    return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0') + ':' + d.getSeconds().toString().padStart(2,'0') + '.' + d.getMilliseconds().toString().padStart(3,'0');
+  }
+
+  function _nmFmtUrl(url, opName) {
+    if (opName) return opName;
+    try { var u = new URL(url, window.location.origin); var p = u.pathname; return p.length > 45 ? ('...' + p.slice(-42)) : p; } catch(e) { return url.substring(0, 45); }
+  }
+
+  function _nmStatusColor(status, isError) {
+    if (isError || !status) return '#f87171';
+    if (status >= 400) return '#f87171';
+    if (status >= 300) return '#facc15';
+    return '#4ade80';
+  }
+
+  function _nmUpdateCount() {
+    var el = document.getElementById('b24t-nm-count');
+    if (el) el.textContent = nmState.entries.length + ' / ' + NM_MAX;
+  }
+
+  function _nmPushRow(entry) {
+    var panel = document.getElementById('b24t-nm-panel');
+    if (!panel || panel.style.display === 'none') return;
+    var tbody = document.getElementById('b24t-nm-tbody');
+    if (!tbody) return;
+    var filter = document.getElementById('b24t-nm-filter') ? document.getElementById('b24t-nm-filter').value : 'all';
+    if (filter === 'errors' && !entry.isError) return;
+    if (filter === 'gql' && !entry.url.includes('graphql')) return;
+    while (tbody.children.length >= 200) tbody.removeChild(tbody.lastChild);
+    var statusColor = _nmStatusColor(entry.status, entry.isError);
+    var methodColor = entry.method === 'POST' ? '#818cf8' : '#60a5fa';
+    var tr = document.createElement('tr');
+    tr.id = 'b24t-nm-row-' + entry.id;
+    tr.innerHTML =
+      '<td style="padding:3px 6px;font-size:10px;color:#6b7280;white-space:nowrap;font-family:monospace;">' + _nmFmtTime(entry.ts) + '</td>' +
+      '<td style="padding:3px 6px;font-size:10px;font-weight:700;color:' + methodColor + ';">' + entry.method + '</td>' +
+      '<td style="padding:3px 6px;font-size:10px;color:#e2e8f0;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + entry.url + '">' + _nmFmtUrl(entry.url, entry.opName) + '</td>' +
+      '<td style="padding:3px 6px;font-size:10px;font-weight:700;color:' + statusColor + ';text-align:center;">' + (entry.status || '—') + '</td>' +
+      '<td style="padding:3px 6px;font-size:10px;color:#9ca3af;text-align:right;white-space:nowrap;">' + entry.duration + 'ms</td>';
+    function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    var detTr = document.createElement('tr');
+    detTr.style.display = 'none';
+    detTr.innerHTML = '<td colspan="5" style="padding:4px 8px 8px;background:#0f1117;border-bottom:1px solid #2a2a35;">' +
+      '<div style="font-size:9px;color:#9ca3af;word-break:break-all;margin-bottom:3px;">URL: <span style="color:#e2e8f0;">' + esc(entry.url) + '</span></div>' +
+      (entry.reqSnippet ? '<div style="font-size:9px;color:#9ca3af;margin-bottom:2px;">Request:<br><pre style="margin:2px 0 4px;color:#c4b5fd;font-size:9px;background:#1a1a2e;padding:4px 6px;border-radius:4px;overflow:auto;max-height:70px;white-space:pre-wrap;">' + esc(entry.reqSnippet) + '</pre></div>' : '') +
+      '<div style="font-size:9px;color:#9ca3af;">Response:<br><pre class="b24t-nm-res" style="margin:2px 0;color:' + (entry.isError ? '#f87171' : '#a7f3d0') + ';font-size:9px;background:#1a1a2e;padding:4px 6px;border-radius:4px;overflow:auto;max-height:70px;white-space:pre-wrap;">' + esc(entry.resSnippet || '(oczekiwanie...)') + '</pre></div>' +
+      '</td>';
+    tr._nmDetail = detTr;
+    tr.style.cursor = 'pointer';
+    tr.addEventListener('click', function() {
+      var open = detTr.style.display !== 'none';
+      detTr.style.display = open ? 'none' : 'table-row';
+      tr.style.background = open ? '' : '#1a1a2e';
+    });
+    tr.addEventListener('mouseenter', function() { if (detTr.style.display === 'none') tr.style.background = '#1e1e30'; });
+    tr.addEventListener('mouseleave', function() { if (detTr.style.display === 'none') tr.style.background = ''; });
+    tbody.insertBefore(detTr, tbody.firstChild);
+    tbody.insertBefore(tr, tbody.firstChild);
+  }
+
+  function _nmRebuildTable() {
+    var tbody = document.getElementById('b24t-nm-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    var filter = document.getElementById('b24t-nm-filter') ? document.getElementById('b24t-nm-filter').value : 'all';
+    var shown = 0;
+    nmState.entries.forEach(function(entry) {
+      if (shown >= 100) return;
+      if (filter === 'errors' && !entry.isError) return;
+      if (filter === 'gql' && !entry.url.includes('graphql')) return;
+      var statusColor = _nmStatusColor(entry.status, entry.isError);
+      var methodColor = entry.method === 'POST' ? '#818cf8' : '#60a5fa';
+      function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+      var tr = document.createElement('tr');
+      tr.id = 'b24t-nm-row-' + entry.id;
+      tr.innerHTML =
+        '<td style="padding:3px 6px;font-size:10px;color:#6b7280;white-space:nowrap;font-family:monospace;">' + _nmFmtTime(entry.ts) + '</td>' +
+        '<td style="padding:3px 6px;font-size:10px;font-weight:700;color:' + methodColor + ';">' + entry.method + '</td>' +
+        '<td style="padding:3px 6px;font-size:10px;color:#e2e8f0;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + entry.url + '">' + _nmFmtUrl(entry.url, entry.opName) + '</td>' +
+        '<td style="padding:3px 6px;font-size:10px;font-weight:700;color:' + statusColor + ';text-align:center;">' + (entry.status || '—') + '</td>' +
+        '<td style="padding:3px 6px;font-size:10px;color:#9ca3af;text-align:right;white-space:nowrap;">' + entry.duration + 'ms</td>';
+      var detTr = document.createElement('tr');
+      detTr.style.display = 'none';
+      detTr.innerHTML = '<td colspan="5" style="padding:4px 8px 8px;background:#0f1117;border-bottom:1px solid #2a2a35;">' +
+        '<div style="font-size:9px;color:#9ca3af;word-break:break-all;margin-bottom:3px;">URL: <span style="color:#e2e8f0;">' + esc(entry.url) + '</span></div>' +
+        (entry.reqSnippet ? '<div style="font-size:9px;color:#9ca3af;margin-bottom:2px;">Request:<br><pre style="margin:2px 0 4px;color:#c4b5fd;font-size:9px;background:#1a1a2e;padding:4px 6px;border-radius:4px;overflow:auto;max-height:70px;white-space:pre-wrap;">' + esc(entry.reqSnippet) + '</pre></div>' : '') +
+        '<div style="font-size:9px;color:#9ca3af;">Response:<br><pre class="b24t-nm-res" style="margin:2px 0;color:' + (entry.isError ? '#f87171' : '#a7f3d0') + ';font-size:9px;background:#1a1a2e;padding:4px 6px;border-radius:4px;overflow:auto;max-height:70px;white-space:pre-wrap;">' + esc(entry.resSnippet || '(oczekiwanie...)') + '</pre></div>' +
+        '</td>';
+      tr._nmDetail = detTr;
+      tr.style.cursor = 'pointer';
+      tr.addEventListener('click', function() {
+        var open = detTr.style.display !== 'none';
+        detTr.style.display = open ? 'none' : 'table-row';
+        tr.style.background = open ? '' : '#1a1a2e';
+      });
+      tr.addEventListener('mouseenter', function() { if (detTr.style.display === 'none') tr.style.background = '#1e1e30'; });
+      tr.addEventListener('mouseleave', function() { if (detTr.style.display === 'none') tr.style.background = ''; });
+      tbody.appendChild(tr);
+      tbody.appendChild(detTr);
+      shown++;
+    });
+    _nmUpdateCount();
+  }
+
+  function buildNetworkMonitorPanel() {
+    if (document.getElementById('b24t-nm-panel')) return;
+    var tab = document.createElement('div');
+    tab.id = 'b24t-nm-tab';
+    tab.title = 'Network Monitor';
+    tab.innerHTML = '<span style="font-size:14px;line-height:1;">📡</span><span style="writing-mode:vertical-rl;text-orientation:mixed;letter-spacing:.07em;font-size:10px;font-weight:700;">Net</span>';
+    tab.addEventListener('click', function() { openNetworkMonitorPanel(); });
+    document.body.appendChild(tab);
+
+    var panel = document.createElement('div');
+    panel.id = 'b24t-nm-panel';
+    panel.style.cssText = 'position:fixed;right:12px;top:80px;width:560px;height:500px;z-index:2147483641;border-radius:14px;display:none;flex-direction:column;overflow:hidden;animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;font-size:13px;background:#0d0d1a;border:1px solid #2a2a35;box-shadow:0 8px 40px rgba(0,0,0,0.6);';
+    panel.innerHTML =
+      '<div id="b24t-nm-header" style="display:flex;align-items:center;gap:6px;padding:10px 14px;background:linear-gradient(135deg,#0ea5e9,#0284c7);cursor:move;user-select:none;flex-shrink:0;">' +
+        '<span style="font-size:14px;">📡</span>' +
+        '<span style="font-size:14px;font-weight:700;color:#fff;flex:1;">Network Monitor</span>' +
+        '<span id="b24t-nm-count" style="font-size:10px;color:rgba(255,255,255,0.7);margin-right:2px;"></span>' +
+        '<button id="b24t-nm-pause" style="background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.4);color:#fff;cursor:pointer;font-size:11px;padding:2px 7px;border-radius:5px;font-family:inherit;">⏸ Pause</button>' +
+        '<button id="b24t-nm-clear" style="background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.4);color:#fff;cursor:pointer;font-size:11px;padding:2px 7px;border-radius:5px;font-family:inherit;margin-left:3px;">🗑</button>' +
+        '<button id="b24t-nm-export" style="background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.4);color:#fff;cursor:pointer;font-size:11px;padding:2px 7px;border-radius:5px;font-family:inherit;margin-left:3px;">↓ JSON</button>' +
+        '<button id="b24t-nm-close" style="background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.5);color:#fff;cursor:pointer;font-size:17px;line-height:1;padding:1px 7px;border-radius:5px;font-family:inherit;margin-left:5px;">×</button>' +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:6px;padding:5px 10px;background:#12121f;border-bottom:1px solid #2a2a35;flex-shrink:0;">' +
+        '<span style="font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:.08em;">Filtr:</span>' +
+        '<select id="b24t-nm-filter" style="background:#1a1a2e;border:1px solid #2a2a35;color:#e2e8f0;font-size:11px;padding:2px 6px;border-radius:5px;font-family:inherit;cursor:pointer;">' +
+          '<option value="all">Wszystkie</option>' +
+          '<option value="errors">Tylko błędy</option>' +
+          '<option value="gql">Tylko GraphQL</option>' +
+        '</select>' +
+        '<span id="b24t-nm-paused-badge" style="display:none;font-size:10px;color:#f59e0b;background:#292218;border:1px solid #f59e0b44;padding:1px 7px;border-radius:10px;font-weight:700;">⏸ PAUSED</span>' +
+      '</div>' +
+      '<div style="flex:1;overflow:auto;min-height:0;">' +
+        '<table style="width:100%;border-collapse:collapse;">' +
+          '<thead style="position:sticky;top:0;z-index:1;background:#12121f;">' +
+            '<tr>' +
+              '<th style="padding:4px 6px;font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#6b7280;text-align:left;border-bottom:1px solid #2a2a35;white-space:nowrap;">Czas</th>' +
+              '<th style="padding:4px 6px;font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#6b7280;text-align:left;border-bottom:1px solid #2a2a35;">Met.</th>' +
+              '<th style="padding:4px 6px;font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#6b7280;text-align:left;border-bottom:1px solid #2a2a35;">URL / Operacja</th>' +
+              '<th style="padding:4px 6px;font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#6b7280;text-align:center;border-bottom:1px solid #2a2a35;">Status</th>' +
+              '<th style="padding:4px 6px;font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#6b7280;text-align:right;border-bottom:1px solid #2a2a35;white-space:nowrap;">ms</th>' +
+            '</tr>' +
+          '</thead>' +
+          '<tbody id="b24t-nm-tbody"></tbody>' +
+        '</table>' +
+      '</div>';
+    document.body.appendChild(panel);
+
+    document.getElementById('b24t-nm-close').addEventListener('click', function() {
+      panel.style.display = 'none';
+      tab.style.display = 'flex';
+    });
+    document.getElementById('b24t-nm-pause').addEventListener('click', function() {
+      nmState.paused = !nmState.paused;
+      this.textContent = nmState.paused ? '▶ Resume' : '⏸ Pause';
+      var badge = document.getElementById('b24t-nm-paused-badge');
+      if (badge) badge.style.display = nmState.paused ? 'inline' : 'none';
+    });
+    document.getElementById('b24t-nm-clear').addEventListener('click', function() {
+      nmState.entries = []; nmState._counter = 0;
+      var tbody = document.getElementById('b24t-nm-tbody');
+      if (tbody) tbody.innerHTML = '';
+      _nmUpdateCount();
+    });
+    document.getElementById('b24t-nm-export').addEventListener('click', function() {
+      var blob = new Blob([JSON.stringify(nmState.entries, null, 2)], { type: 'application/json' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'network-monitor-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
+      a.click(); URL.revokeObjectURL(a.href);
+    });
+    document.getElementById('b24t-nm-filter').addEventListener('change', _nmRebuildTable);
+
+    var hdr = document.getElementById('b24t-nm-header');
+    var dragging = false, sx, sy, sl, st;
+    hdr.addEventListener('mousedown', function(e) {
+      if (['b24t-nm-close','b24t-nm-pause','b24t-nm-clear','b24t-nm-export'].indexOf(e.target.id) !== -1) return;
+      dragging = true; sx = e.clientX; sy = e.clientY;
+      if (typeof _bringToFront === 'function') _bringToFront(panel);
+      var r = panel.getBoundingClientRect(); sl = r.left; st = r.top; e.preventDefault();
+    });
+    document.addEventListener('mousemove', function(e) {
+      if (!dragging) return;
+      panel.style.left = Math.max(0, Math.min(window.innerWidth - panel.offsetWidth, sl + e.clientX - sx)) + 'px';
+      panel.style.top  = Math.max(0, Math.min(window.innerHeight - panel.offsetHeight, st + e.clientY - sy)) + 'px';
+      panel.style.right = 'auto';
+    });
+    document.addEventListener('mouseup', function() { dragging = false; });
+  }
+
+  function openNetworkMonitorPanel() {
+    var panel = document.getElementById('b24t-nm-panel');
+    var tab = document.getElementById('b24t-nm-tab');
+    if (!panel) return;
+    panel.style.animation = 'none';
+    panel.offsetHeight;
+    panel.style.animation = 'b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1)';
+    panel.style.display = 'flex';
+    if (tab) tab.style.display = 'none';
+    _nmRebuildTable();
+    _nmUpdateCount();
+  }
+
+  // ───────────────────────────────────────────
   // INIT
   // ───────────────────────────────────────────
 
@@ -14923,6 +15228,9 @@ Tej operacji nie można cofnąć.`)) {
 
     // Annotator Tools — buduj floating panel
     buildAnnotatorPanel();
+
+    // Network Monitor — buduj floating panel
+    buildNetworkMonitorPanel();
 
     // Zastosuj opcjonalne funkcje
     applyFeatures();

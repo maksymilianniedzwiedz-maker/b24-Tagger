@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.23.98",
+    "date": "2026-05-08",
+    "label": "feat",
+    "changes": [
+      "feat: badge AI — 4 kategorie z unikalnymi ikonami (✅ Relevant, ⚠️ Borderline, ❌ Irrelevant, 🚫 Spam) zamiast binarnego 🤖 relevant/not-relevant; parsowanie pola verdict z odpowiedzi API z fallbackiem na stare relevant:bool",
+      "feat: legenda oznaczeń — redesign na 2-kolumnowy układ z sekcjami (SCANNER / STATUS / OCENA AI / METADANE) + karta JAK DZIAŁA SCORING z punktami i progami",
+      "fix: scoring skanera — scalenie title+h1 jako jeden sygnał (+8 zamiast +8+5), tagi redakcyjne +4→+6, cap akapitów +3→+4"
+    ]
+  },
+  {
     "version": "0.23.97",
     "date": "2026-05-08",
     "label": "ux",

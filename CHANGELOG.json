@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.97",
+    "date": "2026-05-08",
+    "label": "ux",
+    "changes": [
+      "ux: panel News — kolumna URL węższa (28→25%), kolumna formularza szersza (18→22%, min 300px); DATA na pełnej szerokości, GODZINA/MINUTY osobny wiersz, KATEGORIA na pełnej szerokości, KRAJ/SENTYMENT osobny wiersz; pole treści rows 7→9 / min-height 140→200px"
+    ]
+  },
+  {
     "version": "0.23.96",
     "date": "2026-05-08",
     "label": "ux",

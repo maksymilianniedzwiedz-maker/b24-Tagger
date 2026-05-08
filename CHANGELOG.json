@@ -1,5 +1,11 @@
 [
   {
+    "version": "0.23.91",
+    "date": "2026-05-08",
+    "label": "fix",
+    "changes": ["fix: fallback bulkTag — concurrent 8× zamiast sekwencji (8 IDs naraz), 2 retries zamiast 5 per ID; log kontekstu błędu batcha przed fallbackiem ([BRAND24]/[SIEĆ] + hint)"]
+  },
+  {
     "version": "0.23.90",
     "date": "2026-05-08",
     "label": "fix",

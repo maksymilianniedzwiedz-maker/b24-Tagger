@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.90
+// @version      0.23.91
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.90';
+  const VERSION = '0.23.91';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -157,6 +157,7 @@
   const BG_CONCURRENCY  = 5; // równoległość prefetchu danych annotatorskich w tle
   const QT_CONCURRENCY  = 2; // równoległość batchów w Quick Tag / Quick Untag
   const TAG_CONCURRENCY = 4; // równoległość batchów bulkTag w runTagging
+  const FALLBACK_CONCURRENCY = 8; // równoległość single-ID w fallback bulkTag
   const HEALTH_CHECK_INTERVAL = 30000;
   const ACTION_TIMEOUT_WARN = 10000;
   const RETRY_DELAYS = [2000, 4000, 8000, 12000, 20000]; // 5 prób — Brand24 API czasem losowo failuje
@@ -764,7 +765,7 @@
     return data.getMentions;
   }
 
-  async function bulkTagMentions(mentionsIds, tagId) {
+  async function bulkTagMentions(mentionsIds, tagId, retries = 5) {
     if (state.testRunMode) {
       addLog(`[TEST] bulkTag: ${mentionsIds.length} IDs → tagId ${tagId}`, 'info');
       return { success: true, testRun: true };
@@ -776,7 +777,7 @@
       bulkTagMentions(mentionsIds: $mentionsIds, tagId: $tagId) {
         ... on UserError { message }
       }
-    }`, 5); // 5 retry — Brand24 Internal server error jest losowy
+    }`, retries); // domyślnie 5 — Brand24 Internal server error jest losowy; fallback używa 2
     if (data.bulkTagMentions?.message) {
       const brandMsg = data.bulkTagMentions.message;
       const ctx = _errContext(brandMsg);
@@ -1672,34 +1673,51 @@
           if (results[j].status === 'fulfilled') {
             batchSuccessCount += concSlices[j].length;
           } else {
-            // Fallback: taguj po 1 ID żeby wyizolować wadliwy rekord
+            // Fallback: concurrent single-ID — szybsze niż sekwencja, 2 retries zamiast 5
             const errMsg = results[j].reason?.message || 'unknown';
+            const errCtx = _errContext(errMsg);
+            const failedIds = concSlices[j];
             addLog(
-              `⚠ [FALLBACK] Batch ${j + 1} FAILED (${concSlices[j].length} IDs → "${tagName}"): ${errMsg}\n` +
-              `  → Próba fallback: tagowanie po 1 ID aby znaleźć wadliwą wzmiankę...`,
+              `⚠ [FALLBACK] Batch ${j + 1} FAILED (${failedIds.length} IDs → "${tagName}") [${errCtx.src}]: ${errMsg}\n` +
+              `  → ${errCtx.hint}\n` +
+              `  → Fallback: ${Math.min(FALLBACK_CONCURRENCY, failedIds.length)}× równolegle, 2 retries...`,
               'warn'
             );
-            for (const singleId of concSlices[j]) {
-              try {
-                await bulkTagMentions([singleId], parseInt(tagId));
-                batchSuccessCount++;
-              } catch (singleErr) {
-                totalTagFailed++;
-                const ctx = _errContext(singleErr.message);
-                addLog(
-                  `✕ [FALLBACK/${ctx.src}] ID ${singleId} → "${tagName}": ${singleErr.message}\n  → ${ctx.hint}`,
-                  'error'
-                );
-                state.failedMentions.push({
-                  id: singleId,
-                  tagId: parseInt(tagId),
-                  tagName,
-                  error: singleErr.message,
-                  src: ctx.src,
-                  hint: ctx.hint,
-                });
+            let fallbackOk = 0;
+            for (let fi = 0; fi < failedIds.length; fi += FALLBACK_CONCURRENCY) {
+              const chunk = failedIds.slice(fi, fi + FALLBACK_CONCURRENCY);
+              const chunkRes = await Promise.allSettled(
+                chunk.map(singleId => bulkTagMentions([String(singleId)], parseInt(tagId), 2))
+              );
+              for (let ci = 0; ci < chunkRes.length; ci++) {
+                if (chunkRes[ci].status === 'fulfilled') {
+                  batchSuccessCount++;
+                  fallbackOk++;
+                } else {
+                  totalTagFailed++;
+                  const singleId = chunk[ci];
+                  const singleErr = chunkRes[ci].reason;
+                  const ctx = _errContext(singleErr.message);
+                  addLog(
+                    `✕ [FALLBACK/${ctx.src}] ID ${singleId} → "${tagName}": ${singleErr.message}\n  → ${ctx.hint}`,
+                    'error'
+                  );
+                  state.failedMentions.push({
+                    id: singleId,
+                    tagId: parseInt(tagId),
+                    tagName,
+                    error: singleErr.message,
+                    src: ctx.src,
+                    hint: ctx.hint,
+                  });
+                }
               }
+              if (fi + FALLBACK_CONCURRENCY < failedIds.length) await sleep(100);
             }
+            addLog(
+              `ℹ [FALLBACK] Zakończono: ${fallbackOk}/${failedIds.length} otagowano`,
+              fallbackOk === failedIds.length ? 'info' : 'warn'
+            );
           }
         }
         state.stats.tagged += batchSuccessCount;
@@ -10537,6 +10555,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.91",
+      "date": "2026-05-08",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "fallback bulkTag — concurrent 8× zamiast sekwencji (8 IDs naraz), 2 retries zamiast 5 per ID; log kontekstu błędu batcha przed fallbackiem ([BRAND24]/[SIEĆ] + hint)"}
+      ]
+    },
+    {
       "version": "0.23.90",
       "date": "2026-05-08",
       "label": "fix",
@@ -10625,16 +10652,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "News Analytics — scanStatus zapisuje oryginalny wynik skanera; wcześniej 'opened'/'added' nadpisywały status i wszystkie wpisy trafiały do manual_add zamiast scanner.*"},
         {"type": "fix", "text": "News Analytics — nieopublikowane wpisy z pozytywnym statusem teraz liczą się jako skipped (FP) w obliczeniu precision"}
-      ]
-    },
-    {
-      "version": "0.23.81",
-      "date": "2026-05-03",
-      "label": "ux",
-      "labelColor": "#a78bfa",
-      "changes": [
-        {"type": "ux", "text": "kolumna URL — szerokość złota proporcja (38.2% panelu, poprzednio 270px stałe)"},
-        {"type": "ux", "text": "otwieranie artykułu — nowe okno w rozmiarze i pozycji kolumny podglądu (zamiast nowej karty)"}
       ]
     },
   ];

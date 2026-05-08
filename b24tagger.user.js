@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.95
+// @version      0.23.96
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.95';
+  const VERSION = '0.23.96';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -10599,6 +10599,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.96",
+      "date": "2026-05-08",
+      "label": "ux",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "ux", "text": "animacje danych w panelach statystyk — count-up liczb od 0, progress bar od 0% do wartości, stagger fade+slide-up wierszy przy ładowaniu (Overall Stats, Dashboard Annotatora, Tag Stats); wsparcie prefers-reduced-motion"}
+      ]
+    },
+    {
       "version": "0.23.95",
       "date": "2026-05-08",
       "label": "ux",
@@ -10688,16 +10697,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "News — wykrywanie URLi już w projekcie obejmuje teraz 3 miesiące wstecz zamiast tylko bieżącego miesiąca; URLe z poprzednich miesięcy były niewidoczne jako 'już w projekcie'"},
         {"type": "fix", "text": "News — sprawdzanie projektu uwzględnia pole openUrl jako fallback (spójnie z buildUrlMap)"}
-      ]
-    },
-    {
-      "version": "0.23.86",
-      "date": "2026-05-03",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "tryb overwrite/multitag automatycznie buduje mapę ze WSZYSTKICH wzmianek — wcześniej wzmianki z istniejącym tagiem nie trafiały do mapy (NO_MATCH) i były pomijane mimo że overwrite był włączony"},
-        {"type": "feat", "text": "raport tagowania pokazuje 'Podmieniono tag: X' — widoczne w logu diagnostycznym i końcowym RAPORCIE TAGOWANIA gdy użyto trybu overwrite"}
       ]
     },
   ];
@@ -11945,6 +11944,23 @@ function showOnboarding(onComplete) {
           '<tbody>' + rows + '</tbody>' +
         '</table>' +
       '</div>';
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      var _ti = 0;
+      el.querySelectorAll('tbody tr').forEach(function(tr) {
+        tr.style.opacity = '0';
+        tr.style.transform = 'translateY(4px)';
+        (function(d) {
+          requestAnimationFrame(function() {
+            setTimeout(function() {
+              tr.style.transition = 'opacity 220ms cubic-bezier(0.25,1,0.5,1),transform 220ms cubic-bezier(0.25,1,0.5,1)';
+              tr.style.opacity = '1';
+              tr.style.transform = 'translateY(0)';
+            }, d);
+          });
+        })(_ti);
+        _ti += 35;
+      });
+    }
   }
 
   // ───────────────────────────────────────────
@@ -12072,7 +12088,7 @@ function showOnboarding(onComplete) {
         '<div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:10px;">' + label + ' · ' + stats.dateFrom + ' – ' + stats.dateTo + '</div>' +
         // Progress bar
         '<div style="background:var(--b24t-bg-input);border-radius:99px;height:6px;margin-bottom:12px;overflow:hidden;">' +
-          '<div style="height:100%;border-radius:99px;background:' + (pct === 100 ? '#4ade80' : '#6c6cff') + ';width:' + pct + '%;transition:width 0.4s ease;"></div>' +
+          '<div id="b24t-dash-progress-bar" style="height:100%;border-radius:99px;background:' + (pct === 100 ? '#4ade80' : '#6c6cff') + ';width:0%;transition:width 0.6s cubic-bezier(0.25,1,0.5,1);"></div>' +
         '</div>' +
         // Statystyki — 3 kafelki
         '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
@@ -12085,11 +12101,38 @@ function showOnboarding(onComplete) {
           (pct === 100 ? '✓ Gotowe!' : pct + '% ukończone') +
         '</div>' +
       '</div>';
+    var _b24tRMd = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var _dpb = el.querySelector('#b24t-dash-progress-bar');
+    if (_dpb) {
+      if (_b24tRMd) _dpb.style.width = pct + '%';
+      else requestAnimationFrame(function() { requestAnimationFrame(function() { _dpb.style.width = pct + '%'; }); });
+    }
+    if (!_b24tRMd) {
+      var _di = 0;
+      el.querySelectorAll('[data-statval]').forEach(function(span) {
+        var t = parseInt(span.dataset.statval, 10);
+        if (!isNaN(t) && t > 0) {
+          span.style.opacity = '0';
+          span.style.transform = 'translateY(6px)';
+          (function(d, s) {
+            requestAnimationFrame(function() {
+              setTimeout(function() {
+                s.style.transition = 'opacity 300ms cubic-bezier(0.25,1,0.5,1),transform 300ms cubic-bezier(0.25,1,0.5,1)';
+                s.style.opacity = '1';
+                s.style.transform = 'translateY(0)';
+                _animateCountUp(s, t, 500);
+              }, d);
+            });
+          })(_di, span);
+          _di += 60;
+        }
+      });
+    }
   }
 
   function _dashTile(label, value, color) {
     return '<div style="background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:8px;padding:8px;text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,0.10);transition:background 0.3s,border-color 0.3s;">' +
-      '<div style="font-size:16px;font-weight:700;color:' + color + ';">' + (value ?? '—') + '</div>' +
+      '<div data-statval="' + (value != null ? value : '') + '" style="font-size:16px;font-weight:700;color:' + color + ';">' + (value ?? '—') + '</div>' +
       '<div style="font-size:9px;color:var(--b24t-text-faint);margin-top:2px;">' + label + '</div>' +
     '</div>';
   }
@@ -13908,10 +13951,25 @@ To jest NIEODWRACALNE.`)) return;
     }
   }
 
+  function _animateCountUp(el, target, duration) {
+    if (!el || target == null || isNaN(target)) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    var start = null;
+    function step(ts) {
+      if (!start) start = ts;
+      var p = Math.min((ts - start) / duration, 1);
+      var ease = 1 - Math.pow(1 - p, 4);
+      el.textContent = Math.round(target * ease);
+      if (p < 1) requestAnimationFrame(step);
+      else el.textContent = target;
+    }
+    requestAnimationFrame(step);
+  }
+
   function _statsCard(label, value, color, bgColor) {
     return '<div style="display:flex;align-items:baseline;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--b24t-border-sub);">' +
       '<span style="font-size:11px;color:var(--b24t-text-faint);">' + label + '</span>' +
-      '<span style="font-size:13px;font-weight:600;color:' + color + ';font-variant-numeric:tabular-nums;">' + (value != null ? value : '—') + '</span>' +
+      '<span data-statval="' + (value != null ? value : '') + '" style="font-size:13px;font-weight:600;color:' + color + ';font-variant-numeric:tabular-nums;">' + (value != null ? value : '—') + '</span>' +
     '</div>';
   }
 
@@ -13949,7 +14007,7 @@ To jest NIEODWRACALNE.`)) return;
             '<span style="font-size:13px;font-weight:800;color:var(--b24t-primary);">' + (pct != null ? pct + '%' : '—') + '</span>' +
           '</div>' +
           '<div style="background:var(--b24t-bg-deep);border-radius:99px;height:7px;overflow:hidden;">' +
-            '<div style="width:' + pctVal + '%;height:100%;background:var(--b24t-accent-grad);border-radius:99px;transition:width 0.5s ease;"></div>' +
+            '<div id="b24t-overall-progress-bar" style="width:0%;height:100%;background:var(--b24t-accent-grad);border-radius:99px;transition:width 0.6s cubic-bezier(0.25,1,0.5,1);"></div>' +
           '</div>' +
           '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:4px;text-align:right;">' + (totalRelevant + totalToDelete) + ' / ' + totalAll + ' otagowanych</div>' +
         '</div>';
@@ -14010,7 +14068,7 @@ To jest NIEODWRACALNE.`)) return;
     var tableRows = results.map(function(r) {
       if (isMonthClosing && !r.loading && completedPids.includes(r.pid)) {
         var relTdC = hasRelevant ? '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-ok-text);text-align:right;">' + (r.relevant != null ? r.relevant : '—') + '</td>' : '';
-        return '<tr style="border-top:1px solid var(--b24t-border-sub);background:color-mix(in srgb,var(--b24t-ok) 7%,transparent);">' +
+        return '<tr data-pid="' + r.pid + '" style="border-top:1px solid var(--b24t-border-sub);background:color-mix(in srgb,var(--b24t-ok) 7%,transparent);">' +
           '<td style="padding:6px 8px;font-size:11px;color:var(--b24t-ok);text-decoration:line-through;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + r.name + '">✓ ' + r.name + '</td>' +
           '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-ok-text);text-align:right;">' + (r.total != null ? r.total : '—') + '</td>' +
           relTdC +
@@ -14018,10 +14076,10 @@ To jest NIEODWRACALNE.`)) return;
           '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-ok-text);text-align:right;">' + (r.toDelete != null ? r.toDelete : '—') + '</td>' +
         '</tr>';
       }
-      if (r.loading) return '<tr style="border-top:1px solid var(--b24t-border-sub);"><td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="' + colCount + '" style="padding:6px 8px;font-size:10px;color:var(--b24t-text-faint);text-align:center;">⏳ ładowanie…</td></tr>';
-      if (r.error)   return '<tr style="border-top:1px solid var(--b24t-border-sub);"><td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="' + colCount + '" style="padding:6px 8px;font-size:10px;color:var(--b24t-err);">błąd: ' + r.error + '</td></tr>';
+      if (r.loading) return '<tr data-pid="' + r.pid + '" data-loading="1" style="border-top:1px solid var(--b24t-border-sub);"><td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="' + colCount + '" style="padding:6px 8px;font-size:10px;color:var(--b24t-text-faint);text-align:center;">⏳ ładowanie…</td></tr>';
+      if (r.error)   return '<tr data-pid="' + r.pid + '" data-error="1" style="border-top:1px solid var(--b24t-border-sub);"><td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="' + colCount + '" style="padding:6px 8px;font-size:10px;color:var(--b24t-err);">błąd: ' + r.error + '</td></tr>';
       var relTd = hasRelevant ? '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-ok);text-align:right;">' + (r.relevant != null ? r.relevant : '—') + '</td>' : '';
-      return '<tr style="border-top:1px solid var(--b24t-border-sub);">' +
+      return '<tr data-pid="' + r.pid + '" style="border-top:1px solid var(--b24t-border-sub);">' +
         '<td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + r.name + '">' + r.name + '</td>' +
         '<td style="padding:6px 8px;font-size:12px;font-weight:600;color:var(--b24t-text-muted);text-align:right;">' + (r.total   != null ? r.total   : '—') + '</td>' +
         relTd +
@@ -14049,6 +14107,8 @@ To jest NIEODWRACALNE.`)) return;
           '<span style="font-size:10px;color:var(--b24t-text-faint);margin-left:4px;">' + dateFrom + ' → ' + dateTo + '</span>' +
         '</div>'
       : '';
+    var _prevLoaded = new Set();
+    el.querySelectorAll('tr[data-pid]:not([data-loading])').forEach(function(tr) { _prevLoaded.add(tr.dataset.pid); });
     el.innerHTML = periodHtml + progressHtml + monthClosingHtml + warnHtml + cards +
       '<div style="border:1px solid var(--b24t-border);border-radius:8px;overflow:hidden;">' +
         '<table style="width:100%;border-collapse:collapse;">' +
@@ -14063,6 +14123,35 @@ To jest NIEODWRACALNE.`)) return;
         '</table>' +
       '</div>' +
       '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:6px;text-align:right;">' + group.name + ' · ' + results.length + ' projektów</div>';
+    var _b24tRM = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var _pb = el.querySelector('#b24t-overall-progress-bar');
+    if (_pb && pct != null) {
+      if (_b24tRM) _pb.style.width = pctVal + '%';
+      else requestAnimationFrame(function() { requestAnimationFrame(function() { _pb.style.width = pctVal + '%'; }); });
+    }
+    if (!_b24tRM) {
+      el.querySelectorAll('[data-statval]').forEach(function(span) {
+        var t = parseInt(span.dataset.statval, 10);
+        if (!isNaN(t) && t > 0) _animateCountUp(span, t, 600);
+      });
+      var _sd = 0;
+      el.querySelectorAll('tr[data-pid]').forEach(function(tr) {
+        if (!tr.dataset.loading && !_prevLoaded.has(tr.dataset.pid)) {
+          tr.style.opacity = '0';
+          tr.style.transform = 'translateY(4px)';
+          (function(d) {
+            requestAnimationFrame(function() {
+              setTimeout(function() {
+                tr.style.transition = 'opacity 250ms cubic-bezier(0.25,1,0.5,1),transform 250ms cubic-bezier(0.25,1,0.5,1)';
+                tr.style.opacity = '1';
+                tr.style.transform = 'translateY(0)';
+              }, d);
+            });
+          })(_sd);
+          _sd += 40;
+        }
+      });
+    }
     // Przycisk "Zamknij miesiąc" — domyka wyświetlany miesiąc i przeskakuje na auto (zwykle następny)
     var _mcBtn = el.querySelector('#b24t-mc-force-close');
     if (_mcBtn) {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.94
+// @version      0.23.95
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.94';
+  const VERSION = '0.23.95';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3995,6 +3995,7 @@
       <div id="b24t-meta-bar">
         <div style="display:flex;align-items:center;gap:6px;">
           <span id="b24t-token-status" class="b24t-token-pending" title="Status tokenu API">●</span>
+          <span id="b24t-latency-badge" style="display:none;cursor:pointer;font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;line-height:1.4;">⚠</span>
           <div class="b24t-meta-btn-wrap">
             <button class="b24t-icon-btn" id="b24t-btn-changelog" style="font-size:13px;padding:2px 6px;">📋</button>
             <span class="b24t-meta-tooltip">Changelog</span>
@@ -4690,6 +4691,9 @@
 
     // Feedback
     panel.querySelector('#b24t-btn-feedback')?.addEventListener('click', () => showFeedbackModal());
+
+    // Latency badge → otwiera Network Monitor
+    panel.querySelector('#b24t-latency-badge')?.addEventListener('click', function() { openNetworkMonitorPanel(); });
 
     // Dodatkowe funkcje
     panel.querySelector('#b24t-btn-features')?.addEventListener('click', () => showFeaturesModal());
@@ -10595,6 +10599,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.95",
+      "date": "2026-05-08",
+      "label": "ux",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "ux", "text": "wskaźnik opóźnienia ⚠ w meta-bar — żółty/pomarańczowy/czerwony wg p90 ostatnich 30 requestów (progi 500/800/2000ms); tooltip z błędami, p90 ms i slow count; klik → Network Monitor; znika gdy brak slow/error requestów"}
+      ]
+    },
+    {
       "version": "0.23.94",
       "date": "2026-05-08",
       "label": "perf",
@@ -10685,17 +10698,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "tryb overwrite/multitag automatycznie buduje mapę ze WSZYSTKICH wzmianek — wcześniej wzmianki z istniejącym tagiem nie trafiały do mapy (NO_MATCH) i były pomijane mimo że overwrite był włączony"},
         {"type": "feat", "text": "raport tagowania pokazuje 'Podmieniono tag: X' — widoczne w logu diagnostycznym i końcowym RAPORCIE TAGOWANIA gdy użyto trybu overwrite"}
-      ]
-    },
-    {
-      "version": "0.23.85",
-      "date": "2026-05-03",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "cross-project Quick Delete — szerszy zakres dat (od 1. dnia poprzedniego miesiąca do dziś) zamiast wąskiego okna z getAnnotatorDates; wcześniej na początku miesiąca panel pokazywał 0 wzmianek mimo że tag istniał w danych z poprzedniego miesiąca"},
-        {"type": "fix", "text": "Auto-Delete po tagowaniu pliku — jeśli pierwsza próba zwróci 0 wzmianek, retry po 5s z szerszym oknem (prev month → today); zabezpieczenie przed lag indeksu Brand24 lub niezgodnością dat z pliku"},
-        {"type": "ux", "text": "News panel — proporcje kolumn: lista URLi 28% (z 38.2%), formularz 18% (z 23.6%) — środkowa kolumna podglądu zyskuje ~54% szerokości panelu dla wygody czytania artykułów"}
       ]
     },
   ];
@@ -14986,6 +14988,7 @@ Tej operacji nie można cofnąć.`)) {
     if (nmState.entries.length > NM_MAX) nmState.entries.length = NM_MAX;
     _nmPushRow(entry);
     _nmUpdateCount();
+    _nmUpdateLatencyBadge();
     return entry;
   }
 
@@ -15020,6 +15023,35 @@ Tej operacji nie można cofnąć.`)) {
   function _nmUpdateCount() {
     var el = document.getElementById('b24t-nm-count');
     if (el) el.textContent = nmState.entries.length + ' / ' + NM_MAX;
+  }
+
+  function _nmUpdateLatencyBadge() {
+    var badge = document.getElementById('b24t-latency-badge');
+    if (!badge) return;
+    var recent = nmState.entries.slice(0, 30);
+    if (!recent.length) { badge.style.display = 'none'; return; }
+    var SLOW_MS = 500;
+    var slowCount = 0, errorCount = 0;
+    var durations = [];
+    recent.forEach(function(e) {
+      if (e.duration > 0) durations.push(e.duration);
+      if (e.duration > SLOW_MS || e.isError) slowCount++;
+      if (e.isError) errorCount++;
+    });
+    if (!slowCount) { badge.style.display = 'none'; return; }
+    durations.sort(function(a, b) { return a - b; });
+    var p90 = durations.length ? durations[Math.floor(durations.length * 0.9)] : 0;
+    var color, bg, border;
+    if (errorCount || p90 >= 2000) {
+      color = '#fff'; bg = '#dc2626'; border = '#b91c1c';
+    } else if (p90 >= 800) {
+      color = '#fff'; bg = '#ea580c'; border = '#c2410c';
+    } else {
+      color = '#1c1c2a'; bg = '#fbbf24'; border = '#d97706';
+    }
+    var tip = (errorCount ? 'błędy: ' + errorCount + ' | ' : '') + 'p90: ' + p90 + 'ms | slow: ' + slowCount;
+    badge.title = tip;
+    badge.style.cssText = 'display:inline-flex;align-items:center;cursor:pointer;font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;line-height:1.4;color:' + color + ';background:' + bg + ';border:1px solid ' + border + ';';
   }
 
   function _nmPushRow(entry) {
@@ -15168,6 +15200,7 @@ Tej operacji nie można cofnąć.`)) {
       var tbody = document.getElementById('b24t-nm-tbody');
       if (tbody) tbody.innerHTML = '';
       _nmUpdateCount();
+      _nmUpdateLatencyBadge();
     });
     document.getElementById('b24t-nm-export').addEventListener('click', function() {
       var blob = new Blob([JSON.stringify(nmState.entries, null, 2)], { type: 'application/json' });

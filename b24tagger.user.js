@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.93
+// @version      0.23.94
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.93';
+  const VERSION = '0.23.94';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -153,7 +153,7 @@
   const DEL_BATCH_DEFAULT = 25; // domyślny batch równoległych deletów (edytowalny w UI)
   const BASE_PANEL_W = 440; // bazowa szerokość głównego panelu — punkt odniesienia dla zoomu
   let MAP_FETCH_CONCURRENCY = 8; // równoległość pobierania stron w buildUrlMap (fallback: 3)
-  const STATS_FETCH_CONCURRENCY = 10; // równoległość pobierania projektów w _fetchOverallStats
+  const STATS_FETCH_CONCURRENCY = 4; // równoległość pobierania projektów w _fetchOverallStats (4×4 queries = max 16 równoczesnych)
   const BG_CONCURRENCY  = 5; // równoległość prefetchu danych annotatorskich w tle
   const QT_CONCURRENCY  = 2; // równoległość batchów w Quick Tag / Quick Untag
   const TAG_CONCURRENCY = 4; // równoległość batchów bulkTag w runTagging
@@ -9426,29 +9426,43 @@ function showOnboarding(onComplete) {
         var projectUrls = new Set();        // znormalizowane URLe — szybki exact lookup
         var projectUrlsBase = new Set();    // bez query/hash — fallback na utm_*, fbclid itp.
         var projectUrlsArr = [];            // do urlsMatch (tolerancja obcięcia ID)
-        var rawCount = 0;
-        var page = 1;
-        var total = null;
+        var total = 0;
         var _rxQueryHash = /[?#].*$/;
-        while (true) {
-          var res = await getMentions(state.projectId, dateFrom, dateTo, [], page);
-          if (!res) break;
-          if (total === null) total = res.count || 0;
-          var results = res.results || [];
-          if (results.length === 0) break;
-          results.forEach(function(m) {
+        var _processPage = function(results) {
+          (results || []).forEach(function(m) {
             if (!m.url && !m.openUrl) return;
-            rawCount++;
             var n = normalizeUrl(m.url || m.openUrl);
             if (!n || projectUrls.has(n)) return;
             projectUrls.add(n);
             projectUrlsArr.push(n);
             projectUrlsBase.add(n.replace(_rxQueryHash, ''));
           });
-          if (rawCount >= total) break;
-          page++;
-          if (page > 50) break; // safety cap
+        };
+        var first = await getMentions(state.projectId, dateFrom, dateTo, [], 1);
+        if (first) {
+          total = first.count || 0;
+          _processPage(first.results);
+          var _pageSize = (first.results || []).length || 60;
+          var _totalPages = total > 0 ? Math.min(Math.ceil(total / _pageSize), 50) : 0;
+          var _remaining = [];
+          for (var _pg = 2; _pg <= _totalPages; _pg++) _remaining.push(_pg);
+          for (var _ri = 0; _ri < _remaining.length; _ri += 10) {
+            var _batch = _remaining.slice(_ri, _ri + 10);
+            var _pages = await Promise.all(_batch.map(function(pg) {
+              return getMentions(state.projectId, dateFrom, dateTo, [], pg);
+            }));
+            _pages.forEach(function(res) { if (res) _processPage(res.results); });
+          }
         }
+
+        // Prefix index dla Fallback 2 — redukuje O(N×M) do O(N+M)
+        // urlsMatch wymaga min 15 wspólnych znaków — grupujemy po pierwszych 15 znakach URL
+        var _prefixIdx = new Map();
+        projectUrlsArr.forEach(function(pu) {
+          var k = pu.substring(0, 15);
+          if (!_prefixIdx.has(k)) _prefixIdx.set(k, []);
+          _prefixIdx.get(k).push(pu);
+        });
 
         var matchedCount = 0;
         newsState.urls.forEach(function(entry) {
@@ -9463,10 +9477,11 @@ function showOnboarding(onComplete) {
             var enBase = en.replace(_rxQueryHash, '');
             if (projectUrlsBase.has(enBase)) hit = true;
           }
-          if (!hit) {
-            // Fallback 2: tolerancja obcięcia ID (np. video ID skrócone w XLSX)
-            for (var i = 0; i < projectUrlsArr.length; i++) {
-              if (urlsMatch(en, projectUrlsArr[i])) { hit = true; break; }
+          if (!hit && en.length >= 15) {
+            // Fallback 2: tolerancja obcięcia ID — O(1) lookup przez prefix index
+            var candidates = _prefixIdx.get(en.substring(0, 15)) || [];
+            for (var i = 0; i < candidates.length; i++) {
+              if (urlsMatch(en, candidates[i])) { hit = true; break; }
             }
           }
           if (hit) {
@@ -10580,6 +10595,22 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.94",
+      "date": "2026-05-08",
+      "label": "perf",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "perf", "text": "Overall Stats — STATS_FETCH_CONCURRENCY 10→4 (max 16 równoczesnych requestów zamiast 40)"},
+        {"type": "perf", "text": "Quick Delete — sleep(50) między batchami deletów, zapobiega przeciążeniu Brand24"},
+        {"type": "perf", "text": "_bgFetchTagstats — count-only GQL zamiast pełnych results, 2 queries per projekt równolegle"},
+        {"type": "perf", "text": "News re-check — równoległe pobieranie stron (10 naraz) zamiast sekwencyjnego while-loop"},
+        {"type": "perf", "text": "fetchProjectTagCounts — usunięto tags{title} z GQL (mniejszy payload)"},
+        {"type": "perf", "text": "_bgFetchAllProjects — cache check na starcie, pomija re-fetch gdy dane świeże (<5 min)"},
+        {"type": "perf", "text": "_fetchProjectStats — strona 1 cachowana, brak podwójnego fetcha w binary search"},
+        {"type": "perf", "text": "News URL Fallback 2 — prefix index Map O(N+M) zamiast O(N×M) nested loop"}
+      ]
+    },
+    {
       "version": "0.23.93",
       "date": "2026-05-08",
       "label": "perf",
@@ -10665,17 +10696,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "cross-project Quick Delete — szerszy zakres dat (od 1. dnia poprzedniego miesiąca do dziś) zamiast wąskiego okna z getAnnotatorDates; wcześniej na początku miesiąca panel pokazywał 0 wzmianek mimo że tag istniał w danych z poprzedniego miesiąca"},
         {"type": "fix", "text": "Auto-Delete po tagowaniu pliku — jeśli pierwsza próba zwróci 0 wzmianek, retry po 5s z szerszym oknem (prev month → today); zabezpieczenie przed lag indeksu Brand24 lub niezgodnością dat z pliku"},
         {"type": "ux", "text": "News panel — proporcje kolumn: lista URLi 28% (z 38.2%), formularz 18% (z 23.6%) — środkowa kolumna podglądu zyskuje ~54% szerokości panelu dla wygody czytania artykułów"}
-      ]
-    },
-    {
-      "version": "0.23.84",
-      "date": "2026-05-03",
-      "label": "feature",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "Overall Stats — domykanie miesiąca trzyma się poprzedniego miesiąca dopóki wszystkie projekty z grupy nie zostaną domknięte (zamiast od razu przeskakiwać na bieżący)"},
-        {"type": "ux", "text": "Overall Stats — przyciski ← / → do nawigacji między miesiącami; ↺ Auto przywraca automatyczny wybór"},
-        {"type": "ux", "text": "Overall Stats — 'Zamknij miesiąc' czyści manualny override → auto przeskakuje na następny miesiąc"}
       ]
     },
   ];
@@ -11831,7 +11851,7 @@ function showOnboarding(onComplete) {
     };
     const gql = `query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){
       getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){
-        count results{id tags{id title}}
+        count results{id tags{id}}
       }
     }`;
 
@@ -12100,15 +12120,30 @@ function showOnboarding(onComplete) {
     var dates = getAnnotatorDates();
     addLog('📅 Zakres: ' + dates.label + ' (' + dates.dateFrom + ' → ' + dates.dateTo + ')', 'info');
     addLog('⟳ [BG] prefetch tagstats (' + projects.length + ' projektów)...', 'info');
+    // count-only query — nie pobiera results{...}, drastycznie mniejszy payload
+    var _GQL_COUNT = 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count}}';
+    var _doCount = function(pid, gr) {
+      return origFetch('/api/graphql', { method:'POST', credentials:'same-origin',
+        headers: { ...state.tokenHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ operationName:'getMentions', variables:{
+          projectId: pid, dateRange:{ from:dates.dateFrom, to:dates.dateTo },
+          filters:{ va:1,rt:[],se:[],vi:null,gr:gr,sq:'',do:'',au:'',lem:false,ctr:[],nctr:false,is:[0,10],tp:null,lang:[],nlang:false },
+          page:1, order:0
+        }, query:_GQL_COUNT })
+      }).then(function(r){ return r.json(); }).then(function(j){ return j?.data?.getMentions?.count || 0; });
+    };
     var results = [];
     for (var i = 0; i < projects.length; i += BG_CONCURRENCY) {
       var chunk = projects.slice(i, i + BG_CONCURRENCY);
       var chunkResults = await Promise.all(chunk.map(async function(p) {
         try {
-          var reqPage = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.reqVerId],   1, { silent: true });
-          var delPage = await getMentions(p.id, dates.dateFrom, dates.dateTo, [p.toDeleteId], 1, { silent: true });
-          var reqVer   = reqPage.count  || 0;
-          var toDelete = delPage.count  || 0;
+          // 2 count queries w równolegle zamiast 2 sekwencyjnych getMentions z pełnymi results
+          var counts = await Promise.all([
+            _doCount(p.id, [p.reqVerId]),
+            _doCount(p.id, [p.toDeleteId])
+          ]);
+          var reqVer   = counts[0];
+          var toDelete = counts[1];
           if (reqVer > 0 || toDelete > 0) {
             return { name: p.name, id: p.id, reqVer: reqVer, toDelete: toDelete };
           }
@@ -12126,6 +12161,7 @@ function showOnboarding(onComplete) {
   // Cicha wersja fetch danych dla cross-delete — per tagId
   async function _bgFetchAllProjects(tagId) {
     if (!state.tokenHeaders || !tagId) return;
+    if (_bgCacheFresh(bgCache.allProjects[tagId])) return bgCache.allProjects[tagId];
     var projects = getKnownProjects();
     if (!projects.length) return;
     // Cleanup zakres: prev month start → today (covers tagowanie pliku z poprzedniego miesiąca po przekręceniu kalendarza)
@@ -12200,20 +12236,22 @@ function showOnboarding(onComplete) {
         var res = await doTagsPage(p);
         return (res?.data?.getMentions?.results || []).some(function(m){ return m.tags && m.tags.length > 0; });
       };
-      var countUntaggedOnPage = async function(p) {
-        var res = await doTagsPage(p);
-        return (res?.data?.getMentions?.results || []).filter(function(m){ return !m.tags || m.tags.length === 0; }).length;
-      };
-      var p1Tagged = await hasTaggedOnPage(1);
+      // Cache strony 1 — unikamy podwójnego fetcha gdy p1Tagged=true (hasTaggedOnPage(1) + countUntaggedOnPage(1))
+      var p1Res = await doTagsPage(1);
+      var p1Results = p1Res?.data?.getMentions?.results || [];
+      var p1Tagged = p1Results.some(function(m){ return m.tags && m.tags.length > 0; });
       if (p1Tagged) {
-        untaggedCount = await countUntaggedOnPage(1);
+        untaggedCount = p1Results.filter(function(m){ return !m.tags || m.tags.length === 0; }).length;
       } else {
         var lo = 1, hi = totalPages;
         while (lo < hi) {
           var mid = Math.floor((lo + hi) / 2);
           if (await hasTaggedOnPage(mid)) hi = mid; else lo = mid + 1;
         }
-        untaggedCount = (lo - 1) * PER_PAGE + (await countUntaggedOnPage(lo));
+        // Reużyj cache strony 1 jeśli binary search wylądował na stronie 1
+        var boundaryResults = (lo === 1) ? p1Results
+          : ((await doTagsPage(lo))?.data?.getMentions?.results || []);
+        untaggedCount = (lo - 1) * PER_PAGE + boundaryResults.filter(function(m){ return !m.tags || m.tags.length === 0; }).length;
       }
     }
     var tagged = total - untaggedCount;
@@ -12883,6 +12921,7 @@ function showOnboarding(onComplete) {
       if (deleted % 25 === 0 || deleted === allIds.length) {
         addLog(`→ Usunięto ${deleted}/${allIds.length}...`, 'info');
       }
+      if (i + BATCH < allIds.length) await sleep(50);
     }
 
     addLog(`✓ Usunięto ${deleted} wzmianek z tagiem "${tagName}"`, 'success');

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.92
+// @version      0.23.93
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.92';
+  const VERSION = '0.23.93';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -10580,6 +10580,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.93",
+      "date": "2026-05-08",
+      "label": "perf",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "perf", "text": "Annotators Tab — zakładka Projekt ładuje się za pomocą 3 równoległych count queries + binary search dla untagged zamiast pobierania wszystkich stron wzmianek; dane prefetchowane w tle (bgCache.project) — panel otwiera się natychmiast gdy cache gorący"}
+      ]
+    },
+    {
       "version": "0.23.92",
       "date": "2026-05-08",
       "label": "fix",
@@ -10667,18 +10676,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "Overall Stats — domykanie miesiąca trzyma się poprzedniego miesiąca dopóki wszystkie projekty z grupy nie zostaną domknięte (zamiast od razu przeskakiwać na bieżący)"},
         {"type": "ux", "text": "Overall Stats — przyciski ← / → do nawigacji między miesiącami; ↺ Auto przywraca automatyczny wybór"},
         {"type": "ux", "text": "Overall Stats — 'Zamknij miesiąc' czyści manualny override → auto przeskakuje na następny miesiąc"}
-      ]
-    },
-    {
-      "version": "0.23.83",
-      "date": "2026-05-03",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "project-check w panelu News wykrywa też URLe z różnym query string (utm_*, fbclid) i obciętym ID — wcześniej wymagał exact match"},
-        {"type": "ux", "text": "szersza kolumna formularza dodawania wzmianki (23.6% z min 290px / max 400px zamiast stałych 285px)"},
-        {"type": "ux", "text": "większe pole 'Treść' w formularzu (rows 3→7, min-height 60→140px)"},
-        {"type": "fix", "text": "regresja z v0.23.81 — _newsApplyResponsive nadpisywała szerokość listy URLi z 38.2% na 270px"}
       ]
     },
   ];
@@ -12163,6 +12160,76 @@ function showOnboarding(onComplete) {
     return bgCache.allProjects[tagId];
   }
 
+  // Pobiera statystyki projektu: 3 równoległe count queries + binary search dla untagged
+  async function _fetchProjectStats() {
+    var dates = getAnnotatorDates();
+    var reqVerId   = state.tags['REQUIRES_VERIFICATION'];
+    var toDeleteId = state.tags['TO_DELETE'];
+    var GQL_COUNT = 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count}}';
+    var GQL_TAGS  = 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count results{id tags{id}}}}';
+    var PER_PAGE  = 60;
+    var mkFilter = function(gr) {
+      return { va:1,rt:[],se:[],vi:null,gr:gr||[],sq:'',do:'',au:'',lem:false,ctr:[],nctr:false,is:[0,10],tp:null,anom:'',lang:[],nlang:false,aue:null,htg:null,mt:false,mtri:null,cxs:[] };
+    };
+    var doCount = function(gr) {
+      return origFetch('/api/graphql', { method:'POST', credentials:'same-origin',
+        headers:{...state.tokenHeaders,'Content-Type':'application/json'},
+        body: JSON.stringify({ operationName:'getMentions', variables:{ projectId:state.projectId, dateRange:{from:dates.dateFrom,to:dates.dateTo}, filters:mkFilter(gr), page:1, order:0 }, query:GQL_COUNT })
+      }).then(function(r){ return r.json(); }).then(function(j){ return j?.data?.getMentions?.count || 0; });
+    };
+    var doTagsPage = function(p) {
+      return origFetch('/api/graphql', { method:'POST', credentials:'same-origin',
+        headers:{...state.tokenHeaders,'Content-Type':'application/json'},
+        body: JSON.stringify({ operationName:'getMentions', variables:{ projectId:state.projectId, dateRange:{from:dates.dateFrom,to:dates.dateTo}, filters:mkFilter([]), page:p, order:0 }, query:GQL_TAGS })
+      }).then(function(r){ return r.json(); });
+    };
+    // 3 równoległe count-only queries
+    var counts = await Promise.all([
+      doCount([]),
+      reqVerId   ? doCount([reqVerId])   : Promise.resolve(0),
+      toDeleteId ? doCount([toDeleteId]) : Promise.resolve(0),
+    ]);
+    var total    = counts[0];
+    var reqVer   = counts[1];
+    var toDelete = counts[2];
+    // Binary search dla untagged (wzmianki posortowane: nieotagowane najpierw, otagowane na końcu)
+    var untaggedCount = 0;
+    if (total > 0) {
+      var totalPages = Math.ceil(total / PER_PAGE);
+      var hasTaggedOnPage = async function(p) {
+        var res = await doTagsPage(p);
+        return (res?.data?.getMentions?.results || []).some(function(m){ return m.tags && m.tags.length > 0; });
+      };
+      var countUntaggedOnPage = async function(p) {
+        var res = await doTagsPage(p);
+        return (res?.data?.getMentions?.results || []).filter(function(m){ return !m.tags || m.tags.length === 0; }).length;
+      };
+      var p1Tagged = await hasTaggedOnPage(1);
+      if (p1Tagged) {
+        untaggedCount = await countUntaggedOnPage(1);
+      } else {
+        var lo = 1, hi = totalPages;
+        while (lo < hi) {
+          var mid = Math.floor((lo + hi) / 2);
+          if (await hasTaggedOnPage(mid)) hi = mid; else lo = mid + 1;
+        }
+        untaggedCount = (lo - 1) * PER_PAGE + (await countUntaggedOnPage(lo));
+      }
+    }
+    var tagged = total - untaggedCount;
+    var pct = total > 0 ? Math.round((tagged / total) * 100) : 0;
+    var data = { total, untagged: untaggedCount, tagged, reqVer, toDelete, pct, dates, ts: Date.now(), projectId: state.projectId };
+    bgCache.project = data;
+    return data;
+  }
+
+  // Cicha wersja — tylko wypełnia bgCache.project, nie dotyka DOM
+  async function _bgFetchProject() {
+    if (!state.tokenHeaders || !state.projectId) return;
+    addLog('⟳ [BG] prefetch project stats...', 'info');
+    try { return await _fetchProjectStats(); } catch(e) { addLog('[BG] project prefetch error: ' + e.message, 'warn'); }
+  }
+
   // Master scheduler — odpala się raz gdy annotator_tools włączony i token gotowy
   async function startBgPrefetch() {
     if (bgPrefetchStarted) return;
@@ -12182,6 +12249,7 @@ function showOnboarding(onComplete) {
 
     // Pierwsze ładowanie w tle
     try { await _bgFetchTagstats(); } catch(e) {}
+    try { await _bgFetchProject(); } catch(e) {}
 
     // Prefetch cross-delete dla aktualnie wybranego tagu (jeśli jest)
     try {
@@ -12196,6 +12264,7 @@ function showOnboarding(onComplete) {
     setInterval(async function() {
       if (!state.tokenHeaders) return;
       try { await _bgFetchTagstats(); } catch(e) {}
+      try { await _bgFetchProject(); } catch(e) {}
       // Re-fetch dla aktualnie wybranego tagu jeśli cross-delete otwarty
       try {
         var tagId = parseInt(document.getElementById('b24t-del-tag')?.value);
@@ -12431,42 +12500,27 @@ function showOnboarding(onComplete) {
       addLog('⚠ [zakładka Projekt] token lub projekt nie gotowy', 'warn');
       el.innerHTML = '<div style="color:#f87171;font-size:11px;">⚠ Token lub projekt nie gotowy — odśwież stronę</div>'; return;
     }
+    // Jeśli bgCache gorący i ten sam projekt — renderuj od razu bez spinnera
+    var projectCacheFresh = bgCache.project && bgCache.project.ts &&
+      bgCache.project.projectId === state.projectId &&
+      (Date.now() - bgCache.project.ts < BG_CACHE_TTL);
+    if (projectCacheFresh) {
+      var age = Math.round((Date.now() - bgCache.project.ts) / 1000);
+      var ageStr = age < 60 ? age + 's' : Math.round(age / 60) + 'm ' + (age % 60) + 's';
+      addLog('[CACHE] project: gorący (' + ageStr + ' temu), renderuję od razu', 'info');
+      annotatorData.project = bgCache.project;
+      renderAnnotatorProject(el, bgCache.project);
+      _bgFetchProject().then(function(fresh) {
+        if (fresh) { annotatorData.project = fresh; renderAnnotatorProject(el, fresh); }
+      }).catch(function(e){ addLog('[BG] project refresh error: ' + e.message, 'warn'); });
+      return;
+    }
     addLog('→ [zakładka Projekt] ' + (state.projectName || 'projekt') + ': pobieranie danych...', 'info');
     el.innerHTML = '<div style="color:var(--b24t-text-faint);font-size:11px;text-align:center;padding:8px 0;">↻ Pobieranie...</div>';
     try {
-      var dates = getAnnotatorDates();
-      var bf = { va:1,rt:[],se:[],vi:null,gr:[],sq:'',do:'',au:'',lem:false,ctr:[],nctr:false,is:[0,10],tp:null,anom:'',lang:[],nlang:false,aue:null,htg:null,mt:false,mtri:null,cxs:[] };
-      var gql = 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count results{id tags{id}}}}';
-      var doPage = function(p) {
-        return origFetch('/api/graphql', { method:'POST', credentials:'same-origin',
-          headers:{...state.tokenHeaders,'Content-Type':'application/json'},
-          body: JSON.stringify({ operationName:'getMentions', variables:{ projectId:state.projectId, dateRange:{from:dates.dateFrom,to:dates.dateTo}, filters:bf, page:p, order:0 }, query:gql })
-        }).then(function(r){ return r.json(); });
-      };
-      var first = await doPage(1);
-      var total = first?.data?.getMentions?.count || 0;
-      var totalPages = Math.ceil(total / 60);
-      var untagged = 0, reqVer = 0, toDelete = 0;
-      var reqVerId = state.tags['REQUIRES_VERIFICATION'], toDeleteId = state.tags['TO_DELETE'];
-      var proc = function(results) {
-        (results || []).forEach(function(m) {
-          var ids = (m.tags || []).map(function(t){ return t.id; });
-          if (!ids.length) { untagged++; return; }
-          if (reqVerId   && ids.includes(reqVerId))   reqVer++;
-          if (toDeleteId && ids.includes(toDeleteId)) toDelete++;
-        });
-      };
-      proc(first?.data?.getMentions?.results);
-      var pages = []; for (var p = 2; p <= totalPages; p++) pages.push(p);
-      for (var i = 0; i < pages.length; i += 10) {
-        var batch = pages.slice(i, i+10);
-        var res = await Promise.all(batch.map(function(pp){ return doPage(pp); }));
-        res.forEach(function(d){ proc(d?.data?.getMentions?.results); });
-      }
-      var tagged = total - untagged;
-      var pct = total > 0 ? Math.round((tagged/total)*100) : 0;
-      annotatorData.project = { total, untagged, tagged, reqVer, toDelete, pct, dates };
-      addLog('✓ [zakładka Projekt] ' + (state.projectName || 'projekt') + ': ALL:' + total + ' REQ:' + reqVer + ' DEL:' + toDelete + ' (' + pct + '% otagowane)', 'success');
+      var data = await _fetchProjectStats();
+      annotatorData.project = data;
+      addLog('✓ [zakładka Projekt] ' + (state.projectName || 'projekt') + ': ALL:' + data.total + ' REQ:' + data.reqVer + ' DEL:' + data.toDelete + ' (' + data.pct + '% otagowane)', 'success');
       renderAnnotatorProject(el, annotatorData.project);
     } catch(e) {
       addLog('✕ [zakładka Projekt] błąd: ' + e.message, 'error');

@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.100",
+    "date": "2026-05-09",
+    "label": "feat",
+    "changes": [
+      "feat: przycisk 'Testuj klucz API' w ustawieniach AI — sprawdza poprawność klucza przez minimalny request do api.anthropic.com; wyniki inline: ✓ działa / ✗ błędny klucz / ✗ brak połączenia / ⚠ limit / ✗ timeout"
+    ]
+  },
+  {
     "version": "0.23.99",
     "date": "2026-05-08",
     "label": "ux",

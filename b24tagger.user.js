@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.99
+// @version      0.23.100
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.99';
+  const VERSION = '0.23.100';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -10644,6 +10644,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.100",
+      "date": "2026-05-09",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "przycisk 'Testuj klucz API' w ustawieniach AI — sprawdza poprawność klucza przez minimalny request do api.anthropic.com; wyniki inline: ✓ działa / ✗ błędny klucz / ✗ brak połączenia / ⚠ limit / ✗ timeout"}
+      ]
+    },
+    {
       "version": "0.23.99",
       "date": "2026-05-08",
       "label": "ux",
@@ -10736,15 +10745,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "fallback bulkTag — concurrent 8× zamiast sekwencji (8 IDs naraz), 2 retries zamiast 5 per ID; log kontekstu błędu batcha przed fallbackiem ([BRAND24]/[SIEĆ] + hint)"}
-      ]
-    },
-    {
-      "version": "0.23.90",
-      "date": "2026-05-08",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "wykrywanie kolumny dat ignoruje pola gdzie data jest wewnątrz nazwy pliku (np. source_file) — wcześniej taki plik zgłaszał błąd 'kolumna daty wykryta, ale wartości puste'"}
       ]
     },
   ];
@@ -11626,6 +11626,10 @@ function showOnboarding(onComplete) {
             '<input type="text" id="b24t-ai-api-key" autocomplete="off" spellcheck="false" placeholder="sk-ant-api03-..." style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:monospace;">' +
             '<button id="b24t-ai-key-toggle" title="Pokaż/ukryj" style="padding:3px 7px;flex-shrink:0;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;cursor:pointer;font-size:13px;">👁</button>' +
           '</div>' +
+          '<div style="display:flex;align-items:center;gap:6px;margin-top:-4px;margin-bottom:10px;">' +
+            '<button id="b24t-ai-key-test" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid var(--b24t-border);background:transparent;color:var(--b24t-text-muted);cursor:pointer;flex-shrink:0;">Testuj klucz API</button>' +
+            '<span id="b24t-ai-key-test-result" style="font-size:10px;"></span>' +
+          '</div>' +
           '<div style="height:1px;background:var(--b24t-border-sub);margin:4px 0 10px;"></div>' +
           '<div style="font-size:10px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:7px;">News</div>' +
           '<div style="display:flex;align-items:center;gap:6px;margin-bottom:7px;">' +
@@ -11704,6 +11708,45 @@ function showOnboarding(onComplete) {
       if (keyToggle && apiKeyInput) {
         keyToggle.addEventListener('click', function() {
           apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
+        });
+      }
+      var aiKeyTestBtn    = document.getElementById('b24t-ai-key-test');
+      var aiKeyTestResult = document.getElementById('b24t-ai-key-test-result');
+      if (aiKeyTestBtn) {
+        aiKeyTestBtn.addEventListener('click', function() {
+          var key = (apiKeyInput ? apiKeyInput.value.trim() : '') || (_aiGetSettings().apiKey || '');
+          if (!key) { if (aiKeyTestResult) { aiKeyTestResult.textContent = '✗ Brak klucza'; aiKeyTestResult.style.color = '#f87171'; } return; }
+          aiKeyTestBtn.disabled = true; aiKeyTestBtn.textContent = '⏳ Sprawdzam…';
+          if (aiKeyTestResult) { aiKeyTestResult.textContent = ''; }
+          GM_xmlhttpRequest({
+            method: 'POST',
+            url: 'https://api.anthropic.com/v1/messages',
+            headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+            data: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 1, messages: [{ role: 'user', content: 'test' }] }),
+            timeout: 12000,
+            onload: function(r) {
+              aiKeyTestBtn.disabled = false; aiKeyTestBtn.textContent = 'Testuj klucz API';
+              if (r.status === 200) {
+                aiKeyTestResult.textContent = '✓ Klucz działa'; aiKeyTestResult.style.color = '#22c55e';
+              } else if (r.status === 401) {
+                aiKeyTestResult.textContent = '✗ Błędny klucz (401)'; aiKeyTestResult.style.color = '#f87171';
+              } else if (r.status === 403) {
+                aiKeyTestResult.textContent = '✗ Brak dostępu (403)'; aiKeyTestResult.style.color = '#f87171';
+              } else if (r.status === 429) {
+                aiKeyTestResult.textContent = '⚠ Limit API (429)'; aiKeyTestResult.style.color = '#f59e0b';
+              } else {
+                aiKeyTestResult.textContent = '✗ Błąd ' + r.status; aiKeyTestResult.style.color = '#f87171';
+              }
+            },
+            onerror: function() {
+              aiKeyTestBtn.disabled = false; aiKeyTestBtn.textContent = 'Testuj klucz API';
+              aiKeyTestResult.textContent = '✗ Brak połączenia z API'; aiKeyTestResult.style.color = '#f87171';
+            },
+            ontimeout: function() {
+              aiKeyTestBtn.disabled = false; aiKeyTestBtn.textContent = 'Testuj klucz API';
+              aiKeyTestResult.textContent = '✗ Timeout — API nie odpowiada'; aiKeyTestResult.style.color = '#f87171';
+            },
+          });
         });
       }
       if (newsModelSelect) {

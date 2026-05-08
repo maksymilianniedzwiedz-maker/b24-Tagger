@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.97
+// @version      0.23.98
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.97';
+  const VERSION = '0.23.98';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7150,14 +7150,13 @@ function showOnboarding(onComplete) {
   // Zwraca Promise<{status:'mention'|'contentmatch'|'keytopic'|'teasermatch'|'nomatch'|'blocked', score:Number, snippet:String}>
   //
   // Progi punktowe:
-  //   keyword w tytule/og:title          → +8  (silny sygnał — autor strony wybrał ten tytuł)
+  //   keyword w nagłówku (tytuł/og:title/h1 — jeden sygnał) → +8  (silny sygnał — tytuł i h1 to ta sama treść)
   //   keyword w og:description/meta desc → +5  (silny sygnał — opis meta)
-  //   keyword w h1                       → +5  (silny sygnał — nagłówek artykułu)
-  //   keyword w h2/h3 (podrozdziały)     → +3  (wyraźny sygnał — keyword w sekcji artykułu)
+  //   keyword w tagach artykułu          → +6  (najsilniejszy sygnał intencji — redaktor ręcznie oznaczył temat)
   //   keyword w pierwszym akapicie       → +4  (umiarkowany — lede artykułu)
-  //   keyword w kolejnych akapitach      → +1 za każdy, maks. +3 łącznie
+  //   keyword w h2/h3 (podrozdziały)     → +3  (wyraźny sygnał — keyword w sekcji artykułu)
+  //   keyword w kolejnych akapitach      → +1 za każdy, maks. +4 łącznie
   //   keyword w blockquote               → +2  (cytat w treści artykułu)
-  //   keyword w tagach artykułu          → +4  (sygnał redakcyjny — tag dodany przez autora)
   //
   // Poziomy relevancji:
   //   mention     → 1–4 pkt   (wzmianka w treści — poboczna, ale relevantna)
@@ -7457,9 +7456,11 @@ function showOnboarding(onComplete) {
       var kw = chip.toLowerCase();
       var chipMatched = false;
 
-      // Strefa tytułu — najsilniejszy sygnał (tylko score, tytuł idzie do osobnego pola)
-      var inTitle = titleText.toLowerCase().indexOf(kw) !== -1 || ogTitle.toLowerCase().indexOf(kw) !== -1;
-      if (inTitle) {
+      // Strefa nagłówka — tytuł, og:title i h1 traktowane jako jeden sygnał (ta sama treść)
+      var inHeadline = titleText.toLowerCase().indexOf(kw) !== -1 ||
+                       ogTitle.toLowerCase().indexOf(kw) !== -1 ||
+                       h1Text.toLowerCase().indexOf(kw) !== -1;
+      if (inHeadline) {
         score += 8;
         chipMatched = true;
       }
@@ -7470,13 +7471,6 @@ function showOnboarding(onComplete) {
         score += 5;
         chipMatched = true;
         if (!_metaSnippet) _metaSnippet = (ogDesc || metaDesc).slice(0, 500);
-      }
-
-      // Strefa nagłówka h1
-      if (h1Text.toLowerCase().indexOf(kw) !== -1) {
-        score += 5;
-        chipMatched = true;
-        // h1 liczy do scoringu, ale nie do snippetu — tytuł nie trafia do pola Treść
       }
 
       // Strefa nagłówków h2/h3 — podrozdziały artykułu (po usunięciu szumu i teaserów, tylko bodyEl)
@@ -7512,7 +7506,7 @@ function showOnboarding(onComplete) {
         }
       });
       if (firstPMatch) score += 4;
-      if (extraPMatches > 0) score += Math.min(extraPMatches, 3); // maks. +3 za wielokrotne wzmianki w treści
+      if (extraPMatches > 0) score += Math.min(extraPMatches, 4); // maks. +4 za wielokrotne wzmianki w treści
 
       // Strefa blockquote — cytaty w treści artykułu
       var inBlockquote = blockquotes.some(function(q) { return q.toLowerCase().indexOf(kw) !== -1; });
@@ -7520,7 +7514,7 @@ function showOnboarding(onComplete) {
 
       // Tagi redakcyjne artykułu — bardzo silny sygnał (autor/redakcja oznaczyła temat tagem)
       var inArticleTags = articleTagTexts.some(function(t) { return t.indexOf(kw) !== -1; });
-      if (inArticleTags) { score += 4; chipMatched = true; }
+      if (inArticleTags) { score += 6; chipMatched = true; }
 
       // Strefy poboczne — tylko jeśli chip nie trafił w żadną strefę główną
       if (!chipMatched && _secZones.length > 0) {
@@ -8305,7 +8299,11 @@ function showOnboarding(onComplete) {
             var text = (data.content && data.content[0] && data.content[0].text) || '';
             var parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
             entry.aiStatus = 'done';
-            entry.aiRelevant = !!parsed.relevant;
+            var _v = parsed.verdict;
+            if (!_v) _v = parsed.relevant ? 'match' : 'miss';
+            if (_v !== 'match' && _v !== 'borderline' && _v !== 'miss' && _v !== 'spam') _v = parsed.relevant ? 'match' : 'miss';
+            entry.aiVerdict = _v;
+            entry.aiRelevant = (_v === 'match' || _v === 'borderline');
             entry.aiReason = parsed.reason || '';
           } catch(e) {
             entry.aiStatus = 'error';
@@ -8880,37 +8878,76 @@ function showOnboarding(onComplete) {
     var legendOverlay = document.createElement('div');
     legendOverlay.id = 'b24t-news-legend-overlay';
     legendOverlay.style.cssText = 'display:none;position:absolute;inset:0;z-index:10;background:' + t.bg + ';border-radius:16px;overflow-y:auto;padding:20px 24px;';
-    var _legendRows = [
-      ['◆', '#22c55e',  'Główny temat',   'Keyword w tytule artykułu (score 12+)'],
-      ['◆', '#818cf8',  'W treści',       'Keyword wielokrotnie w treści (score 5–11)'],
-      ['◆', '#fb923c',  'Wzmianka',       'Keyword pobocznie w treści (score 1–4)'],
-      ['●', '#22c55e',  'URL match',      'Keyword znaleziony w adresie URL'],
-      ['◇', '#9ca3af',  'W polecanych',   'Keyword tylko w sekcji polecanych artykułów'],
-      ['●', '#f97316',  'Inny kraj',      'Keyword w URL, ale adres wskazuje inny kraj'],
-      ['—', '#6b7280',  'Nieprzeskan.',   'Strona niedostępna — kliknij wiersz aby sprawdzić ręcznie'],
-      ['✓', '#15803d',  'Dodany',         'Wzmianka dodana do projektu Brand24'],
-      ['✗', '#ef4444',  'Błąd/duplikat',  'Błąd dodawania lub duplikat w projekcie'],
-      ['📅', t.textMuted, 'Data',         'Data publikacji artykułu (wykryta ze strony)'],
-      ['🌐', '#a78bfa',  'Język',         'Język strony wykryty ze znacznika <html lang>'],
-      ['🔒', '#f59e0b',  'Paywall',       'Strona za paywallem — treść może być niepełna'],
-      ['📄', t.textMuted, 'Nie-artykuł',  'Strona katalogowa, firmowa lub inny typ niż artykuł'],
-      ['▢',  '#818cf8',  'iframe',        'Podgląd bezpośredni w panelu dostępny'],
-      ['⏳', '#818cf8',  'AI...',         'Oczekuje na analizę AI'],
-      ['🤖', '#22c55e',  'AI Relevant',   'AI oceniło artykuł jako relevantny dla marki'],
-      ['🤖', '#9ca3af',  'AI Not rel.',   'AI oceniło artykuł jako nierelevantny'],
-      ['🤖', '#f87171',  'AI błąd',       'Błąd analizy AI — najedź na badge aby zobaczyć szczegóły'],
-    ];
+    function _lgRow(icon, iconColor, name, nameColor, desc) {
+      return '<span style="font-size:13px;color:' + iconColor + ';line-height:1.6;">' + icon + '</span>' +
+             '<div style="min-width:0;">' +
+               '<span style="font-size:11px;font-weight:600;color:' + (nameColor || t.text) + ';">' + name + '</span>' +
+               '<span style="font-size:10px;color:' + t.textMuted + ';display:block;line-height:1.4;">' + desc + '</span>' +
+             '</div>';
+    }
+    function _lgSection(label) {
+      return '<div style="grid-column:1/-1;font-size:9px;font-weight:700;letter-spacing:0.08em;color:' + t.textMuted + ';padding-bottom:5px;border-bottom:1px solid ' + t.border + ';margin-top:14px;margin-bottom:2px;">' + label + '</div>';
+    }
     legendOverlay.innerHTML =
-      '<div style="display:flex;align-items:center;margin-bottom:16px;">' +
-        '<span style="font-size:14px;font-weight:700;color:' + t.text + ';flex:1;">Legenda oznaczeń</span>' +
-        '<button id="b24t-news-legend-close" style="background:transparent;border:1px solid ' + t.border + ';color:' + t.textMuted + ';cursor:pointer;font-size:17px;line-height:1;padding:1px 7px;border-radius:5px;">×</button>' +
-      '</div>' +
-      '<div style="display:grid;grid-template-columns:24px 1fr 1fr;gap:6px 12px;align-items:center;">' +
-      _legendRows.map(function(r) {
-        return '<span style="font-size:13px;color:' + r[1] + ';text-align:center;">' + r[0] + '</span>' +
-               '<span style="font-size:11px;font-weight:600;color:' + t.text + ';">' + r[2] + '</span>' +
-               '<span style="font-size:11px;color:' + t.textMuted + ';">' + r[3] + '</span>';
-      }).join('') +
+      '<div style="display:flex;flex-direction:column;gap:0;">' +
+        '<div style="display:flex;align-items:center;margin-bottom:18px;">' +
+          '<span style="font-size:14px;font-weight:700;color:' + t.text + ';flex:1;">Legenda oznaczeń</span>' +
+          '<button id="b24t-news-legend-close" style="background:transparent;border:1px solid ' + t.border + ';color:' + t.textMuted + ';cursor:pointer;font-size:17px;line-height:1;padding:1px 7px;border-radius:5px;">×</button>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 32px;">' +
+
+          '<div style="display:grid;grid-template-columns:20px 1fr;gap:4px 10px;align-items:start;">' +
+            _lgSection('SCANNER') +
+            _lgRow('◆','#22c55e','Główny temat',null,'Keyword w tytule artykułu (score 12+)') +
+            _lgRow('◆','#818cf8','W treści',null,'Keyword wielokrotnie w treści (score 5–11)') +
+            _lgRow('◆','#fb923c','Wzmianka',null,'Keyword pobocznie w treści (score 1–4)') +
+            _lgRow('●','#22c55e','URL match',null,'Keyword znaleziony w adresie URL') +
+            _lgRow('◇','#9ca3af','W polecanych',null,'Keyword tylko w sekcji polecanych artykułów') +
+            _lgRow('●','#f97316','Inny kraj',null,'Keyword w URL, ale adres wskazuje inny kraj') +
+            _lgRow('—','#6b7280','Nieprzeskan.',null,'Strona niedostępna — kliknij wiersz aby sprawdzić ręcznie') +
+            _lgSection('STATUS') +
+            _lgRow('✓','#15803d','Dodany',null,'Wzmianka dodana do projektu Brand24') +
+            _lgRow('✗','#ef4444','Błąd/duplikat',null,'Błąd dodawania lub duplikat w projekcie') +
+          '</div>' +
+
+          '<div style="display:grid;grid-template-columns:20px 1fr;gap:4px 10px;align-items:start;">' +
+            _lgSection('OCENA AI') +
+            _lgRow('⏳','#818cf8','AI...','#818cf8','Oczekuje na analizę AI') +
+            _lgRow('✅','#22c55e','Relevant','#22c55e','Artykuł relevantny — keyword w treści edytorskiej') +
+            _lgRow('⚠️','#f59e0b','Borderline','#f59e0b','Niepewne — słaba wzmianka lub artykuł za paywallem') +
+            _lgRow('❌','#9ca3af','Irrelevant','#9ca3af','Nierelevantny — trafienie techniczne (sidebar/footer)') +
+            _lgRow('🚫','#f97316','Spam','#f97316','Strona SEO / autogenerated bez treści redakcyjnej') +
+            _lgRow('🤖','#f87171','AI błąd','#f87171','Błąd analizy — najedź na badge aby zobaczyć szczegóły') +
+            _lgSection('METADANE') +
+            _lgRow('📅',t.textMuted,'Data',null,'Data publikacji artykułu (wykryta ze strony)') +
+            _lgRow('🌐','#a78bfa','Język',null,'Język strony wykryty ze znacznika &lt;html lang&gt;') +
+            _lgRow('🔒','#f59e0b','Paywall',null,'Strona za paywallem — treść może być niepełna') +
+            _lgRow('📄',t.textMuted,'Nie-artykuł',null,'Strona katalogowa, firmowa lub inny typ niż artykuł') +
+            _lgRow('▢','#818cf8','Iframe',null,'Podgląd bezpośredni w panelu dostępny') +
+          '</div>' +
+
+        '</div>' +
+
+        '<div style="margin-top:18px;padding:12px 14px;border-radius:10px;background:' + t.bgDeep + ';border:1px solid ' + t.border + ';">' +
+          '<div style="font-size:9px;font-weight:700;letter-spacing:0.08em;color:' + t.textMuted + ';margin-bottom:10px;">JAK DZIAŁA SCORING</div>' +
+          '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px 12px;margin-bottom:10px;">' +
+            '<div style="display:flex;align-items:baseline;gap:5px;"><span style="font-size:12px;font-weight:700;color:#22c55e;flex-shrink:0;">+8</span><span style="font-size:10px;color:' + t.textMuted + ';">nagłówek (tytuł / h1)</span></div>' +
+            '<div style="display:flex;align-items:baseline;gap:5px;"><span style="font-size:12px;font-weight:700;color:#22c55e;flex-shrink:0;">+6</span><span style="font-size:10px;color:' + t.textMuted + ';">tagi redakcyjne</span></div>' +
+            '<div style="display:flex;align-items:baseline;gap:5px;"><span style="font-size:12px;font-weight:700;color:#818cf8;flex-shrink:0;">+5</span><span style="font-size:10px;color:' + t.textMuted + ';">meta opis</span></div>' +
+            '<div style="display:flex;align-items:baseline;gap:5px;"><span style="font-size:12px;font-weight:700;color:#818cf8;flex-shrink:0;">+4</span><span style="font-size:10px;color:' + t.textMuted + ';">pierwszy akapit (lede)</span></div>' +
+            '<div style="display:flex;align-items:baseline;gap:5px;"><span style="font-size:12px;font-weight:700;color:#818cf8;flex-shrink:0;">+3</span><span style="font-size:10px;color:' + t.textMuted + ';">podtytuł h2/h3</span></div>' +
+            '<div style="display:flex;align-items:baseline;gap:5px;"><span style="font-size:12px;font-weight:700;color:#fb923c;flex-shrink:0;">+1–4</span><span style="font-size:10px;color:' + t.textMuted + ';">akapity (max +4 łącznie)</span></div>' +
+            '<div style="display:flex;align-items:baseline;gap:5px;"><span style="font-size:12px;font-weight:700;color:#fb923c;flex-shrink:0;">+2</span><span style="font-size:10px;color:' + t.textMuted + ';">blockquote / strefa poboczna</span></div>' +
+            '<div style="display:flex;align-items:baseline;gap:5px;"><span style="font-size:12px;font-weight:700;color:#6b7280;flex-shrink:0;">+1</span><span style="font-size:10px;color:' + t.textMuted + ';">fallback body (div/li)</span></div>' +
+          '</div>' +
+          '<div style="display:flex;align-items:center;gap:10px;padding-top:8px;border-top:1px solid ' + t.borderSub + ';flex-wrap:wrap;">' +
+            '<div style="display:flex;align-items:center;gap:5px;"><span style="color:#22c55e;font-size:11px;">◆</span><span style="font-size:10px;font-weight:600;color:' + t.text + ';">Główny temat</span><span style="font-size:10px;color:' + t.textMuted + ';">≥ 12 pkt</span></div>' +
+            '<span style="color:' + t.border + ';font-size:10px;">·</span>' +
+            '<div style="display:flex;align-items:center;gap:5px;"><span style="color:#818cf8;font-size:11px;">◆</span><span style="font-size:10px;font-weight:600;color:' + t.text + ';">W treści</span><span style="font-size:10px;color:' + t.textMuted + ';">5–11 pkt</span></div>' +
+            '<span style="color:' + t.border + ';font-size:10px;">·</span>' +
+            '<div style="display:flex;align-items:center;gap:5px;"><span style="color:#fb923c;font-size:11px;">◆</span><span style="font-size:10px;font-weight:600;color:' + t.text + ';">Wzmianka</span><span style="font-size:10px;color:' + t.textMuted + ';">1–4 pkt</span></div>' +
+          '</div>' +
+        '</div>' +
       '</div>';
 
     // Stats overlay — full-panel, z-index:10, shown by 📊 button or Statystyki tab
@@ -9714,11 +9751,18 @@ function showOnboarding(onComplete) {
           var _aiErrMsg = entry.aiError ? '\uD83E\uDD16 ' + entry.aiError : '\uD83E\uDD16 b\u0142\u0105d';
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);color:#f87171;" title="AI nie mog\u0142o przeanalizowa\u0107 artyku\u0142u \u2014 ' + (entry.aiError || 'nieznany b\u0142\u0105d') + '">' + _aiErrMsg + '</span>');
         } else if (entry.aiStatus === 'done') {
-          var _aic  = entry.aiRelevant ? '#22c55e' : '#9ca3af';
-          var _aib  = entry.aiRelevant ? 'rgba(34,197,94,0.10)' : 'rgba(107,114,128,0.08)';
-          var _aibd = entry.aiRelevant ? 'rgba(34,197,94,0.25)' : 'rgba(107,114,128,0.2)';
-          var _ailbl = entry.aiRelevant ? '\uD83E\uDD16 Relevant' : '\uD83E\uDD16 Not relevant';
+          var _verdict = entry.aiVerdict || (entry.aiRelevant ? 'match' : 'miss');
           var _airsn = (entry.aiReason || '').replace(/"/g, '&quot;');
+          var _aic, _aib, _aibd, _ailbl;
+          if (_verdict === 'match') {
+            _aic = '#22c55e'; _aib = 'rgba(34,197,94,0.10)'; _aibd = 'rgba(34,197,94,0.25)'; _ailbl = '\u2705 Relevant';
+          } else if (_verdict === 'borderline') {
+            _aic = '#f59e0b'; _aib = 'rgba(245,158,11,0.10)'; _aibd = 'rgba(245,158,11,0.30)'; _ailbl = '\u26A0\uFE0F Borderline';
+          } else if (_verdict === 'spam') {
+            _aic = '#f97316'; _aib = 'rgba(249,115,22,0.10)'; _aibd = 'rgba(249,115,22,0.30)'; _ailbl = '\uD83D\uDEAB Spam';
+          } else {
+            _aic = '#9ca3af'; _aib = 'rgba(107,114,128,0.08)'; _aibd = 'rgba(107,114,128,0.2)'; _ailbl = '\u274C Irrelevant';
+          }
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:' + _aib + ';border:1px solid ' + _aibd + ';color:' + _aic + ';" title="' + _airsn + '">' + _ailbl + '</span>');
         }
 
@@ -10599,6 +10643,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.98",
+      "date": "2026-05-08",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "badge AI — 4 kategorie (✅ Relevant, ⚠️ Borderline, ❌ Irrelevant, 🚫 Spam) zamiast binarnego 🤖; parsowanie pola verdict z fallbackiem na relevant:bool"},
+        {"type": "feat", "text": "legenda oznaczeń — redesign: 2-kolumnowy układ z sekcjami SCANNER/STATUS/OCENA AI/METADANE + karta JAK DZIAŁA SCORING"},
+        {"type": "fix", "text": "scoring skanera — title+h1 jako jeden sygnał (+8 zamiast +13), tagi redakcyjne +4→+6, cap akapitów +3→+4"}
+      ]
+    },
+    {
       "version": "0.23.97",
       "date": "2026-05-08",
       "label": "ux",
@@ -10687,15 +10742,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "News Analytics — sesja zamknięta przez X teraz trafia do LS.NA_SESSION_STATS; wcześniej closeNewsPanels nie zapisywał do localStorage (tylko pushował na GitHub), więc po zamknięciu i ponownym otwarciu panelu statystyki pokazywały zera"}
-      ]
-    },
-    {
-      "version": "0.23.88",
-      "date": "2026-05-04",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "Network Monitor — floating panel monitorujący cały ruch sieciowy (fetch + XHR); widok real-time z filtrowaniem All/Errors/GQL, ring buffer 200 wpisów, eksport JSON, Pause/Clear; włączany w ustawieniach ⚙"}
       ]
     },
   ];

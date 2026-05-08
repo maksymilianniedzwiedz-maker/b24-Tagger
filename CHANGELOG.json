@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.23.92",
+    "date": "2026-05-08",
+    "label": "fix",
+    "changes": [
+      "fix: Stop zatrzymuje multiproject loop, runTagging i batch loop — wcześniej stop działał tylko między partycjami",
+      "fix: per-project zakres dat w pliku zbiorczym — każdy projekt używa własnego min/max dat zamiast globalnego zakresu partycji (szybszy URL map, mniej NO_MATCH)",
+      "fix: chip Untagged — brak fałszywego błędu gdy chip już aktywny; warning degradowany do info",
+      "fix: warning gdy brak untaggedId w localStorage projektu w trybie multi-projekt"
+    ]
+  },
+  {
     "version": "0.23.91",
     "date": "2026-05-08",
     "label": "fix",

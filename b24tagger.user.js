@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.89
+// @version      0.23.90
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.89';
+  const VERSION = '0.23.90';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -969,7 +969,7 @@
       if (h === assessmentCol) return false;
       if (['created_date', 'date', 'createddate', 'crawled_date', 'creation_date',
            'published_at', 'timestamp', 'datetime', 'published_date'].includes(h.toLowerCase())) return true;
-      return rows.slice(0, 5).some(r => /\d{4}-\d{2}-\d{2}/.test(String(r[h] || '')));
+      return rows.slice(0, 5).some(r => /^\d{4}-\d{2}-\d{2}/.test(String(r[h] || '')));
     });
     if (dateCol) detected.date = dateCol;
 
@@ -10537,6 +10537,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.90",
+      "date": "2026-05-08",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "wykrywanie kolumny dat ignoruje pola gdzie data jest wewnątrz nazwy pliku (np. source_file) — wcześniej taki plik zgłaszał błąd 'kolumna daty wykryta, ale wartości puste'"}
+      ]
+    },
+    {
       "version": "0.23.89",
       "date": "2026-05-04",
       "label": "fix",
@@ -10626,16 +10635,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "ux", "text": "kolumna URL — szerokość złota proporcja (38.2% panelu, poprzednio 270px stałe)"},
         {"type": "ux", "text": "otwieranie artykułu — nowe okno w rozmiarze i pozycji kolumny podglądu (zamiast nowej karty)"}
-      ]
-    },
-    {
-      "version": "0.23.80",
-      "date": "2026-05-03",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News scan — concurrency 8→5 (mniej agresywne skanowanie równoległe)"},
-        {"type": "ux", "text": "rozróżnienie przyczyn zablokowania URL — timeout / HTTP 403/429/5xx / błąd sieci / błąd wewnętrzny"}
       ]
     },
   ];

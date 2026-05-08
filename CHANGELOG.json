@@ -1,5 +1,20 @@
 [
   {
+    "version": "0.23.94",
+    "date": "2026-05-08",
+    "label": "perf",
+    "changes": [
+      "perf: Overall Stats — STATS_FETCH_CONCURRENCY 10→4 (max 16 równoczesnych requestów zamiast 40, eliminacja kolejki TCP i timeoutów)",
+      "perf: Quick Delete — sleep(50) między batchami deletów, zapobiega przeciążeniu Brand24 przy dużych operacjach",
+      "perf: _bgFetchTagstats — count-only GQL zamiast pełnych results (mniejszy payload), 2 queries per projekt równolegle zamiast sekwencyjnie",
+      "perf: News re-check — równoległe pobieranie stron wzmianek (10 naraz) zamiast sekwencyjnego while-loop",
+      "perf: fetchProjectTagCounts — usunięto tags{title} z GQL, tylko tags{id} (mniejszy payload per strona × każdy projekt)",
+      "perf: _bgFetchAllProjects — cache check na starcie, pomija re-fetch gdy dane świeże (<5 min)",
+      "perf: _fetchProjectStats — strona 1 cachowana (brak podwójnego fetcha w binary search), boundary page reużywa cache gdy lo=1",
+      "perf: News URL Fallback 2 — prefix index Map O(N+M) zamiast O(N×M) nested loop (urlsMatch per 15-char prefix group)"
+    ]
+  },
+  {
     "version": "0.23.93",
     "date": "2026-05-08",
     "label": "perf",

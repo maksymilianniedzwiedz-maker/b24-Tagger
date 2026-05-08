@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.23.99",
+    "date": "2026-05-08",
+    "label": "ux",
+    "changes": [
+      "ux: ikony badge'ów News — 📅 przy dacie, 🌐 przy języku (spójność z rich preview i legendą)",
+      "fix: badge 'Dodano' — usunięto duplikat ✓ w etykiecie (było '✓ Dodano ✓')",
+      "ux: badge typu niepewnego — ? → ❓ (spójność z pozostałymi badge'ami emoji)",
+      "ux: legenda — dodano wpis ❓ Typ niepewny (wcześniej brakujący)"
+    ]
+  },
+  {
     "version": "0.23.98",
     "date": "2026-05-08",
     "label": "feat",

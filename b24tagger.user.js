@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.98
+// @version      0.23.99
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.98';
+  const VERSION = '0.23.99';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8923,6 +8923,7 @@ function showOnboarding(onComplete) {
             _lgRow('🌐','#a78bfa','Język',null,'Język strony wykryty ze znacznika &lt;html lang&gt;') +
             _lgRow('🔒','#f59e0b','Paywall',null,'Strona za paywallem — treść może być niepełna') +
             _lgRow('📄',t.textMuted,'Nie-artykuł',null,'Strona katalogowa, firmowa lub inny typ niż artykuł') +
+            _lgRow('❓','#d97706','Typ niepewny',null,'Tylko 1 sygnał artykułu — może być artykuł, może nie') +
             _lgRow('▢','#818cf8','Iframe',null,'Podgląd bezpośredni w panelu dostępny') +
           '</div>' +
 
@@ -9676,7 +9677,7 @@ function showOnboarding(onComplete) {
           entry.blockReason === 'exception' ? 'B\u0142\u0105d' :
           'Zablokowana'
         ) : 'Zablokowana';
-        var _sLabels = { match:'Keyword w URL', keytopic:'G\u0142\u00f3wny temat', contentmatch:'W tre\u015bci', mention:'Wzmianka', teasermatch:'Polecany art.', wrongcountry:'Z\u0142y kraj', opened:'Otwarty', added:'Dodano \u2713', error:'B\u0142\u0105d', inproject:'W projekcie', scanning:'Skanowanie\u2026', blocked:_blockedLabel, nomatch:'Brak keyword' };
+        var _sLabels = { match:'Keyword w URL', keytopic:'G\u0142\u00f3wny temat', contentmatch:'W tre\u015bci', mention:'Wzmianka', teasermatch:'Polecany art.', wrongcountry:'Z\u0142y kraj', opened:'Otwarty', added:'Dodano', error:'B\u0142\u0105d', inproject:'W projekcie', scanning:'Skanowanie\u2026', blocked:_blockedLabel, nomatch:'Brak keyword' };
         var _sbStyle;
         if (isScanning) {
           _sbStyle = 'background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.2);color:#818cf8;';
@@ -9729,7 +9730,7 @@ function showOnboarding(onComplete) {
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Brak sygna\u0142\u00f3w \u017ce to artyku\u0142/news (og:type, JSON-LD, published_time, &lt;time&gt;, paragraphs)">\uD83D\uDCC4 nie-artyku\u0142</span>');
         } else if (_pt === 'uncertain') {
           var _sigList = (entry.pageTypeSignals || []).join(', ');
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);color:#d97706;" title="Tylko 1 sygna\u0142 artyku\u0142u: ' + _sigList + '">? typ niepewny</span>');
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);color:#d97706;" title="Tylko 1 sygna\u0142 artyku\u0142u: ' + _sigList + '">\u2753 typ niepewny</span>');
         }
         if (entry.articleDate) {
           var _diffD = (Date.now() - new Date(entry.articleDate).getTime()) / 86400000;
@@ -9737,10 +9738,10 @@ function showOnboarding(onComplete) {
           var _db = _diffD > 60 ? 'rgba(239,68,68,0.10)' : _diffD > 30 ? 'rgba(245,158,11,0.10)' : 'rgba(34,197,94,0.10)';
           var _dbd = _diffD > 60 ? 'rgba(239,68,68,0.3)' : _diffD > 30 ? 'rgba(245,158,11,0.3)' : 'rgba(34,197,94,0.25)';
           var _staleTitle = _diffD > 60 ? ' \u2014 zbyt stary artyku\u0142 (&gt;60 dni)' : '';
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:' + _db + ';border:1px solid ' + _dbd + ';color:' + _dc + ';" title="Data publikacji' + _staleTitle + '">' + entry.articleDate + '</span>');
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:' + _db + ';border:1px solid ' + _dbd + ';color:' + _dc + ';" title="Data publikacji' + _staleTitle + '">📅 ' + entry.articleDate + '</span>');
         }
         if (entry.pageLang) {
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.25);color:#a78bfa;" title="Wykryty j\u0119zyk strony">' + entry.pageLang + '</span>');
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.25);color:#a78bfa;" title="Wykryty j\u0119zyk strony">\ud83c\udf10 ' + entry.pageLang + '</span>');
         }
         if (entry.isPaywall) {
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);color:#f59e0b;" title="Strona za paywallem lub blokad\u0105 \u2014 tre\u015b\u0107 mo\u017ce by\u0107 niepe\u0142na">\uD83D\uDD12 paywall</span>');
@@ -10643,6 +10644,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.99",
+      "date": "2026-05-08",
+      "label": "ux",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "ux", "text": "ikony badge'ów News — 📅 przy dacie, 🌐 przy języku (spójność z rich preview i legendą)"},
+        {"type": "fix", "text": "badge 'Dodano' — usunięto duplikat ✓ w etykiecie (było '✓ Dodano ✓')"},
+        {"type": "ux", "text": "badge typu niepewnego ? → ❓; legenda: dodano brakujący wpis ❓ Typ niepewny"}
+      ]
+    },
+    {
       "version": "0.23.98",
       "date": "2026-05-08",
       "label": "feat",
@@ -10733,15 +10745,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "wykrywanie kolumny dat ignoruje pola gdzie data jest wewnątrz nazwy pliku (np. source_file) — wcześniej taki plik zgłaszał błąd 'kolumna daty wykryta, ale wartości puste'"}
-      ]
-    },
-    {
-      "version": "0.23.89",
-      "date": "2026-05-04",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News Analytics — sesja zamknięta przez X teraz trafia do LS.NA_SESSION_STATS; wcześniej closeNewsPanels nie zapisywał do localStorage (tylko pushował na GitHub), więc po zamknięciu i ponownym otwarciu panelu statystyki pokazywały zera"}
       ]
     },
   ];

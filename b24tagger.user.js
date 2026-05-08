@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.96
+// @version      0.23.97
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.96';
+  const VERSION = '0.23.97';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8747,7 +8747,7 @@ function showOnboarding(onComplete) {
     // Left column: URL list
     var colList = document.createElement('div');
     colList.id = 'b24t-news-col-list';
-    colList.style.cssText = 'flex:0 0 28%;display:flex;flex-direction:column;border-right:1px solid ' + t.border + ';min-height:0;overflow:hidden;';
+    colList.style.cssText = 'flex:0 0 25%;display:flex;flex-direction:column;border-right:1px solid ' + t.border + ';min-height:0;overflow:hidden;';
     colList.innerHTML = [
       // Progress bar (scan + session) — shown when URLs present
       '<div id="b24t-news-progress-wrap" style="display:none;padding:8px 10px 0;flex-shrink:0;">',
@@ -8804,7 +8804,7 @@ function showOnboarding(onComplete) {
     // Right column: mention form
     var colForm = document.createElement('div');
     colForm.id = 'b24t-news-col-form';
-    colForm.style.cssText = 'flex:0 0 18%;min-width:260px;max-width:340px;display:flex;flex-direction:column;overflow-y:auto;padding:14px 16px;gap:10px;';
+    colForm.style.cssText = 'flex:0 0 22%;min-width:300px;max-width:420px;display:flex;flex-direction:column;overflow-y:auto;padding:14px 16px;gap:12px;';
 
     colForm.innerHTML = [
       '<div id="b24t-news-cms-warn" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.5;flex-shrink:0;">' +
@@ -8821,37 +8821,37 @@ function showOnboarding(onComplete) {
       _newsFormRow('Tytuł artykułu', '<input id="b24t-news-f-title" type="text" placeholder="Wklej tytuł artykułu..." style="' + _newsInputCss(t) + '">', true),
       '<div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">' +
         '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">TREŚĆ <span style="color:#ef4444;">*</span></label>' +
-        '<textarea id="b24t-news-f-content" rows="7" placeholder="Wklej fragment treści artykułu..." style="' + _newsInputCss(t) + 'resize:vertical;min-height:140px;"></textarea>' +
+        '<textarea id="b24t-news-f-content" rows="9" placeholder="Wklej fragment treści artykułu..." style="' + _newsInputCss(t) + 'resize:vertical;min-height:200px;"></textarea>' +
       '</div>',
-      '<div style="display:flex;gap:6px;flex-shrink:0;">',
-        '<div style="flex:2;display:flex;flex-direction:column;gap:4px;">',
-          '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">DATA <span style="color:#ef4444;">*</span></label>',
-          '<div style="display:flex;gap:4px;align-items:center;">',
-            '<input id="b24t-news-f-date" type="text" placeholder="YYYY-MM-DD" style="' + _newsInputCss(t) + 'flex:1;">',
-            '<span id="b24t-news-date-detect-icon" style="display:none;font-size:14px;cursor:default;" title="Data wykryta automatycznie">🔍</span>',
-          '</div>',
+      '<div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">',
+        '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">DATA <span style="color:#ef4444;">*</span></label>',
+        '<div style="display:flex;gap:6px;align-items:center;">',
+          '<input id="b24t-news-f-date" type="text" placeholder="YYYY-MM-DD" style="' + _newsInputCss(t) + 'flex:1;">',
+          '<span id="b24t-news-date-detect-icon" style="display:none;font-size:14px;cursor:default;" title="Data wykryta automatycznie">🔍</span>',
         '</div>',
+      '</div>',
+      '<div style="display:flex;gap:8px;flex-shrink:0;">',
         '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
-          '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">GODZ.</label>',
+          '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">GODZINA</label>',
           '<input id="b24t-news-f-hour" type="text" value="12" style="' + _newsInputCss(t) + '">',
         '</div>',
         '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
-          '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">MIN.</label>',
+          '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">MINUTY</label>',
           '<input id="b24t-news-f-minute" type="text" value="00" style="' + _newsInputCss(t) + '">',
         '</div>',
       '</div>',
-      '<div style="display:flex;gap:6px;flex-shrink:0;">',
-        '<div style="flex:2;display:flex;flex-direction:column;gap:4px;">',
-          '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">KAT.</label>',
-          '<input type="text" value="7 — News" readonly style="' + _newsInputCss(t) + 'opacity:0.5;">',
-        '</div>',
+      '<div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">',
+        '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">KATEGORIA</label>',
+        '<input type="text" value="7 — News" readonly style="' + _newsInputCss(t) + 'opacity:0.5;">',
+      '</div>',
+      '<div style="display:flex;gap:8px;flex-shrink:0;">',
         '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
           '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">KRAJ</label>',
           '<input id="b24t-news-f-country" type="text" readonly style="' + _newsInputCss(t) + 'opacity:0.6;" placeholder="z proj.">',
           '<span id="b24t-news-proj-lang-hint" style="display:none;font-size:8px;color:' + t.textFaint + ';text-align:center;letter-spacing:0.02em;"></span>',
         '</div>',
         '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
-          '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">SENT.</label>',
+          '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">SENTYMENT</label>',
           '<select id="b24t-news-f-sentiment" style="' + _newsInputCss(t) + '">',
             '<option value="0">0 Neutral</option>',
             '<option value="1">+1 Poz.</option>',
@@ -10599,6 +10599,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.97",
+      "date": "2026-05-08",
+      "label": "ux",
+      "labelColor": "#06b6d4",
+      "changes": [
+        {"type": "ux", "text": "panel News — kolumna URL węższa (28→25%), formularz szerszy (18→22%, min 300px); DATA pełna szerokość, GODZINA/MINUTY osobny wiersz, KATEGORIA pełna szerokość, KRAJ/SENTYMENT osobny wiersz; pole treści rows 7→9 / min-height 140→200px"}
+      ]
+    },
+    {
       "version": "0.23.96",
       "date": "2026-05-08",
       "label": "ux",
@@ -10687,16 +10696,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#6366f1",
       "changes": [
         {"type": "feat", "text": "Network Monitor — floating panel monitorujący cały ruch sieciowy (fetch + XHR); widok real-time z filtrowaniem All/Errors/GQL, ring buffer 200 wpisów, eksport JSON, Pause/Clear; włączany w ustawieniach ⚙"}
-      ]
-    },
-    {
-      "version": "0.23.87",
-      "date": "2026-05-04",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News — wykrywanie URLi już w projekcie obejmuje teraz 3 miesiące wstecz zamiast tylko bieżącego miesiąca; URLe z poprzednich miesięcy były niewidoczne jako 'już w projekcie'"},
-        {"type": "fix", "text": "News — sprawdzanie projektu uwzględnia pole openUrl jako fallback (spójnie z buildUrlMap)"}
       ]
     },
   ];

@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.93",
+    "date": "2026-05-08",
+    "label": "perf",
+    "changes": [
+      "perf: Annotators Tab — zakładka Projekt ładuje się za pomocą 3 równoległych count queries + binary search dla untagged zamiast pobierania wszystkich stron wzmianek; dane prefetchowane w tle (bgCache.project) — panel otwiera się natychmiast gdy cache gorący"
+    ]
+  },
+  {
     "version": "0.23.92",
     "date": "2026-05-08",
     "label": "fix",

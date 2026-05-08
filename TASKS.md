@@ -149,26 +149,179 @@
 ## DROBNE POPRAWKI (odkryte Sesja 39, 2026-04-17)
 
 - [x] **Features modal ⚙ — max-height + scroll** — `max-height:90vh;overflow-y:auto` na inner div — v0.23.45
-- [ ] **News panel — dolny "Importuj URLe" bez odróżnienia od górnego** — oba przyciski robią to samo; rozważyć tooltip "Otwórz import URLi" lub lekką zmianę stylu (np. ikona zamiast `+`) żeby były wizualnie spójne a nie identyczne
+
+## NEWS — PLAN REALIZACJI (od Sesji 41)
+
+> Podział ustalony Sesja 41, 2026-04-17. Realizacja progresywna sesja po sesji.
+
+### MAŁE (każdy izolowany, ~1–2h)
+
+- [x] **Dolny "Importuj URLe" — odróżnienie od górnego** — "↑ Wczytaj URLe" + title tooltip; górny pozostaje "+ Importuj URLe" — v0.23.48
+- [x] **Status AI w headerze panelu News** — chip "🤖 AI" widoczny gdy `_newsAiShouldRun()` (enabled + apiKey) — v0.23.48
+- [x] **Przeprojektowanie wskaźników relevancji** — nowe nazwy: mention→"Wzmianka" (🟠 #fb923c), contentmatch→"W treści" (🟣 #818cf8), keytopic→"Główny temat" (🟢 #22c55e); ujednolicone kolory w liście i rich preview card — v0.23.48
+- [x] **Lepsza detekcja daty** — fallback na widoczny tekst z nazwą miesiąca ("Published: 12 April 2025", "April 12, 2025") gdy meta/JSON-LD zawodzi — v0.23.48
+
+### ŚREDNIE (~3–5h, wymagają logiki + UI)
+
+- [x] **[BUG] Skanowanie AI News zatrzymuje się w połowie bez komunikatu** — outer try/catch, obsługa 401/429/5xx/timeout/parse z konkretnym `entry.aiError`; badge błędu per URL w liście — v0.23.49
+- [x] **Fix detekcji iframe — fallback na kartę** — `iframeEl.onerror` → auto-switch na rich card, `entry.iframeable=false`, rerender listy — v0.23.49
+- [x] **Rich preview card — więcej danych** — autor (meta/JSON-LD/byline), liczba słów, strefy artykułu, badge iframe — v0.23.49
+- [x] **Legenda oznaczeń i chipów** — przycisk `?` w headerze panelu; overlay z grid opisów wszystkich badży; przycisk zamknięcia — v0.23.49
+
+### DUŻE (złożona architektura, >1 dzień)
+
+- [ ] **AI chipy na artykułach — nowe etykiety po analizie** — etykiety AI (np. "Główny temat", "Wzmianka", "Współpraca", "OOT") jako kolorowe chipy w liście URLi i w karcie; tooltip z uzasadnieniem AI; wymaga rozbudowania `_newsAiAnalyze` i struktury danych wyników
+- [x] **Przeprojektowanie listy URLi — kafelki zamiast listy** — układ kart: status badge z etykietą + badże w górnym wierszu, pełny URL (11px, bez limitu 42 znaków), snippet poniżej — v0.23.51
+- [x] **System statystyk AI News — accuracy tracking** — per-sesja confusion matrix (TP/FP/FN/TN) w LS.NA_SESSION_STATS; _naAggSession() oblicza CM z live entries; _naCompute() agreguje sesje; eksport CSV per sesja — v0.23.79
+
+## UKOŃCZONE (sesja 2026-05-04, Sesja 69)
+
+- [x] **[BUG] News Analytics — statystyki pokazują zera po zamknięciu panelu** — `closeNewsPanels` nie zapisywał sesji do `LS.NA_SESSION_STATS` (tylko push GitHub + czyszczenie sessionId); `_naNewSession` widziało sessionId=null → sesja przepadała; fix: zapis do LS na początku `closeNewsPanels` przed `_naFinalizeSession`, deduplikacja po sessionId — v0.23.89
+
+## UKOŃCZONE (sesja 2026-05-04, Sesja 68)
+
+- [x] **Network Monitor — floating panel monitorujący cały ruch sieciowy (fetch + XHR)** — ring buffer 200 wpisów; tabela real-time: czas | method | URL/GQL | status | ms; klik → szczegóły; filtry All/Errors/GQL; Pause/Clear/Export JSON; toggle w ⚙; side tab 📡 poniżej News — v0.23.88
+
+## UKOŃCZONE (sesja 2026-05-04, Sesja 67)
+
+- [x] **[BUG] News project-check wykrywał URLe tylko z bieżącego miesiąca** — fix: zakres dat rozszerzony do 3 miesięcy wstecz (`getMonth() - 2`); ponad połowa URLi nie pokazywała się jako "już w projekcie" gdy były dodane w poprzednich miesiącach — v0.23.87
+- [x] **[BUG] News project-check ignorował pole openUrl** — `getMentions` zwraca URL w `openUrl` dla niektórych wzmianek; dodano fallback `m.url || m.openUrl` (spójnie z `buildUrlMap`) — v0.23.87
+
+## UKOŃCZONE (sesja 2026-05-03, Sesja 66)
+
+- [x] **[BUG] overwrite/multitag pomijał wzmianki z istniejącym tagiem** — gdy conflictMode=overwrite/multitag, mapa URL budowana ze WSZYSTKICH wzmianek (nie tylko Untagged); wcześniej wzmianki z tagiem nie były w mapie → NO_MATCH → "pominięte" — v0.23.86
+- [x] **Raport tagowania: licznik podmian tagu** — nowa linia "Podmieniono tag: X" w logu diagnostycznym i RAPORCIE TAGOWANIA gdy użyto trybu overwrite — v0.23.86
+
+## UKOŃCZONE (sesja 2026-05-03, Sesja 65)
+
+- [x] **UX: proporcje kolumn panelu News — środek najszerszy** — lista URLi 28% (z 38.2%), formularz 18% (z 23.6%); podgląd zyskuje ~54% szerokości dla wygody czytania artykułów — v0.23.85
+- [x] **[BUG] Quick Delete "wszystkie projekty" — 0 wzmianek mimo że tag istnieje** — `_bgFetchAllProjects` używał `getAnnotatorDates()` = wąskie 3 dni (1–3 maja); fix: nowy helper `_getCleanupDateRange()` = prev month start → today (~30-60 dni) — v0.23.85
+- [x] **[BUG] Auto-Delete po tagowaniu pliku — "brak wzmianek"** — zabezpieczenie: jeśli pierwsza próba zwróci 0, retry po 5s z `_getCleanupDateRange()` (zabezpieczenie przed lag indeksu Brand24 lub rozbieżnością dat z pliku) — v0.23.85
+
+## NEWS — DO ZROBIENIA (następna sesja)
+
+- [x] **Poszerzenie sekcji listy URLi** — `flex:0 0 38.2%` (złota proporcja) zamiast `width:270px`; na 1400px panelu ≈535px — v0.23.81
+- [x] **UX: stosunek kolumn w panelu News** — colForm flex 23.6% (min 290 max 400px) zamiast 285px; pole Treść rows 3→7, min-height 60→140px; fix regresji _newsApplyResponsive (list nadpisywany na 270px) — v0.23.83
+- [x] **Fix: wykrywanie wzmianek już istniejących w projekcie** — normalizeUrl + Set + 2 fallbacki (bez query/hash dla utm_*/fbclid + urlsMatch dla obciętego ID) — v0.23.83
+- [x] **[BUG] News Analytics — wyniki zwracają same zera** — entry.scanStatus chroni oryginalny wynik skanera przed nadpisaniem przez 'opened'/'added'; usunięto early-return dla wpisów bez naOutcome → liczą się jako skipped (FP) — v0.23.82
+- [x] **Funkcja zamknięcia miesiąca** — Overall Stats automatycznie trzyma się prev miesiąca dopóki nie domknięty; przyciski ← / → / ↺ Auto; "Zamknij miesiąc" czyści override → auto-przeskok na następny; LS key OVERALL_ACTIVE_MONTH per-grupa; limit 12 miesięcy wstecz — v0.23.84
+
+## NEWS — POZA PLANEM REALIZACJI (bez ustalonego terminu)
+
+- [ ] **Lista URLi: rozmiar i czytelność** — większa proporcja sekcji listy w layoucie, większe chipy/badże (padding, font-size) — wchodzi w scope DUŻEGO "Przeprojektowanie listy URLi — kafelki", ale można zrobić wcześniej jako CSS-only patch
+- [ ] **News kampanijne — import i skanowanie URLi z kampanii** — nowa zakładka lub sekcja w panelu News dedykowana wzmiankom kampanijnym; analogiczny workflow do standardowego News: wczytanie listy URLi (paste/plik), content scan, scoring, lista z badżami; różnica: osobna przestrzeń wyników i eksport do formularza dodawania wzmianki kampanijnej zamiast standardowej
+
+## BUGI DO NAPRAWY — NASTĘPNA SESJA (odkryte Sesja 39+, 2026-04-17)
+
+- [ ] **[BUG] Chip podglądu pojawia się, ale strona zawsze pokazuje "odmówiono nawiązania połączenia"** — ta sama domena za każdym razem; chip `▢` jest widoczny (iframeable=true), ale iframe nie ładuje się (np. tr.fashionnetwork.com). Dwie opcje naprawy — zacząć od Opcji 1:
+  - [ ] **Opcja 1 — szybka (heurystyczna)**: w `onload` gdy `contentDocument === null` próbuj `contentWindow.location.href` — cross-origin rzuca SecurityError (OK), strona błędu przeglądarki zwraca wartość → wywołaj fallback. Brak ryzyka, może nie działać gdy `chrome-error://` też rzuca SecurityError.
+  - [ ] **Opcja 2 — właściwa (podwójny request)**: w `_newsContentScan` dodaj nagłówki `Sec-Fetch-Dest: iframe` + `Sec-Fetch-Mode: navigate` + `Sec-Fetch-Site: cross-site` → CDN/WAF odpowiada tak samo jak przy prawdziwym iframe → błąd = `iframeable=false`, badge nie pojawia się. Ryzyko: strony blokujące iframe-requesty dostają status `blocked` i tracimy treść artykułu.
+
+- [x] **[BUG] Skanowanie URLi w panelu News zatrzymuje się w połowie bez komunikatu** — fix v0.23.50: try/catch w onload `_newsContentScan`; gdy `_newsParseContent` rzuca wyjątek, Promise teraz resolves z `{status:'blocked'}` zamiast wisieć wiecznie
+- [x] **[BUG] Badge `▢` iframe widoczny na stronach gdzie iframe nie działa** — fix v0.23.50: `iframeEl.onload` + detekcja pustego `contentDocument.body`; auto-switch na rich card przy X-Frame-Options block
+
+## NEWS ANALYTICS — DO NAPRAWY (odkryte sesja 2026-04-28, Sesja 60)
+
+- [x] **[BUG] "Rekordy w bazie" liczy wszystko, precision liczy tylko pozytywne** — fix: karta "Pozytywne URL" z `positive.length`, tooltip na "Rekordy w bazie" — v0.23.76
+- [x] **[BUG] Race condition przy równoległych retry push** — fix: `_naRetryPending` sekwencyjny (`retryNext` recursive) — v0.23.76
+- [x] **[BUG] CSV export ignoruje filtr projektu** — fix: `_naExportCsv(filters)` z identyczną logiką jak JSON export — v0.23.76
 
 ## DO ZROBIENIA — NASTĘPNA SESJA (priorytet)
 
 ### AI — implementacja (plan: C:/Users/maksi/work/implementacje/AI_IMPLEMENTATION_PLAN.md)
 - [x] **Krok 1: Ustawienia AI** — LS key, helpery, sekcja HTML w ⚙ Ustawienia (klucz API, model, biblioteka promptów, toggle News AI) — v0.23.43
-- [ ] **Krok 2: AI News Scoring** — rozszerzenie `_newsParseContent` o `keywordContexts`; `_newsAiAnalyze` z GM_xmlhttpRequest + prompt caching; badge w liście URLi (pending/relevant/not-relevant) + tooltip; counter dzienny
-  - **Prompt uniwersalny** — szablon z `{PROJECT_NAME}` (auto z `_pnResolve`) i `{BRAND_CONTEXT}` (pole "Opis marki" w panelu News); użytkownik wkleja prompt raz do biblioteki i wypełnia tylko opis marki per-projekt
-  - **Pole "Opis marki"** — małe textarea w panelu News widoczne gdy AI włączone; persystuje w localStorage jako `b24t_news_ai_brand_ctx_{projectId}`; podmieniane w prompt przed wysłaniem do API
+- [x] **Krok 2: AI News Scoring** — keywordContexts w _newsParseContent, _newsAiAnalyze (GM_xmlhttpRequest + prompt caching), badge ⏳/🤖 Relevant/🤖 Not relevant + tooltip, pole "Opis marki" per projekt, prompt uniwersalny z {PROJECT_NAME}/{BRAND_CONTEXT}, dropdown wyboru promptu News — v0.23.46
+- [x] **Fix: prompt wydzielony z kodu** — usunięto _NEWS_AI_DEFAULT_SYSTEM; prompt jako plik Tagger/prompts/news_ai_scoring.txt; AI nie startuje bez wybranego promptu z biblioteki — v0.23.47
 - [ ] **Krok 3: AI Tagowanie — faza próbkowania** — 10 wzmianek, odkryj assessment values, UI mapowania assessment→tag
 - [ ] **Krok 4: AI Tagowanie — pełny run** — getMentionsWithFilters → batche (batchSize=10) → bulkTagMentions; pasek postępu; licznik; fallbacki (401/429/timeout)
 - [ ] **Tryb weryfikacji AI** — eksport do XLSX z kolumnami: URL, wynik AI, uzasadnienie, wynik skanera, data, język, typ strony
 
-### News — poprawki panelu (odkryte Sesja 39)
-- [ ] **Lista URLi: rozmiar i czytelność** — większa proporcja sekcji listy w layoucie, większe chipy/badże (padding, font-size)
-- [ ] **Fix detekcji iframeable** — badge `▢` pojawia się mimo faktycznej blokady; poprawić logikę lub zwiększyć ostrożność przy oznaczaniu jako iframeable
-- [ ] **Rich preview: więcej danych** — dodać autora, liczbę słów, strefę artykułu, wynik scoringu, matched keywords
-- [ ] **Lepsza detekcja daty** — regex na widoczny tekst w treści artykułu (np. "Published: 12 April 2025") jako fallback gdy meta/JSON-LD zawodzi
+## UKOŃCZONE (sesja 2026-05-03, Sesja 64)
 
-- [ ] **News kampanijne — import i skanowanie URLi z kampanii** — nowa zakładka lub sekcja w panelu News dedykowana wzmiankom kampanijnym; analogiczny workflow do standardowego News: wczytanie listy URLi (paste/plik), content scan, scoring, lista z badżami; różnica: osobna przestrzeń wyników i eksport do formularza dodawania wzmianki kampanijnej zamiast standardowej.
+- [x] **UX: kolumna URL — złota proporcja** — `flex:0 0 38.2%` zamiast `width:270px;flex-shrink:0`; responsywna szerokość ~535px przy panelu 1400px — v0.23.81
+- [x] **UX: otwieranie artykułu — nowe okno zamiast nowej karty** — `_newsOpenUrl` przebudowana na `getBoundingClientRect(colPreview)` + `window.screenX/Y`; przycisk `↗` z `<a target="_blank">` na `<button>` z dataset.wired; "Otwórz w nowej karcie" → button z addEventListener po innerHTML — v0.23.81
+
+## UKOŃCZONE (sesja 2026-05-03, Sesja 63)
+
+- [x] **Fix: News scan — concurrency 8→5 + rozróżnienie przyczyn zablokowania URL** — `blockReason`: timeout / http (+ httpStatus) / error / exception; UI zaktualizowane w 4 miejscach (_statusDot, row.title, badge, sidebar) — v0.23.80
+
+## UKOŃCZONE (sesja 2026-04-27, Sesja 59)
+
+- [x] **[BUG] News — adaptacyjny timeout skanowania** — `_scanTimings[]` sliding window, `_getAdaptiveScanTimeout()` (p90×2, min 8s, max 40s), retry przy `ontimeout` z 2× timeout zamiast od razu `blocked`; `onerror` nadal blocked bez retry — v0.23.74
+
+## UKOŃCZONE (sesja 2026-04-26, Sesja 58)
+
+- [x] **NEWS ANALYTICS — Sesja 5: eksport CSV/JSON w zakładce Statystyki** — _naExportCsv (surowe rekordy LS + pending, BOM UTF-8), _naExportJson (output _naCompute z aktywnym filtrem); przyciski ↓ CSV i ↓ JSON w nagłówku statsOverlay — v0.23.72
+- [x] **UX: przycisk "Testuj połączenie" w ⚙ Analityka** — GM_xmlhttpRequest GET /repos/{repo}; wyniki inline: ✓ OK / ⚠ brak uprawnień / ✗ 401 / ✗ 404 / ✗ brak połączenia; czyta PAT+repo z inputów live — v0.23.73
+
+## UKOŃCZONE (sesja 2026-04-26, Sesja 57)
+
+- [x] **NEWS ANALYTICS — Sesja 4: zakładka 📊 Statystyki w panelu News** — _naStatCard, _naRenderStats (hero metrics, tabela skanera z paskami, sygnały, rozkład score, AI confusion matrix, sesje), statsOverlay z filtrami okres+kraj, przycisk 📊 w headerze, zakładka w tabsBar, live re-render, wzajemne zamykanie legend↔stats — v0.23.71
+
+## UKOŃCZONE (sesja 2026-04-26, Sesja 56)
+
+- [x] **NEWS ANALYTICS — Sesja 2: GitHub Sync + Ustawienia** — _naGetSettings/_naSaveSettings, _naBuildSessionData, _naAddPending, _naPushSession (GM_xmlhttpRequest, GET+PUT GitHub Contents API), _naRetryPending, _naTryPeriodicPush; wypełnienie stubów visibilitychange i setInterval; push przy closeNewsPanels; sekcja Analityka w ⚙ (toggle + PAT + repo + status) — v0.23.69
+
+## UKOŃCZONE (sesja 2026-04-26, Sesja 55)
+
+- [x] **NEWS ANALYTICS — Sesja 1: Storage + Popup + Hooki danych** — nowa sekcja `// NEWS ANALYTICS`: _naRecord, _naNewSession, _naFlushSkipped, _naFinalizeSession, _naShowConsentIfNeeded; hooki submit (added/duplicate/error/manual_add); visibilitychange + auto-flush co 5 min (stubs dla push); 3 klucze LS (NA_RECORDS, NA_PENDING, NA_CONSENT); debug naDebug() — v0.23.68
+- [x] **Plan NEWS_ANALYTICS_PLAN.md** — zaktualizowano sekcję "Timing push" o 3-poziomowe zabezpieczenie przed utratą danych (visibilitychange, auto-flush 5min, pending queue)
+
+## UKOŃCZONE (sesja 2026-04-25, Sesja 54)
+
+- [x] **UX: płynna animacja pasków progresu** — RAF-lerp (`_makeBarSmoother`) zamiast CSS transition; 5 pasków: main panel, News scan, Quick Delete ALL/by-tag, Quick Delete VIEW, Quick Tag — v0.23.67
+
+## UKOŃCZONE (sesja 2026-04-24, Sesja 53)
+
+- [x] **[BUG] Wszystkie artykuły oznaczane jako `blocked` po v0.23.64** — timeout 5s za krótki → większość requestów trafiała do `ontimeout`; fix: przywrócony timeout 8000ms; `_newsAiAnalyze` przeniesione poza try/catch (nie nadpisuje statusu przy błędzie AI) — v0.23.65
+- [x] **[BUG] Freeze skanowania powrócił po v0.23.65** — `_newsAiAnalyze` i `renderUrlList()` poza głównym try/catch zabijały workera przy wyjątku; fix: oba opakowane w dedykowane `try/catch` — v0.23.66
+- [x] **Tokeny PAT zregenerowane** — publiczny i prywatny, ważność 90 dni (do ~2026-07-24)
+
+## UKOŃCZONE (sesja 2026-04-24, Sesja 52)
+
+- [x] **[BUG] News — skanowanie zatrzymywało się w połowie (np. 42/175)** — brak try/catch w _scanWorker; wyjątek z renderUrlList/AI callback zabijał workera cicho; fix: try/catch owijający przetwarzanie, scanDone++ i renderUrlList() zawsze poza blokiem — v0.23.64
+- [x] **[BUG] News — kliknięcie rich card URL zawieszało UI** — infinite loop: stary iframeEl.onload (_iframeFallback) triggerowany przy src='' → znów src='' → pętla renderUrlList(); fix: onload/onerror=null na starcie _newsShowPreview i wewnątrz _iframeFallback — v0.23.64
+- [x] **Perf: News skanowanie szybsze** — concurrency 5→8, timeout 8000→5000ms — v0.23.64
+
+## UKOŃCZONE (sesja 2026-04-24, Sesja 51)
+
+- [x] **Fix: cross-delete "Usuń z wszystkich projektów" nie reagował** — handler czytał `_tagCount` z `getKnownProjects()` (brak tej właściwości) zamiast z `bgCache.allProjects[tagId].results`; `state.status === 'idle'` przerywał pętlę po pierwszym batchu — v0.23.63
+
+## UKOŃCZONE (sesja 2026-04-24, Sesja 50)
+
+- [x] **Mitygacja błędu batcha** — `MAX_BATCH_SIZE` 500→50, `TAG_CONCURRENCY` 2→4; fallback przy błędzie na max 50 wzmianek zamiast 500 — v0.23.62
+
+## DO ZROBIENIA — Audit Mode + multi-projekt
+
+- [ ] **Audit Mode nie obsługuje multi-projektu** — ignoruje kolumnę `project_id`, audytuje tylko `state.projectId`. Do rozważenia: pętla per projekt jak w `runMultiProjectTagging`.
+
+## UKOŃCZONE (sesja 2026-04-24, Sesja 49)
+
+- [x] **Multi-projektowe tagowanie z pliku** — kolumna project_id/projekt_id; widget wykrytych projektów (✓ znany / ✕ nieznany); blokada Start dla nieznanych projektów; mapowanie po nazwie tagu; sekwencyjny run per projekt z osobnymi logami; zbiorczy raport — v0.23.61
+
+## UKOŃCZONE (sesja 2026-04-18, Sesja 48)
+
+- [x] **Redesign UI — Sesja B (Fazy 4–8)** — stats row-list (no hero metrics), section hierarchy, action bar reorganizacja, log panel theme-aware, annotator CSS vars — v0.23.55–v0.23.59
+- [x] **Redesign UI — Sesja C (Fazy 9–12)** — News CSS vars (submit btn, lang map modal), onboarding bubble theme-aware, ikona ↗, b24t-section-reveal animation — v0.23.60
+- [x] **REDESIGN_PLAN.md Fazy 1–12 — wszystkie ukończone** ✓
+
+## UKOŃCZONE (sesja 2026-04-18, Sesja 47)
+
+- [x] **Redesign UI — Priorytet 1 i 2 z REDESIGN_PLAN.md** — Geist font, teal dark mode (oklch), usunięcie section stripe (BAN 1), border-left z logów (BAN 2), primary button solid, stat-card stripe — v0.23.53
+
+## UKOŃCZONE (sesja 2026-04-18, Sesja 46)
+
+- [x] **UI Polish — redesign animacji wg filozofii Emil Kowalski** — 26 zmian CSS+JS: szybsze animacje (modal 0.22s, log 0.08s, progress 0.25s, stat-pop 0.22s, :active 0.08s), GPU-safe side tab (tylko box-shadow), stagger kart URLi i toastów, box-shadow na hover stat-card/file-zone, focus-visible na wszystkich przyciskach, transform-origin na help-tip — v0.23.52
+
+## BATCH ERROR — DIAGNOZA I FIX (sesja 2026-04-20)
+
+> Problem: przy tagowaniu dużych plików (kilkaset wzmianek) sporadycznie pojawia się błąd batcha — po 4 próbach retry odpala się fallback i taguje po jednej wzmiance na raz. Po przejściu na single-mention błędu nie ma. Problem był nieobecny przez kilka dni po wdrożeniu countermeasures, potem pojawił się ponownie mimo braku zmian po naszej stronie.
+
+- [ ] **[DIAGNOZA] Root cause analysis błędu batcha** — MCP monitoring niekonkluzywny (plugin używa `origFetch`, nie da się interceptować external wrapperem). Jeśli błąd wraca po v0.23.62: dodać `console.log` wewnątrz retry `bulkTagMentions`, deploy debug, run na dużym pliku, revert.
+
+- [x] **[PLAN B] Mniejsze batche + równoległość** — `MAX_BATCH_SIZE` 500→50, `TAG_CONCURRENCY` 2→4 — v0.23.62. Fallback per batch był już lokalny; zmiana redukuje koszt fallbacku 10×.
+
+- [x] **[PLAN B] Lepszy fallback dla wadliwych batchów** — fallback był już lokalny per batch (nie zamrażał całego workflow) — potwierdzono przy analizie kodu w Sesji 50.
 
 ## UKOŃCZONE
 > Zarchiwizowane w TASKS_ARCHIVE.md

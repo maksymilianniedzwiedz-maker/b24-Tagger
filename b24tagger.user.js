@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.91
+// @version      0.23.92
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.91';
+  const VERSION = '0.23.92';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1258,6 +1258,7 @@
     var savedProjects = lsGet(LS.PROJECTS, {});
 
     for (var _pIdx = 0; _pIdx < projectIds.length; _pIdx++) {
+      if (state.status !== 'running') break;
       var projectId = projectIds[_pIdx];
       var projectData = savedProjects[projectId];
       if (!projectData) {
@@ -1286,11 +1287,27 @@
       state.projectId = parseInt(projectId);
       state.tags = projectTags;
       state.mapping = projectMapping;
+      if (!projectData.untaggedId) {
+        addLog('⚠ Projekt ' + projectName + ': brak untaggedId w localStorage — używam fallback=' + savedUntaggedId + '. Odwiedź ten projekt w Brand24 aby zaktualizować konfigurację.', 'warn');
+      }
       state.untaggedId = projectData.untaggedId || savedUntaggedId;
+
+      // Per-project date range — nie używaj globalnego zakresu partycji (może być zbyt szeroki)
+      var colDate = colMap.date;
+      var projectDates = projectRows
+        .map(function(r) { return (r[colDate] || '').substring(0, 10); })
+        .filter(function(d) { return d && /^\d{4}-\d{2}-\d{2}$/.test(d); });
+      var projectDateFrom = projectDates.length
+        ? projectDates.reduce(function(m, d) { return d < m ? d : m; })
+        : partition.dateFrom;
+      var projectDateTo = projectDates.length
+        ? projectDates.reduce(function(m, d) { return d > m ? d : m; })
+        : partition.dateTo;
+      addLog('ℹ Zakres dat projektu ' + projectName + ': ' + projectDateFrom + ' → ' + projectDateTo, 'info');
 
       var statsBefore = { tagged: state.stats.tagged, skipped: state.stats.skipped };
       try {
-        await runTagging({ dateFrom: partition.dateFrom, dateTo: partition.dateTo, rows: projectRows }, true);
+        await runTagging({ dateFrom: projectDateFrom, dateTo: projectDateTo, rows: projectRows }, true);
       } catch (e) {
         addLog('✕ Błąd tagowania projektu ' + projectName + ': ' + e.message, 'error');
       }
@@ -1361,6 +1378,7 @@
       addLog('ℹ Tryb overwrite/multitag: buduje mapę ze WSZYSTKICH wzmianek (ignoruje filtr Untagged)', 'info');
     }
     state.urlMap = await buildUrlMap(dateFrom, dateTo, !_forceFullMap && state.mapMode === 'untagged');
+    if (state.status !== 'running') return;
 
     // Walidacja schematu pliku — blokuje tagowanie przy sci notation URL
     const schemaOk = validateInputSchema(rows, state.file.colMap);
@@ -1722,8 +1740,10 @@
         }
         state.stats.tagged += batchSuccessCount;
         updateStatsUI();
+        if (state.status !== 'running') break;
         await sleep(200);
       }
+      if (state.status !== 'running') break;
     }
     if (totalTagFailed > 0) {
       addLog(
@@ -1943,11 +1963,16 @@
 
   function activateUntaggedFilter() {
     const chips = Array.from(document.querySelectorAll('.MuiChip-root.MuiChip-clickable'));
-    const untaggedChip = chips.find(c => c.textContent.trim() === 'Untagged' && !c.classList.contains('Mui-active'));
+    const untaggedActive = chips.find(c => c.textContent.trim() === 'Untagged' && c.classList.contains('Mui-active'));
+    if (untaggedActive) {
+      addLog('ℹ Filtr Untagged już aktywny — pomijam klik.', 'info');
+      return;
+    }
+    const untaggedChip = chips.find(c => c.textContent.trim() === 'Untagged');
     if (untaggedChip) {
       untaggedChip.click();
     } else {
-      addLog('⚠ Nie znaleziono chipa Untagged — filtr nie aktywowany. Sprawdź czy Brand24 nie zmienił interfejsu.', 'warn');
+      addLog('ℹ Chip Untagged nie znaleziony w DOM — filtr UI nie aktywowany. Mapa URL budowana przez API (gr=[untaggedId]) — tagowanie działa normalnie.', 'info');
     }
   }
 
@@ -10555,6 +10580,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.92",
+      "date": "2026-05-08",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Stop zatrzymuje multiproject loop, runTagging i batch loop — wcześniej stop działał tylko między partycjami"},
+        {"type": "fix", "text": "per-project zakres dat w pliku zbiorczym — każdy projekt używa własnego min/max dat zamiast globalnego zakresu partycji (szybszy URL map, mniej NO_MATCH)"},
+        {"type": "fix", "text": "chip Untagged — brak fałszywego błędu gdy chip już aktywny; komunikat degradowany do info"},
+        {"type": "fix", "text": "warning gdy brak untaggedId w localStorage projektu w trybie multi-projekt"}
+      ]
+    },
+    {
       "version": "0.23.91",
       "date": "2026-05-08",
       "label": "fix",
@@ -10642,16 +10679,6 @@ function showOnboarding(onComplete) {
         {"type": "ux", "text": "szersza kolumna formularza dodawania wzmianki (23.6% z min 290px / max 400px zamiast stałych 285px)"},
         {"type": "ux", "text": "większe pole 'Treść' w formularzu (rows 3→7, min-height 60→140px)"},
         {"type": "fix", "text": "regresja z v0.23.81 — _newsApplyResponsive nadpisywała szerokość listy URLi z 38.2% na 270px"}
-      ]
-    },
-    {
-      "version": "0.23.82",
-      "date": "2026-05-03",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News Analytics — scanStatus zapisuje oryginalny wynik skanera; wcześniej 'opened'/'added' nadpisywały status i wszystkie wpisy trafiały do manual_add zamiast scanner.*"},
-        {"type": "fix", "text": "News Analytics — nieopublikowane wpisy z pozytywnym statusem teraz liczą się jako skipped (FP) w obliczeniu precision"}
       ]
     },
   ];

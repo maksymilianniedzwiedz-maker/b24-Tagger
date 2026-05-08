@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.96",
+    "date": "2026-05-08",
+    "label": "ux",
+    "changes": [
+      "ux: animacje danych w panelach statystyk — count-up liczb od 0, progress bar animuje od 0% do wartości docelowej, stagger fade+slide-up wierszy tabeli przy ładowaniu (Overall Stats, Dashboard Annotatora, Tag Stats); pełne wsparcie prefers-reduced-motion"
+    ]
+  },
+  {
     "version": "0.23.95",
     "date": "2026-05-08",
     "label": "ux",

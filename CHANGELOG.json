@@ -1,5 +1,11 @@
 [
   {
+    "version": "0.23.90",
+    "date": "2026-05-08",
+    "label": "fix",
+    "changes": ["fix: wykrywanie kolumny dat ignoruje pola gdzie data jest wewnątrz nazwy pliku (source_file)"]
+  },
+  {
     "version": "0.23.89",
     "date": "2026-05-04",
     "label": "fix",

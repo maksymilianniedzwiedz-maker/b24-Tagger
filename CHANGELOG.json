@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.102",
+    "date": "2026-05-09",
+    "label": "fix",
+    "changes": [
+      "fix: animacje kaskadowe Overall Stats/Tag Stats/Dashboard — void el.offsetHeight zamiast CSS animation fill-mode (tr elements nie wspierają animation niezawodnie w Chromium); opacity fade-in + setTimeout stagger gwarantowane"
+    ]
+  },
+  {
     "version": "0.23.101",
     "date": "2026-05-09",
     "label": "ux",

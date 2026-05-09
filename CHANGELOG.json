@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.103",
+    "date": "2026-05-09",
+    "label": "fix",
+    "changes": [
+      "fix: animacje kaskadowe Overall Stats — animateAll flag, fade-in tylko w finalnym renderze eliminuje kill in-flight timeoutów przez innerHTML replacement"
+    ]
+  },
+  {
     "version": "0.23.102",
     "date": "2026-05-09",
     "label": "fix",

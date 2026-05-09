@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.102
+// @version      0.23.103
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.102';
+  const VERSION = '0.23.103';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -10650,6 +10650,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.103",
+      "date": "2026-05-09",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "animacje kaskadowe Overall Stats — naprawiono root cause: animateAll flag, fade-in tylko w finalnym renderze (nie w onProgress), eliminuje problem kill in-flight timeoutów przez innerHTML replacement"}
+      ]
+    },
+    {
       "version": "0.23.102",
       "date": "2026-05-09",
       "label": "fix",
@@ -10740,15 +10749,6 @@ function showOnboarding(onComplete) {
         {"type": "perf", "text": "_bgFetchAllProjects — cache check na starcie, pomija re-fetch gdy dane świeże (<5 min)"},
         {"type": "perf", "text": "_fetchProjectStats — strona 1 cachowana, brak podwójnego fetcha w binary search"},
         {"type": "perf", "text": "News URL Fallback 2 — prefix index Map O(N+M) zamiast O(N×M) nested loop"}
-      ]
-    },
-    {
-      "version": "0.23.93",
-      "date": "2026-05-08",
-      "label": "perf",
-      "labelColor": "#f59e0b",
-      "changes": [
-        {"type": "perf", "text": "Annotators Tab — zakładka Projekt ładuje się za pomocą 3 równoległych count queries + binary search dla untagged zamiast pobierania wszystkich stron wzmianek; dane prefetchowane w tle (bgCache.project) — panel otwiera się natychmiast gdy cache gorący"}
       ]
     },
   ];
@@ -14044,7 +14044,7 @@ To jest NIEODWRACALNE.`)) return;
       bgCache.overallStats = { groupId: group.id, results: fresh.results, dateFrom: fresh.dateFrom, dateTo: fresh.dateTo, label: fresh.label, ts: Date.now() };
       var _c = document.getElementById('b24t-ann-tab-overall-content');
       var _e = _c && _c.querySelector('#b24t-overall-data');
-      if (_e) renderOverallStatsData(_e, fresh.results, group, bgCache.overallStats);
+      if (_e) renderOverallStatsData(_e, fresh.results, group, bgCache.overallStats, true);
     } finally {
       _overallStatsInFlight = false;
     }
@@ -14072,7 +14072,7 @@ To jest NIEODWRACALNE.`)) return;
     '</div>';
   }
 
-  function renderOverallStatsData(el, results, group, cached) {
+  function renderOverallStatsData(el, results, group, cached, animateAll) {
     if (!el) return;
     var hasRelevant = group.relevantTagId != null;
     // Okres i tryb domykania miesiąca
@@ -14206,8 +14206,6 @@ To jest NIEODWRACALNE.`)) return;
           '<span style="font-size:10px;color:var(--b24t-text-faint);margin-left:4px;">' + dateFrom + ' → ' + dateTo + '</span>' +
         '</div>'
       : '';
-    var _prevLoaded = new Set();
-    el.querySelectorAll('tr[data-pid]:not([data-loading])').forEach(function(tr) { _prevLoaded.add(tr.dataset.pid); });
     el.innerHTML = periodHtml + progressHtml + monthClosingHtml + warnHtml + cards +
       '<div style="border:1px solid var(--b24t-border);border-radius:8px;overflow:hidden;">' +
         '<table style="width:100%;border-collapse:collapse;">' +
@@ -14233,28 +14231,25 @@ To jest NIEODWRACALNE.`)) return;
         var t = parseInt(span.dataset.statval, 10);
         if (!isNaN(t) && t > 0) _animateCountUp(span, t, 600);
       });
-      // Kaskada wierszy — void el.offsetHeight commituje opacity:0 synchronicznie przed setTimeout
-      var _newRows = [];
-      el.querySelectorAll('tr[data-pid]').forEach(function(tr) {
-        if (!tr.dataset.loading && !_prevLoaded.has(tr.dataset.pid)) _newRows.push(tr);
-      });
-      if (_newRows.length > 0) {
-        var _ctx = _overallAnimCtx;
-        if (_ctx && _ctx.batchMs === 0) {
-          _ctx.batchMs = Date.now() - _ctx.startMs;
-          _ctx.staggerMs = Math.min(220, Math.max(55, Math.round(_ctx.batchMs * 0.9 / (STATS_FETCH_CONCURRENCY - 1))));
-        }
-        var _step = (_ctx && _ctx.staggerMs) || 80;
-        _newRows.forEach(function(tr) { tr.style.opacity = '0'; });
-        void el.offsetHeight;
-        _newRows.forEach(function(tr, i) {
-          (function(row, delay) {
-            setTimeout(function() {
-              row.style.transition = 'opacity 260ms ease-out';
-              row.style.opacity = '1';
-            }, delay);
-          })(tr, i * _step);
+      // Kaskada wierszy — tylko gdy animateAll=true (finalny render po zakończeniu fetcha)
+      if (animateAll) {
+        var _animRows = [];
+        el.querySelectorAll('tr[data-pid]').forEach(function(tr) {
+          if (!tr.dataset.loading) _animRows.push(tr);
         });
+        if (_animRows.length > 0) {
+          var _step = (_overallAnimCtx && _overallAnimCtx.staggerMs) || 80;
+          _animRows.forEach(function(tr) { tr.style.opacity = '0'; });
+          void el.offsetHeight;
+          _animRows.forEach(function(tr, i) {
+            (function(row, delay) {
+              setTimeout(function() {
+                row.style.transition = 'opacity 260ms ease-out';
+                row.style.opacity = '1';
+              }, delay);
+            })(tr, i * _step);
+          });
+        }
       }
     }
     // Przycisk "Zamknij miesiąc" — domyka wyświetlany miesiąc i przeskakuje na auto (zwykle następny)

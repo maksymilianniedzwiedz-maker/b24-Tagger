@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.23.101",
+    "date": "2026-05-09",
+    "label": "ux",
+    "changes": [
+      "ux: animacje kaskadowe Overall Stats — CSS fill-mode:both zamiast broken rAF-transition, stagger ekstrapolowany z czasu pierwszego batcha (batchMs*0.9/(B-1)) wypełnia czas do kolejnego batcha — jeden płynny cascade zamiast skoków",
+      "ux: animacje Dashboard Annotatora — ta sama naprawa + countUp startuje zsynchronizowany z opóźnieniem animacji",
+      "ux: animacje Tag Stats — ta sama naprawa CSS fill-mode:both"
+    ]
+  },
+  {
     "version": "0.23.100",
     "date": "2026-05-09",
     "label": "feat",

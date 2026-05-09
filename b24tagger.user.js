@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.101
+// @version      0.23.102
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.101';
+  const VERSION = '0.23.102';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -10650,6 +10650,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.102",
+      "date": "2026-05-09",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "animacje kaskadowe Overall Stats/Tag Stats/Dashboard — void el.offsetHeight zamiast CSS animation (tr elements nie wspierają animation fill-mode niezawodnie); opacity fade gwarantowany"}
+      ]
+    },
+    {
       "version": "0.23.101",
       "date": "2026-05-09",
       "label": "ux",
@@ -10740,18 +10749,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#f59e0b",
       "changes": [
         {"type": "perf", "text": "Annotators Tab — zakładka Projekt ładuje się za pomocą 3 równoległych count queries + binary search dla untagged zamiast pobierania wszystkich stron wzmianek; dane prefetchowane w tle (bgCache.project) — panel otwiera się natychmiast gdy cache gorący"}
-      ]
-    },
-    {
-      "version": "0.23.92",
-      "date": "2026-05-08",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Stop zatrzymuje multiproject loop, runTagging i batch loop — wcześniej stop działał tylko między partycjami"},
-        {"type": "fix", "text": "per-project zakres dat w pliku zbiorczym — każdy projekt używa własnego min/max dat zamiast globalnego zakresu partycji (szybszy URL map, mniej NO_MATCH)"},
-        {"type": "fix", "text": "chip Untagged — brak fałszywego błędu gdy chip już aktywny; komunikat degradowany do info"},
-        {"type": "fix", "text": "warning gdy brak untaggedId w localStorage projektu w trybie multi-projekt"}
       ]
     },
   ];
@@ -12043,9 +12040,17 @@ function showOnboarding(onComplete) {
         '</table>' +
       '</div>';
     if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      var _tagRows = el.querySelectorAll('tbody tr');
+      _tagRows.forEach(function(tr) { tr.style.opacity = '0'; });
+      void el.offsetHeight;
       var _ti = 0;
-      el.querySelectorAll('tbody tr').forEach(function(tr) {
-        tr.style.animation = 'b24t-row-fadein 220ms cubic-bezier(0.25,1,0.5,1) ' + _ti + 'ms both';
+      _tagRows.forEach(function(tr) {
+        (function(row, delay) {
+          setTimeout(function() {
+            row.style.transition = 'opacity 220ms ease-out';
+            row.style.opacity = '1';
+          }, delay);
+        })(tr, _ti);
         _ti += 40;
       });
     }
@@ -12196,16 +12201,27 @@ function showOnboarding(onComplete) {
       else requestAnimationFrame(function() { requestAnimationFrame(function() { _dpb.style.width = pct + '%'; }); });
     }
     if (!_b24tRMd) {
-      var _di = 0;
+      var _dashItems = [];
       el.querySelectorAll('[data-statval]').forEach(function(span) {
         var t = parseInt(span.dataset.statval, 10);
         if (!isNaN(t) && t > 0) {
-          span.style.animation = 'b24t-row-fadein 300ms cubic-bezier(0.25,1,0.5,1) ' + _di + 'ms both';
-          (function(delay, s, target) {
-            setTimeout(function() { _animateCountUp(s, target, 450); }, delay);
-          })(_di, span, t);
-          _di += 70;
+          span.style.opacity = '0';
+          span.style.transform = 'translateY(6px)';
+          _dashItems.push({ el: span, t: t });
         }
+      });
+      void el.offsetHeight;
+      var _di = 0;
+      _dashItems.forEach(function(item) {
+        (function(s, target, delay) {
+          setTimeout(function() {
+            s.style.transition = 'opacity 300ms ease-out, transform 300ms ease-out';
+            s.style.opacity = '1';
+            s.style.transform = 'translateY(0)';
+            _animateCountUp(s, target, 450);
+          }, delay);
+        })(item.el, item.t, _di);
+        _di += 70;
       });
     }
   }
@@ -14217,21 +14233,27 @@ To jest NIEODWRACALNE.`)) return;
         var t = parseInt(span.dataset.statval, 10);
         if (!isNaN(t) && t > 0) _animateCountUp(span, t, 600);
       });
-      // Kaskada wierszy: CSS animation (fill-mode:both gwarantuje opacity:0 przed startem)
+      // Kaskada wierszy — void el.offsetHeight commituje opacity:0 synchronicznie przed setTimeout
       var _newRows = [];
       el.querySelectorAll('tr[data-pid]').forEach(function(tr) {
         if (!tr.dataset.loading && !_prevLoaded.has(tr.dataset.pid)) _newRows.push(tr);
       });
       if (_newRows.length > 0) {
         var _ctx = _overallAnimCtx;
-        // Mierzymy czas pierwszego batcha i wyznaczamy stagger wypełniający czas do następnego
         if (_ctx && _ctx.batchMs === 0) {
           _ctx.batchMs = Date.now() - _ctx.startMs;
           _ctx.staggerMs = Math.min(220, Math.max(55, Math.round(_ctx.batchMs * 0.9 / (STATS_FETCH_CONCURRENCY - 1))));
         }
         var _step = (_ctx && _ctx.staggerMs) || 80;
+        _newRows.forEach(function(tr) { tr.style.opacity = '0'; });
+        void el.offsetHeight;
         _newRows.forEach(function(tr, i) {
-          tr.style.animation = 'b24t-row-fadein 260ms cubic-bezier(0.25,1,0.5,1) ' + (i * _step) + 'ms both';
+          (function(row, delay) {
+            setTimeout(function() {
+              row.style.transition = 'opacity 260ms ease-out';
+              row.style.opacity = '1';
+            }, delay);
+          })(tr, i * _step);
         });
       }
     }

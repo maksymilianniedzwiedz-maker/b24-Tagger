@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.105
+// @version      0.24.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.105';
+  const VERSION = '0.24.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6954,7 +6954,28 @@ function showOnboarding(onComplete) {
     scanDone: 0,
     scanStartTime: 0,
     hideNonArticles: false,
+    mode: 'news', // 'news' | 'custom' — 'custom' = tryb Niestandardowe (bez keyword-filtra, bez wymuszania "dodane")
+    formOnly: false, // tryb tylko-formularz w Niestandardowe (ukrywa listę + podgląd)
   };
+
+  // ── CATEGORY AUTO-DETECT (Brand24 category IDs) — używane w trybie Niestandardowe ──
+  // 1=X/Twitter, 2=Instagram, 3=Blogs, 4=Videos, 5=Facebook, 6=Other Socials, 7=News,
+  // 8=Web, 9=Podcasts, 10=Newsletter, 11=TikTok, 12=LinkedIn
+  function _detectCategoryFromUrl(url) {
+    if (!url) return 8;
+    var h;
+    try { h = new URL(url).hostname.toLowerCase().replace(/^www\./, ''); } catch(e) { return 8; }
+    if (/(^|\.)facebook\.com$|(^|\.)fb\.com$|(^|\.)fb\.watch$/.test(h)) return 5;
+    if (/(^|\.)instagram\.com$/.test(h)) return 2;
+    if (/(^|\.)(twitter\.com|x\.com|t\.co)$/.test(h)) return 1;
+    if (/(^|\.)tiktok\.com$/.test(h)) return 11;
+    if (/(^|\.)linkedin\.com$|(^|\.)lnkd\.in$/.test(h)) return 12;
+    if (/(^|\.)(youtube\.com|youtu\.be|vimeo\.com|dailymotion\.com|twitch\.tv)$/.test(h)) return 4;
+    if (/(^|\.)reddit\.com$|(^|\.)pinterest\.com$|(^|\.)quora\.com$|(^|\.)threads\.net$|(^|\.)tumblr\.com$|(^|\.)snapchat\.com$|(^|\.)mastodon\./.test(h)) return 6;
+    if (/(^|\.)(spotify\.com|anchor\.fm|podcasts\.apple\.com|podcasts\.google\.com|soundcloud\.com|spreaker\.com|buzzsprout\.com)$/.test(h)) return 9;
+    if (/(^|\.)(medium\.com|substack\.com|wordpress\.com|blogspot\.com|blogger\.com|tumblr\.com|wykop\.pl)$/.test(h)) return 3;
+    return 8; // Web (default)
+  }
 
   // Ustawienia importu — zapisywane w localStorage
   var _newsImportOpts = (function() {
@@ -7122,6 +7143,9 @@ function showOnboarding(onComplete) {
   // 'nomatch'      = keyword not found
   function _newsUrlRelevant(url, chips, projectCountry) {
     var lurl = url.toLowerCase();
+
+    // Tryb Niestandardowe — pomijamy filtr keywordów; wszystkie URLe przechodzą
+    if (newsState.mode === 'custom') return 'match';
 
     // Exclusion check
     if (NEWS_KEYWORD_EXCLUSIONS.some(function(ex) { return lurl.indexOf(ex) !== -1; })) {
@@ -8566,11 +8590,14 @@ function showOnboarding(onComplete) {
       return;
     }
     var t2 = _newsThemeVars();
+    var isCustom = newsState.mode === 'custom';
     tagList.innerHTML = tags.map(function(entry) {
       var name = entry[0], tid = entry[1];
       var isDodane = name.toLowerCase().indexOf('dodane') !== -1;
+      // W News tag "dodane" jest auto-zaznaczony; w Niestandardowe — nie
+      var autoCheck = isDodane && !isCustom;
       return '<label style="display:flex;align-items:center;gap:3px;cursor:pointer;padding:3px 7px;border-radius:6px;background:' + (isDodane ? 'rgba(99,102,241,0.15)' : t2.bgInput) + ';border:1px solid ' + (isDodane ? 'rgba(99,102,241,0.35)' : t2.borderSub) + ';">' +
-        '<input type="checkbox" data-tag-id="' + tid + '"' + (isDodane ? ' id="b24t-news-tag-dodane" checked' : '') + ' style="cursor:pointer;accent-color:#6366f1;width:11px;height:11px;">' +
+        '<input type="checkbox" data-tag-id="' + tid + '"' + (isDodane ? ' id="b24t-news-tag-dodane"' : '') + (autoCheck ? ' checked' : '') + ' style="cursor:pointer;accent-color:#6366f1;width:11px;height:11px;">' +
         '<span style="font-size:10px;font-weight:' + (isDodane ? '700' : '500') + ';color:' + t2.text + ';">' + name + '</span>' +
         (isDodane ? '<span id="b24t-news-tag-dodane-status" style="font-size:9px;color:' + t2.textFaint + ';">(sprawdzanie...)</span>' : '') +
       '</label>';
@@ -8578,12 +8605,89 @@ function showOnboarding(onComplete) {
     _newsCheckTagDodane();
   }
 
-  function openNewsPanels() {
+  // ── APPLY NEWS MODE ──
+  // Aktualizuje UI panela News na podstawie newsState.mode ('news' lub 'custom')
+  function _applyNewsMode() {
+    var isCustom = newsState.mode === 'custom';
+    var headerTitle = document.getElementById('b24t-news-header-title');
+    if (headerTitle) headerTitle.innerHTML = isCustom ? '✏️ Niestandardowe' : '📰 News';
+
+    var customRows = document.getElementById('b24t-news-f-custom-fields');
+    if (customRows) customRows.style.display = isCustom ? 'flex' : 'none';
+
+    // Kategoria — w News readonly "7 — News", w Niestandardowe wybór z listy + auto-detect
+    var catReadonly = document.getElementById('b24t-news-f-category-readonly');
+    var catSelect   = document.getElementById('b24t-news-f-category-select');
+    if (catReadonly) catReadonly.style.display = isCustom ? 'none' : '';
+    if (catSelect)   catSelect.style.display   = isCustom ? '' : 'none';
+
+    // URL — w Niestandardowe pozwalamy ręcznie wpisywać / wklejać
+    var urlInput = document.getElementById('b24t-news-f-url');
+    if (urlInput) {
+      urlInput.readOnly = !isCustom;
+      urlInput.placeholder = isCustom ? 'Wklej URL lub wybierz z listy...' : '(kliknij URL z listy)';
+      urlInput.style.opacity = isCustom ? '1' : '0.75';
+    }
+
+    // Kraj — w Niestandardowe edytowalny (użytkownik może nadpisać kraj projektu)
+    var countryInput = document.getElementById('b24t-news-f-country');
+    if (countryInput) {
+      countryInput.readOnly = !isCustom;
+      countryInput.style.opacity = isCustom ? '1' : '0.6';
+      countryInput.title = isCustom ? 'Edytuj kraj (kod 2-literowy, np. PL, TR)' : '';
+    }
+
+    // Tag "dodane" w Niestandardowe — nie auto-zaznaczamy
+    var dodaneCb = document.getElementById('b24t-news-tag-dodane');
+    if (dodaneCb && isCustom) dodaneCb.checked = false;
+
+    // Toggle "Tylko formularz" — widoczny tylko w Niestandardowe
+    var formOnlyBtn = document.getElementById('b24t-news-formonly-toggle');
+    if (formOnlyBtn) formOnlyBtn.style.display = isCustom ? '' : 'none';
+
+    // Wychodzimy z trybu Niestandardowe — przywróć pełny widok
+    if (!isCustom && newsState.formOnly) _toggleFormOnly(false);
+  }
+
+  // ── TYLKO FORMULARZ — toggle widoczności kolumn list+preview w trybie Niestandardowe ──
+  function _toggleFormOnly(force) {
+    var isOn = (force === undefined) ? !newsState.formOnly : !!force;
+    newsState.formOnly = isOn;
+    var colList    = document.getElementById('b24t-news-col-list');
+    var colPreview = document.getElementById('b24t-news-col-preview');
+    var colForm    = document.getElementById('b24t-news-col-form');
+    var panelMain  = document.getElementById('b24t-news-panel-main');
+    var btn        = document.getElementById('b24t-news-formonly-toggle');
+    if (colList)    colList.style.display    = isOn ? 'none' : '';
+    if (colPreview) colPreview.style.display = isOn ? 'none' : '';
+    if (colForm) {
+      // W trybie tylko-formularz formularz rozszerza się na całą szerokość
+      colForm.style.flex     = isOn ? '1' : '';
+      colForm.style.maxWidth = isOn ? 'none' : '';
+    }
+    if (panelMain) {
+      // W trybie tylko-formularz zwężamy panel
+      if (isOn) {
+        panelMain.dataset.origWidth = panelMain.style.width || '';
+        panelMain.style.width = 'min(560px, calc(100vw - 40px))';
+      } else if (panelMain.dataset.origWidth !== undefined) {
+        panelMain.style.width = panelMain.dataset.origWidth;
+      }
+    }
+    if (btn) {
+      btn.innerHTML = isOn ? '⛶ Pełny widok' : '⛶ Tylko formularz';
+      btn.title = isOn ? 'Wróć do widoku 3-kolumnowego' : 'Tryb tylko formularz — ukryj listę i podgląd';
+    }
+  }
+
+  function openNewsPanels(mode) {
+    newsState.mode = (mode === 'custom') ? 'custom' : 'news';
     var overlay = document.getElementById('b24t-news-overlay');
     if (overlay) {
       overlay.style.display = 'flex';
       newsState.panelsOpen = true;
       if (!newsState.wired) { _wireNewsPanels(); newsState.wired = true; }
+      _applyNewsMode();
       requestAnimationFrame(function() {
         if (_newsChipsRenderer) _newsChipsRenderer();
         _newsRefillTags();
@@ -8594,6 +8698,77 @@ function showOnboarding(onComplete) {
     _wireNewsPanels();
     newsState.wired = true;
     newsState.panelsOpen = true;
+    _applyNewsMode();
+  }
+
+  // ── MENTIONS LAUNCHER MODAL — wybór trybu News / Niestandardowe ──
+  function _openMentionsLauncher() {
+    var existing = document.getElementById('b24t-mentions-launcher');
+    if (existing) { existing.remove(); return; }
+
+    var t = _newsThemeVars();
+    var modal = document.createElement('div');
+    modal.id = 'b24t-mentions-launcher';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:2147483645;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;font-family:Geist,\'Segoe UI\',system-ui,sans-serif;animation:b24t-fadein 0.18s ease both;';
+
+    var inner = document.createElement('div');
+    inner.style.cssText = 'background:' + t.bg + ';border:1px solid ' + t.border + ';border-radius:14px;padding:22px 22px 20px;width:540px;max-width:calc(100vw - 40px);box-shadow:' + t.shadow + ';color:' + t.text + ';';
+    inner.innerHTML = [
+      '<div style="display:flex;align-items:center;margin-bottom:14px;">',
+        '<span style="font-size:14px;font-weight:700;color:' + t.text + ';flex:1;">📋 Dodawanie wzmianek</span>',
+        '<button id="b24t-launcher-close" style="background:transparent;border:none;color:' + t.textMuted + ';cursor:pointer;font-size:22px;line-height:1;padding:0 4px;">×</button>',
+      '</div>',
+      '<div style="font-size:11px;color:' + t.textMuted + ';margin-bottom:16px;line-height:1.5;">Wybierz tryb dodawania wzmianek do Brand24.</div>',
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">',
+        '<div data-launcher-tile="news" style="padding:18px 16px;border-radius:12px;border:1px solid ' + t.border + ';background:' + t.bgDeep + ';cursor:pointer;transition:transform 0.15s, border-color 0.15s, background 0.15s;">',
+          '<div style="font-size:24px;margin-bottom:8px;">📰</div>',
+          '<div style="font-size:13px;font-weight:700;color:' + t.text + ';margin-bottom:6px;">News</div>',
+          '<div style="font-size:10px;color:' + t.textFaint + ';line-height:1.5;">Klasyczny tryb News — filtr słów kluczowych, kategoria News, tag <strong>dodane</strong> domyślnie.</div>',
+        '</div>',
+        '<div data-launcher-tile="custom" style="padding:18px 16px;border-radius:12px;border:1px solid ' + t.border + ';background:' + t.bgDeep + ';cursor:pointer;transition:transform 0.15s, border-color 0.15s, background 0.15s;">',
+          '<div style="font-size:24px;margin-bottom:8px;">✏️</div>',
+          '<div style="font-size:13px;font-weight:700;color:' + t.text + ';margin-bottom:6px;">Niestandardowe</div>',
+          '<div style="font-size:10px;color:' + t.textFaint + ';line-height:1.5;">Tryb otwarty — bez filtra słów kluczowych, auto-wykrywanie kategorii z domeny, pełny formularz (likes/pageviews/shares/comments).</div>',
+        '</div>',
+      '</div>',
+    ].join('');
+    modal.appendChild(inner);
+    modal.addEventListener('click', function(e) { if (e.target === modal) modal.remove(); });
+    document.body.appendChild(modal);
+
+    // ESC zamyka launcher
+    var escHandler = function(e) {
+      if (e.key === 'Escape') {
+        modal.remove();
+        document.removeEventListener('keydown', escHandler);
+      }
+    };
+    document.addEventListener('keydown', escHandler);
+    var _origRemove = modal.remove.bind(modal);
+    modal.remove = function() { document.removeEventListener('keydown', escHandler); _origRemove(); };
+
+    var closeBtn = document.getElementById('b24t-launcher-close');
+    if (closeBtn) closeBtn.addEventListener('click', function() { modal.remove(); });
+
+    inner.querySelectorAll('[data-launcher-tile]').forEach(function(tile) {
+      tile.addEventListener('mouseenter', function() {
+        tile.style.transform = 'translateY(-2px)';
+        tile.style.borderColor = 'var(--b24t-primary)';
+        tile.style.background = 'var(--b24t-bg-section-c)';
+      });
+      tile.addEventListener('mouseleave', function() {
+        tile.style.transform = '';
+        tile.style.borderColor = t.border;
+        tile.style.background = t.bgDeep;
+      });
+      tile.addEventListener('click', function() {
+        var mode = tile.getAttribute('data-launcher-tile');
+        modal.remove();
+        openNewsPanels(mode);
+        var nst = document.getElementById('b24t-news-side-tab');
+        if (nst) nst.classList.add('active');
+      });
+    });
   }
 
   function _newsThemeVars() {
@@ -8719,11 +8894,12 @@ function showOnboarding(onComplete) {
       ? '<span id="b24t-news-ai-chip" title="AI News aktywne — artykuły będą analizowane przez Claude" style="font-size:11px;padding:3px 9px;border-radius:12px;background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.40);color:#fff;font-weight:600;flex-shrink:0;cursor:default;letter-spacing:0.01em;">🤖 AI</span>'
       : '';
     header.innerHTML = [
-      '<span style="font-size:13px;font-weight:700;color:#fff;flex:1;text-shadow:0 1px 3px rgba(0,0,0,0.2);">📰 News</span>',
+      '<span id="b24t-news-header-title" style="font-size:13px;font-weight:700;color:#fff;flex:1;text-shadow:0 1px 3px rgba(0,0,0,0.2);">📰 News</span>',
       _aiChipHtml,
       '<button id="b24t-news-legend-btn" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:12px;font-weight:700;padding:3px 8px;border-radius:6px;flex-shrink:0;" title="Legenda oznaczeń">?</button>',
       '<button id="b24t-news-stats-btn" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:12px;font-weight:600;padding:3px 8px;border-radius:6px;flex-shrink:0;" title="News Analytics">📊</button>',
       '<button id="b24t-news-langmap-btn" style="background:rgba(255,255,255,0.20);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:11px;padding:3px 9px;border-radius:6px;flex-shrink:0;" title="Mapa języków">⚙ Języki</button>',
+      '<button id="b24t-news-formonly-toggle" style="display:none;background:rgba(255,255,255,0.20);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:11px;padding:3px 9px;border-radius:6px;flex-shrink:0;" title="Tryb tylko formularz — ukryj listę i podgląd">⛶ Tylko formularz</button>',
       '<button id="b24t-news-modal-open-btn" style="background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.55);color:#fff;cursor:pointer;font-size:12px;font-weight:700;padding:5px 14px;border-radius:7px;flex-shrink:0;letter-spacing:0.01em;">+ Importuj URLe</button>',
       '<span id="b24t-news-cms-dot" class="b24t-cms-checking" style="font-size:11px;font-weight:700;flex-shrink:0;cursor:default;color:rgba(255,255,255,0.5);" title="Sprawdzanie CMS...">● CMS</span>',
       '<button class="b24t-news-close-all" style="background:rgba(255,255,255,0.20);border:1px solid rgba(255,255,255,0.4);color:#fff;cursor:pointer;font-size:17px;line-height:1;padding:1px 7px;border-radius:5px;flex-shrink:0;">×</button>',
@@ -8843,7 +9019,46 @@ function showOnboarding(onComplete) {
       '</div>',
       '<div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">',
         '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">KATEGORIA</label>',
-        '<input type="text" value="7 — News" readonly style="' + _newsInputCss(t) + 'opacity:0.5;">',
+        '<input id="b24t-news-f-category-readonly" type="text" value="7 — News" readonly style="' + _newsInputCss(t) + 'opacity:0.5;">',
+        '<select id="b24t-news-f-category-select" style="display:none;' + _newsInputCss(t) + '">',
+          '<option value="auto">auto (z domeny)</option>',
+          '<option value="1">1 — X/Twitter</option>',
+          '<option value="2">2 — Instagram</option>',
+          '<option value="3">3 — Blogs</option>',
+          '<option value="4">4 — Videos</option>',
+          '<option value="5">5 — Facebook</option>',
+          '<option value="6">6 — Other Socials</option>',
+          '<option value="7">7 — News</option>',
+          '<option value="8">8 — Web</option>',
+          '<option value="9">9 — Podcasts</option>',
+          '<option value="10">10 — Newsletter</option>',
+          '<option value="11">11 — TikTok</option>',
+          '<option value="12">12 — LinkedIn</option>',
+        '</select>',
+      '</div>',
+      // ── CUSTOM-ONLY FIELDS (likes / pageviews / shares / comments) ──
+      '<div id="b24t-news-f-custom-fields" style="display:none;flex-direction:column;gap:8px;flex-shrink:0;padding:8px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';">',
+        '<div style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">METRYKI (opcjonalne)</div>',
+        '<div style="display:flex;gap:8px;">',
+          '<div style="flex:1;display:flex;flex-direction:column;gap:3px;">',
+            '<label style="font-size:9px;color:' + t.textFaint + ';">LIKES</label>',
+            '<input id="b24t-news-f-likes" type="number" min="0" placeholder="0" style="' + _newsInputCss(t) + '">',
+          '</div>',
+          '<div style="flex:1;display:flex;flex-direction:column;gap:3px;">',
+            '<label style="font-size:9px;color:' + t.textFaint + ';">PAGEVIEWS</label>',
+            '<input id="b24t-news-f-pageviews" type="number" min="0" placeholder="0" style="' + _newsInputCss(t) + '">',
+          '</div>',
+        '</div>',
+        '<div style="display:flex;gap:8px;">',
+          '<div style="flex:1;display:flex;flex-direction:column;gap:3px;">',
+            '<label style="font-size:9px;color:' + t.textFaint + ';">SHARES</label>',
+            '<input id="b24t-news-f-shares" type="number" min="0" placeholder="0" style="' + _newsInputCss(t) + '">',
+          '</div>',
+          '<div style="flex:1;display:flex;flex-direction:column;gap:3px;">',
+            '<label style="font-size:9px;color:' + t.textFaint + ';">COMMENTS</label>',
+            '<input id="b24t-news-f-comments" type="number" min="0" placeholder="0" style="' + _newsInputCss(t) + '">',
+          '</div>',
+        '</div>',
       '</div>',
       '<div style="display:flex;gap:8px;flex-shrink:0;">',
         '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
@@ -9060,6 +9275,7 @@ function showOnboarding(onComplete) {
     var cmsDot     = document.getElementById('b24t-news-cms-dot');
     var warnText   = document.getElementById('b24t-news-cms-warn-text');
     var domain     = _newsCmsStatus().domain === 'pl' ? 'panel.brand24.pl' : 'app.brand24.com';
+    var isCustom   = newsState.mode === 'custom';
 
     var hasDodane = state.tags && Object.keys(state.tags).some(function(k) {
       return k.toLowerCase().indexOf('dodane') !== -1;
@@ -9068,9 +9284,9 @@ function showOnboarding(onComplete) {
     if (hasDodane) {
       // Stan 1: tag dodane istnieje w projekcie — CMS aktywny ✓
       if (statusEl)  { statusEl.textContent = '✓ dostępny'; statusEl.style.color = '#22c55e'; }
-      if (checkboxEl){ checkboxEl.disabled = false; checkboxEl.checked = true; }
+      if (checkboxEl){ checkboxEl.disabled = false; checkboxEl.checked = !isCustom; }
       if (cmsBanner) cmsBanner.style.display = 'none';
-      if (cmsDot)    { cmsDot.style.color = '#22c55e'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny — tag "dodane" dostępny'; }
+      if (cmsDot)    { cmsDot.style.color = '#22c55e'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny'; }
       return;
     }
 
@@ -9096,20 +9312,29 @@ function showOnboarding(onComplete) {
         var m = (resp.responseText || '').match(/name="tknB24"[^>]*value="([a-f0-9]{32})"/);
         if (!m) m = (resp.responseText || '').match(/value="([a-f0-9]{32})"[^>]*name="tknB24"/);
         if (m && m[1]) {
-          // Stan 2: zalogowany do CMS, ale brak tagu "dodane" w projekcie
+          // Stan 2: zalogowany do CMS — w News pokazujemy ostrzeżenie o braku tagu, w Niestandardowe brak tagu OK
           state.tknB24 = m[1];
-          if (statusEl)  { statusEl.textContent = '⚠ brak tagu'; statusEl.style.color = '#f59e0b'; }
-          if (cmsDot)    { cmsDot.style.color = '#f59e0b'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny — brak tagu "dodane" w projekcie'; }
-          if (cmsBanner) {
-            if (warnText) warnText.innerHTML = '⚠ CMS aktywny, ale brak tagu <strong>dodane</strong> w tym projekcie — dodaj go w Brand24 w Ustawieniach tagów.';
-            cmsBanner.style.display = '';
+          if (isCustom) {
+            if (statusEl)  { statusEl.textContent = '✓ CMS aktywny'; statusEl.style.color = '#22c55e'; }
+            if (cmsDot)    { cmsDot.style.color = '#22c55e'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny (tryb Niestandardowe — tag "dodane" niewymagany)'; }
+            if (cmsBanner) cmsBanner.style.display = 'none';
+          } else {
+            if (statusEl)  { statusEl.textContent = '⚠ brak tagu'; statusEl.style.color = '#f59e0b'; }
+            if (cmsDot)    { cmsDot.style.color = '#f59e0b'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny — brak tagu "dodane" w projekcie'; }
+            if (cmsBanner) {
+              if (warnText) warnText.innerHTML = '⚠ CMS aktywny, ale brak tagu <strong>dodane</strong> w tym projekcie — dodaj go w Brand24 w Ustawieniach tagów.';
+              cmsBanner.style.display = '';
+            }
           }
         } else {
           // Stan 3: niezalogowany do CMS
           if (statusEl)  { statusEl.textContent = '⚠ niezalogowany'; statusEl.style.color = '#f59e0b'; }
           if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS niedostępny — zaloguj się do Brand24'; }
           if (cmsBanner) {
-            if (warnText) warnText.innerHTML = '⚠ Tag <strong>dodane</strong> niedostępny — zaloguj się do CMS Brand24 (' + domain + ').';
+            var _msg = isCustom
+              ? '⚠ Zaloguj się do CMS Brand24 (' + domain + ') — bez logowania nie można dodawać wzmianek.'
+              : '⚠ Tag <strong>dodane</strong> niedostępny — zaloguj się do CMS Brand24 (' + domain + ').';
+            if (warnText) warnText.innerHTML = _msg;
             cmsBanner.style.display = '';
           }
         }
@@ -9119,7 +9344,10 @@ function showOnboarding(onComplete) {
         if (statusEl)  { statusEl.textContent = '⚠ błąd sprawdzania'; statusEl.style.color = '#f59e0b'; }
         if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS: błąd sieci przy sprawdzaniu'; }
         if (cmsBanner) {
-          if (warnText) warnText.innerHTML = '⚠ Tag <strong>dodane</strong> niedostępny — zaloguj się do CMS Brand24 (' + domain + ').';
+          var _msg2 = isCustom
+            ? '⚠ Zaloguj się do CMS Brand24 (' + domain + ') — bez logowania nie można dodawać wzmianek.'
+            : '⚠ Tag <strong>dodane</strong> niedostępny — zaloguj się do CMS Brand24 (' + domain + ').';
+          if (warnText) warnText.innerHTML = _msg2;
           cmsBanner.style.display = '';
         }
       }
@@ -9136,6 +9364,10 @@ function showOnboarding(onComplete) {
     document.querySelectorAll('.b24t-news-close-all').forEach(function(btn) {
       btn.addEventListener('click', closeNewsPanels);
     });
+
+    // ─── TYLKO FORMULARZ TOGGLE (Niestandardowe) ───
+    var _formOnlyBtn = document.getElementById('b24t-news-formonly-toggle');
+    if (_formOnlyBtn) _formOnlyBtn.addEventListener('click', function() { _toggleFormOnly(); });
 
     // ─── CMS RECHECK ───
     // Use event delegation — button may be re-rendered
@@ -10436,6 +10668,15 @@ function showOnboarding(onComplete) {
         el = document.getElementById('b24t-news-f-content'); if (el) el.value = '';
         el = document.getElementById('b24t-news-f-date');    if (el) el.value = '';
         el = document.getElementById('b24t-news-date-detect-icon'); if (el) el.style.display = 'none';
+        // Tryb Niestandardowe — także resetuj pola metryk + kategorię
+        if (newsState.mode === 'custom') {
+          ['b24t-news-f-likes','b24t-news-f-pageviews','b24t-news-f-shares','b24t-news-f-comments'].forEach(function(id) {
+            var fld = document.getElementById(id);
+            if (fld) fld.value = '';
+          });
+          var catSel = document.getElementById('b24t-news-f-category-select');
+          if (catSel) catSel.value = 'auto';
+        }
         var subStatus = document.getElementById('b24t-news-submit-status');
         if (subStatus) subStatus.textContent = '';
         var formErr = document.getElementById('b24t-news-form-err');
@@ -10468,8 +10709,11 @@ function showOnboarding(onComplete) {
         if (!fContent.trim()) { showErr('⚠ Treść jest wymagana.'); return; }
         if (!/^\d{4}-\d{2}-\d{2}$/.test(fDate)) { showErr('⚠ Nieprawidłowy format daty — wymagany: YYYY-MM-DD'); return; }
         if (_newsGetSessionUrls()[fUrl]) { showErr('⚠ Ten URL był już dodany w tej sesji.'); return; }
-        var pc = _newsProjectCountry();
-        if (pc && fCountry && fCountry !== pc) { showErr('⚠ Kraj (' + fCountry + ') niezgodny z projektem (' + pc + ').'); return; }
+        // W trybie Niestandardowe — pomijamy walidację zgodności kraju (użytkownik może nadpisać)
+        if (newsState.mode !== 'custom') {
+          var pc = _newsProjectCountry();
+          if (pc && fCountry && fCountry !== pc) { showErr('⚠ Kraj (' + fCountry + ') niezgodny z projektem (' + pc + ').'); return; }
+        }
 
         var sid = state.projectId || '';
         if (!sid) { showErr('⚠ Brak ID projektu. Przejdź na stronę projektu Brand24.'); return; }
@@ -10494,6 +10738,14 @@ function showOnboarding(onComplete) {
           if (tid) selectedTagIds.push(tid);
         });
 
+        // Kategoria: w News zawsze 7, w Niestandardowe — wybór z selecta (auto → detect z domeny)
+        var mentionCategory = '7';
+        if (newsState.mode === 'custom') {
+          var catSel = document.getElementById('b24t-news-f-category-select');
+          var catVal = (catSel && catSel.value) || 'auto';
+          mentionCategory = (catVal === 'auto') ? String(_detectCategoryFromUrl(fUrl)) : catVal;
+        }
+
         var bodyParts = [
           'tknB24=' + encodeURIComponent(tkn),
           'f=fser',
@@ -10501,13 +10753,28 @@ function showOnboarding(onComplete) {
           'mention_url=' + encodeURIComponent(fUrl),
           'mention_title=' + encodeURIComponent(fTitle),
           'mention_content=' + encodeURIComponent(fContent),
-          'mention_category=7',
+          'mention_category=' + encodeURIComponent(mentionCategory),
           'mention_country=' + encodeURIComponent(fCountry),
           'mention_sentiment=' + encodeURIComponent(fSent),
           'mention_created_date_day=' + encodeURIComponent(fDate),
           'mention_created_date_hour=' + encodeURIComponent(fHour),
           'mention_created_date_minute=' + encodeURIComponent(fMinute),
         ];
+
+        // Pola metryczne (tylko w trybie Niestandardowe, gdy podane)
+        if (newsState.mode === 'custom') {
+          var _customMetric = function(id, name) {
+            var v = (document.getElementById(id) || {}).value;
+            if (v !== undefined && v !== null && String(v).trim() !== '') {
+              bodyParts.push(name + '=' + encodeURIComponent(String(v).trim()));
+            }
+          };
+          _customMetric('b24t-news-f-likes',     'mention_likes');
+          _customMetric('b24t-news-f-pageviews', 'mention_pageviews');
+          _customMetric('b24t-news-f-shares',    'mention_shares');
+          _customMetric('b24t-news-f-comments',  'mention_comments');
+        }
+
         selectedTagIds.forEach(function(tid) { bodyParts.push('tag[]=' + encodeURIComponent(tid)); });
         var body = bodyParts.join('&');
 
@@ -10699,6 +10966,19 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.0",
+      "date": "2026-05-11",
+      "label": "feature",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "tryb Niestandardowe — boczny przycisk 'News' przemianowany na 'Wzmianki'; kliknięcie otwiera launcher z 2 kafelkami (News / Niestandardowe)"},
+        {"type": "feat", "text": "tryb Niestandardowe — bez filtra słów kluczowych, bez wymuszenia tagu 'dodane'; auto-detect kategorii z domeny (Facebook=5, Instagram=2, X=1, YouTube=4, TikTok=11, LinkedIn=12, Reddit=6, Spotify=9, Medium=3, reszta=8)"},
+        {"type": "feat", "text": "dodatkowe pola w trybie Niestandardowe — Likes, Pageviews, Shares, Comments (opcjonalne); edycja URL i kraju"},
+        {"type": "feat", "text": "tryb 'tylko formularz' w Niestandardowe — toggle w headerze chowa listę i podgląd, formularz na pełnej szerokości w zwężonym panelu"},
+        {"type": "feat", "text": "floating mini-przycisk ✚B24 na obcych stronach (poza /panel/results/) — kliknięcie otwiera standalone formularz z auto URL + tytułem, wyborem projektu z cache LS, CMS check, wszystkie pola Brand24 + tagi projektu, submit przez GM_xmlhttpRequest"}
+      ]
+    },
+    {
       "version": "0.23.105",
       "date": "2026-05-11",
       "label": "fix",
@@ -10784,15 +11064,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#06b6d4",
       "changes": [
         {"type": "ux", "text": "panel News — kolumna URL węższa (28→25%), formularz szerszy (18→22%, min 300px); DATA pełna szerokość, GODZINA/MINUTY osobny wiersz, KATEGORIA pełna szerokość, KRAJ/SENTYMENT osobny wiersz; pole treści rows 7→9 / min-height 140→200px"}
-      ]
-    },
-    {
-      "version": "0.23.96",
-      "date": "2026-05-08",
-      "label": "ux",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "ux", "text": "animacje danych w panelach statystyk — count-up liczb od 0, progress bar od 0% do wartości, stagger fade+slide-up wierszy przy ładowaniu (Overall Stats, Dashboard Annotatora, Tag Stats); wsparcie prefers-reduced-motion"}
       ]
     },
   ];
@@ -15475,12 +15746,331 @@ Tej operacji nie można cofnąć.`)) {
   }
 
   // ───────────────────────────────────────────
+  // MINI MENTION BUTTON (poza /panel/results/ — np. obce strony, dashboard, settings)
+  // ───────────────────────────────────────────
+
+  function _initMiniMentionButton() {
+    // Nie pokazuj w iframe ani jeśli użytkownik nigdy nie używał wtyczki (brak zapisanych projektów)
+    try { if (window.top !== window.self) return; } catch(e) { return; }
+    var projects = lsGet(LS.PROJECTS, {});
+    if (!projects || Object.keys(projects).length === 0) return;
+    if (document.getElementById('b24t-mini-mention-btn')) return;
+
+    var btn = document.createElement('div');
+    btn.id = 'b24t-mini-mention-btn';
+    btn.title = 'Dodaj wzmiankę do Brand24';
+    btn.innerHTML = '<span style="font-size:18px;line-height:1;font-weight:700;">✚</span><span style="font-size:9px;font-weight:700;letter-spacing:0.05em;margin-top:1px;">B24</span>';
+    btn.style.cssText = 'position:fixed;bottom:18px;right:18px;z-index:2147483645;width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 4px 14px rgba(99,102,241,0.45);font-family:Geist,"Segoe UI",system-ui,-apple-system,sans-serif;border:2px solid rgba(255,255,255,0.25);transition:transform 0.15s,box-shadow 0.15s;user-select:none;';
+    btn.addEventListener('mouseenter', function() { btn.style.transform = 'scale(1.08)'; btn.style.boxShadow = '0 6px 18px rgba(99,102,241,0.55)'; });
+    btn.addEventListener('mouseleave', function() { btn.style.transform = ''; btn.style.boxShadow = '0 4px 14px rgba(99,102,241,0.45)'; });
+    btn.addEventListener('click', _openMiniMentionForm);
+    document.body.appendChild(btn);
+  }
+
+  function _miniBuildCategoryOptions(selectedCat) {
+    var cats = [
+      ['auto','auto (z domeny)'],
+      ['1','1 — X/Twitter'],['2','2 — Instagram'],['3','3 — Blogs'],
+      ['4','4 — Videos'],['5','5 — Facebook'],['6','6 — Other Socials'],
+      ['7','7 — News'],['8','8 — Web'],['9','9 — Podcasts'],
+      ['10','10 — Newsletter'],['11','11 — TikTok'],['12','12 — LinkedIn'],
+    ];
+    return cats.map(function(c) {
+      return '<option value="' + c[0] + '"' + (c[0] === selectedCat ? ' selected' : '') + '>' + c[1] + '</option>';
+    }).join('');
+  }
+
+  function _openMiniMentionForm() {
+    if (document.getElementById('b24t-mini-mention-modal')) return;
+
+    var projects = lsGet(LS.PROJECTS, {});
+    var projectIds = Object.keys(projects);
+    if (projectIds.length === 0) {
+      alert('Brak zapisanych projektów Brand24. Najpierw otwórz projekt w Brand24, aby wtyczka pobrała listę tagów.');
+      return;
+    }
+
+    // Domyślny projekt: ten z LS.OVERALL_ACTIVE_MONTH / last used, lub pierwszy z listy
+    var lastUsedId = lsGet('b24tagger_mini_last_project', projectIds[0]);
+    if (!projects[lastUsedId]) lastUsedId = projectIds[0];
+
+    var modal = document.createElement('div');
+    modal.id = 'b24t-mini-mention-modal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;font-family:Geist,"Segoe UI",system-ui,-apple-system,sans-serif;';
+
+    // Kolory hardcoded (modal appendowany do document.body — bez CSS vars wtyczki na obcych stronach)
+    var c = {
+      bg:'#1a1a26', bgInput:'#222230', border:'#2f2f3f', text:'#e2e8f0',
+      textMuted:'#9ca3af', textFaint:'#6b7280', primary:'#6366f1',
+      green:'#22c55e', red:'#ef4444', yellow:'#f59e0b',
+    };
+
+    var inputCss = 'box-sizing:border-box;width:100%;padding:7px 9px;border-radius:6px;border:1px solid ' + c.border + ';background:' + c.bgInput + ';color:' + c.text + ';font-size:11px;font-family:inherit;';
+    var labelCss = 'font-size:9px;font-weight:600;color:' + c.textMuted + ';letter-spacing:0.04em;display:block;margin-bottom:3px;';
+    function _esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+    var projOptions = projectIds.map(function(pid) {
+      var pData = projects[pid] || {};
+      var pName = pData.name || ('Projekt ' + pid);
+      return '<option value="' + _esc(pid) + '"' + (pid === lastUsedId ? ' selected' : '') + '>' + _esc(pName) + '</option>';
+    }).join('');
+
+    // Wykryj kraj z nazwy projektu (np. H&M_TR → TR)
+    var _detectCountry = function(pid) {
+      var pData = projects[pid] || {};
+      var m = (pData.name || '').toUpperCase().match(/_([A-Z]{2})$/);
+      return m ? m[1] : '';
+    };
+
+    var inner = document.createElement('div');
+    inner.style.cssText = 'background:' + c.bg + ';border:1px solid ' + c.border + ';border-radius:14px;width:480px;max-width:calc(100vw - 32px);max-height:calc(100vh - 40px);overflow-y:auto;color:' + c.text + ';box-shadow:0 20px 60px rgba(0,0,0,0.55);';
+
+    var today = new Date();
+    var todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
+    var nowH = String(today.getHours()).padStart(2,'0');
+    var nowM = String(today.getMinutes()).padStart(2,'0');
+
+    inner.innerHTML = [
+      '<div style="display:flex;align-items:center;padding:14px 18px;background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%);border-radius:14px 14px 0 0;">',
+        '<span style="font-size:14px;font-weight:700;color:#fff;flex:1;">✚ Dodaj wzmiankę do Brand24</span>',
+        '<span id="b24t-mini-cms-dot" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(255,255,255,0.18);color:rgba(255,255,255,0.85);margin-right:8px;" title="Sprawdzanie CMS...">● CMS</span>',
+        '<button id="b24t-mini-close" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:16px;line-height:1;padding:2px 8px;border-radius:5px;">×</button>',
+      '</div>',
+      '<div style="padding:14px 18px;display:flex;flex-direction:column;gap:10px;">',
+        '<div id="b24t-mini-cms-warn" style="display:none;padding:7px 10px;border-radius:7px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.4);font-size:10px;color:' + c.yellow + ';line-height:1.5;"></div>',
+        '<div id="b24t-mini-err" style="display:none;padding:7px 10px;border-radius:7px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);font-size:10px;color:' + c.red + ';line-height:1.5;"></div>',
+        '<div><label style="' + labelCss + '">PROJEKT</label><select id="b24t-mini-project" style="' + inputCss + '">' + projOptions + '</select></div>',
+        '<div><label style="' + labelCss + '">URL <span style="color:' + c.red + ';">*</span></label><input id="b24t-mini-url" type="text" value="' + _esc(window.location.href) + '" style="' + inputCss + 'font-family:monospace;font-size:10px;"></div>',
+        '<div><label style="' + labelCss + '">TYTUŁ <span style="color:' + c.red + ';">*</span></label><input id="b24t-mini-title" type="text" placeholder="Wpisz tytuł..." value="' + _esc(document.title || '') + '" style="' + inputCss + '"></div>',
+        '<div><label style="' + labelCss + '">TREŚĆ <span style="color:' + c.red + ';">*</span></label><textarea id="b24t-mini-content" rows="5" placeholder="Wklej fragment treści..." style="' + inputCss + 'resize:vertical;font-family:inherit;line-height:1.5;"></textarea></div>',
+        '<div style="display:flex;gap:8px;">',
+          '<div style="flex:2;"><label style="' + labelCss + '">DATA</label><input id="b24t-mini-date" type="text" value="' + todayStr + '" placeholder="YYYY-MM-DD" style="' + inputCss + '"></div>',
+          '<div style="flex:1;"><label style="' + labelCss + '">GODZ.</label><input id="b24t-mini-hour" type="text" value="' + nowH + '" style="' + inputCss + '"></div>',
+          '<div style="flex:1;"><label style="' + labelCss + '">MIN.</label><input id="b24t-mini-min" type="text" value="' + nowM + '" style="' + inputCss + '"></div>',
+        '</div>',
+        '<div style="display:flex;gap:8px;">',
+          '<div style="flex:1;"><label style="' + labelCss + '">KRAJ</label><input id="b24t-mini-country" type="text" value="' + _detectCountry(lastUsedId) + '" placeholder="np. PL, TR" style="' + inputCss + '"></div>',
+          '<div style="flex:1;"><label style="' + labelCss + '">SENTYMENT</label><select id="b24t-mini-sent" style="' + inputCss + '"><option value="0">0 Neutral</option><option value="1">+1 Poz.</option><option value="-1">-1 Neg.</option></select></div>',
+        '</div>',
+        '<div><label style="' + labelCss + '">KATEGORIA</label><select id="b24t-mini-cat" style="' + inputCss + '">' + _miniBuildCategoryOptions('auto') + '</select></div>',
+        '<details style="border:1px solid ' + c.border + ';border-radius:7px;padding:7px 10px;background:' + c.bgInput + ';">',
+          '<summary style="font-size:10px;font-weight:600;color:' + c.textMuted + ';cursor:pointer;letter-spacing:0.04em;">METRYKI (opcjonalne)</summary>',
+          '<div style="display:flex;gap:6px;margin-top:8px;">',
+            '<div style="flex:1;"><label style="' + labelCss + '">LIKES</label><input id="b24t-mini-likes" type="number" min="0" placeholder="0" style="' + inputCss + '"></div>',
+            '<div style="flex:1;"><label style="' + labelCss + '">PAGEVIEWS</label><input id="b24t-mini-pv" type="number" min="0" placeholder="0" style="' + inputCss + '"></div>',
+          '</div>',
+          '<div style="display:flex;gap:6px;margin-top:6px;">',
+            '<div style="flex:1;"><label style="' + labelCss + '">SHARES</label><input id="b24t-mini-shares" type="number" min="0" placeholder="0" style="' + inputCss + '"></div>',
+            '<div style="flex:1;"><label style="' + labelCss + '">COMMENTS</label><input id="b24t-mini-comments" type="number" min="0" placeholder="0" style="' + inputCss + '"></div>',
+          '</div>',
+        '</details>',
+        '<div id="b24t-mini-tags-wrap"><label style="' + labelCss + '">TAGI</label><div id="b24t-mini-tags" style="display:flex;flex-wrap:wrap;gap:4px;padding:6px 8px;border-radius:7px;background:' + c.bgInput + ';border:1px solid ' + c.border + ';min-height:32px;"></div></div>',
+        '<button id="b24t-mini-submit" style="margin-top:6px;padding:10px;border-radius:8px;border:none;background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%);color:#fff;font-size:12px;font-weight:700;cursor:pointer;letter-spacing:0.02em;box-shadow:inset 0 1px 0 rgba(255,255,255,0.15);">✚ Dodaj wzmiankę</button>',
+        '<div id="b24t-mini-status" style="font-size:10px;text-align:center;min-height:14px;font-weight:500;"></div>',
+      '</div>',
+    ].join('');
+
+    modal.appendChild(inner);
+    modal.addEventListener('click', function(e) { if (e.target === modal) _closeMini(); });
+    document.body.appendChild(modal);
+
+    function _closeMini() {
+      var m = document.getElementById('b24t-mini-mention-modal');
+      if (m) m.remove();
+      document.removeEventListener('keydown', escHandler);
+    }
+    var escHandler = function(e) { if (e.key === 'Escape') _closeMini(); };
+    document.addEventListener('keydown', escHandler);
+
+    document.getElementById('b24t-mini-close').addEventListener('click', _closeMini);
+
+    // Render tagów + CMS check przy zmianie projektu
+    function _renderTags(pid) {
+      var pData = projects[pid] || {};
+      var tagsObj = pData.tagIds || {};
+      var tagList = document.getElementById('b24t-mini-tags');
+      if (!tagList) return;
+      var tagEntries = Object.entries(tagsObj).sort(function(a,b) { return a[0].localeCompare(b[0]); });
+      if (tagEntries.length === 0) {
+        tagList.innerHTML = '<span style="font-size:10px;color:' + c.textFaint + ';">brak tagów w cache — otwórz projekt w Brand24 aby zaktualizować</span>';
+        return;
+      }
+      tagList.innerHTML = tagEntries.map(function(entry) {
+        var name = entry[0], tid = entry[1];
+        return '<label style="display:flex;align-items:center;gap:3px;cursor:pointer;padding:3px 7px;border-radius:5px;background:' + c.bgInput + ';border:1px solid ' + c.border + ';">' +
+          '<input type="checkbox" data-tag-id="' + _esc(tid) + '" style="cursor:pointer;accent-color:#6366f1;width:11px;height:11px;">' +
+          '<span style="font-size:10px;color:' + c.text + ';">' + _esc(name) + '</span>' +
+        '</label>';
+      }).join('');
+    }
+
+    function _checkCms(pid) {
+      var cmsDot = document.getElementById('b24t-mini-cms-dot');
+      var cmsWarn = document.getElementById('b24t-mini-cms-warn');
+      if (cmsDot) { cmsDot.textContent = '● CMS'; cmsDot.style.background = 'rgba(255,255,255,0.18)'; cmsDot.title = 'Sprawdzanie CMS...'; }
+      if (cmsWarn) cmsWarn.style.display = 'none';
+      var base = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: base + '/searches/add-new-mention/?sid=' + pid,
+        onload: function(resp) {
+          var m = (resp.responseText || '').match(/name="tknB24"[^>]*value="([a-f0-9]{32})"/);
+          if (!m) m = (resp.responseText || '').match(/value="([a-f0-9]{32})"[^>]*name="tknB24"/);
+          if (m && m[1]) {
+            state.tknB24 = m[1];
+            if (cmsDot) { cmsDot.textContent = '✓ CMS'; cmsDot.style.background = 'rgba(34,197,94,0.4)'; cmsDot.title = 'CMS aktywny'; }
+          } else {
+            if (cmsDot) { cmsDot.textContent = '✗ CMS'; cmsDot.style.background = 'rgba(239,68,68,0.5)'; cmsDot.title = 'Zaloguj się do Brand24 CMS'; }
+            if (cmsWarn) {
+              var domain = base.replace('https://','');
+              cmsWarn.innerHTML = '⚠ Zaloguj się do CMS Brand24 (' + domain + ') — bez logowania nie można dodawać wzmianek.';
+              cmsWarn.style.display = '';
+            }
+          }
+        },
+        onerror: function() {
+          if (cmsDot) { cmsDot.textContent = '✗ CMS'; cmsDot.style.background = 'rgba(239,68,68,0.5)'; cmsDot.title = 'Błąd sieci'; }
+        }
+      });
+    }
+
+    _renderTags(lastUsedId);
+    _checkCms(lastUsedId);
+
+    document.getElementById('b24t-mini-project').addEventListener('change', function(e) {
+      var pid = e.target.value;
+      lsSet('b24tagger_mini_last_project', pid);
+      _renderTags(pid);
+      _checkCms(pid);
+      var cc = _detectCountry(pid);
+      var cInput = document.getElementById('b24t-mini-country');
+      if (cInput && cc) cInput.value = cc;
+    });
+
+    document.getElementById('b24t-mini-submit').addEventListener('click', function() {
+      var errEl = document.getElementById('b24t-mini-err');
+      var statusEl = document.getElementById('b24t-mini-status');
+      var btn = document.getElementById('b24t-mini-submit');
+      function showErr(msg) { errEl.innerHTML = msg; errEl.style.display = ''; if (statusEl) statusEl.textContent = ''; }
+      function clearErr() { errEl.style.display = 'none'; }
+      clearErr();
+
+      var pid = document.getElementById('b24t-mini-project').value;
+      var fUrl = (document.getElementById('b24t-mini-url').value || '').trim();
+      var fTitle = (document.getElementById('b24t-mini-title').value || '').trim();
+      var fContent = (document.getElementById('b24t-mini-content').value || '').trim();
+      var fDate = (document.getElementById('b24t-mini-date').value || '').trim();
+      var fHour = (document.getElementById('b24t-mini-hour').value || '12').trim();
+      var fMin = (document.getElementById('b24t-mini-min').value || '00').trim();
+      var fCountry = (document.getElementById('b24t-mini-country').value || '').trim().toUpperCase();
+      var fSent = document.getElementById('b24t-mini-sent').value;
+      var catVal = document.getElementById('b24t-mini-cat').value;
+
+      if (!fUrl) { showErr('⚠ URL jest wymagany.'); return; }
+      if (!fTitle) { showErr('⚠ Tytuł jest wymagany.'); return; }
+      if (!fContent) { showErr('⚠ Treść jest wymagana.'); return; }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(fDate)) { showErr('⚠ Nieprawidłowy format daty — wymagany: YYYY-MM-DD'); return; }
+
+      var mentionCategory = (catVal === 'auto') ? String(_detectCategoryFromUrl(fUrl)) : catVal;
+
+      var selectedTags = [];
+      document.querySelectorAll('#b24t-mini-tags input[type="checkbox"]:checked').forEach(function(cb) {
+        var tid = parseInt(cb.dataset.tagId);
+        if (tid) selectedTags.push(tid);
+      });
+
+      btn.disabled = true;
+      btn.style.opacity = '0.6';
+      btn.textContent = '⏳ Pobieram token...';
+      if (statusEl) statusEl.textContent = '';
+
+      // Token w cache (z _checkCms) lub fetch
+      var sid = pid;
+      var base = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
+      function _withToken(tkn) {
+        if (!tkn) {
+          btn.disabled = false; btn.style.opacity = ''; btn.textContent = '✚ Dodaj wzmiankę';
+          showErr('⚠ Nie można pobrać tokenu CSRF. Zaloguj się do Brand24.');
+          return;
+        }
+        var bodyParts = [
+          'tknB24=' + encodeURIComponent(tkn),
+          'f=fser',
+          'search_id=' + encodeURIComponent(sid),
+          'mention_url=' + encodeURIComponent(fUrl),
+          'mention_title=' + encodeURIComponent(fTitle),
+          'mention_content=' + encodeURIComponent(fContent),
+          'mention_category=' + encodeURIComponent(mentionCategory),
+          'mention_country=' + encodeURIComponent(fCountry),
+          'mention_sentiment=' + encodeURIComponent(fSent),
+          'mention_created_date_day=' + encodeURIComponent(fDate),
+          'mention_created_date_hour=' + encodeURIComponent(fHour),
+          'mention_created_date_minute=' + encodeURIComponent(fMin),
+        ];
+        ['b24t-mini-likes','b24t-mini-pv','b24t-mini-shares','b24t-mini-comments'].forEach(function(id, idx) {
+          var name = ['mention_likes','mention_pageviews','mention_shares','mention_comments'][idx];
+          var v = (document.getElementById(id) || {}).value;
+          if (v !== undefined && v !== null && String(v).trim() !== '') {
+            bodyParts.push(name + '=' + encodeURIComponent(String(v).trim()));
+          }
+        });
+        selectedTags.forEach(function(tid) { bodyParts.push('tag[]=' + encodeURIComponent(tid)); });
+
+        btn.textContent = '⏳ Wysyłam...';
+        GM_xmlhttpRequest({
+          method: 'POST',
+          url: base + '/searches/add-new-mention/?sid=' + sid,
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
+          data: bodyParts.join('&'),
+          onload: function(resp) {
+            btn.disabled = false; btn.style.opacity = ''; btn.textContent = '✚ Dodaj wzmiankę';
+            var isDuplicate = resp.responseText && resp.responseText.indexOf('There is the entry with this address') !== -1;
+            var isOk = resp.status >= 200 && resp.status < 400 && !isDuplicate;
+            if (isDuplicate) {
+              if (statusEl) { statusEl.textContent = '⚠ Brand24: taka wzmianka już istnieje.'; statusEl.style.color = c.yellow; }
+            } else if (isOk) {
+              if (statusEl) { statusEl.textContent = '✓ Dodano wzmiankę.'; statusEl.style.color = c.green; }
+              btn.textContent = '✓ Dodano';
+              setTimeout(function() { btn.textContent = '✚ Dodaj wzmiankę'; }, 2500);
+            } else {
+              if (statusEl) { statusEl.textContent = '✕ Błąd serwera (' + resp.status + ').'; statusEl.style.color = c.red; }
+            }
+          },
+          onerror: function() {
+            btn.disabled = false; btn.style.opacity = ''; btn.textContent = '✚ Dodaj wzmiankę';
+            if (statusEl) { statusEl.textContent = '✕ Błąd sieci.'; statusEl.style.color = c.red; }
+          }
+        });
+      }
+
+      if (state.tknB24) {
+        _withToken(state.tknB24);
+      } else {
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url: base + '/searches/add-new-mention/?sid=' + sid,
+          onload: function(resp) {
+            var m = (resp.responseText || '').match(/name="tknB24"[^>]*value="([a-f0-9]{32})"/);
+            if (!m) m = (resp.responseText || '').match(/value="([a-f0-9]{32})"[^>]*name="tknB24"/);
+            if (m && m[1]) { state.tknB24 = m[1]; _withToken(m[1]); }
+            else _withToken(null);
+          },
+          onerror: function() { _withToken(null); }
+        });
+      }
+    });
+  }
+
+  // ───────────────────────────────────────────
   // INIT
   // ───────────────────────────────────────────
 
   function init() {
-    // Only run on Mentions page
-    if (!window.location.pathname.includes('/panel/results/')) return;
+    // Na stronach poza /panel/results/ — tylko floating mini-button do dodawania wzmianek
+    if (!window.location.pathname.includes('/panel/results/')) {
+      _initMiniMentionButton();
+      return;
+    }
 
     // Bootstrap PROJECT_NAMES: przeskanuj LS.PROJECTS i zapisz dobre nazwy do resolvera
     (function() {
@@ -15549,22 +16139,21 @@ Tej operacji nie można cofnąć.`)) {
       }
     })();
 
-    // ── NEWS SIDE TAB ──
+    // ── MENTIONS SIDE TAB (dawniej News) ──
     (function() {
       var newsSideTab = document.createElement('div');
       newsSideTab.id = 'b24t-news-side-tab';
-      newsSideTab.title = 'Otwórz News';
+      newsSideTab.title = 'Dodaj wzmiankę';
       newsSideTab.innerHTML =
         '<span style="font-size:16px;line-height:1;">&#128240;</span>' +
-        '<span style="writing-mode:vertical-rl;text-orientation:mixed;letter-spacing:.07em;font-size:11px;font-weight:700;">News</span>';
+        '<span style="writing-mode:vertical-rl;text-orientation:mixed;letter-spacing:.07em;font-size:11px;font-weight:700;">Wzmianki</span>';
       newsSideTab.addEventListener('click', function() {
         // Fully independent — no annotator panel interaction
         if (newsState.panelsOpen) {
           closeNewsPanels();
           newsSideTab.classList.remove('active');
         } else {
-          openNewsPanels();
-          newsSideTab.classList.add('active');
+          _openMentionsLauncher();
         }
       });
       newsSideTab.style.display = 'none'; // shown by features.annotator_tools check

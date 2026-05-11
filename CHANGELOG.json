@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.24.1",
+    "date": "2026-05-11",
+    "changes": [
+      "fix: przyciski boczne Wzmianki i Net nie nachodzą na siebie — Net przesunięty niżej (calc(50%+250px))",
+      "ux: tryb Niestandardowe działa jako floating panel — ciemne tło znika, panel 560px przylega do prawej strony, dragowalny za header",
+      "ux: ESC zamyka panel importu URLi, a następnie overlay Wzmianek (nie aktywuje się gdy fokus w polu tekstowym)",
+      "ux: import URLi w trybie Niestandardowe ukrywa sekcje Słowa kluczowe i Opis marki (news-only)",
+      "ux: wybór promptu AI przeniesiony z głównych ustawień ⚙ do panelu — osobny selektor dla News (w ustawieniach importu) i Niestandardowe (w formularzu)",
+      "fix: opcja 'auto (z domeny)' usunięta z dropdownu kategorii — domyślna kategoria to 8 (Web)"
+    ]
+  },
+  {
     "version": "0.24.0",
     "date": "2026-05-11",
     "label": "feature",

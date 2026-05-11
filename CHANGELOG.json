@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.23.105",
+    "date": "2026-05-11",
+    "label": "fix",
+    "changes": [
+      "fix: wrongcountry ma priorytet nad blocked/timeout — URL z obcego kraju jest zawsze oznaczany wrongcountry niezależnie od wyniku skanu",
+      "fix: pre-scan skip dla URLi z obcego kraju — brak niepotrzebnego HTTP request",
+      "fix: usunięto retry przy timeout (było 8s×2, teraz 10s×1) — krótszy czas blokowania na nieodpowiadających stronach",
+      "ux: domain-skip — po 2 timeoutach z tej samej domeny kolejne URLi z tej domeny są skipowane natychmiast",
+      "ux: timer ETA podczas skanowania — 'Skanowanie: X/Y — ~Xs pozostało' na pasku postępu"
+    ]
+  },
+  {
     "version": "0.23.104",
     "date": "2026-05-11",
     "label": "fix",

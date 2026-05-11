@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.23.104",
+    "date": "2026-05-11",
+    "label": "fix",
+    "changes": [
+      "fix: project check w module News — dodawanie obu URLi (m.url i m.openUrl) do zestawu, eliminuje false-negative gdy Brand24 przechowuje canonical URL w url a oryginalny w openUrl"
+    ]
+  },
+  {
     "version": "0.23.103",
     "date": "2026-05-09",
     "label": "fix",

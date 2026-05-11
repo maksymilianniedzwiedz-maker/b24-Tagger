@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.0
+// @version      0.24.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.0';
+  const VERSION = '0.24.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -227,15 +227,18 @@
     return {
       apiKey: '', prompts: [],
       tagging: { model: 'claude-haiku-4-5-20251001', activePromptId: null, batchSize: 10, firstUseWarningShown: false },
-      news: { model: 'claude-haiku-4-5-20251001', enabled: false }
+      news: { model: 'claude-haiku-4-5-20251001', enabled: false },
+      custom: { model: 'claude-haiku-4-5-20251001' }
     };
   }
   function _aiGetSettings() {
     var s = lsGet(LS.AI_SETTINGS, _aiDefaultSettings());
     if (!s.news) s.news = {};
     if (!s.tagging) s.tagging = {};
+    if (!s.custom) s.custom = {};
     if (!s.news.model) s.news.model = s.model || 'claude-haiku-4-5-20251001';
     if (!s.tagging.model) s.tagging.model = s.model || 'claude-haiku-4-5-20251001';
+    if (!s.custom.model) s.custom.model = s.model || 'claude-haiku-4-5-20251001';
     if (!s.prompts) s.prompts = [];
     return s;
   }
@@ -3728,7 +3731,7 @@
       #b24t-news-side-tab.active:hover { background: #4f46e5; }
       /* ── NETWORK MONITOR SIDE TAB ── */
       #b24t-nm-tab {
-        position: fixed; right: 0; top: calc(50% + 175px);
+        position: fixed; right: 0; top: calc(50% + 250px);
         z-index: 2147483639; border-radius: 10px 0 0 10px; border: 1px solid var(--b24t-border); border-right: none;
         padding: 12px 9px; cursor: pointer; display: none;
         flex-direction: column; align-items: center; gap: 4px;
@@ -8615,7 +8618,7 @@ function showOnboarding(onComplete) {
     var customRows = document.getElementById('b24t-news-f-custom-fields');
     if (customRows) customRows.style.display = isCustom ? 'flex' : 'none';
 
-    // Kategoria — w News readonly "7 — News", w Niestandardowe wybór z listy + auto-detect
+    // Kategoria — w News readonly "7 — News", w Niestandardowe wybór z listy
     var catReadonly = document.getElementById('b24t-news-f-category-readonly');
     var catSelect   = document.getElementById('b24t-news-f-category-select');
     if (catReadonly) catReadonly.style.display = isCustom ? 'none' : '';
@@ -8641,12 +8644,50 @@ function showOnboarding(onComplete) {
     var dodaneCb = document.getElementById('b24t-news-tag-dodane');
     if (dodaneCb && isCustom) dodaneCb.checked = false;
 
-    // Toggle "Tylko formularz" — widoczny tylko w Niestandardowe
+    // Toggle "Tylko formularz" — widoczny tylko w Niestandardowe (ale mamy floating mode, więc ukrywamy przycisk)
     var formOnlyBtn = document.getElementById('b24t-news-formonly-toggle');
-    if (formOnlyBtn) formOnlyBtn.style.display = isCustom ? '' : 'none';
+    if (formOnlyBtn) formOnlyBtn.style.display = 'none';
 
-    // Wychodzimy z trybu Niestandardowe — przywróć pełny widok
-    if (!isCustom && newsState.formOnly) _toggleFormOnly(false);
+    // Wiersz prompt AI — widoczny tylko w trybie custom
+    var customPromptRow = document.getElementById('b24t-news-custom-prompt-row');
+    if (customPromptRow) customPromptRow.style.display = isCustom ? 'flex' : 'none';
+
+    // Tryb custom — floating panel (bez ciemnego tła, panel pozycjonowany fixed)
+    var overlay  = document.getElementById('b24t-news-overlay');
+    var panelMain = document.getElementById('b24t-news-panel-main');
+    var header   = panelMain ? panelMain.querySelector('div') : null;
+    if (isCustom) {
+      if (overlay) {
+        overlay.style.background    = 'transparent';
+        overlay.style.pointerEvents = 'none';
+        overlay.style.alignItems    = 'flex-start';
+        overlay.style.justifyContent = 'flex-end';
+        overlay.style.padding       = '60px 12px 0 0';
+      }
+      if (panelMain) {
+        panelMain.style.pointerEvents = 'auto';
+        panelMain.style.position      = 'relative';
+      }
+      if (header) header.style.cursor = 'move';
+      if (!newsState.formOnly) _toggleFormOnly(true);
+    } else {
+      if (overlay) {
+        overlay.style.background    = '';
+        overlay.style.pointerEvents = '';
+        overlay.style.alignItems    = 'center';
+        overlay.style.justifyContent = 'center';
+        overlay.style.padding       = '';
+      }
+      if (panelMain) {
+        panelMain.style.pointerEvents = '';
+        panelMain.style.position      = '';
+      }
+      if (header) header.style.cursor = '';
+      if (newsState.formOnly) _toggleFormOnly(false);
+    }
+
+    // Wypełnij dropdown prompta dla odpowiedniego trybu
+    _newsRefillPromptSelect(isCustom);
   }
 
   // ── TYLKO FORMULARZ — toggle widoczności kolumn list+preview w trybie Niestandardowe ──
@@ -8842,6 +8883,13 @@ function showOnboarding(onComplete) {
             '<br><span style="font-size:10px;color:' + t.textFaint + ';line-height:1.4;">Klasyfikuje URLe tylko po adresie — szybsze, bez tytułu i daty.</span>',
           '</span>',
         '</label>',
+        '<div style="height:1px;background:' + t.borderSub + ';margin:8px 0;"></div>',
+        '<div style="display:flex;align-items:center;gap:6px;">',
+          '<span style="font-size:10px;font-weight:600;color:' + t.textMuted + ';flex-shrink:0;min-width:54px;">Prompt AI:</span>',
+          '<select id="b24t-news-import-prompt-sel" style="flex:1;font-size:10px;padding:3px 6px;border-radius:5px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-family:inherit;">',
+            '<option value="">— wybierz —</option>',
+          '</select>',
+        '</div>',
       '</div>',
       '<div id="b24t-news-ai-brand-section" style="display:none;padding:10px 12px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;margin-bottom:12px;">',
         '<div style="font-size:10px;font-weight:700;color:' + t.textMuted + ';letter-spacing:0.06em;margin-bottom:6px;">OPIS MARKI (AI)</div>',
@@ -8861,7 +8909,7 @@ function showOnboarding(onComplete) {
         '</div>',
         '<div id="b24t-news-country-warn" style="display:none;margin-top:5px;font-size:10px;color:#f59e0b;line-height:1.4;"></div>',
       '</div>',
-      '<div style="margin-top:12px;">',
+      '<div id="b24t-news-keywords-section" style="margin-top:12px;">',
         '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">',
           '<label style="font-size:11px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">SŁOWA KLUCZOWE</label>',
           '<div style="display:flex;gap:4px;">',
@@ -9021,7 +9069,6 @@ function showOnboarding(onComplete) {
         '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">KATEGORIA</label>',
         '<input id="b24t-news-f-category-readonly" type="text" value="7 — News" readonly style="' + _newsInputCss(t) + 'opacity:0.5;">',
         '<select id="b24t-news-f-category-select" style="display:none;' + _newsInputCss(t) + '">',
-          '<option value="auto">auto (z domeny)</option>',
           '<option value="1">1 — X/Twitter</option>',
           '<option value="2">2 — Instagram</option>',
           '<option value="3">3 — Blogs</option>',
@@ -9084,6 +9131,12 @@ function showOnboarding(onComplete) {
           '</div>' +
         '</div>' +
         '<div id="b24t-news-tag-list" style="display:none;flex-wrap:wrap;gap:5px;padding:0 10px 8px;max-height:160px;overflow-y:auto;"></div>' +
+      '</div>',
+      '<div id="b24t-news-custom-prompt-row" style="display:none;flex-direction:column;gap:4px;flex-shrink:0;">',
+        '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">PROMPT AI</label>',
+        '<select id="b24t-news-custom-prompt-sel" style="' + _newsInputCss(t) + '">',
+          '<option value="">— wybierz —</option>',
+        '</select>',
       '</div>',
       '<button id="b24t-news-submit-btn" style="flex-shrink:0;padding:9px;border-radius:9px;border:none;background:var(--b24t-accent-grad);color:#fff;font-size:12px;font-weight:700;cursor:pointer;width:100%;letter-spacing:0.03em;transition:opacity 0.15s;">✚ Dodaj wzmiankę do Brand24</button>',
       '<div id="b24t-news-submit-status" style="font-size:10px;text-align:center;min-height:14px;font-weight:500;flex-shrink:0;"></div>',
@@ -9355,6 +9408,24 @@ function showOnboarding(onComplete) {
   }
 
   // ── WIRE LOGIC ──
+  function _newsRefillPromptSelect(isCustom) {
+    var s = _aiGetSettings();
+    var selId = isCustom ? 'b24t-news-custom-prompt-sel' : 'b24t-news-import-prompt-sel';
+    var sel = document.getElementById(selId);
+    if (!sel) return;
+    var current = isCustom ? (s.custom && s.custom.activePromptId) : (s.news && s.news.activePromptId);
+    sel.innerHTML = '<option value="">— wybierz —</option>';
+    if (s.prompts) {
+      s.prompts.forEach(function(p) {
+        var opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.name || p.id;
+        sel.appendChild(opt);
+      });
+    }
+    sel.value = current || '';
+  }
+
   function _wireNewsPanels() {
     _naShowConsentIfNeeded();
     _naRetryPending();
@@ -9513,8 +9584,14 @@ function showOnboarding(onComplete) {
     var importModal  = document.getElementById('b24t-news-import-modal');
     if (modalOpenBtn && importModal) {
       modalOpenBtn.addEventListener('click', function() {
+        var isCustom = newsState.mode === 'custom';
+        var kwSection   = document.getElementById('b24t-news-keywords-section');
+        var brandSection = document.getElementById('b24t-news-ai-brand-section');
+        if (kwSection)   kwSection.style.display   = isCustom ? 'none' : '';
+        if (brandSection) brandSection.style.display = isCustom ? 'none' : '';
+        _newsRefillPromptSelect(false);
         importModal.style.display = 'flex';
-        if (_newsChipsRenderer) _newsChipsRenderer();
+        if (!isCustom && _newsChipsRenderer) _newsChipsRenderer();
         var pasteEl = document.getElementById('b24t-news-paste-area');
         if (pasteEl) setTimeout(function() { pasteEl.focus(); }, 50);
       });
@@ -9524,6 +9601,41 @@ function showOnboarding(onComplete) {
       modalCloseBtn.addEventListener('click', function() {
         importModal.style.display = 'none';
       });
+    }
+
+    // ESC: zamknij import modal → overlay (nie gdy kursor w textarea/input)
+    document.addEventListener('keydown', function(e) {
+      if (e.key !== 'Escape') return;
+      var tag = document.activeElement && document.activeElement.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      var im = document.getElementById('b24t-news-import-modal');
+      if (im && im.style.display === 'flex') { im.style.display = 'none'; return; }
+      var ov = document.getElementById('b24t-news-overlay');
+      if (ov && ov.style.display !== 'none') closeNewsPanels();
+    });
+
+    // Drag dla custom mode (header panelMain)
+    var _npMain = document.getElementById('b24t-news-panel-main');
+    var _npHdr  = _npMain ? _npMain.querySelector('div') : null;
+    if (_npHdr && _npMain) {
+      var _ndrag = false, _ndsx, _ndsy, _ndsl, _ndst;
+      _npHdr.addEventListener('mousedown', function(e) {
+        if (newsState.mode !== 'custom') return;
+        if (e.target.closest('button')) return;
+        _ndrag = true;
+        var r = _npMain.getBoundingClientRect();
+        _ndsx = e.clientX; _ndsy = e.clientY; _ndsl = r.left; _ndst = r.top;
+        e.preventDefault();
+      });
+      document.addEventListener('mousemove', function(e) {
+        if (!_ndrag) return;
+        var nx = Math.max(0, Math.min(window.innerWidth - _npMain.offsetWidth, _ndsl + e.clientX - _ndsx));
+        var ny = Math.max(0, Math.min(window.innerHeight - _npMain.offsetHeight, _ndst + e.clientY - _ndsy));
+        _npMain.style.left  = nx + 'px';
+        _npMain.style.top   = ny + 'px';
+        _npMain.style.right = 'auto';
+      });
+      document.addEventListener('mouseup', function() { _ndrag = false; });
     }
 
     // ─── CHIPS ───
@@ -10647,13 +10759,41 @@ function showOnboarding(onComplete) {
       });
     }
 
+    // Prompt AI — News (w import modalu)
+    var importPromptSel = document.getElementById('b24t-news-import-prompt-sel');
+    if (importPromptSel) {
+      importPromptSel.addEventListener('change', function() {
+        var cfg = _aiGetSettings();
+        if (!cfg.news) cfg.news = {};
+        cfg.news.activePromptId = importPromptSel.value || null;
+        _aiSaveSettings(cfg);
+      });
+    }
+
+    // Prompt AI — custom mode (w formularzu)
+    var customPromptSel = document.getElementById('b24t-news-custom-prompt-sel');
+    if (customPromptSel) {
+      customPromptSel.addEventListener('change', function() {
+        var cfg = _aiGetSettings();
+        if (!cfg.custom) cfg.custom = {};
+        cfg.custom.activePromptId = customPromptSel.value || null;
+        _aiSaveSettings(cfg);
+      });
+    }
+
     // ─── BOTTOM IMPORT BTN ───
     var bottomImportBtn = document.getElementById('b24t-news-bottom-import-btn');
     var _importModalRef = document.getElementById('b24t-news-import-modal');
     if (bottomImportBtn && _importModalRef) {
       bottomImportBtn.addEventListener('click', function() {
+        var isCustom = newsState.mode === 'custom';
+        var kwSection    = document.getElementById('b24t-news-keywords-section');
+        var brandSection = document.getElementById('b24t-news-ai-brand-section');
+        if (kwSection)    kwSection.style.display    = isCustom ? 'none' : '';
+        if (brandSection) brandSection.style.display = isCustom ? 'none' : '';
+        _newsRefillPromptSelect(false);
         _importModalRef.style.display = 'flex';
-        if (_newsChipsRenderer) _newsChipsRenderer();
+        if (!isCustom && _newsChipsRenderer) _newsChipsRenderer();
         var pasteEl = document.getElementById('b24t-news-paste-area');
         if (pasteEl) setTimeout(function() { pasteEl.focus(); }, 50);
       });
@@ -10742,8 +10882,7 @@ function showOnboarding(onComplete) {
         var mentionCategory = '7';
         if (newsState.mode === 'custom') {
           var catSel = document.getElementById('b24t-news-f-category-select');
-          var catVal = (catSel && catSel.value) || 'auto';
-          mentionCategory = (catVal === 'auto') ? String(_detectCategoryFromUrl(fUrl)) : catVal;
+          mentionCategory = (catSel && catSel.value) || '8';
         }
 
         var bodyParts = [
@@ -10966,6 +11105,19 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.1",
+      "date": "2026-05-11",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "przyciski boczne Wzmianki i Net nie nachodzą — Net przesunięty niżej (calc(50%+250px))"},
+        {"type": "ux", "text": "tryb Niestandardowe — floating panel bez ciemnego tła, 560px, przylega do prawej, dragowalny za header"},
+        {"type": "ux", "text": "ESC zamyka panel importu URLi lub overlay Wzmianek (nie aktywuje się gdy fokus w polu tekstowym)"},
+        {"type": "ux", "text": "import URLi w trybie Niestandardowe ukrywa sekcje Słowa kluczowe i Opis marki"},
+        {"type": "ux", "text": "wybór promptu AI przeniesiony z ⚙ do paneli — osobny dla News i Niestandardowe; opcja 'auto (z domeny)' usunięta z kategorii"}
+      ]
+    },
+    {
       "version": "0.24.0",
       "date": "2026-05-11",
       "label": "feature",
@@ -11055,15 +11207,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "badge AI — 4 kategorie (✅ Relevant, ⚠️ Borderline, ❌ Irrelevant, 🚫 Spam) zamiast binarnego 🤖; parsowanie pola verdict z fallbackiem na relevant:bool"},
         {"type": "feat", "text": "legenda oznaczeń — redesign: 2-kolumnowy układ z sekcjami SCANNER/STATUS/OCENA AI/METADANE + karta JAK DZIAŁA SCORING"},
         {"type": "fix", "text": "scoring skanera — title+h1 jako jeden sygnał (+8 zamiast +13), tagi redakcyjne +4→+6, cap akapitów +3→+4"}
-      ]
-    },
-    {
-      "version": "0.23.97",
-      "date": "2026-05-08",
-      "label": "ux",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "ux", "text": "panel News — kolumna URL węższa (28→25%), formularz szerszy (18→22%, min 300px); DATA pełna szerokość, GODZINA/MINUTY osobny wiersz, KATEGORIA pełna szerokość, KRAJ/SENTYMENT osobny wiersz; pole treści rows 7→9 / min-height 140→200px"}
       ]
     },
   ];
@@ -11965,12 +12108,6 @@ function showOnboarding(onComplete) {
               '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Automatyczna ocena artyku\u0142\u00f3w przez Claude</div>' +
             '</div>' +
           '</label>' +
-          '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' +
-            '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">Prompt:</span>' +
-            '<select id="b24t-ai-news-prompt" style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:#fff;color:#333;font-size:11px;font-family:inherit;color-scheme:light;">' +
-              '<option value="">\u2014 wybierz z biblioteki \u2014</option>' +
-            '</select>' +
-          '</div>' +
           '<div style="height:1px;background:var(--b24t-border-sub);margin:8px 0 10px;"></div>' +
           '<div style="font-size:10px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:7px;">Tagowanie</div>' +
           '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">' +
@@ -12002,21 +12139,11 @@ function showOnboarding(onComplete) {
       var newsModelSelect = document.getElementById('b24t-ai-model-news');
       var taggingModelSelect = document.getElementById('b24t-ai-model-tagging');
       var newsEnabledCb = document.getElementById('b24t-ai-news-enabled');
-      var newsPromptSelect = document.getElementById('b24t-ai-news-prompt');
 
       if (apiKeyInput) apiKeyInput.value = s.apiKey || '';
       if (newsModelSelect) newsModelSelect.value = (s.news && s.news.model) || 'claude-haiku-4-5-20251001';
       if (taggingModelSelect) taggingModelSelect.value = (s.tagging && s.tagging.model) || 'claude-haiku-4-5-20251001';
       if (newsEnabledCb) newsEnabledCb.checked = !!(s.news && s.news.enabled);
-      if (newsPromptSelect && s.prompts) {
-        s.prompts.forEach(function(p) {
-          var opt = document.createElement('option');
-          opt.value = p.id;
-          opt.textContent = p.name || p.id;
-          newsPromptSelect.appendChild(opt);
-        });
-        newsPromptSelect.value = (s.news && s.news.activePromptId) || '';
-      }
 
       if (apiKeyInput) {
         apiKeyInput.addEventListener('change', function() {
@@ -12087,14 +12214,6 @@ function showOnboarding(onComplete) {
           var cfg = _aiGetSettings();
           if (!cfg.news) cfg.news = {};
           cfg.news.enabled = newsEnabledCb.checked; _aiSaveSettings(cfg);
-        });
-      }
-      if (newsPromptSelect) {
-        newsPromptSelect.addEventListener('change', function() {
-          var cfg = _aiGetSettings();
-          if (!cfg.news) cfg.news = {};
-          cfg.news.activePromptId = newsPromptSelect.value || null;
-          _aiSaveSettings(cfg);
         });
       }
       var openPromptsBtn = document.getElementById('b24t-ai-open-prompts');
@@ -15769,7 +15888,6 @@ Tej operacji nie można cofnąć.`)) {
 
   function _miniBuildCategoryOptions(selectedCat) {
     var cats = [
-      ['auto','auto (z domeny)'],
       ['1','1 — X/Twitter'],['2','2 — Instagram'],['3','3 — Blogs'],
       ['4','4 — Videos'],['5','5 — Facebook'],['6','6 — Other Socials'],
       ['7','7 — News'],['8','8 — Web'],['9','9 — Podcasts'],
@@ -15852,7 +15970,7 @@ Tej operacji nie można cofnąć.`)) {
           '<div style="flex:1;"><label style="' + labelCss + '">KRAJ</label><input id="b24t-mini-country" type="text" value="' + _detectCountry(lastUsedId) + '" placeholder="np. PL, TR" style="' + inputCss + '"></div>',
           '<div style="flex:1;"><label style="' + labelCss + '">SENTYMENT</label><select id="b24t-mini-sent" style="' + inputCss + '"><option value="0">0 Neutral</option><option value="1">+1 Poz.</option><option value="-1">-1 Neg.</option></select></div>',
         '</div>',
-        '<div><label style="' + labelCss + '">KATEGORIA</label><select id="b24t-mini-cat" style="' + inputCss + '">' + _miniBuildCategoryOptions('auto') + '</select></div>',
+        '<div><label style="' + labelCss + '">KATEGORIA</label><select id="b24t-mini-cat" style="' + inputCss + '">' + _miniBuildCategoryOptions('8') + '</select></div>',
         '<details style="border:1px solid ' + c.border + ';border-radius:7px;padding:7px 10px;background:' + c.bgInput + ';">',
           '<summary style="font-size:10px;font-weight:600;color:' + c.textMuted + ';cursor:pointer;letter-spacing:0.04em;">METRYKI (opcjonalne)</summary>',
           '<div style="display:flex;gap:6px;margin-top:8px;">',
@@ -15971,7 +16089,7 @@ Tej operacji nie można cofnąć.`)) {
       if (!fContent) { showErr('⚠ Treść jest wymagana.'); return; }
       if (!/^\d{4}-\d{2}-\d{2}$/.test(fDate)) { showErr('⚠ Nieprawidłowy format daty — wymagany: YYYY-MM-DD'); return; }
 
-      var mentionCategory = (catVal === 'auto') ? String(_detectCategoryFromUrl(fUrl)) : catVal;
+      var mentionCategory = catVal || '8';
 
       var selectedTags = [];
       document.querySelectorAll('#b24t-mini-tags input[type="checkbox"]:checked').forEach(function(cb) {

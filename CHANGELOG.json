@@ -1,5 +1,22 @@
 [
   {
+    "version": "0.24.0",
+    "date": "2026-05-11",
+    "label": "feature",
+    "changes": [
+      "feature: nowy tryb Niestandardowe — boczny przycisk News przemianowany na 'Wzmianki', kliknięcie otwiera launcher z 2 kafelkami (News / Niestandardowe)",
+      "feature: tryb Niestandardowe — bez filtra słów kluczowych, bez wymuszenia tagu 'dodane', wybór kategorii z dropdowna lub auto-detect z domeny",
+      "feature: auto-detect kategorii Brand24 z domeny URL: Facebook=5, Instagram=2, X/Twitter=1, YouTube/Vimeo=4, TikTok=11, LinkedIn=12, Reddit=6, Spotify=9, Medium/Substack=3, reszta=8 (Web)",
+      "feature: dodatkowe pola formularza w trybie Niestandardowe — Likes, Pageviews, Shares, Comments (opcjonalne, wysyłane gdy podane)",
+      "feature: tryb 'tylko formularz' w Niestandardowe — toggle w headerze ukrywa listę + podgląd, formularz na pełnej szerokości w zwężonym panelu",
+      "feature: floating mini-przycisk na obcych stronach (poza /panel/results/) — okrągły przycisk ✚ B24 w prawym dolnym rogu otwiera standalone formularz z auto-uzupełnionym URL i tytułem strony",
+      "feature: mini-form na obcych stronach — wybór projektu z listy zapisanych, CMS check, wszystkie pola formularza Brand24 + tagi z cache projektu, wysyłka przez GM_xmlhttpRequest",
+      "feature: CMS check w trybie Niestandardowe — wymaga zalogowania do CMS Brand24, ale nie ostrzega o braku tagu 'dodane' w projekcie",
+      "feature: edycja URL i kraju w trybie Niestandardowe — pola pozwalają ręcznie wpisać/nadpisać zamiast wybierać tylko z listy",
+      "ux: ESC zamyka launcher modal; przycisk Wyczyść resetuje też pola metryk i kategorię w trybie Niestandardowe"
+    ]
+  },
+  {
     "version": "0.23.105",
     "date": "2026-05-11",
     "label": "fix",

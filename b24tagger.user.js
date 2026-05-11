@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.104
+// @version      0.23.105
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.104';
+  const VERSION = '0.23.105';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6952,6 +6952,7 @@ function showOnboarding(onComplete) {
     scanning: false,
     scanTotal: 0,
     scanDone: 0,
+    scanStartTime: 0,
     hideNonArticles: false,
   };
 
@@ -7171,7 +7172,7 @@ function showOnboarding(onComplete) {
   //   teasermatch → 0 pkt     (keyword tylko w sekcji polecanych artykułów, nie w głównej treści)
 
   var NEWS_CONTENT_SCAN_CONCURRENCY = 5;
-  var NEWS_CONTENT_SCAN_TIMEOUT_MS  = 8000; // minimum / fallback
+  var NEWS_CONTENT_SCAN_TIMEOUT_MS  = 10000; // minimum / fallback
   var _scanTimings = []; // sliding window: czasy udanych skanów (ms), max 20
 
   function _getAdaptiveScanTimeout() {
@@ -8344,7 +8345,7 @@ function showOnboarding(onComplete) {
         }
       }
 
-      function _attempt(timeoutMs, isRetry) {
+      function _attempt(timeoutMs) {
         // Zewnętrzny timer — ochrona gdyby GM_xmlhttpRequest nie wywołał żadnego callbacku
         var timer = setTimeout(function() {
           _done({ status: 'blocked', blockReason: 'timeout', score: 0, snippet: '' });
@@ -8402,11 +8403,7 @@ function showOnboarding(onComplete) {
             },
             ontimeout: function() {
               clearTimeout(timer);
-              if (!isRetry) {
-                _attempt(Math.min(timeoutMs * 2, 40000), true);
-              } else {
-                _done({ status: 'blocked', blockReason: 'timeout', score: 0, snippet: '' });
-              }
+              _done({ status: 'blocked', blockReason: 'timeout', score: 0, snippet: '' });
             },
           });
         } catch(e) {
@@ -8415,7 +8412,7 @@ function showOnboarding(onComplete) {
         }
       }
 
-      _attempt(_getAdaptiveScanTimeout(), false);
+      _attempt(_getAdaptiveScanTimeout());
     });
   }
 
@@ -9627,7 +9624,18 @@ function showOnboarding(onComplete) {
       if (newsState.scanning) {
         var total = newsState.scanTotal || 1;
         var done  = newsState.scanDone  || 0;
-        if (progressLbl) progressLbl.textContent = 'Skanowanie: ' + done + ' / ' + total;
+        var _etaStr = '';
+        if (done >= 3 && newsState.scanStartTime) {
+          var _elapsed = Date.now() - newsState.scanStartTime;
+          var _remMs   = (_elapsed / done) * (total - done);
+          if (_remMs > 0) {
+            var _remSec = Math.round(_remMs / 1000);
+            _etaStr = ' — ~' + (_remSec >= 60
+              ? Math.floor(_remSec / 60) + 'm ' + (_remSec % 60) + 's'
+              : _remSec + 's') + ' pozostało';
+          }
+        }
+        if (progressLbl) progressLbl.textContent = 'Skanowanie: ' + done + ' / ' + total + _etaStr;
         if (done === 0) _getBarNews().reset(); else _getBarNews().set(Math.round(done / total * 100));
       } else {
         var handled = (counts.added || 0) + (counts.error || 0);
@@ -10240,9 +10248,10 @@ function showOnboarding(onComplete) {
       var toScan = newsState.urls.slice(); // wszystkie do skanowania
 
       // Skanowanie treści — zablokuj przycisk
-      newsState.scanning  = true;
-      newsState.scanTotal = toScan.length;
-      newsState.scanDone  = 0;
+      newsState.scanning      = true;
+      newsState.scanTotal     = toScan.length;
+      newsState.scanDone      = 0;
+      newsState.scanStartTime = Date.now();
       var _newsBar = document.getElementById('b24t-news-progress-bar');
       if (_newsBar) _newsBar.classList.add('b24t-bar-active');
       if (importBtn) {
@@ -10254,22 +10263,56 @@ function showOnboarding(onComplete) {
 
       // Sliding window — NEWS_CONTENT_SCAN_CONCURRENCY równoległych workerów
       var nextScanIdx = 0;
+      var _domainTimeouts = {}; // licznik timeoutów per domena (reset na każdy import)
       async function _scanWorker() {
         while (true) {
           var i = nextScanIdx++;
           if (i >= toScan.length) break;
           var entry = toScan[i];
+
+          // Pre-scan: jeśli URL sygnalizuje obcy kraj → pomiń skanowanie w ogóle
+          if (pc) {
+            var _preC = _newsCountriesInUrl(entry.url);
+            if (Object.keys(_preC).length > 0 && !_preC[pc]) {
+              entry.status = 'wrongcountry'; entry.scanStatus = 'wrongcountry';
+              entry.blockReason = null;
+              entry.score = 0; entry.snippet = ''; entry.matchedChips = [];
+              newsState.scanDone++;
+              if (importBtn) importBtn.textContent = '⟳ Skanowanie ' + newsState.scanDone + '/' + newsState.scanTotal + '...';
+              try { renderUrlList(); } catch(e) {}
+              continue;
+            }
+          }
+
+          // Pre-scan: domena miała już 2+ timeouty w tym imporcie → pomiń
+          var _entryDomain = '';
+          try { _entryDomain = new URL(entry.url).hostname.replace(/^www\./, ''); } catch(e) {}
+          if (_entryDomain && (_domainTimeouts[_entryDomain] || 0) >= 2) {
+            entry.status = 'blocked'; entry.scanStatus = 'blocked'; entry.blockReason = 'domain_timeout';
+            entry.score = 0; entry.snippet = ''; entry.matchedChips = [];
+            newsState.scanDone++;
+            if (importBtn) importBtn.textContent = '⟳ Skanowanie ' + newsState.scanDone + '/' + newsState.scanTotal + '...';
+            try { renderUrlList(); } catch(e) {}
+            continue;
+          }
+
           try {
             var result = await _newsContentScan(entry.url, chips);
-            // Bug #4: jeśli URL sygnalizuje obcy kraj → nadpisz wynik content scan
-            if (result.status !== 'nomatch' && result.status !== 'blocked' && pc) {
+
+            // Zlicz timeout dla domeny — po 2 z tej samej domeny kolejne będą skipowane
+            if (result.blockReason === 'timeout' && _entryDomain) {
+              _domainTimeouts[_entryDomain] = (_domainTimeouts[_entryDomain] || 0) + 1;
+            }
+
+            // URL sygnalizuje obcy kraj → nadpisz wynik (włącznie z blocked/timeout)
+            if (pc) {
               var _urlCountries = _newsCountriesInUrl(entry.url);
               var _urlCountryKeys = Object.keys(_urlCountries);
               if (_urlCountryKeys.length > 0 && !_urlCountries[pc]) {
                 result.status = 'wrongcountry';
               }
             }
-            // Język strony vs kraj projektu — język musi się zgadzać dokładnie
+            // Język strony vs kraj projektu (tylko gdy skan się udał i mamy dane języka)
             if (result.status !== 'nomatch' && result.status !== 'blocked' &&
                 result.status !== 'wrongcountry' && result.pageLang && pc) {
               var _expLangs = (_NEWS_LANG_MAP[pc.toLowerCase()] || []);
@@ -10656,6 +10699,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.105",
+      "date": "2026-05-11",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "wrongcountry ma priorytet nad blocked/timeout — URL z obcego kraju oznaczany wrongcountry niezależnie od wyniku skanu; pre-scan skip eliminuje niepotrzebny HTTP request"},
+        {"type": "fix", "text": "usunięto retry przy timeout (było 8s×2=16s, teraz 10s×1) — krótszy czas blokowania na nieodpowiadających stronach"},
+        {"type": "ux", "text": "domain-skip — po 2 timeoutach z tej samej domeny kolejne URLi skipowane natychmiast; timer ETA 'Skanowanie: X/Y — ~Xs pozostało' na pasku postępu"}
+      ]
+    },
+    {
       "version": "0.23.104",
       "date": "2026-05-11",
       "label": "fix",
@@ -10739,15 +10793,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#06b6d4",
       "changes": [
         {"type": "ux", "text": "animacje danych w panelach statystyk — count-up liczb od 0, progress bar od 0% do wartości, stagger fade+slide-up wierszy przy ładowaniu (Overall Stats, Dashboard Annotatora, Tag Stats); wsparcie prefers-reduced-motion"}
-      ]
-    },
-    {
-      "version": "0.23.95",
-      "date": "2026-05-08",
-      "label": "ux",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "ux", "text": "wskaźnik opóźnienia ⚠ w meta-bar — żółty/pomarańczowy/czerwony wg p90 ostatnich 30 requestów (progi 500/800/2000ms); tooltip z błędami, p90 ms i slow count; klik → Network Monitor; znika gdy brak slow/error requestów"}
       ]
     },
   ];

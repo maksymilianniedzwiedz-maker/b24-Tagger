@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.23.103
+// @version      0.23.104
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.23.103';
+  const VERSION = '0.23.104';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -9476,14 +9476,20 @@ function showOnboarding(onComplete) {
         var projectUrlsArr = [];            // do urlsMatch (tolerancja obcięcia ID)
         var total = 0;
         var _rxQueryHash = /[?#].*$/;
+        var _addProjectUrl = function(raw) {
+          var n = normalizeUrl(raw);
+          if (!n || projectUrls.has(n)) return;
+          projectUrls.add(n);
+          projectUrlsArr.push(n);
+          projectUrlsBase.add(n.replace(_rxQueryHash, ''));
+        };
         var _processPage = function(results) {
           (results || []).forEach(function(m) {
             if (!m.url && !m.openUrl) return;
-            var n = normalizeUrl(m.url || m.openUrl);
-            if (!n || projectUrls.has(n)) return;
-            projectUrls.add(n);
-            projectUrlsArr.push(n);
-            projectUrlsBase.add(n.replace(_rxQueryHash, ''));
+            _addProjectUrl(m.url || m.openUrl);
+            // Dodaj też openUrl osobno jeśli różni się od url — Brand24 może przechowywać
+            // canonical URL w m.url i oryginalny URL użytkownika w m.openUrl
+            if (m.openUrl && m.url && m.openUrl !== m.url) _addProjectUrl(m.openUrl);
           });
         };
         var first = await getMentions(state.projectId, dateFrom, dateTo, [], 1);
@@ -10650,6 +10656,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.23.104",
+      "date": "2026-05-11",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "project check w module News — dodawanie obu URLi (m.url i m.openUrl) do zestawu projektowego; eliminuje false-negative gdy Brand24 przechowuje canonical URL w url a oryginalny w openUrl"}
+      ]
+    },
+    {
       "version": "0.23.103",
       "date": "2026-05-09",
       "label": "fix",
@@ -10733,22 +10748,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#06b6d4",
       "changes": [
         {"type": "ux", "text": "wskaźnik opóźnienia ⚠ w meta-bar — żółty/pomarańczowy/czerwony wg p90 ostatnich 30 requestów (progi 500/800/2000ms); tooltip z błędami, p90 ms i slow count; klik → Network Monitor; znika gdy brak slow/error requestów"}
-      ]
-    },
-    {
-      "version": "0.23.94",
-      "date": "2026-05-08",
-      "label": "perf",
-      "labelColor": "#f59e0b",
-      "changes": [
-        {"type": "perf", "text": "Overall Stats — STATS_FETCH_CONCURRENCY 10→4 (max 16 równoczesnych requestów zamiast 40)"},
-        {"type": "perf", "text": "Quick Delete — sleep(50) między batchami deletów, zapobiega przeciążeniu Brand24"},
-        {"type": "perf", "text": "_bgFetchTagstats — count-only GQL zamiast pełnych results, 2 queries per projekt równolegle"},
-        {"type": "perf", "text": "News re-check — równoległe pobieranie stron (10 naraz) zamiast sekwencyjnego while-loop"},
-        {"type": "perf", "text": "fetchProjectTagCounts — usunięto tags{title} z GQL (mniejszy payload)"},
-        {"type": "perf", "text": "_bgFetchAllProjects — cache check na starcie, pomija re-fetch gdy dane świeże (<5 min)"},
-        {"type": "perf", "text": "_fetchProjectStats — strona 1 cachowana, brak podwójnego fetcha w binary search"},
-        {"type": "perf", "text": "News URL Fallback 2 — prefix index Map O(N+M) zamiast O(N×M) nested loop"}
       ]
     },
   ];

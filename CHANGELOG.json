@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.24.15",
+    "date": "2026-05-13",
+    "label": "feat",
+    "changes": [
+      "feat: ustawienia Niestandardowe (⚙) — przycisk Synchronizuj nazwy projektów: merge GM mirror + LS, usuwa fallbacki 'Projekt cyferki', odświeża dropdown, pokazuje ile zsynchronizowano"
+    ]
+  },
+  {
     "version": "0.24.14",
     "date": "2026-05-13",
     "label": "fix",

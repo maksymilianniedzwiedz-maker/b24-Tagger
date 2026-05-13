@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.24.7",
+    "date": "2026-05-13",
+    "label": "fix",
+    "changes": [
+      "fix: panel Niestandardowe — karty (Lista/Podgląd/Formularz/Statystyki) znikają w trybie custom (responsive skip dla custom mode)",
+      "feat: przycisk AI w headerze panelu News/Niestandardowe — klikalny toggle włącz/wyłącz AI (osobno dla każdego trybu)",
+      "feat: panel Niestandardowe dostępny na każdej stronie — mini button otwiera pełny panel zamiast uproszczonego formularza",
+      "feat: selector projektu w panelu Niestandardowe gdy brak aktywnego projektu Brand24 (ładuje tagi z localStorage)",
+      "fix: injectStyles — guard przed podwójnym wstrzykiwaniem CSS (id b24t-main-styles)"
+    ]
+  },
+  {
     "version": "0.24.6",
     "date": "2026-05-13",
     "label": "feat",

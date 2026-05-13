@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.11
+// @version      0.24.12
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -115,7 +115,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.11';
+  const VERSION = '0.24.12';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -428,8 +428,8 @@
         !/^Project\s+\d+$/.test(state.projectName) && !/^Projekt\s+\d+$/.test(state.projectName)) {
       return state.projectName;
     }
-    // 3. LS.PROJECTS.name
-    var projects = lsGet(LS.PROJECTS, {});
+    // 3. LS.PROJECTS.name (lub GM mirror cross-domain)
+    var projects = _gmGetProjects();
     var pData = projects[String(projectId)];
     var lsName = pData && typeof pData === 'object' ? pData.name : null;
     if (lsName && lsName !== 'Brand24' && lsName !== 'Panel Brand24' &&
@@ -11452,6 +11452,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.12",
+      "date": "2026-05-13",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "_pnResolve krok 3 używa _gmGetProjects() zamiast lsGet(LS.PROJECTS) — nazwy projektów dostępne cross-domain przez GM mirror (fix regresjii z v0.24.11)"}
+      ]
+    },
+    {
       "version": "0.24.11",
       "date": "2026-05-13",
       "label": "fix",
@@ -11550,17 +11559,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "panel Niestandardowe znikał po kliknięciu — side tab Wzmianki dostawał pointer-events:none w trybie custom (leżał w 52px przerwie obok panelu, przechwytywał kliknięcia przez transparent overlay)"},
         {"type": "fix", "text": "gap między side tabami Wzmianki i Net — Net przesunięty z calc(50%+250px) na calc(50%+200px), taby przylegają na styku"}
-      ]
-    },
-    {
-      "version": "0.24.2",
-      "date": "2026-05-13",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "floating panel Niestandardowe widoczny ponad panelem Taggera — overlay z-index podniesiony do 2147483647 w trybie custom"},
-        {"type": "fix", "text": "padding-right overlay 12px→52px — eliminuje nakładanie floating panelu na side tab Wzmianek"},
-        {"type": "fix", "text": "przełączenie custom→news — tło overlay poprawnie przywracane do rgba(0,0,0,0.55)"}
       ]
     },
   ];

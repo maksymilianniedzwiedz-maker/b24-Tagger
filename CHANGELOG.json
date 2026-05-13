@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.24.6",
+    "date": "2026-05-13",
+    "label": "feat",
+    "changes": [
+      "feat: panel Niestandardowe — auto-scraping treści artykułu (article/main/[itemprop=articleBody]), daty (JSON-LD, meta, time[datetime]) i języka strony (html[lang], meta content-language)",
+      "feat: panel Niestandardowe — auto-detekcja kategorii z URL (FB=5, IG=2, X=1, TikTok=11, LinkedIn=12 itd.) zamiast domyślnego Web",
+      "feat: panel Niestandardowe — detekcja duplikatów przed submitem (GQL fulltext search po ostatnim segmencie URL, porównanie normalizeUrl)",
+      "feat: panel Niestandardowe — ostrzeżenie językowe gdy artykuł wykryty w innym języku niż projekt (na podstawie sufiksu _XX w nazwie projektu)",
+      "feat: panel Niestandardowe — pole URL z badge duplikatu (⚠ duplikat / ✓ URL nowy) aktualizowanym przy zmianie projektu"
+    ]
+  },
+  {
     "version": "0.24.5",
     "date": "2026-05-13",
     "label": "fix",

@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.24.13",
+    "date": "2026-05-13",
+    "label": "fix",
+    "changes": [
+      "fix: _getMissingIds() sprawdza też GM mirror — projekty wyłącznie w b24t_projects_mirror (nie w LS.PROJECTS) są teraz widoczne dla Uzupełnij nazwy",
+      "fix: _applyName chirurgicznie aktualizuje nazwę w GM mirror zamiast nadpisywać cały mirror przez lsGet(LS.PROJECTS)"
+    ]
+  },
+  {
     "version": "0.24.12",
     "date": "2026-05-13",
     "label": "fix",

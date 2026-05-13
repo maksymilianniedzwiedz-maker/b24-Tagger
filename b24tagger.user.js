@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.12
+// @version      0.24.13
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -115,7 +115,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.12';
+  const VERSION = '0.24.13';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -11452,6 +11452,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.13",
+      "date": "2026-05-13",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Uzupełnij nazwy — wykrywa też projekty wyłącznie w GM mirror (nie w LS.PROJECTS); _applyName chirurgicznie aktualizuje GM mirror zamiast nadpisywać cały"}
+      ]
+    },
+    {
       "version": "0.24.12",
       "date": "2026-05-13",
       "label": "fix",
@@ -11549,16 +11558,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "panel Niestandardowe znikał przy próbie przeciągania — drag handler ustawiał left/top jako koordynaty viewport na position:relative (element flex), co wypychało panel poza ekran; konwersja na position:fixed przy mousedown"}
-      ]
-    },
-    {
-      "version": "0.24.3",
-      "date": "2026-05-13",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "panel Niestandardowe znikał po kliknięciu — side tab Wzmianki dostawał pointer-events:none w trybie custom (leżał w 52px przerwie obok panelu, przechwytywał kliknięcia przez transparent overlay)"},
-        {"type": "fix", "text": "gap między side tabami Wzmianki i Net — Net przesunięty z calc(50%+250px) na calc(50%+200px), taby przylegają na styku"}
       ]
     },
   ];
@@ -12687,13 +12686,17 @@ function showOnboarding(onComplete) {
       var pnStatusEl = document.getElementById('b24t-pn-status');
 
       function _getMissingIds() {
-        var projects = lsGet(LS.PROJECTS, {});
-        var names    = lsGet(LS.PROJECT_NAMES, {});
-        return Object.keys(projects).filter(function(pid) {
+        var lsProjects = lsGet(LS.PROJECTS, {});
+        var gmProjects = {};
+        try { var _gr = GM_getValue('b24t_projects_mirror', null); if (_gr) gmProjects = typeof _gr === 'string' ? JSON.parse(_gr) : _gr; } catch(e) {}
+        var names = lsGet(LS.PROJECT_NAMES, {});
+        var allPids = Object.keys(lsProjects);
+        Object.keys(gmProjects).forEach(function(pid) { if (allPids.indexOf(pid) < 0) allPids.push(pid); });
+        return allPids.filter(function(pid) {
           if (names[pid]) return false;
-          var lsName = (projects[pid] || {}).name || '';
-          return !lsName || lsName.length < 3 || lsName === 'Brand24' || lsName === 'Panel Brand24' ||
-                 /^(Project|Projekt)\s+\d+$/.test(lsName);
+          var name = ((lsProjects[pid] || gmProjects[pid] || {}).name) || '';
+          return !name || name.length < 3 || name === 'Brand24' || name === 'Panel Brand24' ||
+                 /^(Project|Projekt)\s+\d+$/.test(name);
         });
       }
 
@@ -12721,7 +12724,11 @@ function showOnboarding(onComplete) {
             _pnSet(parseInt(pid), name);
             var ps = lsGet(LS.PROJECTS, {});
             if (ps[String(pid)]) { ps[String(pid)].name = name; lsSet(LS.PROJECTS, ps); }
-            _gmSaveProjects(ps);
+            try {
+              var _gmr = GM_getValue('b24t_projects_mirror', null);
+              var _gmp = _gmr ? (typeof _gmr === 'string' ? JSON.parse(_gmr) : _gmr) : {};
+              if (_gmp[String(pid)]) { _gmp[String(pid)].name = name; GM_setValue('b24t_projects_mirror', JSON.stringify(_gmp)); }
+            } catch(e) {}
             found++;
           }
 

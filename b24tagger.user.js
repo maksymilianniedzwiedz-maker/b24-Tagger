@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.2
+// @version      0.24.3
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.2';
+  const VERSION = '0.24.3';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3731,7 +3731,7 @@
       #b24t-news-side-tab.active:hover { background: #4f46e5; }
       /* ── NETWORK MONITOR SIDE TAB ── */
       #b24t-nm-tab {
-        position: fixed; right: 0; top: calc(50% + 250px);
+        position: fixed; right: 0; top: calc(50% + 200px);
         z-index: 2147483639; border-radius: 10px 0 0 10px; border: 1px solid var(--b24t-border); border-right: none;
         padding: 12px 9px; cursor: pointer; display: none;
         flex-direction: column; align-items: center; gap: 4px;
@@ -8671,6 +8671,9 @@ function showOnboarding(onComplete) {
       }
       if (header) header.style.cursor = 'move';
       if (!newsState.formOnly) _toggleFormOnly(true);
+      // W custom mode side tab nie powinien reagować na kliknięcia (leży w przerwie 52px za panelem)
+      var _nstC = document.getElementById('b24t-news-side-tab');
+      if (_nstC) _nstC.style.pointerEvents = 'none';
     } else {
       if (overlay) {
         overlay.style.background    = 'rgba(0,0,0,0.55)';
@@ -8686,6 +8689,8 @@ function showOnboarding(onComplete) {
       }
       if (header) header.style.cursor = '';
       if (newsState.formOnly) _toggleFormOnly(false);
+      var _nstN = document.getElementById('b24t-news-side-tab');
+      if (_nstN) _nstN.style.pointerEvents = '';
     }
 
     // Wypełnij dropdown prompta dla odpowiedniego trybu
@@ -8858,6 +8863,7 @@ function showOnboarding(onComplete) {
     if (nst) {
       nst.classList.remove('active');
       nst.style.display = 'flex';
+      nst.style.pointerEvents = '';
     }
   }
 
@@ -11107,6 +11113,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.3",
+      "date": "2026-05-13",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "panel Niestandardowe znikał po kliknięciu — side tab Wzmianki dostawał pointer-events:none w trybie custom (leżał w 52px przerwie obok panelu, przechwytywał kliknięcia przez transparent overlay)"},
+        {"type": "fix", "text": "gap między side tabami Wzmianki i Net — Net przesunięty z calc(50%+250px) na calc(50%+200px), taby przylegają na styku"}
+      ]
+    },
+    {
       "version": "0.24.2",
       "date": "2026-05-13",
       "label": "fix",
@@ -11198,17 +11214,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#6366f1",
       "changes": [
         {"type": "feat", "text": "przycisk 'Testuj klucz API' w ustawieniach AI — sprawdza poprawność klucza przez minimalny request do api.anthropic.com; wyniki inline: ✓ działa / ✗ błędny klucz / ✗ brak połączenia / ⚠ limit / ✗ timeout"}
-      ]
-    },
-    {
-      "version": "0.23.99",
-      "date": "2026-05-08",
-      "label": "ux",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "ux", "text": "ikony badge'ów News — 📅 przy dacie, 🌐 przy języku (spójność z rich preview i legendą)"},
-        {"type": "fix", "text": "badge 'Dodano' — usunięto duplikat ✓ w etykiecie (było '✓ Dodano ✓')"},
-        {"type": "ux", "text": "badge typu niepewnego ? → ❓; legenda: dodano brakujący wpis ❓ Typ niepewny"}
       ]
     },
   ];

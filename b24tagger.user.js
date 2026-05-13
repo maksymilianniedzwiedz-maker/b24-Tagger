@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.1
+// @version      0.24.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.1';
+  const VERSION = '0.24.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8662,7 +8662,8 @@ function showOnboarding(onComplete) {
         overlay.style.pointerEvents = 'none';
         overlay.style.alignItems    = 'flex-start';
         overlay.style.justifyContent = 'flex-end';
-        overlay.style.padding       = '60px 12px 0 0';
+        overlay.style.padding       = '60px 52px 0 0';
+        overlay.style.zIndex        = '2147483647';
       }
       if (panelMain) {
         panelMain.style.pointerEvents = 'auto';
@@ -8672,11 +8673,12 @@ function showOnboarding(onComplete) {
       if (!newsState.formOnly) _toggleFormOnly(true);
     } else {
       if (overlay) {
-        overlay.style.background    = '';
+        overlay.style.background    = 'rgba(0,0,0,0.55)';
         overlay.style.pointerEvents = '';
         overlay.style.alignItems    = 'center';
         overlay.style.justifyContent = 'center';
         overlay.style.padding       = '';
+        overlay.style.zIndex        = '2147483632';
       }
       if (panelMain) {
         panelMain.style.pointerEvents = '';
@@ -11105,6 +11107,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.2",
+      "date": "2026-05-13",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "floating panel Niestandardowe widoczny ponad panelem Taggera — overlay z-index podniesiony do 2147483647 w trybie custom"},
+        {"type": "fix", "text": "padding-right overlay 12px→52px — eliminuje nakładanie floating panelu na side tab Wzmianek"},
+        {"type": "fix", "text": "przełączenie custom→news — tło overlay poprawnie przywracane do rgba(0,0,0,0.55)"}
+      ]
+    },
+    {
       "version": "0.24.1",
       "date": "2026-05-11",
       "label": "fix",
@@ -11196,17 +11209,6 @@ function showOnboarding(onComplete) {
         {"type": "ux", "text": "ikony badge'ów News — 📅 przy dacie, 🌐 przy języku (spójność z rich preview i legendą)"},
         {"type": "fix", "text": "badge 'Dodano' — usunięto duplikat ✓ w etykiecie (było '✓ Dodano ✓')"},
         {"type": "ux", "text": "badge typu niepewnego ? → ❓; legenda: dodano brakujący wpis ❓ Typ niepewny"}
-      ]
-    },
-    {
-      "version": "0.23.98",
-      "date": "2026-05-08",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "badge AI — 4 kategorie (✅ Relevant, ⚠️ Borderline, ❌ Irrelevant, 🚫 Spam) zamiast binarnego 🤖; parsowanie pola verdict z fallbackiem na relevant:bool"},
-        {"type": "feat", "text": "legenda oznaczeń — redesign: 2-kolumnowy układ z sekcjami SCANNER/STATUS/OCENA AI/METADANE + karta JAK DZIAŁA SCORING"},
-        {"type": "fix", "text": "scoring skanera — title+h1 jako jeden sygnał (+8 zamiast +13), tagi redakcyjne +4→+6, cap akapitów +3→+4"}
       ]
     },
   ];

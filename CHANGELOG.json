@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.24.16",
+    "date": "2026-05-13",
+    "label": "fix",
+    "changes": [
+      "fix: _gmGetProjectNames scal LS.PROJECTS + LS.PROJECT_NAMES przy sync — nazwy projektów cross-domain bez klikania (wizyta na brand24.com wystarczy)"
+    ]
+  },
+  {
     "version": "0.24.15",
     "date": "2026-05-13",
     "label": "feat",

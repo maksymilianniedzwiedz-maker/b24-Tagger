@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.17
+// @version      0.24.18
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -115,7 +115,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.17';
+  const VERSION = '0.24.18';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -9070,17 +9070,23 @@ function showOnboarding(onComplete) {
     if (syncBtn) {
       syncBtn.addEventListener('click', function() {
         syncMsg.style.color = 'var(--b24t-text-muted)';
-        syncMsg.textContent = 'Czyszczę i przebudowuję...';
+        syncMsg.textContent = 'Sprawdzam...';
         var isFb = function(n) {
           return !n || n.length < 3 || n === 'Brand24' || n === 'Panel Brand24' || /^(Project|Projekt)\s+\d+$/.test(n);
         };
-        // 1. Wyczyść stare mirrory
+        // Najpierw sprawdź czy LS ma dane — dostępne tylko na brand24.com
+        var lsProj  = lsGet(LS.PROJECTS, {});
+        var lsNames = lsGet(LS.PROJECT_NAMES, {});
+        if (Object.keys(lsProj).length === 0 && Object.keys(lsNames).length === 0) {
+          syncMsg.style.color = '#f59e0b';
+          syncMsg.textContent = 'Otwórz brand24.com i kliknij ten przycisk tam — tutaj brak danych do odbudowania.';
+          return;
+        }
+        // Wyczyść stare mirrory (tylko jeśli mamy z czego odbudować)
         try { GM_setValue('b24t_projects_mirror', '{}'); } catch(e) {}
         try { GM_setValue('b24t_project_names_mirror', '{}'); } catch(e) {}
         _gmPNSynced = false;
-        // 2. Odbuduj wyłącznie z LS (dostępne tylko na brand24.com)
-        var lsProj  = lsGet(LS.PROJECTS, {});
-        var lsNames = lsGet(LS.PROJECT_NAMES, {});
+        // Odbuduj wyłącznie z LS
         var newProj = {}, newNames = {};
         Object.keys(lsProj).forEach(function(pid) {
           var p = lsProj[pid] || {};
@@ -9092,20 +9098,11 @@ function showOnboarding(onComplete) {
         Object.keys(lsNames).forEach(function(pid) {
           if (!isFb(lsNames[pid])) newNames[String(pid)] = lsNames[pid];
         });
-        // 3. Zapisz nowe mirrory
         try { GM_setValue('b24t_projects_mirror', JSON.stringify(newProj)); } catch(e) {}
         _gmSaveProjectNames(newNames);
-        // 4. Odśwież dropdown
         _newsRefillProjectSelect();
-        // 5. Feedback
-        var cnt = Object.keys(newProj).length;
-        if (cnt === 0) {
-          syncMsg.style.color = '#f59e0b';
-          syncMsg.textContent = 'Brak projekt\xF3w w pamięci — otw\xF3rz brand24.com i kliknij ponownie.';
-        } else {
-          syncMsg.style.color = '#22c55e';
-          syncMsg.textContent = 'Przebudowano: ' + cnt + ' projekt\xF3w.';
-        }
+        syncMsg.style.color = '#22c55e';
+        syncMsg.textContent = 'Przebudowano: ' + Object.keys(newProj).length + ' projekt\xF3w.';
       });
     }
 
@@ -11520,6 +11517,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.18",
+      "date": "2026-05-13",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Reset i przebuduj — guard: nie czyści mirrorów gdy LS pusty (non-brand24); komunikat kieruje na brand24.com zamiast kasowania danych i znikania przycisku"}
+      ]
+    },
+    {
       "version": "0.24.17",
       "date": "2026-05-13",
       "label": "fix",
@@ -11608,16 +11614,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "panel Niestandardowe — ⚙ ustawienia w headerze: AI toggle + prompt selector"},
         {"type": "feat", "text": "panel Niestandardowe — dioda ●Panel sprawdzania logowania do Brand24"},
         {"type": "fix", "text": "panel Niestandardowe — usunięty przycisk Importuj URLe, tagi otwarte domyślnie, więcej wysokości"}
-      ]
-    },
-    {
-      "version": "0.24.8",
-      "date": "2026-05-13",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "mini button na zewnętrznych stronach — localStorage per-domena, dane Brand24 niedostępne; fix: GM_getValue/GM_setValue jako cross-domain mirror projektów"},
-        {"type": "feat", "text": "_gmGetProjects() — fallback do GM storage gdy localStorage pusty; _gmSaveProjects() — mirror przy załadowaniu projektu na Brand24"}
       ]
     },
   ];

@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.24.18",
+    "date": "2026-05-13",
+    "label": "fix",
+    "changes": [
+      "fix: Reset i przebuduj — guard przed czyszczeniem mirrorów gdy LS pusty (non-brand24); komunikat kieruje na brand24.com zamiast kasowania danych"
+    ]
+  },
+  {
     "version": "0.24.17",
     "date": "2026-05-13",
     "label": "fix",

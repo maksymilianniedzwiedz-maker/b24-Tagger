@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.24.14",
+    "date": "2026-05-13",
+    "label": "fix",
+    "changes": [
+      "fix: _gmGetProjectNames() — lazy sync LS.PROJECT_NAMES → b24t_project_names_mirror przy pierwszym wywołaniu na brand24.com; nazwy projektów propagują się cross-domain bez klikania Uzupełnij nazwy"
+    ]
+  },
+  {
     "version": "0.24.13",
     "date": "2026-05-13",
     "label": "fix",

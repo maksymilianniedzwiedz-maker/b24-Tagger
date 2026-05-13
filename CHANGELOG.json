@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.24.10",
+    "date": "2026-05-13",
+    "label": "feat",
+    "changes": [
+      "ustawienia ⚙ — sekcja Projekty: przycisk Uzupełnij nazwy pobiera brakujące nazwy projektów z Brand24 GQL i zapisuje do localStorage",
+      "panel Niestandardowe — auto-scraping treści: tylko pierwszy akapit artykułu (poprzednio cała strona do 3000 znaków)",
+      "panel Niestandardowe — domyślna kategoria zmieniona z Web (8) na News (7) dla nierozpoznanych domen"
+    ]
+  },
+  {
     "version": "0.24.9",
     "date": "2026-05-13",
     "label": "feat",

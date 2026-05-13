@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.7
+// @version      0.24.8
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -11,6 +11,8 @@
 // @downloadURL  https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/b24tagger.user.js
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @connect       hooks.slack.com
 // @connect       raw.githubusercontent.com
 // @connect       cdn.jsdelivr.net
@@ -113,7 +115,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.7';
+  const VERSION = '0.24.8';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -218,6 +220,20 @@
   const lsSet = (key, val) => {
     try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
   };
+
+  // GM storage — cross-domain mirror dla kluczowych danych (GM_getValue działa na każdej stronie)
+  function _gmGetProjects() {
+    var fromLS = lsGet(LS.PROJECTS, null);
+    if (fromLS && Object.keys(fromLS).length > 0) return fromLS;
+    try {
+      var raw = GM_getValue('b24t_projects_mirror', null);
+      if (raw) return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch(e) {}
+    return {};
+  }
+  function _gmSaveProjects(projects) {
+    try { GM_setValue('b24t_projects_mirror', JSON.stringify(projects)); } catch(e) {}
+  }
 
   // ── AI SETTINGS HELPERS ────────────────────────────────────────────────────
 
@@ -5420,6 +5436,7 @@
         updatedAt: new Date().toISOString(),
       };
       lsSet(LS.PROJECTS, projects);
+      _gmSaveProjects(projects); // mirror do GM — dostępne na każdej stronie
       // Zapisz nazwę do trwałego resolvera — _pnSet ignoruje fallbacki
       _pnSet(projectId, state.projectName);
 
@@ -8623,7 +8640,7 @@ function showOnboarding(onComplete) {
   function _newsRefillProjectSelect() {
     var sel = document.getElementById('b24t-news-f-project-sel');
     if (!sel) return;
-    var projects = lsGet(LS.PROJECTS, {});
+    var projects = _gmGetProjects();
     var pids = Object.keys(projects);
     sel.innerHTML = '<option value="">— wybierz projekt —</option>' +
       pids.map(function(pid) {
@@ -9516,7 +9533,7 @@ function showOnboarding(onComplete) {
       _projSelEl.addEventListener('change', function() {
         var pid = _projSelEl.value;
         if (!pid) return;
-        var projects = lsGet(LS.PROJECTS, {});
+        var projects = _gmGetProjects();
         var pData = projects[pid] || {};
         state.projectId = parseInt(pid);
         state.tags = pData.tagIds || {};
@@ -11211,6 +11228,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.8",
+      "date": "2026-05-13",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "mini button na zewnętrznych stronach — localStorage per-domena, dane Brand24 niedostępne; fix: GM_getValue/GM_setValue jako cross-domain mirror projektów"},
+        {"type": "feat", "text": "_gmGetProjects() — fallback do GM storage gdy localStorage pusty; _gmSaveProjects() — mirror przy załadowaniu projektu na Brand24"}
+      ]
+    },
+    {
       "version": "0.24.7",
       "date": "2026-05-13",
       "label": "fix",
@@ -11310,15 +11337,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "wrongcountry ma priorytet nad blocked/timeout — URL z obcego kraju oznaczany wrongcountry niezależnie od wyniku skanu; pre-scan skip eliminuje niepotrzebny HTTP request"},
         {"type": "fix", "text": "usunięto retry przy timeout (było 8s×2=16s, teraz 10s×1) — krótszy czas blokowania na nieodpowiadających stronach"},
         {"type": "ux", "text": "domain-skip — po 2 timeoutach z tej samej domeny kolejne URLi skipowane natychmiast; timer ETA 'Skanowanie: X/Y — ~Xs pozostało' na pasku postępu"}
-      ]
-    },
-    {
-      "version": "0.23.104",
-      "date": "2026-05-11",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "project check w module News — dodawanie obu URLi (m.url i m.openUrl) do zestawu projektowego; eliminuje false-negative gdy Brand24 przechowuje canonical URL w url a oryginalny w openUrl"}
       ]
     },
   ];
@@ -16033,7 +16051,7 @@ Tej operacji nie można cofnąć.`)) {
   function _initMiniMentionButton() {
     // Nie pokazuj w iframe ani jeśli użytkownik nigdy nie używał wtyczki (brak zapisanych projektów)
     try { if (window.top !== window.self) return; } catch(e) { return; }
-    var projects = lsGet(LS.PROJECTS, {});
+    var projects = _gmGetProjects();
     if (!projects || Object.keys(projects).length === 0) return;
     if (document.getElementById('b24t-mini-mention-btn')) return;
 

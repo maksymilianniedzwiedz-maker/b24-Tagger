@@ -1,5 +1,21 @@
 [
   {
+    "version": "0.24.9",
+    "date": "2026-05-13",
+    "label": "feat",
+    "changes": [
+      "panel Niestandardowe — skanowanie bieżącej strony (treść, tytuł, data, kategoria, metryki social media: Twitter/X, Facebook, LinkedIn, YouTube, Reddit)",
+      "panel Niestandardowe — dark/light mode zgodny z ustawieniami wtyczki (mirror przez GM_setValue cross-domain)",
+      "panel Niestandardowe — przycisk ✚ B24 przesunięty na 1/3 wysokości ekranu od góry, większy (54px)",
+      "panel Niestandardowe — wybór projektu zawsze widoczny (dropdown nie znika po wyborze), ostatni projekt zapamiętywany cross-domain",
+      "panel Niestandardowe — przycisk ⚙ ustawień w headerze: AI toggle + wybór promptu",
+      "panel Niestandardowe — dioda sprawdzania logowania do Brand24 (●Panel) obok istniejącej diody CMS",
+      "panel Niestandardowe — check języka strony vs projekt przy zmianie projektu",
+      "panel Niestandardowe — tagi otwarte domyślnie, więcej wysokości panelu (padding 60→20px od góry)",
+      "panel Niestandardowe — usunięty przycisk Importuj URLe (niedziałający) z headera"
+    ]
+  },
+  {
     "version": "0.24.8",
     "date": "2026-05-13",
     "label": "fix",

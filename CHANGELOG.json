@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.24.5",
+    "date": "2026-05-13",
+    "label": "fix",
+    "changes": [
+      "fix: przyciski Stats/Legenda/Języki ukryte w trybie Niestandardowe — panel custom zawiera tylko formularz",
+      "fix: lag przy przeciąganiu panelu — offsetWidth/offsetHeight cachowane przy mousedown zamiast czytane przy każdym mousemove (eliminuje reflow)"
+    ]
+  },
+  {
     "version": "0.24.4",
     "date": "2026-05-13",
     "label": "fix",

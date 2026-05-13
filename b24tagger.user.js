@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.9
+// @version      0.24.10
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -115,7 +115,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.9';
+  const VERSION = '0.24.10';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6985,9 +6985,9 @@ function showOnboarding(onComplete) {
   // 1=X/Twitter, 2=Instagram, 3=Blogs, 4=Videos, 5=Facebook, 6=Other Socials, 7=News,
   // 8=Web, 9=Podcasts, 10=Newsletter, 11=TikTok, 12=LinkedIn
   function _detectCategoryFromUrl(url) {
-    if (!url) return 8;
+    if (!url) return 7;
     var h;
-    try { h = new URL(url).hostname.toLowerCase().replace(/^www\./, ''); } catch(e) { return 8; }
+    try { h = new URL(url).hostname.toLowerCase().replace(/^www\./, ''); } catch(e) { return 7; }
     if (/(^|\.)facebook\.com$|(^|\.)fb\.com$|(^|\.)fb\.watch$/.test(h)) return 5;
     if (/(^|\.)instagram\.com$/.test(h)) return 2;
     if (/(^|\.)(twitter\.com|x\.com|t\.co)$/.test(h)) return 1;
@@ -6997,7 +6997,7 @@ function showOnboarding(onComplete) {
     if (/(^|\.)reddit\.com$|(^|\.)pinterest\.com$|(^|\.)quora\.com$|(^|\.)threads\.net$|(^|\.)tumblr\.com$|(^|\.)snapchat\.com$|(^|\.)mastodon\./.test(h)) return 6;
     if (/(^|\.)(spotify\.com|anchor\.fm|podcasts\.apple\.com|podcasts\.google\.com|soundcloud\.com|spreaker\.com|buzzsprout\.com)$/.test(h)) return 9;
     if (/(^|\.)(medium\.com|substack\.com|wordpress\.com|blogspot\.com|blogger\.com|tumblr\.com|wykop\.pl)$/.test(h)) return 3;
-    return 8; // Web (default)
+    return 7; // News (default — najczęściej dodawana kategoria)
   }
 
   // Ustawienia importu — zapisywane w localStorage
@@ -11417,6 +11417,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.10",
+      "date": "2026-05-13",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "ustawienia ⚙ — sekcja Projekty: przycisk Uzupełnij nazwy pobiera brakujące nazwy projektów z Brand24 GQL i zapisuje do localStorage"},
+        {"type": "fix", "text": "panel Niestandardowe — auto-scraping treści: tylko pierwszy akapit (poprzednio cała strona do 3000 znaków)"},
+        {"type": "fix", "text": "panel Niestandardowe — domyślna kategoria zmieniona z Web (8) na News (7) dla nierozpoznanych domen"}
+      ]
+    },
+    {
       "version": "0.24.9",
       "date": "2026-05-13",
       "label": "feature",
@@ -11517,19 +11528,6 @@ function showOnboarding(onComplete) {
         {"type": "ux", "text": "ESC zamyka panel importu URLi lub overlay Wzmianek (nie aktywuje się gdy fokus w polu tekstowym)"},
         {"type": "ux", "text": "import URLi w trybie Niestandardowe ukrywa sekcje Słowa kluczowe i Opis marki"},
         {"type": "ux", "text": "wybór promptu AI przeniesiony z ⚙ do paneli — osobny dla News i Niestandardowe; opcja 'auto (z domeny)' usunięta z kategorii"}
-      ]
-    },
-    {
-      "version": "0.24.0",
-      "date": "2026-05-11",
-      "label": "feature",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "tryb Niestandardowe — boczny przycisk 'News' przemianowany na 'Wzmianki'; kliknięcie otwiera launcher z 2 kafelkami (News / Niestandardowe)"},
-        {"type": "feat", "text": "tryb Niestandardowe — bez filtra słów kluczowych, bez wymuszenia tagu 'dodane'; auto-detect kategorii z domeny (Facebook=5, Instagram=2, X=1, YouTube=4, TikTok=11, LinkedIn=12, Reddit=6, Spotify=9, Medium=3, reszta=8)"},
-        {"type": "feat", "text": "dodatkowe pola w trybie Niestandardowe — Likes, Pageviews, Shares, Comments (opcjonalne); edycja URL i kraju"},
-        {"type": "feat", "text": "tryb 'tylko formularz' w Niestandardowe — toggle w headerze chowa listę i podgląd, formularz na pełnej szerokości w zwężonym panelu"},
-        {"type": "feat", "text": "floating mini-przycisk ✚B24 na obcych stronach (poza /panel/results/) — kliknięcie otwiera standalone formularz z auto URL + tytułem, wyborem projektu z cache LS, CMS check, wszystkie pola Brand24 + tagi projektu, submit przez GM_xmlhttpRequest"}
       ]
     },
   ];
@@ -12404,6 +12402,16 @@ function showOnboarding(onComplete) {
           '<div style="font-size:11px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Kanał aktualizacji</div>' +
           channelHtml +
         '</div>' +
+        '<div style="padding:12px 20px 14px;border-top:1px solid var(--b24t-border-sub);">' +
+          '<div style="font-size:11px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Projekty</div>' +
+          '<div style="font-size:11px;color:var(--b24t-text-muted);margin-bottom:9px;">' +
+            'Projekty bez nazwy w pamięci: <strong id="b24t-pn-missing-count" style="color:var(--b24t-text);">...</strong>' +
+          '</div>' +
+          '<div style="display:flex;align-items:center;gap:8px;">' +
+            '<button id="b24t-pn-fill" style="font-size:11px;padding:4px 12px;border-radius:7px;border:1px solid var(--b24t-border);background:transparent;color:var(--b24t-text-muted);cursor:pointer;">Uzupełnij nazwy</button>' +
+            '<span id="b24t-pn-status" style="font-size:10px;color:var(--b24t-text-faint);"></span>' +
+          '</div>' +
+        '</div>' +
         '<div style="padding:12px 20px 16px;border-top:1px solid var(--b24t-border-sub);">' +
           '<div style="font-size:11px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Ustawienia AI</div>' +
           '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">' +
@@ -12637,6 +12645,92 @@ function showOnboarding(onComplete) {
               naTestResult.textContent = '✗ Błąd ' + (repoOrStatus || ''); naTestResult.style.color = '#f87171';
             }
           });
+        });
+      }
+    })();
+
+    // Project names wiring
+    (function() {
+      var pnCountEl  = document.getElementById('b24t-pn-missing-count');
+      var pnFillBtn  = document.getElementById('b24t-pn-fill');
+      var pnStatusEl = document.getElementById('b24t-pn-status');
+
+      function _getMissingIds() {
+        var projects = lsGet(LS.PROJECTS, {});
+        var names    = lsGet(LS.PROJECT_NAMES, {});
+        return Object.keys(projects).filter(function(pid) {
+          if (names[pid]) return false;
+          var lsName = (projects[pid] || {}).name || '';
+          return !lsName || lsName.length < 3 || lsName === 'Brand24' || lsName === 'Panel Brand24' ||
+                 /^(Project|Projekt)\s+\d+$/.test(lsName);
+        });
+      }
+
+      var initialMissing = _getMissingIds();
+      if (pnCountEl) pnCountEl.textContent = initialMissing.length;
+      if (pnFillBtn && initialMissing.length === 0) pnFillBtn.disabled = true;
+
+      if (pnFillBtn) {
+        pnFillBtn.addEventListener('click', function() {
+          if (!state.tokenHeaders) {
+            if (pnStatusEl) { pnStatusEl.style.color = '#f87171'; pnStatusEl.textContent = 'Brak tokenu — otwórz projekt w Brand24'; }
+            return;
+          }
+          var missingIds = _getMissingIds();
+          if (!missingIds.length) {
+            if (pnStatusEl) { pnStatusEl.style.color = '#22c55e'; pnStatusEl.textContent = 'Wszystkie nazwy są znane'; }
+            return;
+          }
+          pnFillBtn.disabled = true;
+          if (pnStatusEl) { pnStatusEl.style.color = 'var(--b24t-text-faint)'; pnStatusEl.textContent = '⏳ Szukam...'; }
+
+          var found = 0;
+
+          function _applyName(pid, name) {
+            _pnSet(parseInt(pid), name);
+            var ps = lsGet(LS.PROJECTS, {});
+            if (ps[String(pid)]) { ps[String(pid)].name = name; lsSet(LS.PROJECTS, ps); }
+            found++;
+          }
+
+          function _finish() {
+            var stillMissing = _getMissingIds().length;
+            pnFillBtn.disabled = stillMissing === 0;
+            if (pnCountEl) pnCountEl.textContent = stillMissing;
+            if (pnStatusEl) {
+              if (found > 0) {
+                pnStatusEl.style.color = '#22c55e';
+                pnStatusEl.textContent = '✓ Uzupełniono ' + found + ' nazw';
+              } else {
+                pnStatusEl.style.color = '#f59e0b';
+                pnStatusEl.textContent = 'Nie znaleziono — otwórz projekty ręcznie w Brand24';
+              }
+            }
+          }
+
+          function _runPerProject(pending) {
+            if (!pending.length) { _finish(); return; }
+            var pid = pending.shift();
+            if (pnStatusEl) pnStatusEl.textContent = '⏳ ' + (missingIds.length - pending.length) + '/' + missingIds.length + '...';
+            gql('getProject', { id: parseInt(pid) },
+              'query getProject($id: Int!) { getProject(id: $id) { id name } }', { silent: true })
+              .then(function(d) {
+                if (d && d.getProject && d.getProject.name) _applyName(pid, d.getProject.name);
+              })
+              .catch(function() {})
+              .then(function() { _runPerProject(pending); });
+          }
+
+          // Attempt 1: getProjects — pobierz wszystkie projekty naraz
+          gql('getProjects', {}, 'query getProjects { getProjects { id name } }', { silent: true })
+            .then(function(data) {
+              if (data && Array.isArray(data.getProjects)) {
+                data.getProjects.forEach(function(p) { if (p && p.name) _applyName(p.id, p.name); });
+                if (found > 0) { _finish(); return; }
+              }
+              _runPerProject(missingIds.slice());
+            })
+            .catch(function() { _runPerProject(missingIds.slice()); });
         });
       }
     })();
@@ -16235,8 +16329,11 @@ Tej operacji nie można cofnąć.`)) {
       ['script','style','nav','header','footer','aside','figure','figcaption'].forEach(function(sel) {
         try { clone.querySelectorAll(sel).forEach(function(el) { el.remove(); }); } catch(e) {}
       });
-      var txt = (clone.innerText || clone.textContent || '').replace(/\s+/g, ' ').trim();
-      result.content = txt.substring(0, 3000);
+      var firstP = clone.querySelector('p');
+      var txt = firstP
+        ? (firstP.innerText || firstP.textContent || '').replace(/\s+/g, ' ').trim()
+        : (clone.innerText || clone.textContent || '').replace(/\s+/g, ' ').trim().substring(0, 600);
+      result.content = txt.substring(0, 600);
     }
     return result;
   }

@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.24.11",
+    "date": "2026-05-13",
+    "label": "fix",
+    "changes": [
+      "fix: nazwy projektów cross-domain — GM mirror dla PROJECT_NAMES, _pnSet i _pnGet synchronizują GM storage, dropdown Niestandardowe używa _pnResolve",
+      "feat: wybór kraju w panelu Niestandardowe i mini panelu — dropdown z listą 49 krajów zamiast pola tekstowego",
+      "fix: auto-fill treści — łączy akapity do 200 znaków (maks. 5), przycina na granicy zdania (ostatnia kropka) zamiast twardego cięcia w środku"
+    ]
+  },
+  {
     "version": "0.24.10",
     "date": "2026-05-13",
     "label": "feat",

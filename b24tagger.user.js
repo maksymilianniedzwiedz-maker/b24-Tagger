@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.10
+// @version      0.24.11
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -115,7 +115,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.10';
+  const VERSION = '0.24.11';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -233,6 +233,18 @@
   }
   function _gmSaveProjects(projects) {
     try { GM_setValue('b24t_projects_mirror', JSON.stringify(projects)); } catch(e) {}
+  }
+  function _gmGetProjectNames() {
+    var fromLS = lsGet(LS.PROJECT_NAMES, null);
+    if (fromLS && Object.keys(fromLS).length > 0) return fromLS;
+    try {
+      var raw = GM_getValue('b24t_project_names_mirror', null);
+      if (raw) return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch(e) {}
+    return {};
+  }
+  function _gmSaveProjectNames(names) {
+    try { GM_setValue('b24t_project_names_mirror', JSON.stringify(names)); } catch(e) {}
   }
 
   // ── AI SETTINGS HELPERS ────────────────────────────────────────────────────
@@ -389,7 +401,7 @@
   // Priorytet przy odczycie nazwy: PROJECT_NAMES > LS.PROJECTS.name > state > fallback
 
   function _pnGet(projectId) {
-    var names = lsGet(LS.PROJECT_NAMES, {});
+    var names = _gmGetProjectNames();
     return names[String(projectId)] || null;
   }
 
@@ -404,6 +416,7 @@
     if (names[String(projectId)] === name) return; // bez zmian
     names[String(projectId)] = name;
     lsSet(LS.PROJECT_NAMES, names);
+    _gmSaveProjectNames(names);
   }
 
   function _pnResolve(projectId) {
@@ -8638,6 +8651,28 @@ function showOnboarding(onComplete) {
     chip.title = enabled ? 'AI aktywne — kliknij aby wyłączyć' : 'AI nieaktywne — kliknij aby włączyć';
   }
 
+  var _COUNTRIES = [
+    ['','— (auto) —'],['AL','AL — Albania'],['AM','AM — Armenia'],['AR','AR — Argentina'],
+    ['AT','AT — Austria'],['AU','AU — Australia'],['AZ','AZ — Azerbejdżan'],
+    ['BA','BA — Bośnia'],['BE','BE — Belgia'],['BG','BG — Bułgaria'],['BR','BR — Brazylia'],
+    ['CA','CA — Kanada'],['CH','CH — Szwajcaria'],['CN','CN — Chiny'],['CZ','CZ — Czechy'],
+    ['DE','DE — Niemcy'],['DK','DK — Dania'],['EE','EE — Estonia'],['ES','ES — Hiszpania'],
+    ['FI','FI — Finlandia'],['FR','FR — Francja'],['GB','GB — Wielka Brytania'],
+    ['GE','GE — Gruzja'],['GR','GR — Grecja'],['HR','HR — Chorwacja'],['HU','HU — Węgry'],
+    ['IE','IE — Irlandia'],['IN','IN — Indie'],['IT','IT — Włochy'],['JP','JP — Japonia'],
+    ['KR','KR — Korea Pd.'],['KZ','KZ — Kazachstan'],['LT','LT — Litwa'],['LV','LV — Łotwa'],
+    ['MD','MD — Mołdawia'],['ME','ME — Czarnogóra'],['MK','MK — Macedonia'],
+    ['NL','NL — Holandia'],['NO','NO — Norwegia'],['PL','PL — Polska'],['PT','PT — Portugalia'],
+    ['RO','RO — Rumunia'],['RS','RS — Serbia'],['RU','RU — Rosja'],['SE','SE — Szwecja'],
+    ['SK','SK — Słowacja'],['TR','TR — Turcja'],['UA','UA — Ukraina'],['US','US — USA'],
+    ['XK','XK — Kosowo'],
+  ];
+  function _countryOptionsHtml(selCode) {
+    return _COUNTRIES.map(function(c) {
+      return '<option value="' + c[0] + '"' + (c[0] === (selCode || '') ? ' selected' : '') + '>' + c[1] + '</option>';
+    }).join('');
+  }
+
   function _newsRefillProjectSelect() {
     var sel = document.getElementById('b24t-news-f-project-sel');
     if (!sel) return;
@@ -8645,7 +8680,7 @@ function showOnboarding(onComplete) {
     var pids = Object.keys(projects);
     sel.innerHTML = '<option value="">— wybierz projekt —</option>' +
       pids.map(function(pid) {
-        var pName = (projects[pid] && projects[pid].name) || ('Projekt ' + pid);
+        var pName = _pnResolve(pid);
         return '<option value="' + pid + '">' + pName.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</option>';
       }).join('');
     if (state.projectId) sel.value = String(state.projectId);
@@ -8678,9 +8713,9 @@ function showOnboarding(onComplete) {
     // Kraj — w Niestandardowe edytowalny (użytkownik może nadpisać kraj projektu)
     var countryInput = document.getElementById('b24t-news-f-country');
     if (countryInput) {
-      countryInput.readOnly = !isCustom;
+      countryInput.style.pointerEvents = isCustom ? '' : 'none';
       countryInput.style.opacity = isCustom ? '1' : '0.6';
-      countryInput.title = isCustom ? 'Edytuj kraj (kod 2-literowy, np. PL, TR)' : '';
+      countryInput.title = isCustom ? 'Wybierz kraj' : '';
     }
 
     // Tag "dodane" w Niestandardowe — nie auto-zaznaczamy
@@ -9322,7 +9357,7 @@ function showOnboarding(onComplete) {
       '<div style="display:flex;gap:8px;flex-shrink:0;">',
         '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
           '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">KRAJ</label>',
-          '<input id="b24t-news-f-country" type="text" readonly style="' + _newsInputCss(t) + 'opacity:0.6;" placeholder="z proj.">',
+          '<select id="b24t-news-f-country" style="' + _newsInputCss(t) + 'opacity:0.6;">' + _countryOptionsHtml('') + '</select>',
           '<span id="b24t-news-proj-lang-hint" style="display:none;font-size:8px;color:' + t.textFaint + ';text-align:center;letter-spacing:0.02em;"></span>',
         '</div>',
         '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
@@ -11417,6 +11452,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.11",
+      "date": "2026-05-13",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "nazwy projektów cross-domain — GM mirror dla PROJECT_NAMES, _pnSet/_pnGet synchronizują GM storage, dropdown Niestandardowe używa _pnResolve"},
+        {"type": "feat", "text": "wybór kraju w panelu Niestandardowe i mini panelu — dropdown z listą 49 krajów zamiast pola tekstowego"},
+        {"type": "fix", "text": "auto-fill treści — łączy akapity do 200 znaków (maks. 5 akapitów), przycina na granicy zdania zamiast twardego cięcia"}
+      ]
+    },
+    {
       "version": "0.24.10",
       "date": "2026-05-13",
       "label": "feat",
@@ -11515,19 +11561,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "floating panel Niestandardowe widoczny ponad panelem Taggera — overlay z-index podniesiony do 2147483647 w trybie custom"},
         {"type": "fix", "text": "padding-right overlay 12px→52px — eliminuje nakładanie floating panelu na side tab Wzmianek"},
         {"type": "fix", "text": "przełączenie custom→news — tło overlay poprawnie przywracane do rgba(0,0,0,0.55)"}
-      ]
-    },
-    {
-      "version": "0.24.1",
-      "date": "2026-05-11",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "przyciski boczne Wzmianki i Net nie nachodzą — Net przesunięty niżej (calc(50%+250px))"},
-        {"type": "ux", "text": "tryb Niestandardowe — floating panel bez ciemnego tła, 560px, przylega do prawej, dragowalny za header"},
-        {"type": "ux", "text": "ESC zamyka panel importu URLi lub overlay Wzmianek (nie aktywuje się gdy fokus w polu tekstowym)"},
-        {"type": "ux", "text": "import URLi w trybie Niestandardowe ukrywa sekcje Słowa kluczowe i Opis marki"},
-        {"type": "ux", "text": "wybór promptu AI przeniesiony z ⚙ do paneli — osobny dla News i Niestandardowe; opcja 'auto (z domeny)' usunięta z kategorii"}
       ]
     },
   ];
@@ -12690,6 +12723,7 @@ function showOnboarding(onComplete) {
             _pnSet(parseInt(pid), name);
             var ps = lsGet(LS.PROJECTS, {});
             if (ps[String(pid)]) { ps[String(pid)].name = name; lsSet(LS.PROJECTS, ps); }
+            _gmSaveProjects(ps);
             found++;
           }
 
@@ -16329,11 +16363,26 @@ Tej operacji nie można cofnąć.`)) {
       ['script','style','nav','header','footer','aside','figure','figcaption'].forEach(function(sel) {
         try { clone.querySelectorAll(sel).forEach(function(el) { el.remove(); }); } catch(e) {}
       });
-      var firstP = clone.querySelector('p');
-      var txt = firstP
-        ? (firstP.innerText || firstP.textContent || '').replace(/\s+/g, ' ').trim()
-        : (clone.innerText || clone.textContent || '').replace(/\s+/g, ' ').trim().substring(0, 600);
-      result.content = txt.substring(0, 600);
+      var _paras = clone.querySelectorAll('p');
+      var txt = '';
+      if (_paras.length > 0) {
+        var _combined = '';
+        for (var _pi2 = 0; _pi2 < _paras.length && _pi2 < 5; _pi2++) {
+          var _pt = (_paras[_pi2].innerText || _paras[_pi2].textContent || '').replace(/\s+/g, ' ').trim();
+          if (!_pt || _pt.length < 20) continue;
+          _combined = _combined ? _combined + ' ' + _pt : _pt;
+          if (_combined.length >= 200) break;
+        }
+        txt = _combined || (_paras[0] ? (_paras[0].innerText || _paras[0].textContent || '').replace(/\s+/g, ' ').trim() : '');
+      } else {
+        txt = (clone.innerText || clone.textContent || '').replace(/\s+/g, ' ').trim();
+      }
+      if (txt.length > 600) {
+        var _sub = txt.substring(0, 600);
+        var _dot = _sub.lastIndexOf('.');
+        txt = _dot > 300 ? _sub.substring(0, _dot + 1) : _sub;
+      }
+      result.content = txt;
     }
     return result;
   }
@@ -16592,7 +16641,7 @@ Tej operacji nie można cofnąć.`)) {
           '<div style="flex:1;"><label style="' + labelCss + '">MIN.</label><input id="b24t-mini-min" type="text" value="' + nowM + '" style="' + inputCss + '"></div>',
         '</div>',
         '<div style="display:flex;gap:8px;">',
-          '<div style="flex:1;"><label style="' + labelCss + '">KRAJ</label><input id="b24t-mini-country" type="text" value="' + _detectCountry(lastUsedId) + '" placeholder="np. PL, TR" style="' + inputCss + '"></div>',
+          '<div style="flex:1;"><label style="' + labelCss + '">KRAJ</label><select id="b24t-mini-country" style="' + inputCss + '">' + _countryOptionsHtml(_detectCountry(lastUsedId)) + '</select></div>',
           '<div style="flex:1;"><label style="' + labelCss + '">SENTYMENT</label><select id="b24t-mini-sent" style="' + inputCss + '"><option value="0">0 Neutral</option><option value="1">+1 Poz.</option><option value="-1">-1 Neg.</option></select></div>',
         '</div>',
         '<div><label style="' + labelCss + '">KATEGORIA</label><select id="b24t-mini-cat" style="' + inputCss + '">' + _miniBuildCategoryOptions(String(_detectCategoryFromUrl(window.location.href))) + '</select></div>',

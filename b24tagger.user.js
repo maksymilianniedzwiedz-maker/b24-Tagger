@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.3
+// @version      0.24.4
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.3';
+  const VERSION = '0.24.4';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -9632,6 +9632,11 @@ function showOnboarding(onComplete) {
         if (e.target.closest('button')) return;
         _ndrag = true;
         var r = _npMain.getBoundingClientRect();
+        // Konwertuj z position:relative (flex) na fixed żeby left/top działały jako koordynaty viewport
+        _npMain.style.position = 'fixed';
+        _npMain.style.right    = 'auto';
+        _npMain.style.left     = r.left + 'px';
+        _npMain.style.top      = r.top  + 'px';
         _ndsx = e.clientX; _ndsy = e.clientY; _ndsl = r.left; _ndst = r.top;
         e.preventDefault();
       });
@@ -11113,6 +11118,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.4",
+      "date": "2026-05-13",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "panel Niestandardowe znikał przy próbie przeciągania — drag handler ustawiał left/top jako koordynaty viewport na position:relative (element flex), co wypychało panel poza ekran; konwersja na position:fixed przy mousedown"}
+      ]
+    },
+    {
       "version": "0.24.3",
       "date": "2026-05-13",
       "label": "fix",
@@ -11205,15 +11219,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "ux", "text": "animacje kaskadowe Overall Stats — CSS fill-mode:both zamiast broken rAF-transition, stagger ekstrapolowany z czasu 1. batcha wypełnia czas do kolejnego — jeden płynny cascade zamiast skoków partii"},
         {"type": "ux", "text": "animacje Dashboard Annotatora i Tag Stats — ta sama naprawa CSS fill-mode:both; countUp zsynchronizowany z opóźnieniem animacji"}
-      ]
-    },
-    {
-      "version": "0.23.100",
-      "date": "2026-05-09",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "przycisk 'Testuj klucz API' w ustawieniach AI — sprawdza poprawność klucza przez minimalny request do api.anthropic.com; wyniki inline: ✓ działa / ✗ błędny klucz / ✗ brak połączenia / ⚠ limit / ✗ timeout"}
       ]
     },
   ];

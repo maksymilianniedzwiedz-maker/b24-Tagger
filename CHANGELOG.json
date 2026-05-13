@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.24.4",
+    "date": "2026-05-13",
+    "label": "fix",
+    "changes": [
+      "fix: panel Niestandardowe znikał przy próbie przeciągania — drag handler ustawiał left/top jako koordynaty viewport na position:relative (flex), co odpychało panel poza ekran; fix: konwersja na position:fixed przy mousedown dragu"
+    ]
+  },
+  {
     "version": "0.24.3",
     "date": "2026-05-13",
     "label": "fix",

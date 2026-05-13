@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.18
+// @version      0.24.19
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -115,7 +115,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.18';
+  const VERSION = '0.24.19';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -232,7 +232,22 @@
     return {};
   }
   function _gmSaveProjects(projects) {
-    try { GM_setValue('b24t_projects_mirror', JSON.stringify(projects)); } catch(e) {}
+    var _isFbName = function(n) {
+      return !n || n.length < 3 || n === 'Brand24' || n === 'Panel Brand24' || /^(Project|Projekt)\s+\d+$/.test(n);
+    };
+    var existing = {};
+    try { var _r = GM_getValue('b24t_projects_mirror', null); if (_r) existing = typeof _r === 'string' ? JSON.parse(_r) : _r; } catch(e) {}
+    var merged = {};
+    // Zachowaj dobre nazwy z istniejącego mirrora
+    Object.keys(existing).forEach(function(pid) {
+      if (!_isFbName((existing[pid] || {}).name)) merged[pid] = existing[pid];
+    });
+    // Dodaj/nadpisz dobrymi nazwami z nowych danych — fallbacki ignoruj
+    Object.keys(projects).forEach(function(pid) {
+      var p = projects[pid] || {};
+      if (!_isFbName(p.name)) merged[String(pid)] = p;
+    });
+    try { GM_setValue('b24t_projects_mirror', JSON.stringify(merged)); } catch(e) {}
   }
   var _gmPNSynced = false;
   function _gmGetProjectNames() {
@@ -11517,6 +11532,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.19",
+      "date": "2026-05-13",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "_gmSaveProjects: filtruje fallbacki przed zapisem do GM mirror — złe nazwy z LS.PROJECTS nie wracają do mirrora po resecie ani przy kolejnych załadowaniach projektu"}
+      ]
+    },
+    {
       "version": "0.24.18",
       "date": "2026-05-13",
       "label": "fix",
@@ -11599,21 +11623,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "ustawienia ⚙ — sekcja Projekty: przycisk Uzupełnij nazwy pobiera brakujące nazwy projektów z Brand24 GQL i zapisuje do localStorage"},
         {"type": "fix", "text": "panel Niestandardowe — auto-scraping treści: tylko pierwszy akapit (poprzednio cała strona do 3000 znaków)"},
         {"type": "fix", "text": "panel Niestandardowe — domyślna kategoria zmieniona z Web (8) na News (7) dla nierozpoznanych domen"}
-      ]
-    },
-    {
-      "version": "0.24.9",
-      "date": "2026-05-13",
-      "label": "feature",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "panel Niestandardowe — skanowanie bieżącej strony (treść, tytuł, data, kategoria, metryki social media: Twitter/X, Facebook, LinkedIn, YouTube, Reddit)"},
-        {"type": "feat", "text": "panel Niestandardowe — dark/light mode zgodny z ustawieniami wtyczki (GM_setValue cross-domain)"},
-        {"type": "feat", "text": "panel Niestandardowe — przycisk ✚B24 na 1/3 ekranu od góry, większy (54px)"},
-        {"type": "feat", "text": "panel Niestandardowe — projekt zawsze widoczny, zapamiętywany cross-domain (GM_setValue)"},
-        {"type": "feat", "text": "panel Niestandardowe — ⚙ ustawienia w headerze: AI toggle + prompt selector"},
-        {"type": "feat", "text": "panel Niestandardowe — dioda ●Panel sprawdzania logowania do Brand24"},
-        {"type": "fix", "text": "panel Niestandardowe — usunięty przycisk Importuj URLe, tagi otwarte domyślnie, więcej wysokości"}
       ]
     },
   ];

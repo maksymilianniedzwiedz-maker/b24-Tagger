@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.4
+// @version      0.24.5
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.4';
+  const VERSION = '0.24.5';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8671,6 +8671,10 @@ function showOnboarding(onComplete) {
       }
       if (header) header.style.cursor = 'move';
       if (!newsState.formOnly) _toggleFormOnly(true);
+      // Chowamy przyciski News-only — w custom mode niepotrzebne
+      var _sb = document.getElementById('b24t-news-stats-btn');    if (_sb) _sb.style.display = 'none';
+      var _lb = document.getElementById('b24t-news-legend-btn');   if (_lb) _lb.style.display = 'none';
+      var _lm = document.getElementById('b24t-news-langmap-btn');  if (_lm) _lm.style.display = 'none';
       // W custom mode side tab nie powinien reagować na kliknięcia (leży w przerwie 52px za panelem)
       var _nstC = document.getElementById('b24t-news-side-tab');
       if (_nstC) _nstC.style.pointerEvents = 'none';
@@ -8689,6 +8693,10 @@ function showOnboarding(onComplete) {
       }
       if (header) header.style.cursor = '';
       if (newsState.formOnly) _toggleFormOnly(false);
+      // Przywróć przyciski News
+      var _sbN = document.getElementById('b24t-news-stats-btn');   if (_sbN) _sbN.style.display = '';
+      var _lbN = document.getElementById('b24t-news-legend-btn');  if (_lbN) _lbN.style.display = '';
+      var _lmN = document.getElementById('b24t-news-langmap-btn'); if (_lmN) _lmN.style.display = '';
       var _nstN = document.getElementById('b24t-news-side-tab');
       if (_nstN) _nstN.style.pointerEvents = '';
     }
@@ -9626,11 +9634,10 @@ function showOnboarding(onComplete) {
     var _npMain = document.getElementById('b24t-news-panel-main');
     var _npHdr  = _npMain ? _npMain.querySelector('div') : null;
     if (_npHdr && _npMain) {
-      var _ndrag = false, _ndsx, _ndsy, _ndsl, _ndst;
+      var _ndrag = false, _ndsx, _ndsy, _ndsl, _ndst, _ndw, _ndh;
       _npHdr.addEventListener('mousedown', function(e) {
         if (newsState.mode !== 'custom') return;
         if (e.target.closest('button')) return;
-        _ndrag = true;
         var r = _npMain.getBoundingClientRect();
         // Konwertuj z position:relative (flex) na fixed żeby left/top działały jako koordynaty viewport
         _npMain.style.position = 'fixed';
@@ -9638,15 +9645,17 @@ function showOnboarding(onComplete) {
         _npMain.style.left     = r.left + 'px';
         _npMain.style.top      = r.top  + 'px';
         _ndsx = e.clientX; _ndsy = e.clientY; _ndsl = r.left; _ndst = r.top;
+        _ndw  = _npMain.offsetWidth;   // cache — unika reflow przy każdym mousemove
+        _ndh  = _npMain.offsetHeight;
+        _ndrag = true;
         e.preventDefault();
       });
       document.addEventListener('mousemove', function(e) {
         if (!_ndrag) return;
-        var nx = Math.max(0, Math.min(window.innerWidth - _npMain.offsetWidth, _ndsl + e.clientX - _ndsx));
-        var ny = Math.max(0, Math.min(window.innerHeight - _npMain.offsetHeight, _ndst + e.clientY - _ndsy));
-        _npMain.style.left  = nx + 'px';
-        _npMain.style.top   = ny + 'px';
-        _npMain.style.right = 'auto';
+        var nx = Math.max(0, Math.min(window.innerWidth  - _ndw, _ndsl + e.clientX - _ndsx));
+        var ny = Math.max(0, Math.min(window.innerHeight - _ndh, _ndst + e.clientY - _ndsy));
+        _npMain.style.left = nx + 'px';
+        _npMain.style.top  = ny + 'px';
       });
       document.addEventListener('mouseup', function() { _ndrag = false; });
     }
@@ -11118,6 +11127,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.5",
+      "date": "2026-05-13",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "przyciski Stats/Legenda/Języki ukryte w trybie Niestandardowe — panel custom zawiera tylko formularz"},
+        {"type": "fix", "text": "lag przy przeciąganiu panelu — offsetWidth/offsetHeight cachowane przy mousedown zamiast czytane przy każdym mousemove (eliminuje reflow)"}
+      ]
+    },
+    {
       "version": "0.24.4",
       "date": "2026-05-13",
       "label": "fix",
@@ -11209,16 +11228,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "animacje kaskadowe Overall Stats/Tag Stats/Dashboard — void el.offsetHeight zamiast CSS animation (tr elements nie wspierają animation fill-mode niezawodnie); opacity fade gwarantowany"}
-      ]
-    },
-    {
-      "version": "0.23.101",
-      "date": "2026-05-09",
-      "label": "ux",
-      "labelColor": "#06b6d4",
-      "changes": [
-        {"type": "ux", "text": "animacje kaskadowe Overall Stats — CSS fill-mode:both zamiast broken rAF-transition, stagger ekstrapolowany z czasu 1. batcha wypełnia czas do kolejnego — jeden płynny cascade zamiast skoków partii"},
-        {"type": "ux", "text": "animacje Dashboard Annotatora i Tag Stats — ta sama naprawa CSS fill-mode:both; countUp zsynchronizowany z opóźnieniem animacji"}
       ]
     },
   ];

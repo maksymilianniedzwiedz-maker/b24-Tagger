@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.24.17",
+    "date": "2026-05-13",
+    "label": "fix",
+    "changes": [
+      "fix: ustawienia Niestandardowe (⚙) — przycisk Reset i przebuduj projekty: czyści oba GM mirrory i odbudowuje wyłącznie z LS (brand24.com), usuwa stale fallbacki nieodwracalnie"
+    ]
+  },
+  {
     "version": "0.24.16",
     "date": "2026-05-13",
     "label": "fix",

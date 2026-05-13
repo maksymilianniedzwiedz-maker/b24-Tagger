@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.24.8",
+    "date": "2026-05-13",
+    "label": "fix",
+    "changes": [
+      "fix: mini button na zewnętrznych stronach — localStorage jest per-domena, dane Brand24 niedostępne; teraz używamy GM_getValue/GM_setValue (Tampermonkey storage cross-domain) jako mirror projektów",
+      "feat: GM_getValue + GM_setValue grants dodane do nagłówka skryptu",
+      "feat: _gmGetProjects() — fallback do GM storage gdy localStorage pusty (strony zewnętrzne); _gmSaveProjects() — mirror przy każdym załadowaniu projektu na Brand24"
+    ]
+  },
+  {
     "version": "0.24.7",
     "date": "2026-05-13",
     "label": "fix",

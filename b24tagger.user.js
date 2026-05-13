@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.15
+// @version      0.24.16
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -115,7 +115,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.15';
+  const VERSION = '0.24.16';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -237,11 +237,24 @@
   var _gmPNSynced = false;
   function _gmGetProjectNames() {
     var fromLS = lsGet(LS.PROJECT_NAMES, null);
-    if (fromLS && Object.keys(fromLS).length > 0) {
-      if (!_gmPNSynced) {
-        try { GM_setValue('b24t_project_names_mirror', JSON.stringify(fromLS)); _gmPNSynced = true; } catch(e) {}
+    var lsProj = lsGet(LS.PROJECTS, null);
+    var _pnFallback = function(n) {
+      return !n || n.length < 3 || n === 'Brand24' || n === 'Panel Brand24' || /^(Project|Projekt)\s+\d+$/.test(n);
+    };
+    var lsHasData = (lsProj && Object.keys(lsProj).length > 0) || (fromLS && Object.keys(fromLS).length > 0);
+    if (lsHasData) {
+      var merged = {};
+      if (lsProj) Object.keys(lsProj).forEach(function(pid) {
+        var n = (lsProj[pid] || {}).name;
+        if (!_pnFallback(n)) merged[String(pid)] = n;
+      });
+      if (fromLS) Object.keys(fromLS).forEach(function(pid) {
+        if (!_pnFallback(fromLS[pid])) merged[String(pid)] = fromLS[pid];
+      });
+      if (!_gmPNSynced && Object.keys(merged).length > 0) {
+        try { GM_setValue('b24t_project_names_mirror', JSON.stringify(merged)); _gmPNSynced = true; } catch(e) {}
       }
-      return fromLS;
+      return merged;
     }
     try {
       var raw = GM_getValue('b24t_project_names_mirror', null);
@@ -11503,6 +11516,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.16",
+      "date": "2026-05-13",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "_gmGetProjectNames: scal LS.PROJECTS + LS.PROJECT_NAMES przy sync — nazwy projektów cross-domain bez klikania, wizyta na brand24.com wystarczy"}
+      ]
+    },
+    {
       "version": "0.24.15",
       "date": "2026-05-13",
       "label": "feat",
@@ -11595,19 +11617,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "przycisk AI w headerze — klikalny toggle włącz/wyłącz AI osobno dla trybu News i Niestandardowe"},
         {"type": "feat", "text": "panel Niestandardowe dostępny na każdej stronie — mini button otwiera pełny panel z selectorem projektu"},
         {"type": "fix", "text": "injectStyles — guard przed podwójnym wstrzykiwaniem CSS (id b24t-main-styles)"}
-      ]
-    },
-    {
-      "version": "0.24.6",
-      "date": "2026-05-13",
-      "label": "feature",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "panel Niestandardowe — auto-scraping treści artykułu (article/main/[itemprop=articleBody]), daty (JSON-LD, meta, time[datetime]) i języka strony (html[lang], meta content-language)"},
-        {"type": "feat", "text": "panel Niestandardowe — auto-detekcja kategorii z URL (FB=5, IG=2, X=1, TikTok=11, LinkedIn=12 itd.) zamiast domyślnego Web"},
-        {"type": "feat", "text": "panel Niestandardowe — detekcja duplikatów przed submitem (GQL fulltext search po ostatnim segmencie URL, porównanie normalizeUrl)"},
-        {"type": "feat", "text": "panel Niestandardowe — ostrzeżenie językowe gdy artykuł wykryty w innym języku niż projekt (na podstawie sufiksu _XX w nazwie projektu)"},
-        {"type": "feat", "text": "panel Niestandardowe — pole URL z badge duplikatu (⚠ duplikat / ✓ URL nowy) aktualizowanym przy zmianie projektu"}
       ]
     },
   ];

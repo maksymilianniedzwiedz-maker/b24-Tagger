@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.6
+// @version      0.24.7
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.6';
+  const VERSION = '0.24.7';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -228,7 +228,7 @@
       apiKey: '', prompts: [],
       tagging: { model: 'claude-haiku-4-5-20251001', activePromptId: null, batchSize: 10, firstUseWarningShown: false },
       news: { model: 'claude-haiku-4-5-20251001', enabled: false },
-      custom: { model: 'claude-haiku-4-5-20251001' }
+      custom: { model: 'claude-haiku-4-5-20251001', enabled: false }
     };
   }
   function _aiGetSettings() {
@@ -2903,6 +2903,7 @@
   // ───────────────────────────────────────────
 
   function injectStyles() {
+    if (document.getElementById('b24t-main-styles')) return;
     // Wczytaj Geist z Google Fonts (jeśli jeszcze nie ma)
     if (!document.getElementById('b24t-geist-font')) {
       const link = document.createElement('link');
@@ -2912,6 +2913,7 @@
       document.head.appendChild(link);
     }
     const style = document.createElement('style');
+    style.id = 'b24t-main-styles';
     style.textContent = `
       /* =====================================================================
          B24 TAGGER — DESIGN SYSTEM v0.7.0
@@ -8608,6 +8610,29 @@ function showOnboarding(onComplete) {
     _newsCheckTagDodane();
   }
 
+  function _syncAiChip() {
+    var chip = document.getElementById('b24t-news-ai-chip');
+    if (!chip) return;
+    var s = _aiGetSettings();
+    var isCustom = newsState.mode === 'custom';
+    var enabled = isCustom ? !!(s.custom && s.custom.enabled) : !!(s.news && s.news.enabled);
+    chip.style.background = enabled ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.18)';
+    chip.title = enabled ? 'AI aktywne — kliknij aby wyłączyć' : 'AI nieaktywne — kliknij aby włączyć';
+  }
+
+  function _newsRefillProjectSelect() {
+    var sel = document.getElementById('b24t-news-f-project-sel');
+    if (!sel) return;
+    var projects = lsGet(LS.PROJECTS, {});
+    var pids = Object.keys(projects);
+    sel.innerHTML = '<option value="">— wybierz projekt —</option>' +
+      pids.map(function(pid) {
+        var pName = (projects[pid] && projects[pid].name) || ('Projekt ' + pid);
+        return '<option value="' + pid + '">' + pName.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</option>';
+      }).join('');
+    if (state.projectId) sel.value = String(state.projectId);
+  }
+
   // ── APPLY NEWS MODE ──
   // Aktualizuje UI panela News na podstawie newsState.mode ('news' lub 'custom')
   function _applyNewsMode() {
@@ -8703,6 +8728,17 @@ function showOnboarding(onComplete) {
 
     // Wypełnij dropdown prompta dla odpowiedniego trybu
     _newsRefillPromptSelect(isCustom);
+
+    // Synchronizuj wygląd przycisku AI
+    _syncAiChip();
+
+    // Projekt row — pokaż gdy custom mode i brak aktywnego projektu
+    var projRow = document.getElementById('b24t-news-f-project-row');
+    if (projRow) {
+      var showProjRow = isCustom && !state.projectId;
+      projRow.style.display = showProjRow ? 'flex' : 'none';
+      if (showProjRow) _newsRefillProjectSelect();
+    }
   }
 
   // ── TYLKO FORMULARZ — toggle widoczności kolumn list+preview w trybie Niestandardowe ──
@@ -8954,9 +8990,8 @@ function showOnboarding(onComplete) {
     // Header
     var header = document.createElement('div');
     header.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--b24t-accent-grad);flex-shrink:0;';
-    var _aiChipHtml = _newsAiShouldRun()
-      ? '<span id="b24t-news-ai-chip" title="AI News aktywne — artykuły będą analizowane przez Claude" style="font-size:11px;padding:3px 9px;border-radius:12px;background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.40);color:#fff;font-weight:600;flex-shrink:0;cursor:default;letter-spacing:0.01em;">🤖 AI</span>'
-      : '';
+    var _initAiEnabled = _newsAiShouldRun();
+    var _aiChipHtml = '<button id="b24t-news-ai-chip" title="' + (_initAiEnabled ? 'AI aktywne — kliknij aby wyłączyć' : 'AI nieaktywne — kliknij aby włączyć') + '" style="font-size:11px;padding:3px 9px;border-radius:12px;background:' + (_initAiEnabled ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.18)') + ';border:1px solid rgba(255,255,255,0.40);color:#fff;font-weight:600;flex-shrink:0;cursor:pointer;letter-spacing:0.01em;transition:background 0.15s;">🤖 AI</button>';
     header.innerHTML = [
       '<span id="b24t-news-header-title" style="font-size:13px;font-weight:700;color:#fff;flex:1;text-shadow:0 1px 3px rgba(0,0,0,0.2);">📰 News</span>',
       _aiChipHtml,
@@ -9054,6 +9089,12 @@ function showOnboarding(onComplete) {
       '</div>',
       '<div id="b24t-news-form-err" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.redBg + ';border:1px solid rgba(239,68,68,0.35);font-size:10px;color:' + t.red + ';line-height:1.4;flex-shrink:0;"></div>',
       '<div id="b24t-news-lang-warn" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.4;flex-shrink:0;"></div>',
+      '<div id="b24t-news-f-project-row" style="display:none;flex-direction:column;gap:4px;flex-shrink:0;">',
+        '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">PROJEKT</label>',
+        '<select id="b24t-news-f-project-sel" style="' + _newsInputCss(t) + '">',
+          '<option value="">— wybierz projekt —</option>',
+        '</select>',
+      '</div>',
       _newsFormRow('URL wzmianki', '<input id="b24t-news-f-url" type="text" readonly placeholder="(kliknij URL z listy)" style="' + _newsInputCss(t) + 'font-family:monospace;font-size:10px;opacity:0.75;"><button id="b24t-news-lang-force-open" style="display:none;flex-shrink:0;font-size:9px;padding:3px 6px;border-radius:5px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:' + t.yellow + ';cursor:pointer;margin-left:4px;" title="Otwórz mimo ostrzeżenia">Otwórz</button>', true, 'flex'),
       '<div style="display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">',
         '<span style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">DANE ARTYKUŁU</span>',
@@ -9275,6 +9316,10 @@ function showOnboarding(onComplete) {
 
     // Responsive: switch between columns and tabs at < 960px (3 columns)
     function _newsApplyResponsive() {
+      if (newsState.mode === 'custom') {
+        tabsBar.style.display = 'none';
+        return;
+      }
       var narrow = panelMain.offsetWidth < 960;
       tabsBar.style.display = narrow ? '' : 'none';
       if (!narrow) {
@@ -9446,6 +9491,45 @@ function showOnboarding(onComplete) {
     _naShowConsentIfNeeded();
     _naRetryPending();
     var projectCountry = _newsProjectCountry();
+
+    // ─── AI CHIP TOGGLE ───
+    var _aiChipEl = document.getElementById('b24t-news-ai-chip');
+    if (_aiChipEl) {
+      _aiChipEl.addEventListener('click', function() {
+        var s = _aiGetSettings();
+        var isCustom = newsState.mode === 'custom';
+        if (isCustom) {
+          if (!s.custom) s.custom = {};
+          s.custom.enabled = !s.custom.enabled;
+        } else {
+          if (!s.news) s.news = {};
+          s.news.enabled = !s.news.enabled;
+        }
+        _aiSaveSettings(s);
+        _syncAiChip();
+      });
+    }
+
+    // ─── PROJEKT SELECTOR (strony zewnętrzne) ───
+    var _projSelEl = document.getElementById('b24t-news-f-project-sel');
+    if (_projSelEl) {
+      _projSelEl.addEventListener('change', function() {
+        var pid = _projSelEl.value;
+        if (!pid) return;
+        var projects = lsGet(LS.PROJECTS, {});
+        var pData = projects[pid] || {};
+        state.projectId = parseInt(pid);
+        state.tags = pData.tagIds || {};
+        var countryInput = document.getElementById('b24t-news-f-country');
+        if (countryInput) {
+          var m = (pData.name || '').toUpperCase().match(/_([A-Z]{2})$/);
+          countryInput.value = m ? m[1] : '';
+        }
+        var projRow = document.getElementById('b24t-news-f-project-row');
+        if (projRow) projRow.style.display = 'none';
+        _newsRefillTags();
+      });
+    }
 
     // ─── CLOSE ALL ───
     document.querySelectorAll('.b24t-news-close-all').forEach(function(btn) {
@@ -11127,6 +11211,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.7",
+      "date": "2026-05-13",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "panel Niestandardowe — karty Lista/Podgląd/Formularz/Statystyki znikają w trybie custom (responsive skip)"},
+        {"type": "feat", "text": "przycisk AI w headerze — klikalny toggle włącz/wyłącz AI osobno dla trybu News i Niestandardowe"},
+        {"type": "feat", "text": "panel Niestandardowe dostępny na każdej stronie — mini button otwiera pełny panel z selectorem projektu"},
+        {"type": "fix", "text": "injectStyles — guard przed podwójnym wstrzykiwaniem CSS (id b24t-main-styles)"}
+      ]
+    },
+    {
       "version": "0.24.6",
       "date": "2026-05-13",
       "label": "feature",
@@ -11223,24 +11319,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "project check w module News — dodawanie obu URLi (m.url i m.openUrl) do zestawu projektowego; eliminuje false-negative gdy Brand24 przechowuje canonical URL w url a oryginalny w openUrl"}
-      ]
-    },
-    {
-      "version": "0.23.103",
-      "date": "2026-05-09",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "animacje kaskadowe Overall Stats — naprawiono root cause: animateAll flag, fade-in tylko w finalnym renderze (nie w onProgress), eliminuje problem kill in-flight timeoutów przez innerHTML replacement"}
-      ]
-    },
-    {
-      "version": "0.23.102",
-      "date": "2026-05-09",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "animacje kaskadowe Overall Stats/Tag Stats/Dashboard — void el.offsetHeight zamiast CSS animation (tr elements nie wspierają animation fill-mode niezawodnie); opacity fade gwarantowany"}
       ]
     },
   ];
@@ -15966,7 +16044,10 @@ Tej operacji nie można cofnąć.`)) {
     btn.style.cssText = 'position:fixed;bottom:18px;right:18px;z-index:2147483645;width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 4px 14px rgba(99,102,241,0.45);font-family:Geist,"Segoe UI",system-ui,-apple-system,sans-serif;border:2px solid rgba(255,255,255,0.25);transition:transform 0.15s,box-shadow 0.15s;user-select:none;';
     btn.addEventListener('mouseenter', function() { btn.style.transform = 'scale(1.08)'; btn.style.boxShadow = '0 6px 18px rgba(99,102,241,0.55)'; });
     btn.addEventListener('mouseleave', function() { btn.style.transform = ''; btn.style.boxShadow = '0 4px 14px rgba(99,102,241,0.45)'; });
-    btn.addEventListener('click', _openMiniMentionForm);
+    btn.addEventListener('click', function() {
+      if (!document.getElementById('b24t-main-styles')) injectStyles();
+      openNewsPanels('custom');
+    });
     document.body.appendChild(btn);
   }
 

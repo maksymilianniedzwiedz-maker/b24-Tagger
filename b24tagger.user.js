@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.13
+// @version      0.24.14
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -115,7 +115,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.13';
+  const VERSION = '0.24.14';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -234,9 +234,15 @@
   function _gmSaveProjects(projects) {
     try { GM_setValue('b24t_projects_mirror', JSON.stringify(projects)); } catch(e) {}
   }
+  var _gmPNSynced = false;
   function _gmGetProjectNames() {
     var fromLS = lsGet(LS.PROJECT_NAMES, null);
-    if (fromLS && Object.keys(fromLS).length > 0) return fromLS;
+    if (fromLS && Object.keys(fromLS).length > 0) {
+      if (!_gmPNSynced) {
+        try { GM_setValue('b24t_project_names_mirror', JSON.stringify(fromLS)); _gmPNSynced = true; } catch(e) {}
+      }
+      return fromLS;
+    }
     try {
       var raw = GM_getValue('b24t_project_names_mirror', null);
       if (raw) return typeof raw === 'string' ? JSON.parse(raw) : raw;
@@ -244,7 +250,7 @@
     return {};
   }
   function _gmSaveProjectNames(names) {
-    try { GM_setValue('b24t_project_names_mirror', JSON.stringify(names)); } catch(e) {}
+    try { GM_setValue('b24t_project_names_mirror', JSON.stringify(names)); _gmPNSynced = true; } catch(e) {}
   }
 
   // ── AI SETTINGS HELPERS ────────────────────────────────────────────────────
@@ -11452,6 +11458,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.14",
+      "date": "2026-05-13",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "_gmGetProjectNames() lazy sync: przy pierwszym wywołaniu na brand24.com kopiuje LS.PROJECT_NAMES → GM mirror, nazwy projektów dostępne cross-domain automatycznie"}
+      ]
+    },
+    {
       "version": "0.24.13",
       "date": "2026-05-13",
       "label": "fix",
@@ -11549,15 +11564,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "przyciski Stats/Legenda/Języki ukryte w trybie Niestandardowe — panel custom zawiera tylko formularz"},
         {"type": "fix", "text": "lag przy przeciąganiu panelu — offsetWidth/offsetHeight cachowane przy mousedown zamiast czytane przy każdym mousemove (eliminuje reflow)"}
-      ]
-    },
-    {
-      "version": "0.24.4",
-      "date": "2026-05-13",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "panel Niestandardowe znikał przy próbie przeciągania — drag handler ustawiał left/top jako koordynaty viewport na position:relative (element flex), co wypychało panel poza ekran; konwersja na position:fixed przy mousedown"}
       ]
     },
   ];

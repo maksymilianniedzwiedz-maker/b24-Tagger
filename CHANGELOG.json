@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.24.19",
+    "date": "2026-05-13",
+    "label": "fix",
+    "changes": [
+      "fix: _gmSaveProjects filtruje fallbacki przed zapisem do GM mirror — złe nazwy z LS.PROJECTS nie wracają do mirrora po resecie ani przy kolejnych załadowaniach projektu"
+    ]
+  },
+  {
     "version": "0.24.18",
     "date": "2026-05-13",
     "label": "fix",

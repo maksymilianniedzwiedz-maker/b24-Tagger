@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.8
+// @version      0.24.9
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -115,7 +115,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.8';
+  const VERSION = '0.24.9';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4582,6 +4582,7 @@
       else track.classList.remove('is-dark');
     }
     lsSet(LS.THEME, theme);
+    try { GM_setValue('b24t_theme_mirror', theme); } catch(e) {}
     const ap = document.getElementById('b24t-annotator-panel');
     const at = document.getElementById('b24t-annotator-tab');
     if (ap) ap.setAttribute('data-b24t-theme', theme);
@@ -8698,18 +8699,28 @@ function showOnboarding(onComplete) {
     var overlay  = document.getElementById('b24t-news-overlay');
     var panelMain = document.getElementById('b24t-news-panel-main');
     var header   = panelMain ? panelMain.querySelector('div') : null;
+    // Przyciski header: AI chip vs gear (custom), import URLe
+    var _aiChip   = document.getElementById('b24t-news-ai-chip');
+    var _gearBtn  = document.getElementById('b24t-news-custom-settings-btn');
+    var _importBtn = document.getElementById('b24t-news-modal-open-btn');
+    var _panelDot = document.getElementById('b24t-news-panel-dot');
+    if (_aiChip)   _aiChip.style.display   = isCustom ? 'none' : '';
+    if (_gearBtn)  _gearBtn.style.display  = isCustom ? '' : 'none';
+    if (_importBtn) _importBtn.style.display = isCustom ? 'none' : '';
+    if (_panelDot) _panelDot.style.display  = isCustom ? '' : 'none';
     if (isCustom) {
       if (overlay) {
         overlay.style.background    = 'transparent';
         overlay.style.pointerEvents = 'none';
         overlay.style.alignItems    = 'flex-start';
         overlay.style.justifyContent = 'flex-end';
-        overlay.style.padding       = '60px 52px 0 0';
+        overlay.style.padding       = '20px 52px 0 0';
         overlay.style.zIndex        = '2147483647';
       }
       if (panelMain) {
         panelMain.style.pointerEvents = 'auto';
         panelMain.style.position      = 'relative';
+        panelMain.style.maxHeight     = 'calc(100vh - 20px)';
       }
       if (header) header.style.cursor = 'move';
       if (!newsState.formOnly) _toggleFormOnly(true);
@@ -8720,6 +8731,13 @@ function showOnboarding(onComplete) {
       // W custom mode side tab nie powinien reagować na kliknięcia (leży w przerwie 52px za panelem)
       var _nstC = document.getElementById('b24t-news-side-tab');
       if (_nstC) _nstC.style.pointerEvents = 'none';
+      // Tagi — otwarte domyślnie w custom mode
+      var _tagList = document.getElementById('b24t-news-tag-list');
+      var _tagChev = document.getElementById('b24t-news-tag-chevron');
+      if (_tagList && _tagList.style.display === 'none') {
+        _tagList.style.display = 'flex';
+        if (_tagChev) _tagChev.style.transform = 'rotate(180deg)';
+      }
     } else {
       if (overlay) {
         overlay.style.background    = 'rgba(0,0,0,0.55)';
@@ -8732,6 +8750,7 @@ function showOnboarding(onComplete) {
       if (panelMain) {
         panelMain.style.pointerEvents = '';
         panelMain.style.position      = '';
+        panelMain.style.maxHeight     = '';
       }
       if (header) header.style.cursor = '';
       if (newsState.formOnly) _toggleFormOnly(false);
@@ -8747,14 +8766,34 @@ function showOnboarding(onComplete) {
     _newsRefillPromptSelect(isCustom);
 
     // Synchronizuj wygląd przycisku AI
-    _syncAiChip();
+    if (!isCustom) _syncAiChip();
 
-    // Projekt row — pokaż gdy custom mode i brak aktywnego projektu
+    // Projekt row — zawsze widoczny w custom mode (użytkownik może zmienić projekt)
     var projRow = document.getElementById('b24t-news-f-project-row');
     if (projRow) {
-      var showProjRow = isCustom && !state.projectId;
-      projRow.style.display = showProjRow ? 'flex' : 'none';
-      if (showProjRow) _newsRefillProjectSelect();
+      projRow.style.display = isCustom ? 'flex' : 'none';
+      if (isCustom) {
+        _newsRefillProjectSelect();
+        // Pre-select ostatnio wybranego projektu (cross-domain przez GM)
+        var _lastPid = '';
+        try { _lastPid = GM_getValue('b24t_mini_last_project', '') || ''; } catch(e) {}
+        if (!_lastPid) _lastPid = lsGet('b24tagger_mini_last_project', '') || '';
+        var _pSel = document.getElementById('b24t-news-f-project-sel');
+        if (_pSel && _lastPid) {
+          _pSel.value = _lastPid;
+          if (_pSel.value === _lastPid) {
+            var _pProjects = _gmGetProjects();
+            var _pData = _pProjects[_lastPid] || {};
+            state.projectId = parseInt(_lastPid);
+            state.tags = _pData.tagIds || {};
+            var _ctry = document.getElementById('b24t-news-f-country');
+            if (_ctry && !_ctry.value) {
+              var _cm = (_pData.name || '').toUpperCase().match(/_([A-Z]{2})$/);
+              if (_cm) _ctry.value = _cm[1];
+            }
+          }
+        }
+      }
     }
   }
 
@@ -8791,6 +8830,7 @@ function showOnboarding(onComplete) {
 
   function openNewsPanels(mode) {
     newsState.mode = (mode === 'custom') ? 'custom' : 'news';
+    var _isExternal = !window.location.pathname.includes('/panel/results/');
     var overlay = document.getElementById('b24t-news-overlay');
     if (overlay) {
       overlay.style.display = 'flex';
@@ -8800,6 +8840,7 @@ function showOnboarding(onComplete) {
       requestAnimationFrame(function() {
         if (_newsChipsRenderer) _newsChipsRenderer();
         _newsRefillTags();
+        if (newsState.mode === 'custom' && _isExternal) _customAutoFillFromPage();
       });
       return;
     }
@@ -8808,6 +8849,12 @@ function showOnboarding(onComplete) {
     newsState.wired = true;
     newsState.panelsOpen = true;
     _applyNewsMode();
+    if (newsState.mode === 'custom' && _isExternal) {
+      requestAnimationFrame(function() {
+        _newsRefillTags();
+        _customAutoFillFromPage();
+      });
+    }
   }
 
   // ── MENTIONS LAUNCHER MODAL — wybór trybu News / Niestandardowe ──
@@ -8878,6 +8925,95 @@ function showOnboarding(onComplete) {
         if (nst) nst.classList.add('active');
       });
     });
+  }
+
+  // ── CUSTOM PANEL SETTINGS — modal z ustawieniami AI dla trybu Niestandardowe ──
+  function _openCustomPanelSettings() {
+    var existing = document.getElementById('b24t-custom-settings-popover');
+    if (existing) { existing.remove(); return; }
+    var gearBtn = document.getElementById('b24t-news-custom-settings-btn');
+    var t = _newsThemeVars();
+    var s = _aiGetSettings();
+    if (!s.custom) s.custom = {};
+    var aiEnabled = !!s.custom.enabled;
+
+    // Zbuduj listę dostępnych promptów
+    var prompts = (s.prompts || []).filter(function(p) { return p.mode === 'custom' || p.mode === 'all' || !p.mode; });
+    var activePromptId = s.custom.activePromptId || '';
+    var promptOptsHtml = '<option value="">— brak / auto —</option>' +
+      prompts.map(function(p) {
+        return '<option value="' + p.id + '"' + (p.id === activePromptId ? ' selected' : '') + '>' + (p.name || p.id) + '</option>';
+      }).join('');
+
+    var sliderHtml =
+      '<div style="display:flex;align-items:center;gap:8px;cursor:pointer;" id="b24t-cps-ai-wrap">' +
+        '<span style="font-size:11px;color:' + t.textMuted + ';flex:1;">AI scoring wzmianek</span>' +
+        '<div id="b24t-cps-ai-track" class="' + (aiEnabled ? 'b24t-slider-track is-dark' : 'b24t-slider-track') + '"><div class="b24t-slider-knob"></div></div>' +
+      '</div>';
+
+    var pop = document.createElement('div');
+    pop.id = 'b24t-custom-settings-popover';
+    pop.style.cssText = 'position:fixed;z-index:2147483648;background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:12px;padding:14px 16px;width:280px;box-shadow:var(--b24t-shadow-h);font-family:Geist,"Segoe UI",system-ui,sans-serif;animation:b24t-fadein 0.15s ease;';
+
+    // Pozycjonuj pod gear buttonem
+    if (gearBtn) {
+      var rect = gearBtn.getBoundingClientRect();
+      pop.style.top  = (rect.bottom + 8) + 'px';
+      pop.style.right = (window.innerWidth - rect.right) + 'px';
+    } else {
+      pop.style.top = '60px'; pop.style.right = '60px';
+    }
+
+    pop.innerHTML =
+      '<div style="font-size:11px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Ustawienia Niestandardowe</div>' +
+      '<div style="display:flex;flex-direction:column;gap:10px;">' +
+        sliderHtml +
+        '<div style="display:flex;flex-direction:column;gap:4px;">' +
+          '<label style="font-size:10px;font-weight:600;color:var(--b24t-text-muted);letter-spacing:0.04em;">PROMPT AI</label>' +
+          '<select id="b24t-cps-prompt-sel" style="padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-input);color:var(--b24t-text);font-size:11px;font-family:inherit;">' + promptOptsHtml + '</select>' +
+        '</div>' +
+        '<div style="display:flex;justify-content:flex-end;padding-top:4px;border-top:1px solid var(--b24t-border-sub);">' +
+          '<button id="b24t-cps-save" style="padding:5px 14px;border-radius:7px;border:none;background:var(--b24t-accent-grad);color:#fff;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">Zapisz</button>' +
+        '</div>' +
+      '</div>';
+
+    document.body.appendChild(pop);
+
+    // Toggle AI
+    var aiWrap  = document.getElementById('b24t-cps-ai-wrap');
+    var aiTrack = document.getElementById('b24t-cps-ai-track');
+    var _aiOn = aiEnabled;
+    if (aiWrap) {
+      aiWrap.addEventListener('click', function() {
+        _aiOn = !_aiOn;
+        if (_aiOn) aiTrack.classList.add('is-dark');
+        else       aiTrack.classList.remove('is-dark');
+      });
+    }
+
+    // Zapisz
+    var saveBtn = document.getElementById('b24t-cps-save');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', function() {
+        var cfg = _aiGetSettings();
+        if (!cfg.custom) cfg.custom = {};
+        cfg.custom.enabled = _aiOn;
+        var promptSel = document.getElementById('b24t-cps-prompt-sel');
+        if (promptSel) cfg.custom.activePromptId = promptSel.value || null;
+        _aiSaveSettings(cfg);
+        pop.remove();
+        _syncAiChip();
+      });
+    }
+
+    // Zamknij po kliknięciu poza
+    var _closeOnOut = function(e) {
+      if (!pop.contains(e.target) && e.target !== gearBtn) {
+        pop.remove();
+        document.removeEventListener('mousedown', _closeOnOut);
+      }
+    };
+    setTimeout(function() { document.addEventListener('mousedown', _closeOnOut); }, 10);
   }
 
   function _newsThemeVars() {
@@ -9012,11 +9148,13 @@ function showOnboarding(onComplete) {
     header.innerHTML = [
       '<span id="b24t-news-header-title" style="font-size:13px;font-weight:700;color:#fff;flex:1;text-shadow:0 1px 3px rgba(0,0,0,0.2);">📰 News</span>',
       _aiChipHtml,
+      '<button id="b24t-news-custom-settings-btn" style="display:none;background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:14px;padding:3px 8px;border-radius:6px;flex-shrink:0;" title="Ustawienia trybu Niestandardowe">⚙</button>',
       '<button id="b24t-news-legend-btn" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:12px;font-weight:700;padding:3px 8px;border-radius:6px;flex-shrink:0;" title="Legenda oznaczeń">?</button>',
       '<button id="b24t-news-stats-btn" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:12px;font-weight:600;padding:3px 8px;border-radius:6px;flex-shrink:0;" title="News Analytics">📊</button>',
       '<button id="b24t-news-langmap-btn" style="background:rgba(255,255,255,0.20);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:11px;padding:3px 9px;border-radius:6px;flex-shrink:0;" title="Mapa języków">⚙ Języki</button>',
       '<button id="b24t-news-formonly-toggle" style="display:none;background:rgba(255,255,255,0.20);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:11px;padding:3px 9px;border-radius:6px;flex-shrink:0;" title="Tryb tylko formularz — ukryj listę i podgląd">⛶ Tylko formularz</button>',
       '<button id="b24t-news-modal-open-btn" style="background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.55);color:#fff;cursor:pointer;font-size:12px;font-weight:700;padding:5px 14px;border-radius:7px;flex-shrink:0;letter-spacing:0.01em;">+ Importuj URLe</button>',
+      '<span id="b24t-news-panel-dot" class="b24t-cms-checking" style="font-size:11px;font-weight:700;flex-shrink:0;cursor:default;color:rgba(255,255,255,0.5);" title="Sprawdzanie logowania...">● Panel</span>',
       '<span id="b24t-news-cms-dot" class="b24t-cms-checking" style="font-size:11px;font-weight:700;flex-shrink:0;cursor:default;color:rgba(255,255,255,0.5);" title="Sprawdzanie CMS...">● CMS</span>',
       '<button class="b24t-news-close-all" style="background:rgba(255,255,255,0.20);border:1px solid rgba(255,255,255,0.4);color:#fff;cursor:pointer;font-size:17px;line-height:1;padding:1px 7px;border-radius:5px;flex-shrink:0;">×</button>',
     ].join('');
@@ -9527,6 +9665,43 @@ function showOnboarding(onComplete) {
       });
     }
 
+    // ─── CUSTOM SETTINGS GEAR ───
+    var _customSettingsBtn = document.getElementById('b24t-news-custom-settings-btn');
+    if (_customSettingsBtn && !_customSettingsBtn.dataset.wired) {
+      _customSettingsBtn.dataset.wired = '1';
+      _customSettingsBtn.addEventListener('click', function() { _openCustomPanelSettings(); });
+    }
+
+    // ─── PANEL LOGIN CHECK ───
+    (function() {
+      var panelDot = document.getElementById('b24t-news-panel-dot');
+      if (!panelDot || panelDot.dataset.checked) return;
+      panelDot.dataset.checked = '1';
+      var base = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: base + '/panel/',
+        timeout: 8000,
+        onload: function(resp) {
+          var loggedIn = resp.finalUrl && resp.finalUrl.indexOf('/login') === -1 && resp.status === 200;
+          if (loggedIn) {
+            panelDot.textContent = '✓ Panel';
+            panelDot.style.color = 'rgba(74,222,128,0.9)';
+            panelDot.title = 'Zalogowany do Brand24';
+          } else {
+            panelDot.textContent = '✗ Panel';
+            panelDot.style.color = 'rgba(248,113,113,0.9)';
+            panelDot.title = 'Nie zalogowany — otwórz app.brand24.com';
+          }
+        },
+        onerror: function() {
+          panelDot.style.color = 'rgba(248,113,113,0.9)';
+          panelDot.textContent = '✗ Panel';
+          panelDot.title = 'Błąd sieci';
+        }
+      });
+    })();
+
     // ─── PROJEKT SELECTOR (strony zewnętrzne) ───
     var _projSelEl = document.getElementById('b24t-news-f-project-sel');
     if (_projSelEl) {
@@ -9537,13 +9712,27 @@ function showOnboarding(onComplete) {
         var pData = projects[pid] || {};
         state.projectId = parseInt(pid);
         state.tags = pData.tagIds || {};
+        try { GM_setValue('b24t_mini_last_project', pid); } catch(e) {}
+        lsSet('b24tagger_mini_last_project', pid);
         var countryInput = document.getElementById('b24t-news-f-country');
         if (countryInput) {
           var m = (pData.name || '').toUpperCase().match(/_([A-Z]{2})$/);
           countryInput.value = m ? m[1] : '';
         }
-        var projRow = document.getElementById('b24t-news-f-project-row');
-        if (projRow) projRow.style.display = 'none';
+        // Sprawdź zgodność języka strony z projektem
+        var _pageLangNow = (document.documentElement.getAttribute('lang') || '').toLowerCase().slice(0,2);
+        if (_pageLangNow) {
+          var _langWarnEl = document.getElementById('b24t-news-lang-warn');
+          var _cmap = { PL:'pl', TR:'tr', DE:'de', FR:'fr', IT:'it', ES:'es', PT:'pt', NL:'nl', SE:'sv', NO:'no', DK:'da', FI:'fi', CZ:'cs', SK:'sk', HU:'hu', RO:'ro', GR:'el', BG:'bg', HR:'hr', UA:'uk', RU:'ru', JP:'ja', KR:'ko', CN:'zh', AR:'ar', IN:'hi', BR:'pt' };
+          var _projSuffix = (pData.name || '').toUpperCase().match(/_([A-Z]{2})$/);
+          var _projLang = _projSuffix ? (_cmap[_projSuffix[1]] || '') : '';
+          if (_langWarnEl && _projLang && _pageLangNow !== _projLang) {
+            _langWarnEl.innerHTML = '⚠ Język strony (<strong>' + _pageLangNow.toUpperCase() + '</strong>) niezgodny z projektem (<strong>' + _projLang.toUpperCase() + '</strong>)';
+            _langWarnEl.style.display = '';
+          } else if (_langWarnEl) {
+            _langWarnEl.style.display = 'none';
+          }
+        }
         _newsRefillTags();
       });
     }
@@ -11228,6 +11417,21 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.9",
+      "date": "2026-05-13",
+      "label": "feature",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "panel Niestandardowe — skanowanie bieżącej strony (treść, tytuł, data, kategoria, metryki social media: Twitter/X, Facebook, LinkedIn, YouTube, Reddit)"},
+        {"type": "feat", "text": "panel Niestandardowe — dark/light mode zgodny z ustawieniami wtyczki (GM_setValue cross-domain)"},
+        {"type": "feat", "text": "panel Niestandardowe — przycisk ✚B24 na 1/3 ekranu od góry, większy (54px)"},
+        {"type": "feat", "text": "panel Niestandardowe — projekt zawsze widoczny, zapamiętywany cross-domain (GM_setValue)"},
+        {"type": "feat", "text": "panel Niestandardowe — ⚙ ustawienia w headerze: AI toggle + prompt selector"},
+        {"type": "feat", "text": "panel Niestandardowe — dioda ●Panel sprawdzania logowania do Brand24"},
+        {"type": "fix", "text": "panel Niestandardowe — usunięty przycisk Importuj URLe, tagi otwarte domyślnie, więcej wysokości"}
+      ]
+    },
+    {
       "version": "0.24.8",
       "date": "2026-05-13",
       "label": "fix",
@@ -11326,17 +11530,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "dodatkowe pola w trybie Niestandardowe — Likes, Pageviews, Shares, Comments (opcjonalne); edycja URL i kraju"},
         {"type": "feat", "text": "tryb 'tylko formularz' w Niestandardowe — toggle w headerze chowa listę i podgląd, formularz na pełnej szerokości w zwężonym panelu"},
         {"type": "feat", "text": "floating mini-przycisk ✚B24 na obcych stronach (poza /panel/results/) — kliknięcie otwiera standalone formularz z auto URL + tytułem, wyborem projektu z cache LS, CMS check, wszystkie pola Brand24 + tagi projektu, submit przez GM_xmlhttpRequest"}
-      ]
-    },
-    {
-      "version": "0.23.105",
-      "date": "2026-05-11",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "wrongcountry ma priorytet nad blocked/timeout — URL z obcego kraju oznaczany wrongcountry niezależnie od wyniku skanu; pre-scan skip eliminuje niepotrzebny HTTP request"},
-        {"type": "fix", "text": "usunięto retry przy timeout (było 8s×2=16s, teraz 10s×1) — krótszy czas blokowania na nieodpowiadających stronach"},
-        {"type": "ux", "text": "domain-skip — po 2 timeoutach z tej samej domeny kolejne URLi skipowane natychmiast; timer ETA 'Skanowanie: X/Y — ~Xs pozostało' na pasku postępu"}
       ]
     },
   ];
@@ -16048,6 +16241,148 @@ Tej operacji nie można cofnąć.`)) {
     return result;
   }
 
+  // ── AUTO-FILL Z BIEŻĄCEJ STRONY — wypełnia pola formularza Niestandardowe ──
+  // Wywoływana przy otwieraniu panelu custom na zewnętrznej stronie.
+  // Używa żywego DOM (document) — bez fetcha, bez opóźnień.
+  function _customAutoFillFromPage() {
+    // Poczekaj aż DOM formularza jest w pełni wyrenderowany
+    requestAnimationFrame(function() {
+      var scraped = _miniScrapeCurrentPage();
+
+      // URL — zawsze ustaw z bieżącego okna
+      var urlFld = document.getElementById('b24t-news-f-url');
+      if (urlFld && !urlFld.value) {
+        urlFld.value = window.location.href;
+        urlFld.style.borderColor = 'rgba(99,102,241,0.4)';
+      }
+
+      // Tytuł — og:title > h1 > document.title
+      var titleFld = document.getElementById('b24t-news-f-title');
+      if (titleFld && !titleFld.value) {
+        var _ogT = document.querySelector('meta[property="og:title"]');
+        var _h1  = document.querySelector('article h1, main h1, h1');
+        var _title = (_ogT && _ogT.getAttribute('content')) || (_h1 && _h1.textContent.trim()) || document.title || '';
+        titleFld.value = _title.slice(0, 400);
+        if (_title) titleFld.style.borderColor = 'rgba(99,102,241,0.4)';
+      }
+
+      // Treść — z _miniScrapeCurrentPage
+      var contentFld = document.getElementById('b24t-news-f-content');
+      if (contentFld && !contentFld.value && scraped.content) {
+        contentFld.value = scraped.content;
+        contentFld.style.borderColor = 'rgba(99,102,241,0.4)';
+        contentFld.title = 'Automatycznie wypełniono z treści strony';
+      }
+
+      // Data
+      var dateFld = document.getElementById('b24t-news-f-date');
+      if (dateFld && scraped.date) {
+        dateFld.value = scraped.date;
+        dateFld.style.borderColor = 'rgba(34,197,94,0.5)';
+        dateFld.title = 'Data wykryta automatycznie';
+      } else if (dateFld && !dateFld.value) {
+        var _now = new Date();
+        dateFld.value = _now.getFullYear() + '-' + String(_now.getMonth()+1).padStart(2,'0') + '-' + String(_now.getDate()).padStart(2,'0');
+      }
+
+      // Godzina i minuty z bieżącego czasu jeśli puste
+      var hourFld = document.getElementById('b24t-news-f-hour');
+      var minFld  = document.getElementById('b24t-news-f-minute');
+      if (hourFld && !hourFld.value) { var _n = new Date(); hourFld.value = String(_n.getHours()).padStart(2,'0'); }
+      if (minFld  && !minFld.value)  { var _n2 = new Date(); minFld.value  = String(_n2.getMinutes()).padStart(2,'0'); }
+
+      // Kategoria — auto-detect z URL
+      var catSel = document.getElementById('b24t-news-f-category-select');
+      if (catSel) {
+        var _autoCat = String(_detectCategoryFromUrl(window.location.href));
+        catSel.value = _autoCat;
+      }
+
+      // Metryki social media — próba scrapowania z żywego DOM
+      var _metrics = _scrapeSocialMetrics();
+      if (_metrics.likes   !== null) { var lF = document.getElementById('b24t-news-f-likes');    if (lF && !lF.value) lF.value = _metrics.likes; }
+      if (_metrics.shares  !== null) { var sF = document.getElementById('b24t-news-f-shares');   if (sF && !sF.value) sF.value = _metrics.shares; }
+      if (_metrics.comments!== null) { var cF = document.getElementById('b24t-news-f-comments'); if (cF && !cF.value) cF.value = _metrics.comments; }
+
+      // Sprawdź zgodność języka z projektem
+      if (scraped.lang && state.projectId) {
+        var _projects = _gmGetProjects();
+        var _pData = _projects[String(state.projectId)] || {};
+        var _cmap = { PL:'pl',TR:'tr',DE:'de',FR:'fr',IT:'it',ES:'es',PT:'pt',NL:'nl',SE:'sv',NO:'no',DK:'da',FI:'fi',CZ:'cs',SK:'sk',HU:'hu',RO:'ro',GR:'el',BG:'bg',HR:'hr',UA:'uk',RU:'ru',JP:'ja',KR:'ko',CN:'zh',AR:'ar',IN:'hi',BR:'pt' };
+        var _ps = (_pData.name || '').toUpperCase().match(/_([A-Z]{2})$/);
+        var _projLang = _ps ? (_cmap[_ps[1]] || '') : '';
+        var _langWarnEl = document.getElementById('b24t-news-lang-warn');
+        if (_langWarnEl && _projLang && scraped.lang !== _projLang) {
+          _langWarnEl.innerHTML = '⚠ Język strony (<strong>' + scraped.lang.toUpperCase() + '</strong>) niezgodny z projektem (<strong>' + _projLang.toUpperCase() + '</strong>)';
+          _langWarnEl.style.display = '';
+        }
+      }
+    });
+  }
+
+  // Próba scrapowania metryk social media z żywego DOM
+  function _scrapeSocialMetrics() {
+    var result = { likes: null, shares: null, comments: null };
+    var host = window.location.hostname;
+
+    function _parseNum(txt) {
+      if (!txt) return null;
+      var s = txt.trim();
+      var m = s.match(/^([\d,.]+)\s*([KkMmBb]?)$/);
+      if (!m) return null;
+      // Usuń separatory tysięcy (przecinki), zachowaj kropkę dziesiętną
+      var n = parseFloat(m[1].replace(/,/g,''));
+      var sfx = m[2].toLowerCase();
+      if (sfx === 'k') n = Math.round(n * 1000);
+      else if (sfx === 'm') n = Math.round(n * 1000000);
+      else if (sfx === 'b') n = Math.round(n * 1000000000);
+      return isNaN(n) ? null : n;
+    }
+    function _tryGet(selectors) {
+      for (var i = 0; i < selectors.length; i++) {
+        try {
+          var el = document.querySelector(selectors[i]);
+          if (el) {
+            var n = _parseNum((el.getAttribute('aria-label') || el.textContent || '').replace(/[^0-9KkMm.,\s]/g,'').trim());
+            if (n !== null) return n;
+          }
+        } catch(e) {}
+      }
+      return null;
+    }
+
+    // Twitter / X
+    if (host.indexOf('twitter.com') !== -1 || host.indexOf('x.com') !== -1) {
+      result.likes    = _tryGet(['[data-testid="like"] span[data-testid="app-text-transition-container"]', '[aria-label*="Like"]']);
+      result.shares   = _tryGet(['[data-testid="retweet"] span[data-testid="app-text-transition-container"]', '[aria-label*="Retweet"]']);
+      result.comments = _tryGet(['[data-testid="reply"] span[data-testid="app-text-transition-container"]', '[aria-label*="Reply"]']);
+    }
+    // Facebook
+    else if (host.indexOf('facebook.com') !== -1) {
+      result.likes    = _tryGet(['[data-testid="UFI2ReactionCountRoot"]', '[aria-label*="reaction"]']);
+      result.comments = _tryGet(['[data-testid="UFI2CommentsCount"]', 'a[aria-label*="comment"]']);
+      result.shares   = _tryGet(['a[aria-label*="share"]', 'div[aria-label*="share"]']);
+    }
+    // LinkedIn
+    else if (host.indexOf('linkedin.com') !== -1) {
+      result.likes    = _tryGet(['.social-counts-reactions__count-value', '[aria-label*="reaction"]', '.social-action-bar__reactions-count']);
+      result.comments = _tryGet(['.comments-tab__header-text', '[aria-label*="comment"]', '.social-action-bar__comment-count']);
+      result.shares   = _tryGet(['[aria-label*="reposts"]', '[aria-label*="repost"]']);
+    }
+    // YouTube
+    else if (host.indexOf('youtube.com') !== -1) {
+      result.likes = _tryGet(['[aria-label*="like this video"]', '#segmented-like-button ytd-toggle-button-renderer .yt-spec-button-shape-next__button-text-content']);
+      result.comments = _tryGet(['#count .count-text yt-formatted-string', 'ytd-comments-header-renderer #count']);
+    }
+    // Reddit
+    else if (host.indexOf('reddit.com') !== -1) {
+      result.likes    = _tryGet(['[id*="vote-arrows"] faceplate-number', '.score', '[aria-label*="upvote"]']);
+      result.comments = _tryGet(['a[href*="comments"] faceplate-number', '[id*="comment-count"]']);
+    }
+    // Instagram — metryki ukryte za auth, pomijamy
+    return result;
+  }
+
   function _initMiniMentionButton() {
     // Nie pokazuj w iframe ani jeśli użytkownik nigdy nie używał wtyczki (brak zapisanych projektów)
     try { if (window.top !== window.self) return; } catch(e) { return; }
@@ -16058,12 +16393,15 @@ Tej operacji nie można cofnąć.`)) {
     var btn = document.createElement('div');
     btn.id = 'b24t-mini-mention-btn';
     btn.title = 'Dodaj wzmiankę do Brand24';
-    btn.innerHTML = '<span style="font-size:18px;line-height:1;font-weight:700;">✚</span><span style="font-size:9px;font-weight:700;letter-spacing:0.05em;margin-top:1px;">B24</span>';
-    btn.style.cssText = 'position:fixed;bottom:18px;right:18px;z-index:2147483645;width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 4px 14px rgba(99,102,241,0.45);font-family:Geist,"Segoe UI",system-ui,-apple-system,sans-serif;border:2px solid rgba(255,255,255,0.25);transition:transform 0.15s,box-shadow 0.15s;user-select:none;';
+    btn.innerHTML = '<span style="font-size:20px;line-height:1;font-weight:700;">✚</span><span style="font-size:9px;font-weight:700;letter-spacing:0.05em;margin-top:2px;">B24</span>';
+    btn.style.cssText = 'position:fixed;top:33vh;right:18px;z-index:2147483645;width:54px;height:54px;border-radius:50%;background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 4px 14px rgba(99,102,241,0.45);font-family:Geist,"Segoe UI",system-ui,-apple-system,sans-serif;border:2px solid rgba(255,255,255,0.25);transition:transform 0.15s,box-shadow 0.15s;user-select:none;';
     btn.addEventListener('mouseenter', function() { btn.style.transform = 'scale(1.08)'; btn.style.boxShadow = '0 6px 18px rgba(99,102,241,0.55)'; });
     btn.addEventListener('mouseleave', function() { btn.style.transform = ''; btn.style.boxShadow = '0 4px 14px rgba(99,102,241,0.45)'; });
     btn.addEventListener('click', function() {
-      if (!document.getElementById('b24t-main-styles')) injectStyles();
+      if (!document.getElementById('b24t-main-styles')) {
+        injectStyles();
+        try { var _t = GM_getValue('b24t_theme_mirror', 'dark'); applyTheme(_t); } catch(e) { applyTheme('dark'); }
+      }
       openNewsPanels('custom');
     });
     document.body.appendChild(btn);

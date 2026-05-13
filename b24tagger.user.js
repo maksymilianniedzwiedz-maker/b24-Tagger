@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.14
+// @version      0.24.15
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -115,7 +115,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.14';
+  const VERSION = '0.24.15';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -9013,7 +9013,11 @@ function showOnboarding(onComplete) {
           '<label style="font-size:10px;font-weight:600;color:var(--b24t-text-muted);letter-spacing:0.04em;">PROMPT AI</label>' +
           '<select id="b24t-cps-prompt-sel" style="padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-input);color:var(--b24t-text);font-size:11px;font-family:inherit;">' + promptOptsHtml + '</select>' +
         '</div>' +
-        '<div style="display:flex;justify-content:flex-end;padding-top:4px;border-top:1px solid var(--b24t-border-sub);">' +
+        '<div style="display:flex;flex-direction:column;gap:4px;padding-top:6px;border-top:1px solid var(--b24t-border-sub);">' +
+          '<button id="b24t-cps-sync" style="padding:5px 10px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-input);color:var(--b24t-text);font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;text-align:left;">&#x1F504; Synchronizuj nazwy projekt&#xF3;w</button>' +
+          '<div id="b24t-cps-sync-msg" style="font-size:10px;color:var(--b24t-text-muted);min-height:14px;line-height:1.4;"></div>' +
+        '</div>' +
+        '<div style="display:flex;justify-content:flex-end;padding-top:4px;">' +
           '<button id="b24t-cps-save" style="padding:5px 14px;border-radius:7px;border:none;background:var(--b24t-accent-grad);color:#fff;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">Zapisz</button>' +
         '</div>' +
       '</div>';
@@ -9044,6 +9048,47 @@ function showOnboarding(onComplete) {
         _aiSaveSettings(cfg);
         pop.remove();
         _syncAiChip();
+      });
+    }
+
+    // Synchronizuj nazwy projektów
+    var syncBtn = document.getElementById('b24t-cps-sync');
+    var syncMsg = document.getElementById('b24t-cps-sync-msg');
+    if (syncBtn) {
+      syncBtn.addEventListener('click', function() {
+        syncMsg.style.color = 'var(--b24t-text-muted)';
+        syncMsg.textContent = 'Synchronizuję...';
+        var lsProj  = lsGet(LS.PROJECTS, {});
+        var lsNames = lsGet(LS.PROJECT_NAMES, {});
+        var gmProj = {}, gmNames = {};
+        try { var _gr = GM_getValue('b24t_projects_mirror', null); if (_gr) gmProj = typeof _gr === 'string' ? JSON.parse(_gr) : _gr; } catch(e) {}
+        try { var _gn = GM_getValue('b24t_project_names_mirror', null); if (_gn) gmNames = typeof _gn === 'string' ? JSON.parse(_gn) : _gn; } catch(e) {}
+        var isFallback = function(n) {
+          if (!n || n.length < 3) return true;
+          if (n === 'Brand24' || n === 'Panel Brand24') return true;
+          if (/^(Project|Projekt)\s+\d+$/.test(n)) return true;
+          return false;
+        };
+        var merged = {};
+        // GM mirror — najniższy priorytet
+        Object.keys(gmProj).forEach(function(pid) { var n = (gmProj[pid] || {}).name; if (!isFallback(n)) merged[String(pid)] = n; });
+        Object.keys(gmNames).forEach(function(pid) { if (!isFallback(gmNames[pid])) merged[String(pid)] = gmNames[pid]; });
+        // LS (brand24.com) — najwyższy priorytet
+        Object.keys(lsProj).forEach(function(pid) { var n = (lsProj[pid] || {}).name; if (!isFallback(n)) merged[String(pid)] = n; });
+        Object.keys(lsNames).forEach(function(pid) { if (!isFallback(lsNames[pid])) merged[String(pid)] = lsNames[pid]; });
+        _gmSaveProjectNames(merged);
+        var allIds = Object.keys(gmProj);
+        Object.keys(lsProj).forEach(function(pid) { if (allIds.indexOf(pid) < 0) allIds.push(pid); });
+        var still = allIds.filter(function(pid) { return !merged[String(pid)]; }).length;
+        _newsRefillProjectSelect();
+        var synced = Object.keys(merged).length;
+        if (still > 0) {
+          syncMsg.style.color = '#f59e0b';
+          syncMsg.textContent = 'Zsynchronizowano ' + synced + '. ' + still + ' nadal bez nazwy — otw\xF3rz brand24.com i kliknij ponownie.';
+        } else {
+          syncMsg.style.color = '#22c55e';
+          syncMsg.textContent = 'Zsynchronizowano ' + synced + ' nazw projekt\xF3w.';
+        }
       });
     }
 
@@ -11458,6 +11503,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.15",
+      "date": "2026-05-13",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "ustawienia Niestandardowe (⚙) — przycisk Synchronizuj nazwy projektów: merge GM mirror + LS, usuwa fallbacki 'Projekt cyferki', odświeża dropdown, pokazuje ile zsynchronizowano"}
+      ]
+    },
+    {
       "version": "0.24.14",
       "date": "2026-05-13",
       "label": "fix",
@@ -11554,16 +11608,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "panel Niestandardowe — detekcja duplikatów przed submitem (GQL fulltext search po ostatnim segmencie URL, porównanie normalizeUrl)"},
         {"type": "feat", "text": "panel Niestandardowe — ostrzeżenie językowe gdy artykuł wykryty w innym języku niż projekt (na podstawie sufiksu _XX w nazwie projektu)"},
         {"type": "feat", "text": "panel Niestandardowe — pole URL z badge duplikatu (⚠ duplikat / ✓ URL nowy) aktualizowanym przy zmianie projektu"}
-      ]
-    },
-    {
-      "version": "0.24.5",
-      "date": "2026-05-13",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "przyciski Stats/Legenda/Języki ukryte w trybie Niestandardowe — panel custom zawiera tylko formularz"},
-        {"type": "fix", "text": "lag przy przeciąganiu panelu — offsetWidth/offsetHeight cachowane przy mousedown zamiast czytane przy każdym mousemove (eliminuje reflow)"}
       ]
     },
   ];

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.5
+// @version      0.24.6
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -113,7 +113,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.5';
+  const VERSION = '0.24.6';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -11127,6 +11127,19 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.6",
+      "date": "2026-05-13",
+      "label": "feature",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "panel Niestandardowe — auto-scraping treści artykułu (article/main/[itemprop=articleBody]), daty (JSON-LD, meta, time[datetime]) i języka strony (html[lang], meta content-language)"},
+        {"type": "feat", "text": "panel Niestandardowe — auto-detekcja kategorii z URL (FB=5, IG=2, X=1, TikTok=11, LinkedIn=12 itd.) zamiast domyślnego Web"},
+        {"type": "feat", "text": "panel Niestandardowe — detekcja duplikatów przed submitem (GQL fulltext search po ostatnim segmencie URL, porównanie normalizeUrl)"},
+        {"type": "feat", "text": "panel Niestandardowe — ostrzeżenie językowe gdy artykuł wykryty w innym języku niż projekt (na podstawie sufiksu _XX w nazwie projektu)"},
+        {"type": "feat", "text": "panel Niestandardowe — pole URL z badge duplikatu (⚠ duplikat / ✓ URL nowy) aktualizowanym przy zmianie projektu"}
+      ]
+    },
+    {
       "version": "0.24.5",
       "date": "2026-05-13",
       "label": "fix",
@@ -15889,6 +15902,56 @@ Tej operacji nie można cofnąć.`)) {
   // MINI MENTION BUTTON (poza /panel/results/ — np. obce strony, dashboard, settings)
   // ───────────────────────────────────────────
 
+  function _miniScrapeCurrentPage() {
+    var result = { content: '', date: '', lang: null };
+    // Language from <html lang>
+    try {
+      var hl = document.documentElement.getAttribute('lang') || '';
+      var lm = hl.match(/^([a-z]{2})/i);
+      if (lm) result.lang = lm[1].toLowerCase();
+    } catch(e) {}
+    if (!result.lang) {
+      var mLang = document.querySelector('meta[http-equiv="content-language"], meta[name="language"]');
+      if (mLang) { var lm2 = (mLang.getAttribute('content') || '').match(/^([a-z]{2})/i); if (lm2) result.lang = lm2[1].toLowerCase(); }
+    }
+    // Date — JSON-LD first (most reliable)
+    var ldScripts = document.querySelectorAll('script[type="application/ld+json"]');
+    for (var i = 0; i < ldScripts.length && !result.date; i++) {
+      try {
+        var ld = JSON.parse(ldScripts[i].textContent || '');
+        var arr = Array.isArray(ld) ? ld : [ld];
+        for (var j = 0; j < arr.length && !result.date; j++) {
+          var dp = arr[j].datePublished || arr[j].dateCreated;
+          if (dp) { var dm = String(dp).match(/(\d{4}-\d{2}-\d{2})/); if (dm) result.date = dm[1]; }
+        }
+      } catch(e) {}
+    }
+    // Date — meta tags
+    if (!result.date) {
+      var mDate = document.querySelector('meta[property="article:published_time"],meta[name="article:published_time"],meta[name="publish-date"],meta[name="date"],meta[property="og:article:published_time"]');
+      if (mDate) { var mdm = (mDate.getAttribute('content') || '').match(/(\d{4}-\d{2}-\d{2})/); if (mdm) result.date = mdm[1]; }
+    }
+    // Date — time[datetime]
+    if (!result.date) {
+      var te = document.querySelector('time[datetime]');
+      if (te) { var tdm = (te.getAttribute('datetime') || '').match(/(\d{4}-\d{2}-\d{2})/); if (tdm) result.date = tdm[1]; }
+    }
+    // Content — extract main article text
+    var cEl = document.querySelector('[itemprop="articleBody"]') ||
+              document.querySelector('article') ||
+              document.querySelector('.article-body,.article-content,.entry-content,.post-content,.content-body,.story-body,.post-body') ||
+              document.querySelector('main');
+    if (cEl) {
+      var clone = cEl.cloneNode(true);
+      ['script','style','nav','header','footer','aside','figure','figcaption'].forEach(function(sel) {
+        try { clone.querySelectorAll(sel).forEach(function(el) { el.remove(); }); } catch(e) {}
+      });
+      var txt = (clone.innerText || clone.textContent || '').replace(/\s+/g, ' ').trim();
+      result.content = txt.substring(0, 3000);
+    }
+    return result;
+  }
+
   function _initMiniMentionButton() {
     // Nie pokazuj w iframe ani jeśli użytkownik nigdy nie używał wtyczki (brak zapisanych projektów)
     try { if (window.top !== window.self) return; } catch(e) { return; }
@@ -15978,8 +16041,15 @@ Tej operacji nie można cofnąć.`)) {
       '<div style="padding:14px 18px;display:flex;flex-direction:column;gap:10px;">',
         '<div id="b24t-mini-cms-warn" style="display:none;padding:7px 10px;border-radius:7px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.4);font-size:10px;color:' + c.yellow + ';line-height:1.5;"></div>',
         '<div id="b24t-mini-err" style="display:none;padding:7px 10px;border-radius:7px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);font-size:10px;color:' + c.red + ';line-height:1.5;"></div>',
+        '<div id="b24t-mini-lang-warn" style="display:none;padding:7px 10px;border-radius:7px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.4);font-size:10px;color:' + c.yellow + ';line-height:1.5;"></div>',
         '<div><label style="' + labelCss + '">PROJEKT</label><select id="b24t-mini-project" style="' + inputCss + '">' + projOptions + '</select></div>',
-        '<div><label style="' + labelCss + '">URL <span style="color:' + c.red + ';">*</span></label><input id="b24t-mini-url" type="text" value="' + _esc(window.location.href) + '" style="' + inputCss + 'font-family:monospace;font-size:10px;"></div>',
+        '<div>',
+          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">',
+            '<label style="' + labelCss + ';margin-bottom:0;">URL <span style="color:' + c.red + ';">*</span></label>',
+            '<span id="b24t-mini-dup-status" style="font-size:9px;color:' + c.textFaint + ';"></span>',
+          '</div>',
+          '<input id="b24t-mini-url" type="text" value="' + _esc(window.location.href) + '" style="' + inputCss + 'font-family:monospace;font-size:10px;">',
+        '</div>',
         '<div><label style="' + labelCss + '">TYTUŁ <span style="color:' + c.red + ';">*</span></label><input id="b24t-mini-title" type="text" placeholder="Wpisz tytuł..." value="' + _esc(document.title || '') + '" style="' + inputCss + '"></div>',
         '<div><label style="' + labelCss + '">TREŚĆ <span style="color:' + c.red + ';">*</span></label><textarea id="b24t-mini-content" rows="5" placeholder="Wklej fragment treści..." style="' + inputCss + 'resize:vertical;font-family:inherit;line-height:1.5;"></textarea></div>',
         '<div style="display:flex;gap:8px;">',
@@ -15991,7 +16061,7 @@ Tej operacji nie można cofnąć.`)) {
           '<div style="flex:1;"><label style="' + labelCss + '">KRAJ</label><input id="b24t-mini-country" type="text" value="' + _detectCountry(lastUsedId) + '" placeholder="np. PL, TR" style="' + inputCss + '"></div>',
           '<div style="flex:1;"><label style="' + labelCss + '">SENTYMENT</label><select id="b24t-mini-sent" style="' + inputCss + '"><option value="0">0 Neutral</option><option value="1">+1 Poz.</option><option value="-1">-1 Neg.</option></select></div>',
         '</div>',
-        '<div><label style="' + labelCss + '">KATEGORIA</label><select id="b24t-mini-cat" style="' + inputCss + '">' + _miniBuildCategoryOptions('8') + '</select></div>',
+        '<div><label style="' + labelCss + '">KATEGORIA</label><select id="b24t-mini-cat" style="' + inputCss + '">' + _miniBuildCategoryOptions(String(_detectCategoryFromUrl(window.location.href))) + '</select></div>',
         '<details style="border:1px solid ' + c.border + ';border-radius:7px;padding:7px 10px;background:' + c.bgInput + ';">',
           '<summary style="font-size:10px;font-weight:600;color:' + c.textMuted + ';cursor:pointer;letter-spacing:0.04em;">METRYKI (opcjonalne)</summary>',
           '<div style="display:flex;gap:6px;margin-top:8px;">',
@@ -16073,8 +16143,92 @@ Tej operacji nie można cofnąć.`)) {
       });
     }
 
+    function _miniLangCheck(articleLang, pid) {
+      var warn = document.getElementById('b24t-mini-lang-warn');
+      if (!warn) return;
+      var pData = (projects || {})[pid] || {};
+      var projLang = '';
+      var cmap = { PL:'pl', TR:'tr', DE:'de', FR:'fr', IT:'it', ES:'es', PT:'pt', NL:'nl', SE:'sv', NO:'no', DK:'da', FI:'fi', CZ:'cs', SK:'sk', HU:'hu', RO:'ro', GR:'el', BG:'bg', HR:'hr', UA:'uk', RU:'ru', JP:'ja', KR:'ko', CN:'zh', AR:'ar', IN:'hi', BR:'pt' };
+      var nm = (pData.name || '').toUpperCase().match(/_([A-Z]{2})$/);
+      if (nm) projLang = cmap[nm[1]] || '';
+      if (!projLang || !articleLang || projLang === articleLang) { warn.style.display = 'none'; return; }
+      warn.innerHTML = '⚠ Artykuł wygląda na <strong>' + articleLang.toUpperCase() + '</strong>, projekt oczekuje <strong>' + projLang.toUpperCase() + '</strong>. Czy na pewno dodać?';
+      warn.style.display = '';
+    }
+
+    function _miniDupCheck(url, pid) {
+      var dupEl = document.getElementById('b24t-mini-dup-status');
+      if (!dupEl) return;
+      var normUrl = normalizeUrl(url || '');
+      if (!normUrl) { dupEl.textContent = ''; return; }
+      var sq;
+      try { sq = new URL(url).pathname.split('/').filter(Boolean).pop() || ''; } catch(e) { sq = ''; }
+      if (!sq || sq.length < 4) { dupEl.textContent = ''; return; }
+      dupEl.textContent = '⏳ sprawdzanie...';
+      dupEl.style.color = c.textFaint;
+      var base = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
+      var gqlBody = JSON.stringify({
+        operationName: 'getMentions',
+        variables: {
+          projectId: parseInt(pid),
+          dateRange: { from: '2000-01-01', to: new Date().toISOString().split('T')[0] },
+          filters: { va: 1, rt: [], se: [], vi: null, gr: [], sq: sq, lem: false, ctr: [], nctr: false, is: [0, 10], tp: null, anom: '', lang: [], nlang: false, aue: null, htg: null, mt: false, mtri: null, cxs: [] },
+          page: 1, order: 0
+        },
+        query: 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){results{id url openUrl}}}'
+      });
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url: base + '/api/graphql',
+        headers: { 'Content-Type': 'application/json' },
+        data: gqlBody,
+        timeout: 8000,
+        onload: function(resp) {
+          try {
+            var data = JSON.parse(resp.responseText);
+            var results = (data && data.data && data.data.getMentions && data.data.getMentions.results) || [];
+            var dup = results.find(function(m) {
+              var mu = normalizeUrl(m.url || '');
+              var mo = normalizeUrl(m.openUrl || '');
+              return mu === normUrl || mo === normUrl;
+            });
+            if (dup) {
+              dupEl.textContent = '⚠ duplikat w projekcie';
+              dupEl.style.color = c.yellow;
+              dupEl.title = 'Ten URL już istnieje w wybranym projekcie (ID wzmianki: ' + dup.id + ')';
+            } else {
+              dupEl.textContent = '✓ URL nowy';
+              dupEl.style.color = c.green;
+              dupEl.title = '';
+            }
+          } catch(e) { dupEl.textContent = ''; }
+        },
+        onerror: function() { dupEl.textContent = ''; },
+        ontimeout: function() { dupEl.textContent = ''; }
+      });
+    }
+
     _renderTags(lastUsedId);
     _checkCms(lastUsedId);
+
+    // Auto-scrape page data after modal renders
+    requestAnimationFrame(function() {
+      var scraped = _miniScrapeCurrentPage();
+      var contentFld = document.getElementById('b24t-mini-content');
+      if (scraped.content && contentFld && !contentFld.value.trim()) {
+        contentFld.value = scraped.content;
+        contentFld.style.borderColor = 'rgba(99,102,241,0.5)';
+        contentFld.title = 'Automatycznie wypełniono z treści strony';
+      }
+      var dateFld = document.getElementById('b24t-mini-date');
+      if (scraped.date && dateFld) {
+        dateFld.value = scraped.date;
+        dateFld.style.borderColor = 'rgba(34,197,94,0.5)';
+        dateFld.title = 'Data wykryta automatycznie';
+      }
+      if (scraped.lang) _miniLangCheck(scraped.lang, lastUsedId);
+      _miniDupCheck(window.location.href, lastUsedId);
+    });
 
     document.getElementById('b24t-mini-project').addEventListener('change', function(e) {
       var pid = e.target.value;
@@ -16084,6 +16238,10 @@ Tej operacji nie można cofnąć.`)) {
       var cc = _detectCountry(pid);
       var cInput = document.getElementById('b24t-mini-country');
       if (cInput && cc) cInput.value = cc;
+      var urlVal = (document.getElementById('b24t-mini-url') || {}).value || window.location.href;
+      var scraped = _miniScrapeCurrentPage();
+      if (scraped.lang) _miniLangCheck(scraped.lang, pid);
+      _miniDupCheck(urlVal, pid);
     });
 
     document.getElementById('b24t-mini-submit').addEventListener('click', function() {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.16
+// @version      0.24.17
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -115,7 +115,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.16';
+  const VERSION = '0.24.17';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -9027,7 +9027,7 @@ function showOnboarding(onComplete) {
           '<select id="b24t-cps-prompt-sel" style="padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-input);color:var(--b24t-text);font-size:11px;font-family:inherit;">' + promptOptsHtml + '</select>' +
         '</div>' +
         '<div style="display:flex;flex-direction:column;gap:4px;padding-top:6px;border-top:1px solid var(--b24t-border-sub);">' +
-          '<button id="b24t-cps-sync" style="padding:5px 10px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-input);color:var(--b24t-text);font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;text-align:left;">&#x1F504; Synchronizuj nazwy projekt&#xF3;w</button>' +
+          '<button id="b24t-cps-sync" style="padding:5px 10px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-input);color:var(--b24t-text);font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;text-align:left;">&#x1F5D1; Reset i przebuduj projekty</button>' +
           '<div id="b24t-cps-sync-msg" style="font-size:10px;color:var(--b24t-text-muted);min-height:14px;line-height:1.4;"></div>' +
         '</div>' +
         '<div style="display:flex;justify-content:flex-end;padding-top:4px;">' +
@@ -9064,43 +9064,47 @@ function showOnboarding(onComplete) {
       });
     }
 
-    // Synchronizuj nazwy projektów
+    // Reset + przebuduj listę projektów
     var syncBtn = document.getElementById('b24t-cps-sync');
     var syncMsg = document.getElementById('b24t-cps-sync-msg');
     if (syncBtn) {
       syncBtn.addEventListener('click', function() {
         syncMsg.style.color = 'var(--b24t-text-muted)';
-        syncMsg.textContent = 'Synchronizuję...';
+        syncMsg.textContent = 'Czyszczę i przebudowuję...';
+        var isFb = function(n) {
+          return !n || n.length < 3 || n === 'Brand24' || n === 'Panel Brand24' || /^(Project|Projekt)\s+\d+$/.test(n);
+        };
+        // 1. Wyczyść stare mirrory
+        try { GM_setValue('b24t_projects_mirror', '{}'); } catch(e) {}
+        try { GM_setValue('b24t_project_names_mirror', '{}'); } catch(e) {}
+        _gmPNSynced = false;
+        // 2. Odbuduj wyłącznie z LS (dostępne tylko na brand24.com)
         var lsProj  = lsGet(LS.PROJECTS, {});
         var lsNames = lsGet(LS.PROJECT_NAMES, {});
-        var gmProj = {}, gmNames = {};
-        try { var _gr = GM_getValue('b24t_projects_mirror', null); if (_gr) gmProj = typeof _gr === 'string' ? JSON.parse(_gr) : _gr; } catch(e) {}
-        try { var _gn = GM_getValue('b24t_project_names_mirror', null); if (_gn) gmNames = typeof _gn === 'string' ? JSON.parse(_gn) : _gn; } catch(e) {}
-        var isFallback = function(n) {
-          if (!n || n.length < 3) return true;
-          if (n === 'Brand24' || n === 'Panel Brand24') return true;
-          if (/^(Project|Projekt)\s+\d+$/.test(n)) return true;
-          return false;
-        };
-        var merged = {};
-        // GM mirror — najniższy priorytet
-        Object.keys(gmProj).forEach(function(pid) { var n = (gmProj[pid] || {}).name; if (!isFallback(n)) merged[String(pid)] = n; });
-        Object.keys(gmNames).forEach(function(pid) { if (!isFallback(gmNames[pid])) merged[String(pid)] = gmNames[pid]; });
-        // LS (brand24.com) — najwyższy priorytet
-        Object.keys(lsProj).forEach(function(pid) { var n = (lsProj[pid] || {}).name; if (!isFallback(n)) merged[String(pid)] = n; });
-        Object.keys(lsNames).forEach(function(pid) { if (!isFallback(lsNames[pid])) merged[String(pid)] = lsNames[pid]; });
-        _gmSaveProjectNames(merged);
-        var allIds = Object.keys(gmProj);
-        Object.keys(lsProj).forEach(function(pid) { if (allIds.indexOf(pid) < 0) allIds.push(pid); });
-        var still = allIds.filter(function(pid) { return !merged[String(pid)]; }).length;
+        var newProj = {}, newNames = {};
+        Object.keys(lsProj).forEach(function(pid) {
+          var p = lsProj[pid] || {};
+          if (!isFb(p.name)) {
+            newProj[String(pid)] = p;
+            newNames[String(pid)] = p.name;
+          }
+        });
+        Object.keys(lsNames).forEach(function(pid) {
+          if (!isFb(lsNames[pid])) newNames[String(pid)] = lsNames[pid];
+        });
+        // 3. Zapisz nowe mirrory
+        try { GM_setValue('b24t_projects_mirror', JSON.stringify(newProj)); } catch(e) {}
+        _gmSaveProjectNames(newNames);
+        // 4. Odśwież dropdown
         _newsRefillProjectSelect();
-        var synced = Object.keys(merged).length;
-        if (still > 0) {
+        // 5. Feedback
+        var cnt = Object.keys(newProj).length;
+        if (cnt === 0) {
           syncMsg.style.color = '#f59e0b';
-          syncMsg.textContent = 'Zsynchronizowano ' + synced + '. ' + still + ' nadal bez nazwy — otw\xF3rz brand24.com i kliknij ponownie.';
+          syncMsg.textContent = 'Brak projekt\xF3w w pamięci — otw\xF3rz brand24.com i kliknij ponownie.';
         } else {
           syncMsg.style.color = '#22c55e';
-          syncMsg.textContent = 'Zsynchronizowano ' + synced + ' nazw projekt\xF3w.';
+          syncMsg.textContent = 'Przebudowano: ' + cnt + ' projekt\xF3w.';
         }
       });
     }
@@ -11516,6 +11520,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.17",
+      "date": "2026-05-13",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "ustawienia Niestandardowe (⚙) — przycisk Reset i przebuduj: czyści oba GM mirrory i odbudowuje wyłącznie z LS (brand24.com), usuwa stale fallbacki 'Projekt cyferki' nieodwracalnie"}
+      ]
+    },
+    {
       "version": "0.24.16",
       "date": "2026-05-13",
       "label": "fix",
@@ -11605,18 +11618,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "mini button na zewnętrznych stronach — localStorage per-domena, dane Brand24 niedostępne; fix: GM_getValue/GM_setValue jako cross-domain mirror projektów"},
         {"type": "feat", "text": "_gmGetProjects() — fallback do GM storage gdy localStorage pusty; _gmSaveProjects() — mirror przy załadowaniu projektu na Brand24"}
-      ]
-    },
-    {
-      "version": "0.24.7",
-      "date": "2026-05-13",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "panel Niestandardowe — karty Lista/Podgląd/Formularz/Statystyki znikają w trybie custom (responsive skip)"},
-        {"type": "feat", "text": "przycisk AI w headerze — klikalny toggle włącz/wyłącz AI osobno dla trybu News i Niestandardowe"},
-        {"type": "feat", "text": "panel Niestandardowe dostępny na każdej stronie — mini button otwiera pełny panel z selectorem projektu"},
-        {"type": "fix", "text": "injectStyles — guard przed podwójnym wstrzykiwaniem CSS (id b24t-main-styles)"}
       ]
     },
   ];

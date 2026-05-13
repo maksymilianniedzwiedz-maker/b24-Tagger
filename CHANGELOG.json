@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.24.2",
+    "date": "2026-05-13",
+    "changes": [
+      "fix: floating panel Niestandardowe widoczny ponad panelem Taggera — overlay z-index podniesiony do 2147483647 w trybie custom",
+      "fix: padding-right overlay 12px→52px — eliminuje nakładanie floating panelu na side tab Wzmianek",
+      "fix: przełączenie custom→news — tło overlay poprawnie przywracane do rgba(0,0,0,0.55)"
+    ]
+  },
+  {
     "version": "0.24.1",
     "date": "2026-05-11",
     "changes": [

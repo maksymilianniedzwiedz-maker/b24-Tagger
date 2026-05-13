@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.24.12",
+    "date": "2026-05-13",
+    "label": "fix",
+    "changes": [
+      "fix: _pnResolve krok 3 używa _gmGetProjects() zamiast lsGet(LS.PROJECTS) — nazwy projektów dostępne cross-domain przez GM mirror"
+    ]
+  },
+  {
     "version": "0.24.11",
     "date": "2026-05-13",
     "label": "fix",

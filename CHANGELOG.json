@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.24.3",
+    "date": "2026-05-13",
+    "label": "fix",
+    "changes": [
+      "fix: panel Niestandardowe znikał po kliknięciu — side tab Wzmianki dostawał pointer-events:none w trybie custom (leży w 52px przerwie obok panelu, przechwytywał kliknięcia przez transparent overlay)",
+      "fix: gap między side tabami Wzmianki i Net — Net tab przesunięty z calc(50%+250px) na calc(50%+200px), taby teraz przylegają na styku"
+    ]
+  },
+  {
     "version": "0.24.2",
     "date": "2026-05-13",
     "changes": [

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.24
+// @version      0.24.25
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -115,7 +115,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.24';
+  const VERSION = '0.24.25';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -573,8 +573,13 @@
     const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
     const opts = args[1] || {};
     const bodyStr = typeof opts.body === 'string' ? opts.body : '';
-    if (url.includes('graphql') && opts.headers && !state.tokenHeaders) {
+    var _isBrand24Host = window.location.hostname === 'app.brand24.com' || window.location.hostname === 'panel.brand24.pl';
+    if (url.includes('graphql') && opts.headers && !state.tokenHeaders && _isBrand24Host) {
       state.tokenHeaders = { ...opts.headers };
+      try {
+        GM_setValue('b24t_token_headers', JSON.stringify(state.tokenHeaders));
+        GM_setValue('b24t_brand24_base', window.location.hostname === 'panel.brand24.pl' ? 'https://panel.brand24.pl' : 'https://app.brand24.com');
+      } catch(e) {}
       updateTokenUI(true);
     }
     // Capture last organic getMentions variables for Quick Tag filter mirroring
@@ -11578,6 +11583,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.25",
+      "date": "2026-05-14",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "dup-check cross-domain: tokenHeaders (Authorization) zapisywane do GM na brand24.com; cross-domain GQL dostaje pełne auth headery"},
+        {"type": "fix", "text": "dup-check: błąd GQL (brak tokenu, timeout, sieć) pokazuje komunikat zamiast cichego 'URL nowy'"}
+      ]
+    },
+    {
       "version": "0.24.24",
       "date": "2026-05-14",
       "label": "fix",
@@ -11662,15 +11677,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "_gmGetProjectNames: scal LS.PROJECTS + LS.PROJECT_NAMES przy sync — nazwy projektów cross-domain bez klikania, wizyta na brand24.com wystarczy"}
-      ]
-    },
-    {
-      "version": "0.24.15",
-      "date": "2026-05-13",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "ustawienia Niestandardowe (⚙) — przycisk Synchronizuj nazwy projektów: merge GM mirror + LS, usuwa fallbacki 'Projekt cyferki', odświeża dropdown, pokazuje ile zsynchronizowano"}
       ]
     },
   ];
@@ -16533,7 +16539,18 @@ Tej operacji nie można cofnąć.`)) {
     dupEl.style.color = '#6b7280';
     dupEl.style.display = '';
 
-    var _base  = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
+    // Base URL: szukaj w GM jaki domain używa użytkownik (zapisany przy logowaniu)
+    var _storedBase = '';
+    try { _storedBase = GM_getValue('b24t_brand24_base', '') || ''; } catch(e) {}
+    var _base = _storedBase || (window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com');
+
+    // Token headers: przechwycone na brand24.com i zapisane do GM — potrzebne do GQL cross-domain
+    var _authHeaders = { 'Content-Type': 'application/json' };
+    try {
+      var _rawH = GM_getValue('b24t_token_headers', null);
+      if (_rawH) Object.assign(_authHeaders, JSON.parse(_rawH));
+    } catch(e) {}
+
     var _rxQH  = /[?#].*$/;
     var _normBase = normUrl.replace(_rxQH, '');
     var _urls  = new Set();
@@ -16573,14 +16590,26 @@ Tej operacji nie można cofnąć.`)) {
       GM_xmlhttpRequest({
         method: 'POST',
         url: _base + '/api/graphql',
-        headers: { 'Content-Type': 'application/json' },
+        headers: _authHeaders,
         data: JSON.stringify({ operationName: 'getMentions', variables: { projectId: parseInt(pid, 10), dateRange: { from: dateFrom, to: dateTo }, filters: _fil, page: pg, order: 0 }, query: _GQL }),
         timeout: 10000,
         onload: function(resp) {
-          try { var d = JSON.parse(resp.responseText); var r = d && d.data && d.data.getMentions; cb(r ? (r.count || 0) : 0, r ? (r.results || []) : []); }
-          catch(e) { cb(0, []); }
+          try {
+            var d = JSON.parse(resp.responseText);
+            if (d && d.errors && (!d.data || !d.data.getMentions)) {
+              // GQL auth error lub inny błąd — pokaż użytkownikowi zamiast cichego "nowy"
+              dupEl.textContent = '⚠ dup-check: otwórz Brand24 żeby odświeżyć token';
+              dupEl.style.color = '#f59e0b';
+              dupEl.style.display = '';
+              cb(-1, []);
+              return;
+            }
+            var r = d && d.data && d.data.getMentions;
+            cb(r ? (r.count || 0) : 0, r ? (r.results || []) : []);
+          } catch(e) { cb(0, []); }
         },
-        onerror: function() { cb(0, []); }, ontimeout: function() { cb(0, []); }
+        onerror:   function() { dupEl.textContent = '⚠ dup-check: błąd sieci'; dupEl.style.color = '#f59e0b'; dupEl.style.display = ''; cb(-1, []); },
+        ontimeout: function() { dupEl.textContent = '⚠ dup-check: timeout'; dupEl.style.color = '#f59e0b'; dupEl.style.display = ''; cb(-1, []); }
       });
     }
 
@@ -16591,6 +16620,7 @@ Tej operacji nie można cofnąć.`)) {
     }
 
     _fetch(1, function(count, results) {
+      if (count === -1) return; // błąd — komunikat już ustawiony w _fetch
       _page(results);
       if (_hit()) { dupEl.textContent = '⚠ duplikat — URL już istnieje w projekcie'; dupEl.style.color = '#f59e0b'; return; }
       var pageSize   = results.length || 60;
@@ -16602,6 +16632,7 @@ Tej operacji nie można cofnąć.`)) {
       function _next() {
         if (idx >= remaining.length) { _show(); return; }
         _fetch(remaining[idx++], function(c, r) {
+          if (c === -1) return;
           _page(r);
           if (_hit()) { dupEl.textContent = '⚠ duplikat — URL już istnieje w projekcie'; dupEl.style.color = '#f59e0b'; return; }
           _next();

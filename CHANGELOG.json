@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.24.26",
+    "date": "2026-05-14",
+    "label": "feat",
+    "changes": [
+      "feat: B24Bridge — centralny system cross-domain (token + projekty + lastProject w jednym kluczu GM b24t_bridge)",
+      "feat: GM_addValueChangeListener — reaktywne powiadomienia między kartami; dupcheck auto-ponawia gdy brand24.com zapisze token",
+      "fix: _customDupCheck — sequence guard anuluje stare requesty; pid NaN guard; komentarz przeniesiony nad właściwą funkcję",
+      "refactor: _gmGetProjects, _gmSaveProjects, _gmGetProjectNames, _gmSaveProjectNames, _pnSet, ANNOTATOR TOOLS → delegują do B24Bridge",
+      "fix: _newsCheckTagDodane base URL → B24Bridge.token.base() (obsługuje pl vs com cross-domain)"
+    ]
+  },
+  {
     "version": "0.24.25",
     "date": "2026-05-14",
     "label": "fix",

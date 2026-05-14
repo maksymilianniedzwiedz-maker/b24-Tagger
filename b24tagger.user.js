@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.20
+// @version      0.24.21
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -115,7 +115,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.20';
+  const VERSION = '0.24.21';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4020,6 +4020,19 @@
       @keyframes b24t-dot-pulse {
         0%, 100% { opacity: 1; }
         50%       { opacity: 0.2; }
+      }
+
+      /* ── CROSS-DOMAIN CHECKBOX RESET (neutralizuje CSS hosta) ── */
+      #b24t-news-tag-list input[type="checkbox"] {
+        width: 11px !important; height: 11px !important;
+        min-width: 11px !important; max-width: 11px !important;
+        min-height: 11px !important; max-height: 11px !important;
+        flex-shrink: 0 !important; flex-grow: 0 !important;
+        margin: 0 !important; padding: 0 !important;
+        box-sizing: content-box !important;
+        transform: none !important;
+        cursor: pointer !important;
+        accent-color: #6366f1 !important;
       }
 
       /* ── TOAST NOTIFICATIONS ── */
@@ -9766,7 +9779,7 @@ function showOnboarding(onComplete) {
   }
 
   function _wireNewsPanels() {
-    _naShowConsentIfNeeded();
+    if (newsState.mode !== 'custom') _naShowConsentIfNeeded();
     _naRetryPending();
     var projectCountry = _newsProjectCountry();
 
@@ -11540,6 +11553,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.21",
+      "date": "2026-05-14",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "tagi w panelu Niestandardowe — CSS reset !important neutralizuje style hosta; checkboxy nie są ogromne na obcych stronach"},
+        {"type": "fix", "text": "popup zgody na analitykę News nie wyskakuje przy otwieraniu panelu Niestandardowe"}
+      ]
+    },
+    {
       "version": "0.24.20",
       "date": "2026-05-14",
       "label": "fix",
@@ -11621,17 +11644,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "_pnResolve krok 3 używa _gmGetProjects() zamiast lsGet(LS.PROJECTS) — nazwy projektów dostępne cross-domain przez GM mirror (fix regresjii z v0.24.11)"}
-      ]
-    },
-    {
-      "version": "0.24.11",
-      "date": "2026-05-13",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "nazwy projektów cross-domain — GM mirror dla PROJECT_NAMES, _pnSet/_pnGet synchronizują GM storage, dropdown Niestandardowe używa _pnResolve"},
-        {"type": "feat", "text": "wybór kraju w panelu Niestandardowe i mini panelu — dropdown z listą 49 krajów zamiast pola tekstowego"},
-        {"type": "fix", "text": "auto-fill treści — łączy akapity do 200 znaków (maks. 5 akapitów), przycina na granicy zdania zamiast twardego cięcia"}
       ]
     },
   ];
@@ -16768,11 +16780,21 @@ Tej operacji nie można cofnąć.`)) {
       }
       tagList.innerHTML = tagEntries.map(function(entry) {
         var name = entry[0], tid = entry[1];
-        return '<label style="display:flex;align-items:center;gap:3px;cursor:pointer;padding:3px 7px;border-radius:5px;background:' + c.bgInput + ';border:1px solid ' + c.border + ';">' +
-          '<input type="checkbox" data-tag-id="' + _esc(tid) + '" style="cursor:pointer;accent-color:#6366f1;width:11px;height:11px;">' +
+        return '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;padding:3px 7px 3px 5px;border-radius:5px;background:' + c.bgInput + ';border:1px solid ' + c.border + ';user-select:none;">' +
+          '<span data-tag-id="' + _esc(tid) + '" data-checked="0" style="flex-shrink:0;display:inline-block;width:11px;height:11px;border-radius:2px;border:1.5px solid ' + c.border + ';background:transparent;box-sizing:border-box;"></span>' +
           '<span style="font-size:10px;color:' + c.text + ';">' + _esc(name) + '</span>' +
         '</label>';
       }).join('');
+      tagList.onclick = function(e) {
+        var label = e.target && e.target.closest ? e.target.closest('label') : null;
+        if (!label) return;
+        var box = label.querySelector('[data-tag-id]');
+        if (!box) return;
+        var on = box.dataset.checked !== '1';
+        box.dataset.checked = on ? '1' : '0';
+        box.style.background = on ? '#6366f1' : 'transparent';
+        box.style.borderColor = on ? '#6366f1' : c.border;
+      };
     }
 
     function _checkCms(pid) {
@@ -16938,8 +16960,8 @@ Tej operacji nie można cofnąć.`)) {
       var mentionCategory = catVal || '8';
 
       var selectedTags = [];
-      document.querySelectorAll('#b24t-mini-tags input[type="checkbox"]:checked').forEach(function(cb) {
-        var tid = parseInt(cb.dataset.tagId);
+      document.querySelectorAll('#b24t-mini-tags [data-tag-id][data-checked="1"]').forEach(function(span) {
+        var tid = parseInt(span.dataset.tagId);
         if (tid) selectedTags.push(tid);
       });
 

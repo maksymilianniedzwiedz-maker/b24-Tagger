@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.22
+// @version      0.24.23
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -115,7 +115,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.22';
+  const VERSION = '0.24.23';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -11578,6 +11578,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.23",
+      "date": "2026-05-14",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "dup-check URL — sq używa tytułu artykułu zamiast segmentu URL; Brand24 GQL indeksuje tytuł (nie URL), więc dup-check teraz faktycznie działa"}
+      ]
+    },
+    {
       "version": "0.24.22",
       "date": "2026-05-14",
       "label": "feat",
@@ -11661,15 +11670,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "_gmGetProjectNames() lazy sync: przy pierwszym wywołaniu na brand24.com kopiuje LS.PROJECT_NAMES → GM mirror, nazwy projektów dostępne cross-domain automatycznie"}
-      ]
-    },
-    {
-      "version": "0.24.13",
-      "date": "2026-05-13",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Uzupełnij nazwy — wykrywa też projekty wyłącznie w GM mirror (nie w LS.PROJECTS); _applyName chirurgicznie aktualizuje GM mirror zamiast nadpisywać cały"}
       ]
     },
   ];
@@ -16512,8 +16512,12 @@ Tej operacji nie można cofnąć.`)) {
     if (!dupEl) return;
     var normUrl = normalizeUrl(url || '');
     if (!normUrl) { dupEl.style.display = 'none'; return; }
-    var sq;
-    try { sq = new URL(url).pathname.split('/').filter(Boolean).pop() || ''; } catch(e) { sq = ''; }
+    // sq = tytuł artykułu (Brand24 indeksuje tytuł, nie URL) — fallback: domena
+    var titleFld = document.getElementById('b24t-news-f-title');
+    var sq = (titleFld && titleFld.value.trim()) || '';
+    if (!sq) {
+      try { sq = new URL(url).hostname.replace(/^www\./, ''); } catch(e) { sq = ''; }
+    }
     if (!sq || sq.length < 4) { dupEl.style.display = 'none'; return; }
     dupEl.textContent = '⏳ sprawdzanie duplikatów...';
     dupEl.style.color = '#6b7280';

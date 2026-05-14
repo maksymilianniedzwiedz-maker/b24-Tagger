@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.25
+// @version      0.24.26
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -13,6 +13,7 @@
 // @grant        unsafeWindow
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_addValueChangeListener
 // @connect       hooks.slack.com
 // @connect       raw.githubusercontent.com
 // @connect       cdn.jsdelivr.net
@@ -115,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.25';
+  const VERSION = '0.24.26';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -225,29 +226,12 @@
   function _gmGetProjects() {
     var fromLS = lsGet(LS.PROJECTS, null);
     if (fromLS && Object.keys(fromLS).length > 0) return fromLS;
-    try {
-      var raw = GM_getValue('b24t_projects_mirror', null);
-      if (raw) return typeof raw === 'string' ? JSON.parse(raw) : raw;
-    } catch(e) {}
+    var bridgeProjs = B24Bridge.projects.all();
+    if (Object.keys(bridgeProjs).length > 0) return bridgeProjs;
     return {};
   }
   function _gmSaveProjects(projects) {
-    var _isFbName = function(n) {
-      return !n || n.length < 3 || n === 'Brand24' || n === 'Panel Brand24' || /^(Project|Projekt)\s+\d+$/.test(n);
-    };
-    var existing = {};
-    try { var _r = GM_getValue('b24t_projects_mirror', null); if (_r) existing = typeof _r === 'string' ? JSON.parse(_r) : _r; } catch(e) {}
-    var merged = {};
-    // Zachowaj dobre nazwy z istniejącego mirrora
-    Object.keys(existing).forEach(function(pid) {
-      if (!_isFbName((existing[pid] || {}).name)) merged[pid] = existing[pid];
-    });
-    // Dodaj/nadpisz dobrymi nazwami z nowych danych — fallbacki ignoruj
-    Object.keys(projects).forEach(function(pid) {
-      var p = projects[pid] || {};
-      if (!_isFbName(p.name)) merged[String(pid)] = p;
-    });
-    try { GM_setValue('b24t_projects_mirror', JSON.stringify(merged)); } catch(e) {}
+    B24Bridge.projects.setAll(projects);
   }
   var _gmPNSynced = false;
   function _gmGetProjectNames() {
@@ -267,18 +251,20 @@
         if (!_pnFallback(fromLS[pid])) merged[String(pid)] = fromLS[pid];
       });
       if (!_gmPNSynced && Object.keys(merged).length > 0) {
-        try { GM_setValue('b24t_project_names_mirror', JSON.stringify(merged)); _gmPNSynced = true; } catch(e) {}
+        var _syncProjs = {};
+        Object.keys(merged).forEach(function(pid) { _syncProjs[pid] = { name: merged[pid] }; });
+        B24Bridge.projects.setAll(_syncProjs);
+        _gmPNSynced = true;
       }
       return merged;
     }
-    try {
-      var raw = GM_getValue('b24t_project_names_mirror', null);
-      if (raw) return typeof raw === 'string' ? JSON.parse(raw) : raw;
-    } catch(e) {}
-    return {};
+    return B24Bridge.projects.names();
   }
   function _gmSaveProjectNames(names) {
-    try { GM_setValue('b24t_project_names_mirror', JSON.stringify(names)); _gmPNSynced = true; } catch(e) {}
+    var _projs = {};
+    Object.keys(names).forEach(function(pid) { _projs[pid] = { name: names[pid] }; });
+    B24Bridge.projects.setAll(_projs);
+    _gmPNSynced = true;
   }
 
   // ── AI SETTINGS HELPERS ────────────────────────────────────────────────────
@@ -450,15 +436,9 @@
     if (names[String(projectId)] === name) return; // bez zmian
     names[String(projectId)] = name;
     lsSet(LS.PROJECT_NAMES, names);
-    // Merge z istniejącym GM mirror — zapobiega nadpisaniu całego mirrora
-    // jednym wpisem gdy LS jest pusty (np. na obcej domenie)
-    try {
-      var raw = GM_getValue('b24t_project_names_mirror', null);
-      var mirror = (raw && typeof raw === 'string') ? JSON.parse(raw) : {};
-      mirror[String(projectId)] = name;
-      GM_setValue('b24t_project_names_mirror', JSON.stringify(mirror));
-      _gmPNSynced = true;
-    } catch(e) {}
+    // Zaktualizuj B24Bridge (cross-domain, reaktywne)
+    B24Bridge.projects.update(projectId, { name: name });
+    _gmPNSynced = true;
   }
 
   function _pnResolve(projectId) {
@@ -483,6 +463,153 @@
     // 4. Fallback — ID projektu (przynajmniej wiadomo co to)
     return 'Projekt ' + projectId;
   }
+
+  // ───────────────────────────────────────────
+  // B24BRIDGE — cross-domain data bus
+  // ───────────────────────────────────────────
+  // Jedyny punkt wymiany danych między brand24.com a obcymi stronami.
+  // GM_getValue/GM_setValue działa na każdej stronie w Tampermonkey.
+  // GM_addValueChangeListener reaguje na zmiany z innej karty w czasie rzeczywistym.
+  //
+  // Klucz GM: 'b24t_bridge' (JSON):
+  //   _v           — licznik wersji (monotoniczny)
+  //   _ts          — timestamp ostatniego zapisu (ms)
+  //   token        — { headers, base, savedAt } — auth do Brand24 GQL
+  //   projects     — { pid: { name, tags[], updatedAt } }
+  //   lastProject  — ostatnio wybrany projekt w panelu Niestandardowe
+
+  var B24Bridge = (function() {
+    var _KEY = 'b24t_bridge';
+    var _cache = null;
+    var _listeners = {};
+
+    var _isFallback = function(n) {
+      return !n || n.length < 3 || n === 'Brand24' || n === 'Panel Brand24' || /^(Project|Projekt)\s+\d+$/.test(n);
+    };
+
+    function _read() {
+      if (_cache) return _cache;
+      try {
+        var raw = GM_getValue(_KEY, null);
+        _cache = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : { _v: 0, _ts: 0 };
+      } catch(e) { _cache = { _v: 0, _ts: 0 }; }
+      return _cache;
+    }
+
+    function _write(patch) {
+      var cur = _read();
+      var updated = Object.assign({}, cur, patch);
+      updated._v = (cur._v || 0) + 1;
+      updated._ts = Date.now();
+      _cache = updated;
+      try { GM_setValue(_KEY, JSON.stringify(updated)); } catch(e) {}
+      return updated;
+    }
+
+    // Reaktywne nasłuchiwanie: inny tab (np. brand24.com) zapisał nowe dane
+    try {
+      GM_addValueChangeListener(_KEY, function(name, oldVal, newVal, remote) {
+        if (!remote) return; // ignoruj własne zapisy
+        _cache = null;
+        var data = _read();
+        Object.keys(_listeners).forEach(function(id) {
+          if (_listeners[id]) { try { _listeners[id](data); } catch(e) {} }
+        });
+      });
+    } catch(e) {}
+
+    var _token = {
+      save: function(headers, base) {
+        _write({ token: { headers: headers, base: base, savedAt: Date.now() } });
+      },
+      get: function() {
+        var d = _read();
+        if (!d.token || !d.token.headers) return null;
+        if (Date.now() - (d.token.savedAt || 0) > 8 * 3600 * 1000) return null; // 8h TTL
+        return d.token;
+      },
+      headers: function() {
+        var t = this.get();
+        return t ? Object.assign({ 'Content-Type': 'application/json' }, t.headers) : { 'Content-Type': 'application/json' };
+      },
+      base: function() {
+        var d = _read();
+        return (d.token && d.token.base) || 'https://app.brand24.com';
+      },
+      isValid: function() { return !!this.get(); }
+    };
+
+    var _projects = {
+      setAll: function(map) {
+        var d = _read();
+        var merged = {};
+        var existing = d.projects || {};
+        Object.keys(existing).forEach(function(pid) {
+          if (!_isFallback((existing[pid] || {}).name)) merged[pid] = existing[pid];
+        });
+        Object.keys(map || {}).forEach(function(pid) {
+          var p = map[pid] || {};
+          if (!_isFallback(p.name)) {
+            merged[String(pid)] = Object.assign({}, merged[String(pid)] || {}, p, { updatedAt: Date.now() });
+          }
+        });
+        _write({ projects: merged });
+      },
+      update: function(pid, data) {
+        var d = _read();
+        var projs = Object.assign({}, d.projects || {});
+        projs[String(pid)] = Object.assign({}, projs[String(pid)] || {}, data, { updatedAt: Date.now() });
+        _write({ projects: projs });
+      },
+      get: function(pid) { return (_read().projects || {})[String(pid)] || null; },
+      all: function() { return _read().projects || {}; },
+      names: function() {
+        var out = {};
+        var all = this.all();
+        Object.keys(all).forEach(function(pid) { if (all[pid] && all[pid].name) out[pid] = all[pid].name; });
+        return out;
+      }
+    };
+
+    return {
+      token: _token,
+      projects: _projects,
+      lastProject: {
+        set: function(pid) { _write({ lastProject: String(pid || '') }); },
+        get: function() { return _read().lastProject || ''; }
+      },
+      onChange: function(id, cb) { _listeners[id] = cb; },
+      offChange: function(id) { delete _listeners[id]; },
+      debug: function() { return _read(); },
+      isReady: function() { return _token.isValid(); }
+    };
+  })();
+
+  // Jednorazowa migracja: przepisz stare klucze GM → b24t_bridge (uruchamia się raz gdy bridge pusty)
+  (function() {
+    if (B24Bridge.debug()._v) return;
+    var _patch = {};
+    try {
+      var _rawH = GM_getValue('b24t_token_headers', null);
+      var _rawB = GM_getValue('b24t_brand24_base', null);
+      if (_rawH) _patch.token = { headers: typeof _rawH === 'string' ? JSON.parse(_rawH) : _rawH, base: _rawB || 'https://app.brand24.com', savedAt: Date.now() };
+    } catch(e) {}
+    try {
+      var _rawP = GM_getValue('b24t_projects_mirror', null);
+      if (_rawP) _patch.projects = typeof _rawP === 'string' ? JSON.parse(_rawP) : _rawP;
+    } catch(e) {}
+    try {
+      var _rawN = GM_getValue('b24t_project_names_mirror', null);
+      if (_rawN) {
+        var _names = typeof _rawN === 'string' ? JSON.parse(_rawN) : _rawN;
+        var _pp = _patch.projects || {};
+        Object.keys(_names).forEach(function(pid) { if (!_pp[pid]) _pp[pid] = {}; if (_names[pid] && _names[pid].length >= 3) _pp[pid].name = _names[pid]; });
+        _patch.projects = _pp;
+      }
+    } catch(e) {}
+    if (_patch.token) B24Bridge.token.save(_patch.token.headers, _patch.token.base);
+    if (_patch.projects && Object.keys(_patch.projects).length > 0) B24Bridge.projects.setAll(_patch.projects);
+  })();
 
   // ───────────────────────────────────────────
   // URL NORMALIZATION
@@ -576,10 +703,8 @@
     var _isBrand24Host = window.location.hostname === 'app.brand24.com' || window.location.hostname === 'panel.brand24.pl';
     if (url.includes('graphql') && opts.headers && !state.tokenHeaders && _isBrand24Host) {
       state.tokenHeaders = { ...opts.headers };
-      try {
-        GM_setValue('b24t_token_headers', JSON.stringify(state.tokenHeaders));
-        GM_setValue('b24t_brand24_base', window.location.hostname === 'panel.brand24.pl' ? 'https://panel.brand24.pl' : 'https://app.brand24.com');
-      } catch(e) {}
+      var _b24tBase = window.location.hostname === 'panel.brand24.pl' ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
+      B24Bridge.token.save(state.tokenHeaders, _b24tBase);
       updateTokenUI(true);
     }
     // Capture last organic getMentions variables for Quick Tag filter mirroring
@@ -8871,8 +8996,7 @@ function showOnboarding(onComplete) {
         _newsRefillProjectSelect();
         // Pre-select ostatnio wybranego projektu (cross-domain przez GM)
         var _lastPid = '';
-        try { _lastPid = GM_getValue('b24t_mini_last_project', '') || ''; } catch(e) {}
-        if (!_lastPid) _lastPid = lsGet('b24tagger_mini_last_project', '') || '';
+        _lastPid = B24Bridge.lastProject.get() || lsGet('b24tagger_mini_last_project', '') || '';
         var _pSel = document.getElementById('b24t-news-f-project-sel');
         if (_pSel && _lastPid) {
           _pSel.value = _lastPid;
@@ -9123,11 +9247,8 @@ function showOnboarding(onComplete) {
           syncMsg.textContent = 'Otwórz brand24.com i kliknij ten przycisk tam — tutaj brak danych do odbudowania.';
           return;
         }
-        // Wyczyść stare mirrory (tylko jeśli mamy z czego odbudować)
-        try { GM_setValue('b24t_projects_mirror', '{}'); } catch(e) {}
-        try { GM_setValue('b24t_project_names_mirror', '{}'); } catch(e) {}
+        // Wyczyść bridge i odbuduj wyłącznie z LS
         _gmPNSynced = false;
-        // Odbuduj wyłącznie z LS
         var newProj = {}, newNames = {};
         Object.keys(lsProj).forEach(function(pid) {
           var p = lsProj[pid] || {};
@@ -9139,8 +9260,11 @@ function showOnboarding(onComplete) {
         Object.keys(lsNames).forEach(function(pid) {
           if (!isFb(lsNames[pid])) newNames[String(pid)] = lsNames[pid];
         });
-        try { GM_setValue('b24t_projects_mirror', JSON.stringify(newProj)); } catch(e) {}
-        _gmSaveProjectNames(newNames);
+        // Zapisz do B24Bridge (czyści stare, wpisuje tylko dobre)
+        var _cleanProj = {};
+        Object.keys(newProj).forEach(function(pid) { _cleanProj[pid] = newProj[pid]; });
+        Object.keys(newNames).forEach(function(pid) { if (!_cleanProj[pid]) _cleanProj[pid] = {}; _cleanProj[pid].name = newNames[pid]; });
+        B24Bridge.projects.setAll(_cleanProj);
         _newsRefillProjectSelect();
         syncMsg.style.color = '#22c55e';
         syncMsg.textContent = 'Przebudowano: ' + Object.keys(newProj).length + ' projekt\xF3w.';
@@ -9717,7 +9841,7 @@ function showOnboarding(onComplete) {
       return;
     }
 
-    var _b24base = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
+    var _b24base = B24Bridge.token.base();
     GM_xmlhttpRequest({
       method: 'GET',
       url: _b24base + '/searches/add-new-mention/?sid=' + sid,
@@ -9859,7 +9983,7 @@ function showOnboarding(onComplete) {
         var pData = projects[pid] || {};
         state.projectId = parseInt(pid);
         state.tags = pData.tagIds || {};
-        try { GM_setValue('b24t_mini_last_project', pid); } catch(e) {}
+        B24Bridge.lastProject.set(pid);
         lsSet('b24tagger_mini_last_project', pid);
         var countryInput = document.getElementById('b24t-news-f-country');
         if (countryInput) {
@@ -11583,6 +11707,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.26",
+      "date": "2026-05-14",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "B24Bridge — centralny system cross-domain: token + projekty + lastProject w jednym kluczu GM (b24t_bridge)"},
+        {"type": "feat", "text": "GM_addValueChangeListener — reaktywny: gdy brand24.com zapisze token, inne karty ponowią dupcheck automatycznie"},
+        {"type": "fix", "text": "_customDupCheck: sequence guard anuluje stale requesty; pid NaN guard; B24Bridge.token.headers/base zamiast GM_getValue"}
+      ]
+    },
+    {
       "version": "0.24.25",
       "date": "2026-05-14",
       "label": "fix",
@@ -11668,15 +11803,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "ustawienia Niestandardowe (⚙) — przycisk Reset i przebuduj: czyści oba GM mirrory i odbudowuje wyłącznie z LS (brand24.com), usuwa stale fallbacki 'Projekt cyferki' nieodwracalnie"}
-      ]
-    },
-    {
-      "version": "0.24.16",
-      "date": "2026-05-13",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "_gmGetProjectNames: scal LS.PROJECTS + LS.PROJECT_NAMES przy sync — nazwy projektów cross-domain bez klikania, wizyta na brand24.com wystarczy"}
       ]
     },
   ];
@@ -12806,8 +12932,7 @@ function showOnboarding(onComplete) {
 
       function _getMissingIds() {
         var lsProjects = lsGet(LS.PROJECTS, {});
-        var gmProjects = {};
-        try { var _gr = GM_getValue('b24t_projects_mirror', null); if (_gr) gmProjects = typeof _gr === 'string' ? JSON.parse(_gr) : _gr; } catch(e) {}
+        var gmProjects = B24Bridge.projects.all();
         var names = lsGet(LS.PROJECT_NAMES, {});
         var allPids = Object.keys(lsProjects);
         Object.keys(gmProjects).forEach(function(pid) { if (allPids.indexOf(pid) < 0) allPids.push(pid); });
@@ -12843,11 +12968,7 @@ function showOnboarding(onComplete) {
             _pnSet(parseInt(pid), name);
             var ps = lsGet(LS.PROJECTS, {});
             if (ps[String(pid)]) { ps[String(pid)].name = name; lsSet(LS.PROJECTS, ps); }
-            try {
-              var _gmr = GM_getValue('b24t_projects_mirror', null);
-              var _gmp = _gmr ? (typeof _gmr === 'string' ? JSON.parse(_gmr) : _gmr) : {};
-              if (_gmp[String(pid)]) { _gmp[String(pid)].name = name; GM_setValue('b24t_projects_mirror', JSON.stringify(_gmp)); }
-            } catch(e) {}
+            B24Bridge.projects.update(pid, { name: name });
             found++;
           }
 
@@ -16511,14 +16632,18 @@ Tej operacji nie można cofnąć.`)) {
     return result;
   }
 
-  // ── AUTO-FILL Z BIEŻĄCEJ STRONY — wypełnia pola formularza Niestandardowe ──
-  // Wywoływana przy otwieraniu panelu custom na zewnętrznej stronie.
-  // Używa żywego DOM (document) — bez fetcha, bez opóźnień.
+  var _dupCheckSeq = 0; // sequence counter — anuluje stare requesty gdy nowe wywołanie przychodzi
+
   function _customDupCheck(url, pid) {
+    // Sprawdza czy podany URL już istnieje w projekcie (cross-domain przez GM_xmlhttpRequest + B24Bridge)
+    // Skanuje tylko miesiąc daty artykułu — duplikat musiałby mieć tę samą datę
+    var _mySeq = ++_dupCheckSeq;
     var dupEl = document.getElementById('b24t-news-dup-status');
     if (!dupEl) return;
     var normUrl = normalizeUrl(url || '');
     if (!normUrl) { dupEl.style.display = 'none'; return; }
+    var _pidInt = parseInt(pid, 10);
+    if (!pid || isNaN(_pidInt)) { dupEl.style.display = 'none'; return; }
 
     // Zakres dat = miesiąc artykułu + 1 dzień buforu (na opóźnienie crawlera)
     var dateFld  = document.getElementById('b24t-news-f-date');
@@ -16535,21 +16660,20 @@ Tej operacji nie można cofnąć.`)) {
       dateTo   = _localDateStr(_now2);
     }
 
+    // Jeśli brak tokenu — pokaż komunikat i czekaj na reaktywne odświeżenie z brand24.com
+    if (!B24Bridge.token.isValid()) {
+      dupEl.textContent = '⏳ otwórz brand24.com — token załaduje się automatycznie';
+      dupEl.style.color = '#6b7280';
+      dupEl.style.display = '';
+      return;
+    }
+
     dupEl.textContent = '⏳ sprawdzanie duplikatów...';
     dupEl.style.color = '#6b7280';
     dupEl.style.display = '';
 
-    // Base URL: szukaj w GM jaki domain używa użytkownik (zapisany przy logowaniu)
-    var _storedBase = '';
-    try { _storedBase = GM_getValue('b24t_brand24_base', '') || ''; } catch(e) {}
-    var _base = _storedBase || (window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com');
-
-    // Token headers: przechwycone na brand24.com i zapisane do GM — potrzebne do GQL cross-domain
-    var _authHeaders = { 'Content-Type': 'application/json' };
-    try {
-      var _rawH = GM_getValue('b24t_token_headers', null);
-      if (_rawH) Object.assign(_authHeaders, JSON.parse(_rawH));
-    } catch(e) {}
+    var _base = B24Bridge.token.base();
+    var _authHeaders = B24Bridge.token.headers();
 
     var _rxQH  = /[?#].*$/;
     var _normBase = normUrl.replace(_rxQH, '');
@@ -16591,13 +16715,13 @@ Tej operacji nie można cofnąć.`)) {
         method: 'POST',
         url: _base + '/api/graphql',
         headers: _authHeaders,
-        data: JSON.stringify({ operationName: 'getMentions', variables: { projectId: parseInt(pid, 10), dateRange: { from: dateFrom, to: dateTo }, filters: _fil, page: pg, order: 0 }, query: _GQL }),
+        data: JSON.stringify({ operationName: 'getMentions', variables: { projectId: _pidInt, dateRange: { from: dateFrom, to: dateTo }, filters: _fil, page: pg, order: 0 }, query: _GQL }),
         timeout: 10000,
         onload: function(resp) {
+          if (_mySeq !== _dupCheckSeq) return; // stale — nowsze wywołanie już przejęło
           try {
             var d = JSON.parse(resp.responseText);
             if (d && d.errors && (!d.data || !d.data.getMentions)) {
-              // GQL auth error lub inny błąd — pokaż użytkownikowi zamiast cichego "nowy"
               dupEl.textContent = '⚠ dup-check: otwórz Brand24 żeby odświeżyć token';
               dupEl.style.color = '#f59e0b';
               dupEl.style.display = '';
@@ -16608,21 +16732,22 @@ Tej operacji nie można cofnąć.`)) {
             cb(r ? (r.count || 0) : 0, r ? (r.results || []) : []);
           } catch(e) { cb(0, []); }
         },
-        onerror:   function() { dupEl.textContent = '⚠ dup-check: błąd sieci'; dupEl.style.color = '#f59e0b'; dupEl.style.display = ''; cb(-1, []); },
-        ontimeout: function() { dupEl.textContent = '⚠ dup-check: timeout'; dupEl.style.color = '#f59e0b'; dupEl.style.display = ''; cb(-1, []); }
+        onerror:   function() { if (_mySeq !== _dupCheckSeq) return; dupEl.textContent = '⚠ dup-check: błąd sieci'; dupEl.style.color = '#f59e0b'; dupEl.style.display = ''; cb(-1, []); },
+        ontimeout: function() { if (_mySeq !== _dupCheckSeq) return; dupEl.textContent = '⚠ dup-check: timeout'; dupEl.style.color = '#f59e0b'; dupEl.style.display = ''; cb(-1, []); }
       });
     }
 
     function _show() {
+      if (_mySeq !== _dupCheckSeq) return;
       var found = _hit();
       dupEl.textContent = found ? '⚠ duplikat — URL już istnieje w projekcie' : '✓ URL nowy w projekcie';
       dupEl.style.color  = found ? '#f59e0b' : '#22c55e';
     }
 
     _fetch(1, function(count, results) {
-      if (count === -1) return; // błąd — komunikat już ustawiony w _fetch
+      if (_mySeq !== _dupCheckSeq || count === -1) return;
       _page(results);
-      if (_hit()) { dupEl.textContent = '⚠ duplikat — URL już istnieje w projekcie'; dupEl.style.color = '#f59e0b'; return; }
+      if (_hit()) { dupEl.textContent = '⚠ duplikat — URL już istnieje w projekcie'; dupEl.style.color = '#f59e0b'; dupEl.style.display = ''; return; }
       var pageSize   = results.length || 60;
       var totalPages = count > 0 ? Math.min(Math.ceil(count / pageSize), 10) : 1;
       if (totalPages <= 1) { _show(); return; }
@@ -16630,11 +16755,12 @@ Tej operacji nie można cofnąć.`)) {
       for (var pg = 2; pg <= totalPages; pg++) remaining.push(pg);
       var idx = 0;
       function _next() {
+        if (_mySeq !== _dupCheckSeq) return;
         if (idx >= remaining.length) { _show(); return; }
         _fetch(remaining[idx++], function(c, r) {
-          if (c === -1) return;
+          if (_mySeq !== _dupCheckSeq || c === -1) return;
           _page(r);
-          if (_hit()) { dupEl.textContent = '⚠ duplikat — URL już istnieje w projekcie'; dupEl.style.color = '#f59e0b'; return; }
+          if (_hit()) { dupEl.textContent = '⚠ duplikat — URL już istnieje w projekcie'; dupEl.style.color = '#f59e0b'; dupEl.style.display = ''; return; }
           _next();
         });
       }
@@ -16642,6 +16768,8 @@ Tej operacji nie można cofnąć.`)) {
     });
   }
 
+  // ── AUTO-FILL Z BIEŻĄCEJ STRONY — wypełnia pola formularza Niestandardowe ──
+  // Wywoływana przy otwieraniu panelu custom. Używa żywego DOM bez fetcha.
   function _customAutoFillFromPage() {
     // Poczekaj aż DOM formularza jest w pełni wyrenderowany
     requestAnimationFrame(function() {
@@ -16976,6 +17104,17 @@ Tej operacji nie można cofnąć.`)) {
 
     // Network Monitor — buduj floating panel
     buildNetworkMonitorPanel();
+
+    // Reaktywne: gdy brand24.com zapisze świeży token → auto-ponów dupcheck w panelu Niestandardowe
+    B24Bridge.onChange('custom-dupcheck', function() {
+      if (newsState.mode !== 'custom') return;
+      var urlEl = document.getElementById('b24t-news-f-url');
+      var _url = (urlEl && urlEl.value) || '';
+      var _pid = state.projectId || '';
+      if (_url && _pid) {
+        setTimeout(function() { _customDupCheck(_url, String(_pid)); }, 100);
+      }
+    });
 
     // Zastosuj opcjonalne funkcje
     applyFeatures();

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.21
+// @version      0.24.22
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -115,7 +115,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.21';
+  const VERSION = '0.24.22';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -9387,6 +9387,7 @@ function showOnboarding(onComplete) {
         '</select>',
       '</div>',
       _newsFormRow('URL wzmianki', '<input id="b24t-news-f-url" type="text" readonly placeholder="(kliknij URL z listy)" style="' + _newsInputCss(t) + 'font-family:monospace;font-size:10px;opacity:0.75;"><button id="b24t-news-lang-force-open" style="display:none;flex-shrink:0;font-size:9px;padding:3px 6px;border-radius:5px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:' + t.yellow + ';cursor:pointer;margin-left:4px;" title="Otwórz mimo ostrzeżenia">Otwórz</button>', true, 'flex'),
+      '<div id="b24t-news-dup-status" style="display:none;font-size:10px;padding:2px 0;flex-shrink:0;"></div>',
       '<div style="display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">',
         '<span style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">DANE ARTYKUŁU</span>',
         '<button id="b24t-news-clear-btn" style="background:transparent;border:1px solid ' + t.border + ';color:' + t.textMuted + ';cursor:pointer;font-size:10px;padding:2px 8px;border-radius:5px;">✕ Wyczyść</button>',
@@ -9692,6 +9693,7 @@ function showOnboarding(onComplete) {
       if (checkboxEl){ checkboxEl.disabled = false; checkboxEl.checked = !isCustom; }
       if (cmsBanner) cmsBanner.style.display = 'none';
       if (cmsDot)    { cmsDot.style.color = '#22c55e'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny'; }
+      if (isCustom)  { var _sb1 = document.getElementById('b24t-news-submit-btn'); if (_sb1) _sb1.disabled = false; }
       return;
     }
 
@@ -9700,6 +9702,7 @@ function showOnboarding(onComplete) {
     if (checkboxEl){ checkboxEl.checked = false; checkboxEl.disabled = true; }
     if (cmsBanner) cmsBanner.style.display = 'none';
     if (cmsDot)    { cmsDot.style.color = '#6b7280'; cmsDot.classList.add('b24t-cms-checking'); cmsDot.title = 'Sprawdzanie CMS...'; }
+    if (isCustom)  { var _sbChk = document.getElementById('b24t-news-submit-btn'); if (_sbChk) _sbChk.disabled = true; }
 
     var sid = state.projectId || '';
     if (!sid) {
@@ -9723,6 +9726,7 @@ function showOnboarding(onComplete) {
             if (statusEl)  { statusEl.textContent = '✓ CMS aktywny'; statusEl.style.color = '#22c55e'; }
             if (cmsDot)    { cmsDot.style.color = '#22c55e'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny (tryb Niestandardowe — tag "dodane" niewymagany)'; }
             if (cmsBanner) cmsBanner.style.display = 'none';
+            var _sb2 = document.getElementById('b24t-news-submit-btn'); if (_sb2) _sb2.disabled = false;
           } else {
             if (statusEl)  { statusEl.textContent = '⚠ brak tagu'; statusEl.style.color = '#f59e0b'; }
             if (cmsDot)    { cmsDot.style.color = '#f59e0b'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny — brak tagu "dodane" w projekcie'; }
@@ -9742,6 +9746,7 @@ function showOnboarding(onComplete) {
             if (warnText) warnText.innerHTML = _msg;
             cmsBanner.style.display = '';
           }
+          if (isCustom) { var _sb3 = document.getElementById('b24t-news-submit-btn'); if (_sb3) _sb3.disabled = true; }
         }
       },
       onerror: function() {
@@ -9755,6 +9760,7 @@ function showOnboarding(onComplete) {
           if (warnText) warnText.innerHTML = _msg2;
           cmsBanner.style.display = '';
         }
+        if (isCustom) { var _sb4 = document.getElementById('b24t-news-submit-btn'); if (_sb4) _sb4.disabled = true; }
       }
     });
   }
@@ -11248,6 +11254,23 @@ function showOnboarding(onComplete) {
     }
 
     // ─── CLEAR BUTTON ───
+    // Dup-check na zmianę URL (custom mode, edycja ręczna) i zmianę projektu
+    var _dupUrlFld = document.getElementById('b24t-news-f-url');
+    if (_dupUrlFld) {
+      _dupUrlFld.addEventListener('change', function() {
+        if (newsState.mode === 'custom' && state.projectId) _customDupCheck(this.value, state.projectId);
+      });
+    }
+    var _dupProjSel = document.getElementById('b24t-news-f-project-sel');
+    if (_dupProjSel) {
+      _dupProjSel.addEventListener('change', function() {
+        if (newsState.mode === 'custom' && this.value) {
+          var _urlVal = (document.getElementById('b24t-news-f-url') || {}).value || '';
+          if (_urlVal) _customDupCheck(_urlVal, this.value);
+        }
+      });
+    }
+
     var clearBtn = document.getElementById('b24t-news-clear-btn');
     if (clearBtn) {
       clearBtn.addEventListener('click', function() {
@@ -11269,6 +11292,8 @@ function showOnboarding(onComplete) {
         if (subStatus) subStatus.textContent = '';
         var formErr = document.getElementById('b24t-news-form-err');
         if (formErr) formErr.style.display = 'none';
+        var dupSt = document.getElementById('b24t-news-dup-status');
+        if (dupSt) dupSt.style.display = 'none';
       });
     }
 
@@ -11553,6 +11578,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.22",
+      "date": "2026-05-14",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "Niestandardowe — blokada przycisku Dodaj gdy CMS niezalogowany (sprawdzanie w toku lub błąd logowania)"},
+        {"type": "feat", "text": "Niestandardowe — dup-check URL: sprawdza czy wzmianka z tym URL już istnieje w projekcie; wynik pod polem URL"}
+      ]
+    },
+    {
       "version": "0.24.21",
       "date": "2026-05-14",
       "label": "fix",
@@ -11635,15 +11670,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "Uzupełnij nazwy — wykrywa też projekty wyłącznie w GM mirror (nie w LS.PROJECTS); _applyName chirurgicznie aktualizuje GM mirror zamiast nadpisywać cały"}
-      ]
-    },
-    {
-      "version": "0.24.12",
-      "date": "2026-05-13",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "_pnResolve krok 3 używa _gmGetProjects() zamiast lsGet(LS.PROJECTS) — nazwy projektów dostępne cross-domain przez GM mirror (fix regresjii z v0.24.11)"}
       ]
     },
   ];
@@ -16481,6 +16507,54 @@ Tej operacji nie można cofnąć.`)) {
   // ── AUTO-FILL Z BIEŻĄCEJ STRONY — wypełnia pola formularza Niestandardowe ──
   // Wywoływana przy otwieraniu panelu custom na zewnętrznej stronie.
   // Używa żywego DOM (document) — bez fetcha, bez opóźnień.
+  function _customDupCheck(url, pid) {
+    var dupEl = document.getElementById('b24t-news-dup-status');
+    if (!dupEl) return;
+    var normUrl = normalizeUrl(url || '');
+    if (!normUrl) { dupEl.style.display = 'none'; return; }
+    var sq;
+    try { sq = new URL(url).pathname.split('/').filter(Boolean).pop() || ''; } catch(e) { sq = ''; }
+    if (!sq || sq.length < 4) { dupEl.style.display = 'none'; return; }
+    dupEl.textContent = '⏳ sprawdzanie duplikatów...';
+    dupEl.style.color = '#6b7280';
+    dupEl.style.display = '';
+    var base = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
+    GM_xmlhttpRequest({
+      method: 'POST',
+      url: base + '/api/graphql',
+      headers: { 'Content-Type': 'application/json' },
+      data: JSON.stringify({
+        operationName: 'getMentions',
+        variables: {
+          projectId: parseInt(pid),
+          dateRange: { from: '2000-01-01', to: new Date().toISOString().split('T')[0] },
+          filters: { va: 1, rt: [], se: [], vi: null, gr: [], sq: sq, lem: false, ctr: [], nctr: false, is: null, tp: null, anom: '', lang: [], nlang: false, aue: null, htg: null, mt: false, mtri: null, cxs: [] },
+          page: 1, order: 0
+        },
+        query: 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){results{id url openUrl}}}'
+      }),
+      timeout: 8000,
+      onload: function(resp) {
+        try {
+          var data = JSON.parse(resp.responseText);
+          var results = (data && data.data && data.data.getMentions && data.data.getMentions.results) || [];
+          var dup = results.find(function(m) {
+            return normalizeUrl(m.url || '') === normUrl || normalizeUrl(m.openUrl || '') === normUrl;
+          });
+          if (dup) {
+            dupEl.textContent = '⚠ duplikat — URL już istnieje w projekcie (ID: ' + dup.id + ')';
+            dupEl.style.color = '#f59e0b';
+          } else {
+            dupEl.textContent = '✓ URL nowy w projekcie';
+            dupEl.style.color = '#22c55e';
+          }
+        } catch(e) { dupEl.style.display = 'none'; }
+      },
+      onerror:   function() { dupEl.style.display = 'none'; },
+      ontimeout: function() { dupEl.style.display = 'none'; }
+    });
+  }
+
   function _customAutoFillFromPage() {
     // Poczekaj aż DOM formularza jest w pełni wyrenderowany
     requestAnimationFrame(function() {
@@ -16554,6 +16628,9 @@ Tej operacji nie można cofnąć.`)) {
           _langWarnEl.style.display = '';
         }
       }
+
+      // Sprawdź duplikat URL w wybranym projekcie
+      if (state.projectId) _customDupCheck(window.location.href, state.projectId);
     });
   }
 

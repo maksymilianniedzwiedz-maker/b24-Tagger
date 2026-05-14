@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.24.20",
+    "date": "2026-05-14",
+    "label": "fix",
+    "changes": [
+      "fix: panel Niestandardowe — blokada przycisku Dodaj podczas sprawdzania CMS; przycisk zablokowany gdy CMS ✗, odblokowany gdy ✓",
+      "fix: panel Niestandardowe — usunięto duplikat dropdownu promptu AI z widoku głównego (jest już w ⚙ ustawieniach panelu)",
+      "fix: dup-check URL — is: null zamiast is: [0, 10]; sprawdza wzmianki ze wszystkich statusów (wcześniej pomijał otagowane)",
+      "fix: _pnSet — merge z istniejącym GM mirror zamiast overwrite; zapobiega nadpisaniu całego mirrora nazw projektów jednym wpisem cross-domain"
+    ]
+  },
+  {
     "version": "0.24.19",
     "date": "2026-05-13",
     "label": "fix",

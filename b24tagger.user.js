@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.19
+// @version      0.24.20
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -115,7 +115,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.19';
+  const VERSION = '0.24.20';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -450,7 +450,15 @@
     if (names[String(projectId)] === name) return; // bez zmian
     names[String(projectId)] = name;
     lsSet(LS.PROJECT_NAMES, names);
-    _gmSaveProjectNames(names);
+    // Merge z istniejącym GM mirror — zapobiega nadpisaniu całego mirrora
+    // jednym wpisem gdy LS jest pusty (np. na obcej domenie)
+    try {
+      var raw = GM_getValue('b24t_project_names_mirror', null);
+      var mirror = (raw && typeof raw === 'string') ? JSON.parse(raw) : {};
+      mirror[String(projectId)] = name;
+      GM_setValue('b24t_project_names_mirror', JSON.stringify(mirror));
+      _gmPNSynced = true;
+    } catch(e) {}
   }
 
   function _pnResolve(projectId) {
@@ -8762,7 +8770,7 @@ function showOnboarding(onComplete) {
 
     // Wiersz prompt AI — widoczny tylko w trybie custom
     var customPromptRow = document.getElementById('b24t-news-custom-prompt-row');
-    if (customPromptRow) customPromptRow.style.display = isCustom ? 'flex' : 'none';
+    if (customPromptRow) customPromptRow.style.display = 'none';
 
     // Tryb custom — floating panel (bez ciemnego tła, panel pozycjonowany fixed)
     var overlay  = document.getElementById('b24t-news-overlay');
@@ -11532,6 +11540,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.20",
+      "date": "2026-05-14",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "panel Niestandardowe — blokada przycisku Dodaj podczas sprawdzania CMS; zablokowany gdy CMS ✗, odblokowany gdy ✓"},
+        {"type": "fix", "text": "panel Niestandardowe — usunięto duplikat dropdownu promptu AI z widoku głównego (jest w ⚙ ustawieniach panelu)"},
+        {"type": "fix", "text": "dup-check URL — is: null zamiast is: [0, 10]; sprawdza wzmianki ze wszystkich statusów (wcześniej pomijał otagowane)"},
+        {"type": "fix", "text": "_pnSet — merge z istniejącym GM mirror zamiast overwrite; zapobiega nadpisaniu całego mirrora nazw projektów jednym wpisem cross-domain"}
+      ]
+    },
+    {
       "version": "0.24.19",
       "date": "2026-05-13",
       "label": "fix",
@@ -11612,17 +11632,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "nazwy projektów cross-domain — GM mirror dla PROJECT_NAMES, _pnSet/_pnGet synchronizują GM storage, dropdown Niestandardowe używa _pnResolve"},
         {"type": "feat", "text": "wybór kraju w panelu Niestandardowe i mini panelu — dropdown z listą 49 krajów zamiast pola tekstowego"},
         {"type": "fix", "text": "auto-fill treści — łączy akapity do 200 znaków (maks. 5 akapitów), przycina na granicy zdania zamiast twardego cięcia"}
-      ]
-    },
-    {
-      "version": "0.24.10",
-      "date": "2026-05-13",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "ustawienia ⚙ — sekcja Projekty: przycisk Uzupełnij nazwy pobiera brakujące nazwy projektów z Brand24 GQL i zapisuje do localStorage"},
-        {"type": "fix", "text": "panel Niestandardowe — auto-scraping treści: tylko pierwszy akapit (poprzednio cała strona do 3000 znaków)"},
-        {"type": "fix", "text": "panel Niestandardowe — domyślna kategoria zmieniona z Web (8) na News (7) dla nierozpoznanych domen"}
       ]
     },
   ];
@@ -16769,8 +16778,10 @@ Tej operacji nie można cofnąć.`)) {
     function _checkCms(pid) {
       var cmsDot = document.getElementById('b24t-mini-cms-dot');
       var cmsWarn = document.getElementById('b24t-mini-cms-warn');
+      var submitBtn = document.getElementById('b24t-mini-submit');
       if (cmsDot) { cmsDot.textContent = '● CMS'; cmsDot.style.background = 'rgba(255,255,255,0.18)'; cmsDot.title = 'Sprawdzanie CMS...'; }
       if (cmsWarn) cmsWarn.style.display = 'none';
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.style.opacity = '0.5'; submitBtn.title = 'Sprawdzanie logowania do CMS...'; }
       var base = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
       GM_xmlhttpRequest({
         method: 'GET',
@@ -16781,8 +16792,10 @@ Tej operacji nie można cofnąć.`)) {
           if (m && m[1]) {
             state.tknB24 = m[1];
             if (cmsDot) { cmsDot.textContent = '✓ CMS'; cmsDot.style.background = 'rgba(34,197,94,0.4)'; cmsDot.title = 'CMS aktywny'; }
+            if (submitBtn) { submitBtn.disabled = false; submitBtn.style.opacity = ''; submitBtn.title = ''; }
           } else {
             if (cmsDot) { cmsDot.textContent = '✗ CMS'; cmsDot.style.background = 'rgba(239,68,68,0.5)'; cmsDot.title = 'Zaloguj się do Brand24 CMS'; }
+            if (submitBtn) { submitBtn.disabled = true; submitBtn.style.opacity = '0.45'; submitBtn.title = 'Zaloguj się do Brand24 CMS, aby dodawać wzmianki'; }
             if (cmsWarn) {
               var domain = base.replace('https://','');
               cmsWarn.innerHTML = '⚠ Zaloguj się do CMS Brand24 (' + domain + ') — bez logowania nie można dodawać wzmianek.';
@@ -16792,6 +16805,7 @@ Tej operacji nie można cofnąć.`)) {
         },
         onerror: function() {
           if (cmsDot) { cmsDot.textContent = '✗ CMS'; cmsDot.style.background = 'rgba(239,68,68,0.5)'; cmsDot.title = 'Błąd sieci'; }
+          if (submitBtn) { submitBtn.disabled = true; submitBtn.style.opacity = '0.45'; submitBtn.title = 'Błąd sieci przy sprawdzaniu CMS'; }
         }
       });
     }
@@ -16825,7 +16839,7 @@ Tej operacji nie można cofnąć.`)) {
         variables: {
           projectId: parseInt(pid),
           dateRange: { from: '2000-01-01', to: new Date().toISOString().split('T')[0] },
-          filters: { va: 1, rt: [], se: [], vi: null, gr: [], sq: sq, lem: false, ctr: [], nctr: false, is: [0, 10], tp: null, anom: '', lang: [], nlang: false, aue: null, htg: null, mt: false, mtri: null, cxs: [] },
+          filters: { va: 1, rt: [], se: [], vi: null, gr: [], sq: sq, lem: false, ctr: [], nctr: false, is: null, tp: null, anom: '', lang: [], nlang: false, aue: null, htg: null, mt: false, mtri: null, cxs: [] },
           page: 1, order: 0
         },
         query: 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){results{id url openUrl}}}'

@@ -1,12 +1,15 @@
 [
   {
-    "version": "0.24.23",
+    "version": "0.24.24",
     "date": "2026-05-14",
     "label": "fix",
     "changes": [
-      "fix: dup-check URL — sq używa tytułu artykułu zamiast segmentu URL; Brand24 GQL indeksuje tytuł (nie URL), więc dup-check teraz faktycznie znajduje istniejące wzmianki"
+      "fix: dup-check URL przepisany — pobiera wszystkie wzmianki z miesiąca artykułu (bez sq), porównuje URL bezpośrednio (3-poziomowy match: exact, bez params, prefix); identyczna logika jak News",
+      "fix: usunięto ~400 linii martwego kodu (_openMiniMentionForm, _miniBuildCategoryOptions i zagnieżdżone helpery) — panel Niestandardowe od początku używał openNewsPanels('custom')"
     ]
   },
+  {
+    "version": "0.24.23",
   {
     "version": "0.24.22",
     "date": "2026-05-14",

@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.24.21",
+    "date": "2026-05-14",
+    "label": "fix",
+    "changes": [
+      "fix: tagi w panelu Niestandardowe — CSS reset !important neutralizuje style hosta (width/height/transform); checkboxy nie są już ogromne na obcych stronach",
+      "fix: popup zgody na analitykę News nie wyskakuje przy otwieraniu panelu Niestandardowe (analityka dotyczy tylko modułu News)"
+    ]
+  },
+  {
     "version": "0.24.20",
     "date": "2026-05-14",
     "label": "fix",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.23
+// @version      0.24.24
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -115,7 +115,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.23';
+  const VERSION = '0.24.24';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -11578,6 +11578,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.24",
+      "date": "2026-05-14",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "dup-check URL — pobiera wzmianki z miesiąca artykułu (bez sq), porównuje URL bezpośrednio; identyczna logika jak News (3-poziomowy match)"},
+        {"type": "fix", "text": "usunięto ~400 linii martwego kodu (_openMiniMentionForm + helpery) — panel Niestandardowe używał openNewsPanels('custom') od początku"}
+      ]
+    },
+    {
       "version": "0.24.23",
       "date": "2026-05-14",
       "label": "fix",
@@ -11661,15 +11671,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#6366f1",
       "changes": [
         {"type": "feat", "text": "ustawienia Niestandardowe (⚙) — przycisk Synchronizuj nazwy projektów: merge GM mirror + LS, usuwa fallbacki 'Projekt cyferki', odświeża dropdown, pokazuje ile zsynchronizowano"}
-      ]
-    },
-    {
-      "version": "0.24.14",
-      "date": "2026-05-13",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "_gmGetProjectNames() lazy sync: przy pierwszym wywołaniu na brand24.com kopiuje LS.PROJECT_NAMES → GM mirror, nazwy projektów dostępne cross-domain automatycznie"}
       ]
     },
   ];
@@ -16512,50 +16513,101 @@ Tej operacji nie można cofnąć.`)) {
     if (!dupEl) return;
     var normUrl = normalizeUrl(url || '');
     if (!normUrl) { dupEl.style.display = 'none'; return; }
-    // sq = tytuł artykułu (Brand24 indeksuje tytuł, nie URL) — fallback: domena
-    var titleFld = document.getElementById('b24t-news-f-title');
-    var sq = (titleFld && titleFld.value.trim()) || '';
-    if (!sq) {
-      try { sq = new URL(url).hostname.replace(/^www\./, ''); } catch(e) { sq = ''; }
+
+    // Zakres dat = miesiąc artykułu + 1 dzień buforu (na opóźnienie crawlera)
+    var dateFld  = document.getElementById('b24t-news-f-date');
+    var dateVal  = (dateFld && dateFld.value) || '';
+    var dateFrom, dateTo;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateVal)) {
+      var _y = parseInt(dateVal.substring(0, 4), 10);
+      var _m = parseInt(dateVal.substring(5, 7), 10) - 1; // 0-based
+      dateFrom = _localDateStr(new Date(_y, _m, 1));
+      dateTo   = _localDateStr(new Date(_y, _m + 1, 1)); // pierwszy dzień nast. mies. = bufor
+    } else {
+      var _now2 = new Date();
+      dateFrom = _localDateStr(new Date(_now2.getFullYear(), _now2.getMonth(), 1));
+      dateTo   = _localDateStr(_now2);
     }
-    if (!sq || sq.length < 4) { dupEl.style.display = 'none'; return; }
+
     dupEl.textContent = '⏳ sprawdzanie duplikatów...';
     dupEl.style.color = '#6b7280';
     dupEl.style.display = '';
-    var base = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
-    GM_xmlhttpRequest({
-      method: 'POST',
-      url: base + '/api/graphql',
-      headers: { 'Content-Type': 'application/json' },
-      data: JSON.stringify({
-        operationName: 'getMentions',
-        variables: {
-          projectId: parseInt(pid),
-          dateRange: { from: '2000-01-01', to: new Date().toISOString().split('T')[0] },
-          filters: { va: 1, rt: [], se: [], vi: null, gr: [], sq: sq, lem: false, ctr: [], nctr: false, is: null, tp: null, anom: '', lang: [], nlang: false, aue: null, htg: null, mt: false, mtri: null, cxs: [] },
-          page: 1, order: 0
+
+    var _base  = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
+    var _rxQH  = /[?#].*$/;
+    var _normBase = normUrl.replace(_rxQH, '');
+    var _urls  = new Set();
+    var _bases = new Set();
+    var _arr   = [];
+
+    function _add(raw) {
+      var n = normalizeUrl(raw);
+      if (!n || _urls.has(n)) return;
+      _urls.add(n);
+      _bases.add(n.replace(_rxQH, ''));
+      _arr.push(n);
+    }
+
+    function _hit() {
+      if (_urls.has(normUrl))   return true;
+      if (_bases.has(_normBase)) return true;
+      if (normUrl.length >= 15) {
+        for (var i = 0; i < _arr.length; i++) {
+          if (urlsMatch(normUrl, _arr[i])) return true;
+        }
+      }
+      return false;
+    }
+
+    function _page(results) {
+      (results || []).forEach(function(m) {
+        if (m.url) _add(m.url);
+        if (m.openUrl && m.openUrl !== m.url) _add(m.openUrl);
+      });
+    }
+
+    var _GQL = 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count results{url openUrl}}}';
+    var _fil = { va: 1, rt: [], se: [], vi: null, gr: [], sq: '', lem: false, ctr: [], nctr: false, is: null, tp: null, anom: '', lang: [], nlang: false, aue: null, htg: null, mt: false, mtri: null, cxs: [] };
+
+    function _fetch(pg, cb) {
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url: _base + '/api/graphql',
+        headers: { 'Content-Type': 'application/json' },
+        data: JSON.stringify({ operationName: 'getMentions', variables: { projectId: parseInt(pid, 10), dateRange: { from: dateFrom, to: dateTo }, filters: _fil, page: pg, order: 0 }, query: _GQL }),
+        timeout: 10000,
+        onload: function(resp) {
+          try { var d = JSON.parse(resp.responseText); var r = d && d.data && d.data.getMentions; cb(r ? (r.count || 0) : 0, r ? (r.results || []) : []); }
+          catch(e) { cb(0, []); }
         },
-        query: 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){results{id url openUrl}}}'
-      }),
-      timeout: 8000,
-      onload: function(resp) {
-        try {
-          var data = JSON.parse(resp.responseText);
-          var results = (data && data.data && data.data.getMentions && data.data.getMentions.results) || [];
-          var dup = results.find(function(m) {
-            return normalizeUrl(m.url || '') === normUrl || normalizeUrl(m.openUrl || '') === normUrl;
-          });
-          if (dup) {
-            dupEl.textContent = '⚠ duplikat — URL już istnieje w projekcie (ID: ' + dup.id + ')';
-            dupEl.style.color = '#f59e0b';
-          } else {
-            dupEl.textContent = '✓ URL nowy w projekcie';
-            dupEl.style.color = '#22c55e';
-          }
-        } catch(e) { dupEl.style.display = 'none'; }
-      },
-      onerror:   function() { dupEl.style.display = 'none'; },
-      ontimeout: function() { dupEl.style.display = 'none'; }
+        onerror: function() { cb(0, []); }, ontimeout: function() { cb(0, []); }
+      });
+    }
+
+    function _show() {
+      var found = _hit();
+      dupEl.textContent = found ? '⚠ duplikat — URL już istnieje w projekcie' : '✓ URL nowy w projekcie';
+      dupEl.style.color  = found ? '#f59e0b' : '#22c55e';
+    }
+
+    _fetch(1, function(count, results) {
+      _page(results);
+      if (_hit()) { dupEl.textContent = '⚠ duplikat — URL już istnieje w projekcie'; dupEl.style.color = '#f59e0b'; return; }
+      var pageSize   = results.length || 60;
+      var totalPages = count > 0 ? Math.min(Math.ceil(count / pageSize), 10) : 1;
+      if (totalPages <= 1) { _show(); return; }
+      var remaining = [];
+      for (var pg = 2; pg <= totalPages; pg++) remaining.push(pg);
+      var idx = 0;
+      function _next() {
+        if (idx >= remaining.length) { _show(); return; }
+        _fetch(remaining[idx++], function(c, r) {
+          _page(r);
+          if (_hit()) { dupEl.textContent = '⚠ duplikat — URL już istnieje w projekcie'; dupEl.style.color = '#f59e0b'; return; }
+          _next();
+        });
+      }
+      _next();
     });
   }
 
@@ -16723,409 +16775,6 @@ Tej operacji nie można cofnąć.`)) {
       openNewsPanels('custom');
     });
     document.body.appendChild(btn);
-  }
-
-  function _miniBuildCategoryOptions(selectedCat) {
-    var cats = [
-      ['1','1 — X/Twitter'],['2','2 — Instagram'],['3','3 — Blogs'],
-      ['4','4 — Videos'],['5','5 — Facebook'],['6','6 — Other Socials'],
-      ['7','7 — News'],['8','8 — Web'],['9','9 — Podcasts'],
-      ['10','10 — Newsletter'],['11','11 — TikTok'],['12','12 — LinkedIn'],
-    ];
-    return cats.map(function(c) {
-      return '<option value="' + c[0] + '"' + (c[0] === selectedCat ? ' selected' : '') + '>' + c[1] + '</option>';
-    }).join('');
-  }
-
-  function _openMiniMentionForm() {
-    if (document.getElementById('b24t-mini-mention-modal')) return;
-
-    var projects = lsGet(LS.PROJECTS, {});
-    var projectIds = Object.keys(projects);
-    if (projectIds.length === 0) {
-      alert('Brak zapisanych projektów Brand24. Najpierw otwórz projekt w Brand24, aby wtyczka pobrała listę tagów.');
-      return;
-    }
-
-    // Domyślny projekt: ten z LS.OVERALL_ACTIVE_MONTH / last used, lub pierwszy z listy
-    var lastUsedId = lsGet('b24tagger_mini_last_project', projectIds[0]);
-    if (!projects[lastUsedId]) lastUsedId = projectIds[0];
-
-    var modal = document.createElement('div');
-    modal.id = 'b24t-mini-mention-modal';
-    modal.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;font-family:Geist,"Segoe UI",system-ui,-apple-system,sans-serif;';
-
-    // Kolory hardcoded (modal appendowany do document.body — bez CSS vars wtyczki na obcych stronach)
-    var c = {
-      bg:'#1a1a26', bgInput:'#222230', border:'#2f2f3f', text:'#e2e8f0',
-      textMuted:'#9ca3af', textFaint:'#6b7280', primary:'#6366f1',
-      green:'#22c55e', red:'#ef4444', yellow:'#f59e0b',
-    };
-
-    var inputCss = 'box-sizing:border-box;width:100%;padding:7px 9px;border-radius:6px;border:1px solid ' + c.border + ';background:' + c.bgInput + ';color:' + c.text + ';font-size:11px;font-family:inherit;';
-    var labelCss = 'font-size:9px;font-weight:600;color:' + c.textMuted + ';letter-spacing:0.04em;display:block;margin-bottom:3px;';
-    function _esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-
-    var projOptions = projectIds.map(function(pid) {
-      var pData = projects[pid] || {};
-      var pName = pData.name || ('Projekt ' + pid);
-      return '<option value="' + _esc(pid) + '"' + (pid === lastUsedId ? ' selected' : '') + '>' + _esc(pName) + '</option>';
-    }).join('');
-
-    // Wykryj kraj z nazwy projektu (np. H&M_TR → TR)
-    var _detectCountry = function(pid) {
-      var pData = projects[pid] || {};
-      var m = (pData.name || '').toUpperCase().match(/_([A-Z]{2})$/);
-      return m ? m[1] : '';
-    };
-
-    var inner = document.createElement('div');
-    inner.style.cssText = 'background:' + c.bg + ';border:1px solid ' + c.border + ';border-radius:14px;width:480px;max-width:calc(100vw - 32px);max-height:calc(100vh - 40px);overflow-y:auto;color:' + c.text + ';box-shadow:0 20px 60px rgba(0,0,0,0.55);';
-
-    var today = new Date();
-    var todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
-    var nowH = String(today.getHours()).padStart(2,'0');
-    var nowM = String(today.getMinutes()).padStart(2,'0');
-
-    inner.innerHTML = [
-      '<div style="display:flex;align-items:center;padding:14px 18px;background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%);border-radius:14px 14px 0 0;">',
-        '<span style="font-size:14px;font-weight:700;color:#fff;flex:1;">✚ Dodaj wzmiankę do Brand24</span>',
-        '<span id="b24t-mini-cms-dot" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(255,255,255,0.18);color:rgba(255,255,255,0.85);margin-right:8px;" title="Sprawdzanie CMS...">● CMS</span>',
-        '<button id="b24t-mini-close" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:16px;line-height:1;padding:2px 8px;border-radius:5px;">×</button>',
-      '</div>',
-      '<div style="padding:14px 18px;display:flex;flex-direction:column;gap:10px;">',
-        '<div id="b24t-mini-cms-warn" style="display:none;padding:7px 10px;border-radius:7px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.4);font-size:10px;color:' + c.yellow + ';line-height:1.5;"></div>',
-        '<div id="b24t-mini-err" style="display:none;padding:7px 10px;border-radius:7px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);font-size:10px;color:' + c.red + ';line-height:1.5;"></div>',
-        '<div id="b24t-mini-lang-warn" style="display:none;padding:7px 10px;border-radius:7px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.4);font-size:10px;color:' + c.yellow + ';line-height:1.5;"></div>',
-        '<div><label style="' + labelCss + '">PROJEKT</label><select id="b24t-mini-project" style="' + inputCss + '">' + projOptions + '</select></div>',
-        '<div>',
-          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">',
-            '<label style="' + labelCss + ';margin-bottom:0;">URL <span style="color:' + c.red + ';">*</span></label>',
-            '<span id="b24t-mini-dup-status" style="font-size:9px;color:' + c.textFaint + ';"></span>',
-          '</div>',
-          '<input id="b24t-mini-url" type="text" value="' + _esc(window.location.href) + '" style="' + inputCss + 'font-family:monospace;font-size:10px;">',
-        '</div>',
-        '<div><label style="' + labelCss + '">TYTUŁ <span style="color:' + c.red + ';">*</span></label><input id="b24t-mini-title" type="text" placeholder="Wpisz tytuł..." value="' + _esc(document.title || '') + '" style="' + inputCss + '"></div>',
-        '<div><label style="' + labelCss + '">TREŚĆ <span style="color:' + c.red + ';">*</span></label><textarea id="b24t-mini-content" rows="5" placeholder="Wklej fragment treści..." style="' + inputCss + 'resize:vertical;font-family:inherit;line-height:1.5;"></textarea></div>',
-        '<div style="display:flex;gap:8px;">',
-          '<div style="flex:2;"><label style="' + labelCss + '">DATA</label><input id="b24t-mini-date" type="text" value="' + todayStr + '" placeholder="YYYY-MM-DD" style="' + inputCss + '"></div>',
-          '<div style="flex:1;"><label style="' + labelCss + '">GODZ.</label><input id="b24t-mini-hour" type="text" value="' + nowH + '" style="' + inputCss + '"></div>',
-          '<div style="flex:1;"><label style="' + labelCss + '">MIN.</label><input id="b24t-mini-min" type="text" value="' + nowM + '" style="' + inputCss + '"></div>',
-        '</div>',
-        '<div style="display:flex;gap:8px;">',
-          '<div style="flex:1;"><label style="' + labelCss + '">KRAJ</label><select id="b24t-mini-country" style="' + inputCss + '">' + _countryOptionsHtml(_detectCountry(lastUsedId)) + '</select></div>',
-          '<div style="flex:1;"><label style="' + labelCss + '">SENTYMENT</label><select id="b24t-mini-sent" style="' + inputCss + '"><option value="0">0 Neutral</option><option value="1">+1 Poz.</option><option value="-1">-1 Neg.</option></select></div>',
-        '</div>',
-        '<div><label style="' + labelCss + '">KATEGORIA</label><select id="b24t-mini-cat" style="' + inputCss + '">' + _miniBuildCategoryOptions(String(_detectCategoryFromUrl(window.location.href))) + '</select></div>',
-        '<details style="border:1px solid ' + c.border + ';border-radius:7px;padding:7px 10px;background:' + c.bgInput + ';">',
-          '<summary style="font-size:10px;font-weight:600;color:' + c.textMuted + ';cursor:pointer;letter-spacing:0.04em;">METRYKI (opcjonalne)</summary>',
-          '<div style="display:flex;gap:6px;margin-top:8px;">',
-            '<div style="flex:1;"><label style="' + labelCss + '">LIKES</label><input id="b24t-mini-likes" type="number" min="0" placeholder="0" style="' + inputCss + '"></div>',
-            '<div style="flex:1;"><label style="' + labelCss + '">PAGEVIEWS</label><input id="b24t-mini-pv" type="number" min="0" placeholder="0" style="' + inputCss + '"></div>',
-          '</div>',
-          '<div style="display:flex;gap:6px;margin-top:6px;">',
-            '<div style="flex:1;"><label style="' + labelCss + '">SHARES</label><input id="b24t-mini-shares" type="number" min="0" placeholder="0" style="' + inputCss + '"></div>',
-            '<div style="flex:1;"><label style="' + labelCss + '">COMMENTS</label><input id="b24t-mini-comments" type="number" min="0" placeholder="0" style="' + inputCss + '"></div>',
-          '</div>',
-        '</details>',
-        '<div id="b24t-mini-tags-wrap"><label style="' + labelCss + '">TAGI</label><div id="b24t-mini-tags" style="display:flex;flex-wrap:wrap;gap:4px;padding:6px 8px;border-radius:7px;background:' + c.bgInput + ';border:1px solid ' + c.border + ';min-height:32px;"></div></div>',
-        '<button id="b24t-mini-submit" style="margin-top:6px;padding:10px;border-radius:8px;border:none;background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%);color:#fff;font-size:12px;font-weight:700;cursor:pointer;letter-spacing:0.02em;box-shadow:inset 0 1px 0 rgba(255,255,255,0.15);">✚ Dodaj wzmiankę</button>',
-        '<div id="b24t-mini-status" style="font-size:10px;text-align:center;min-height:14px;font-weight:500;"></div>',
-      '</div>',
-    ].join('');
-
-    modal.appendChild(inner);
-    modal.addEventListener('click', function(e) { if (e.target === modal) _closeMini(); });
-    document.body.appendChild(modal);
-
-    function _closeMini() {
-      var m = document.getElementById('b24t-mini-mention-modal');
-      if (m) m.remove();
-      document.removeEventListener('keydown', escHandler);
-    }
-    var escHandler = function(e) { if (e.key === 'Escape') _closeMini(); };
-    document.addEventListener('keydown', escHandler);
-
-    document.getElementById('b24t-mini-close').addEventListener('click', _closeMini);
-
-    // Render tagów + CMS check przy zmianie projektu
-    function _renderTags(pid) {
-      var pData = projects[pid] || {};
-      var tagsObj = pData.tagIds || {};
-      var tagList = document.getElementById('b24t-mini-tags');
-      if (!tagList) return;
-      var tagEntries = Object.entries(tagsObj).sort(function(a,b) { return a[0].localeCompare(b[0]); });
-      if (tagEntries.length === 0) {
-        tagList.innerHTML = '<span style="font-size:10px;color:' + c.textFaint + ';">brak tagów w cache — otwórz projekt w Brand24 aby zaktualizować</span>';
-        return;
-      }
-      tagList.innerHTML = tagEntries.map(function(entry) {
-        var name = entry[0], tid = entry[1];
-        return '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;padding:3px 7px 3px 5px;border-radius:5px;background:' + c.bgInput + ';border:1px solid ' + c.border + ';user-select:none;">' +
-          '<span data-tag-id="' + _esc(tid) + '" data-checked="0" style="flex-shrink:0;display:inline-block;width:11px;height:11px;border-radius:2px;border:1.5px solid ' + c.border + ';background:transparent;box-sizing:border-box;"></span>' +
-          '<span style="font-size:10px;color:' + c.text + ';">' + _esc(name) + '</span>' +
-        '</label>';
-      }).join('');
-      tagList.onclick = function(e) {
-        var label = e.target && e.target.closest ? e.target.closest('label') : null;
-        if (!label) return;
-        var box = label.querySelector('[data-tag-id]');
-        if (!box) return;
-        var on = box.dataset.checked !== '1';
-        box.dataset.checked = on ? '1' : '0';
-        box.style.background = on ? '#6366f1' : 'transparent';
-        box.style.borderColor = on ? '#6366f1' : c.border;
-      };
-    }
-
-    function _checkCms(pid) {
-      var cmsDot = document.getElementById('b24t-mini-cms-dot');
-      var cmsWarn = document.getElementById('b24t-mini-cms-warn');
-      var submitBtn = document.getElementById('b24t-mini-submit');
-      if (cmsDot) { cmsDot.textContent = '● CMS'; cmsDot.style.background = 'rgba(255,255,255,0.18)'; cmsDot.title = 'Sprawdzanie CMS...'; }
-      if (cmsWarn) cmsWarn.style.display = 'none';
-      if (submitBtn) { submitBtn.disabled = true; submitBtn.style.opacity = '0.5'; submitBtn.title = 'Sprawdzanie logowania do CMS...'; }
-      var base = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
-      GM_xmlhttpRequest({
-        method: 'GET',
-        url: base + '/searches/add-new-mention/?sid=' + pid,
-        onload: function(resp) {
-          var m = (resp.responseText || '').match(/name="tknB24"[^>]*value="([a-f0-9]{32})"/);
-          if (!m) m = (resp.responseText || '').match(/value="([a-f0-9]{32})"[^>]*name="tknB24"/);
-          if (m && m[1]) {
-            state.tknB24 = m[1];
-            if (cmsDot) { cmsDot.textContent = '✓ CMS'; cmsDot.style.background = 'rgba(34,197,94,0.4)'; cmsDot.title = 'CMS aktywny'; }
-            if (submitBtn) { submitBtn.disabled = false; submitBtn.style.opacity = ''; submitBtn.title = ''; }
-          } else {
-            if (cmsDot) { cmsDot.textContent = '✗ CMS'; cmsDot.style.background = 'rgba(239,68,68,0.5)'; cmsDot.title = 'Zaloguj się do Brand24 CMS'; }
-            if (submitBtn) { submitBtn.disabled = true; submitBtn.style.opacity = '0.45'; submitBtn.title = 'Zaloguj się do Brand24 CMS, aby dodawać wzmianki'; }
-            if (cmsWarn) {
-              var domain = base.replace('https://','');
-              cmsWarn.innerHTML = '⚠ Zaloguj się do CMS Brand24 (' + domain + ') — bez logowania nie można dodawać wzmianek.';
-              cmsWarn.style.display = '';
-            }
-          }
-        },
-        onerror: function() {
-          if (cmsDot) { cmsDot.textContent = '✗ CMS'; cmsDot.style.background = 'rgba(239,68,68,0.5)'; cmsDot.title = 'Błąd sieci'; }
-          if (submitBtn) { submitBtn.disabled = true; submitBtn.style.opacity = '0.45'; submitBtn.title = 'Błąd sieci przy sprawdzaniu CMS'; }
-        }
-      });
-    }
-
-    function _miniLangCheck(articleLang, pid) {
-      var warn = document.getElementById('b24t-mini-lang-warn');
-      if (!warn) return;
-      var pData = (projects || {})[pid] || {};
-      var projLang = '';
-      var cmap = { PL:'pl', TR:'tr', DE:'de', FR:'fr', IT:'it', ES:'es', PT:'pt', NL:'nl', SE:'sv', NO:'no', DK:'da', FI:'fi', CZ:'cs', SK:'sk', HU:'hu', RO:'ro', GR:'el', BG:'bg', HR:'hr', UA:'uk', RU:'ru', JP:'ja', KR:'ko', CN:'zh', AR:'ar', IN:'hi', BR:'pt' };
-      var nm = (pData.name || '').toUpperCase().match(/_([A-Z]{2})$/);
-      if (nm) projLang = cmap[nm[1]] || '';
-      if (!projLang || !articleLang || projLang === articleLang) { warn.style.display = 'none'; return; }
-      warn.innerHTML = '⚠ Artykuł wygląda na <strong>' + articleLang.toUpperCase() + '</strong>, projekt oczekuje <strong>' + projLang.toUpperCase() + '</strong>. Czy na pewno dodać?';
-      warn.style.display = '';
-    }
-
-    function _miniDupCheck(url, pid) {
-      var dupEl = document.getElementById('b24t-mini-dup-status');
-      if (!dupEl) return;
-      var normUrl = normalizeUrl(url || '');
-      if (!normUrl) { dupEl.textContent = ''; return; }
-      var sq;
-      try { sq = new URL(url).pathname.split('/').filter(Boolean).pop() || ''; } catch(e) { sq = ''; }
-      if (!sq || sq.length < 4) { dupEl.textContent = ''; return; }
-      dupEl.textContent = '⏳ sprawdzanie...';
-      dupEl.style.color = c.textFaint;
-      var base = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
-      var gqlBody = JSON.stringify({
-        operationName: 'getMentions',
-        variables: {
-          projectId: parseInt(pid),
-          dateRange: { from: '2000-01-01', to: new Date().toISOString().split('T')[0] },
-          filters: { va: 1, rt: [], se: [], vi: null, gr: [], sq: sq, lem: false, ctr: [], nctr: false, is: null, tp: null, anom: '', lang: [], nlang: false, aue: null, htg: null, mt: false, mtri: null, cxs: [] },
-          page: 1, order: 0
-        },
-        query: 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){results{id url openUrl}}}'
-      });
-      GM_xmlhttpRequest({
-        method: 'POST',
-        url: base + '/api/graphql',
-        headers: { 'Content-Type': 'application/json' },
-        data: gqlBody,
-        timeout: 8000,
-        onload: function(resp) {
-          try {
-            var data = JSON.parse(resp.responseText);
-            var results = (data && data.data && data.data.getMentions && data.data.getMentions.results) || [];
-            var dup = results.find(function(m) {
-              var mu = normalizeUrl(m.url || '');
-              var mo = normalizeUrl(m.openUrl || '');
-              return mu === normUrl || mo === normUrl;
-            });
-            if (dup) {
-              dupEl.textContent = '⚠ duplikat w projekcie';
-              dupEl.style.color = c.yellow;
-              dupEl.title = 'Ten URL już istnieje w wybranym projekcie (ID wzmianki: ' + dup.id + ')';
-            } else {
-              dupEl.textContent = '✓ URL nowy';
-              dupEl.style.color = c.green;
-              dupEl.title = '';
-            }
-          } catch(e) { dupEl.textContent = ''; }
-        },
-        onerror: function() { dupEl.textContent = ''; },
-        ontimeout: function() { dupEl.textContent = ''; }
-      });
-    }
-
-    _renderTags(lastUsedId);
-    _checkCms(lastUsedId);
-
-    // Auto-scrape page data after modal renders
-    requestAnimationFrame(function() {
-      var scraped = _miniScrapeCurrentPage();
-      var contentFld = document.getElementById('b24t-mini-content');
-      if (scraped.content && contentFld && !contentFld.value.trim()) {
-        contentFld.value = scraped.content;
-        contentFld.style.borderColor = 'rgba(99,102,241,0.5)';
-        contentFld.title = 'Automatycznie wypełniono z treści strony';
-      }
-      var dateFld = document.getElementById('b24t-mini-date');
-      if (scraped.date && dateFld) {
-        dateFld.value = scraped.date;
-        dateFld.style.borderColor = 'rgba(34,197,94,0.5)';
-        dateFld.title = 'Data wykryta automatycznie';
-      }
-      if (scraped.lang) _miniLangCheck(scraped.lang, lastUsedId);
-      _miniDupCheck(window.location.href, lastUsedId);
-    });
-
-    document.getElementById('b24t-mini-project').addEventListener('change', function(e) {
-      var pid = e.target.value;
-      lsSet('b24tagger_mini_last_project', pid);
-      _renderTags(pid);
-      _checkCms(pid);
-      var cc = _detectCountry(pid);
-      var cInput = document.getElementById('b24t-mini-country');
-      if (cInput && cc) cInput.value = cc;
-      var urlVal = (document.getElementById('b24t-mini-url') || {}).value || window.location.href;
-      var scraped = _miniScrapeCurrentPage();
-      if (scraped.lang) _miniLangCheck(scraped.lang, pid);
-      _miniDupCheck(urlVal, pid);
-    });
-
-    document.getElementById('b24t-mini-submit').addEventListener('click', function() {
-      var errEl = document.getElementById('b24t-mini-err');
-      var statusEl = document.getElementById('b24t-mini-status');
-      var btn = document.getElementById('b24t-mini-submit');
-      function showErr(msg) { errEl.innerHTML = msg; errEl.style.display = ''; if (statusEl) statusEl.textContent = ''; }
-      function clearErr() { errEl.style.display = 'none'; }
-      clearErr();
-
-      var pid = document.getElementById('b24t-mini-project').value;
-      var fUrl = (document.getElementById('b24t-mini-url').value || '').trim();
-      var fTitle = (document.getElementById('b24t-mini-title').value || '').trim();
-      var fContent = (document.getElementById('b24t-mini-content').value || '').trim();
-      var fDate = (document.getElementById('b24t-mini-date').value || '').trim();
-      var fHour = (document.getElementById('b24t-mini-hour').value || '12').trim();
-      var fMin = (document.getElementById('b24t-mini-min').value || '00').trim();
-      var fCountry = (document.getElementById('b24t-mini-country').value || '').trim().toUpperCase();
-      var fSent = document.getElementById('b24t-mini-sent').value;
-      var catVal = document.getElementById('b24t-mini-cat').value;
-
-      if (!fUrl) { showErr('⚠ URL jest wymagany.'); return; }
-      if (!fTitle) { showErr('⚠ Tytuł jest wymagany.'); return; }
-      if (!fContent) { showErr('⚠ Treść jest wymagana.'); return; }
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(fDate)) { showErr('⚠ Nieprawidłowy format daty — wymagany: YYYY-MM-DD'); return; }
-
-      var mentionCategory = catVal || '8';
-
-      var selectedTags = [];
-      document.querySelectorAll('#b24t-mini-tags [data-tag-id][data-checked="1"]').forEach(function(span) {
-        var tid = parseInt(span.dataset.tagId);
-        if (tid) selectedTags.push(tid);
-      });
-
-      btn.disabled = true;
-      btn.style.opacity = '0.6';
-      btn.textContent = '⏳ Pobieram token...';
-      if (statusEl) statusEl.textContent = '';
-
-      // Token w cache (z _checkCms) lub fetch
-      var sid = pid;
-      var base = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
-      function _withToken(tkn) {
-        if (!tkn) {
-          btn.disabled = false; btn.style.opacity = ''; btn.textContent = '✚ Dodaj wzmiankę';
-          showErr('⚠ Nie można pobrać tokenu CSRF. Zaloguj się do Brand24.');
-          return;
-        }
-        var bodyParts = [
-          'tknB24=' + encodeURIComponent(tkn),
-          'f=fser',
-          'search_id=' + encodeURIComponent(sid),
-          'mention_url=' + encodeURIComponent(fUrl),
-          'mention_title=' + encodeURIComponent(fTitle),
-          'mention_content=' + encodeURIComponent(fContent),
-          'mention_category=' + encodeURIComponent(mentionCategory),
-          'mention_country=' + encodeURIComponent(fCountry),
-          'mention_sentiment=' + encodeURIComponent(fSent),
-          'mention_created_date_day=' + encodeURIComponent(fDate),
-          'mention_created_date_hour=' + encodeURIComponent(fHour),
-          'mention_created_date_minute=' + encodeURIComponent(fMin),
-        ];
-        ['b24t-mini-likes','b24t-mini-pv','b24t-mini-shares','b24t-mini-comments'].forEach(function(id, idx) {
-          var name = ['mention_likes','mention_pageviews','mention_shares','mention_comments'][idx];
-          var v = (document.getElementById(id) || {}).value;
-          if (v !== undefined && v !== null && String(v).trim() !== '') {
-            bodyParts.push(name + '=' + encodeURIComponent(String(v).trim()));
-          }
-        });
-        selectedTags.forEach(function(tid) { bodyParts.push('tag[]=' + encodeURIComponent(tid)); });
-
-        btn.textContent = '⏳ Wysyłam...';
-        GM_xmlhttpRequest({
-          method: 'POST',
-          url: base + '/searches/add-new-mention/?sid=' + sid,
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
-          data: bodyParts.join('&'),
-          onload: function(resp) {
-            btn.disabled = false; btn.style.opacity = ''; btn.textContent = '✚ Dodaj wzmiankę';
-            var isDuplicate = resp.responseText && resp.responseText.indexOf('There is the entry with this address') !== -1;
-            var isOk = resp.status >= 200 && resp.status < 400 && !isDuplicate;
-            if (isDuplicate) {
-              if (statusEl) { statusEl.textContent = '⚠ Brand24: taka wzmianka już istnieje.'; statusEl.style.color = c.yellow; }
-            } else if (isOk) {
-              if (statusEl) { statusEl.textContent = '✓ Dodano wzmiankę.'; statusEl.style.color = c.green; }
-              btn.textContent = '✓ Dodano';
-              setTimeout(function() { btn.textContent = '✚ Dodaj wzmiankę'; }, 2500);
-            } else {
-              if (statusEl) { statusEl.textContent = '✕ Błąd serwera (' + resp.status + ').'; statusEl.style.color = c.red; }
-            }
-          },
-          onerror: function() {
-            btn.disabled = false; btn.style.opacity = ''; btn.textContent = '✚ Dodaj wzmiankę';
-            if (statusEl) { statusEl.textContent = '✕ Błąd sieci.'; statusEl.style.color = c.red; }
-          }
-        });
-      }
-
-      if (state.tknB24) {
-        _withToken(state.tknB24);
-      } else {
-        GM_xmlhttpRequest({
-          method: 'GET',
-          url: base + '/searches/add-new-mention/?sid=' + sid,
-          onload: function(resp) {
-            var m = (resp.responseText || '').match(/name="tknB24"[^>]*value="([a-f0-9]{32})"/);
-            if (!m) m = (resp.responseText || '').match(/value="([a-f0-9]{32})"[^>]*name="tknB24"/);
-            if (m && m[1]) { state.tknB24 = m[1]; _withToken(m[1]); }
-            else _withToken(null);
-          },
-          onerror: function() { _withToken(null); }
-        });
-      }
-    });
   }
 
   // ───────────────────────────────────────────

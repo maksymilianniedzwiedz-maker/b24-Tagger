@@ -16,6 +16,103 @@
 - [x] Z-index: aktywny/przesuwany panel zawsze on top — v0.23.0
 - [x] News: poprawić działanie trzymających się razem paneli — v0.23.0
 
+## DO ZROBIENIA — NASTĘPNA SESJA
+
+### Floating panel Niestandardowe — pozostałe punkty planu
+- [x] **[FIX] Nazwy projektów cross-domain — dropdown kraju jako `<select>` z 49 kodami** — `_COUNTRIES` + `_countryOptionsHtml()`, zamiana `<input>` na `<select>` w full panel i mini panelu — v0.24.11
+- [x] **[FIX] Auto-fill treści — łączy akapity do 200 znaków, przycina na granicy zdania** — maks. 5 akapitów, fallback na cały kontener, trim na ostatniej kropce — v0.24.11
+- [x] **[FIX] Nazwy projektów cross-domain — GM mirror dla PROJECT_NAMES, _gmGetProjectNames scal LS.PROJECTS + LS.PROJECT_NAMES** — v0.24.11–v0.24.16
+- [x] **[FIX] Nazwy projektów cross-domain — przycisk Reset i przebuduj w ⚙ Niestandardowe** — nuclear clear obu GM mirrorów + rebuild z LS; guard gdy LS pusty (non-brand24) — v0.24.17–v0.24.18
+- [x] **[FIX ROOT] _gmSaveProjects filtruje fallbacki przed zapisem** — złe nazwy z LS.PROJECTS nie wracają do mirrora nigdy — v0.24.19
+- [x] **[FEATURE] Floating panel Niestandardowe — auto-scraping danych artykułu** — `_miniScrapeCurrentPage()`: treść (article/main/[itemprop=articleBody]), data (JSON-LD → meta → time[datetime]), język (html[lang]); auto-fill content+date po otwarciu modalu z wizualnym highlight — v0.24.6
+- [x] **[FEATURE] Floating panel Niestandardowe — selektor projektu z LS** — już był w mini panelu od v0.24.0; `_renderTags(pid)` przeładowuje tagi przy zmianie projektu; `b24tagger_mini_last_project` pamięta ostatni wybór
+- [x] **[FEATURE] Floating panel Niestandardowe — multi-tag support** — już był w mini panelu od v0.24.0; checkbox list wszystkich tagów projektu
+- [x] **[FEATURE] Floating panel Niestandardowe — auto-detekcja kategorii z URL** — `_detectCategoryFromUrl(window.location.href)` przy otwarciu modalu zamiast hardcoded '8 — Web' — v0.24.6
+- [x] **[FEATURE] Floating panel Niestandardowe — detekcja duplikatów** — `_miniDupCheck()`: GQL search po ostatnim segmencie URL, porównanie `url`+`openUrl` przez normalizeUrl; badge `✓ URL nowy`/`⚠ duplikat` obok pola URL — v0.24.6
+- [x] **[FEATURE] Floating panel Niestandardowe — ostrzeżenie językowe** — `_miniLangCheck()`: inference języka projektu z sufiksu nazwy (_XX), porównanie z `html[lang]`; żółty pasek ostrzeżenia — v0.24.6
+- [x] **[CLEANUP] Floating panel Niestandardowe — usunąć dropdown promptu AI z głównego widoku** — dropdown promptu AI jest już w ustawieniach ⚙; z formularza Niestandardowe można go usunąć — v0.24.20
+- [x] **[BUG/DIAGNOZA] Tagi w panelu Niestandardowe — weryfikacja zaciągania z projektów** — CSS reset naprawił zaciąganie tagów cross-domain — v0.24.21
+- [x] **[BUG/DIAGNOZA] Dup-check w panelu Niestandardowe — weryfikacja skanowania projektu** — pełna przebudowa `_customDupCheck` z B24Bridge + sequence guard + pid NaN guard — v0.24.26
+- [x] **[BUG/DIAGNOZA] Diody CMS i Token — faktyczny check czy użytkownik jest zalogowany** — `_newsCheckTagDodane` prawidłowo implementuje check — v0.24.x
+- [x] **[FEATURE] Floating panel Niestandardowe — blokada submitu przy ✗ CMS** — blokada submitu przy ✗ CMS zaimplementowana — v0.24.20/v0.24.22
+- [ ] **[FEATURE] Floating panel Niestandardowe — link do dodanej wzmianki po submicie** — parsowanie ID wzmianki z odpowiedzi POST `/searches/add-new-mention/`; wyświetlenie linku `app.brand24.com/panel/results/...` w statusie sukcesu
+- [x] **[FEATURE] Floating panel Niestandardowe — ustawienia panelu** — `_openCustomPanelSettings()`: popover pod przyciskiem ⚙; AI toggle (slider style), selektor promptu, przycisk Zapisz; chip AI ukryty w custom mode — v0.24.9
+- [x] **[FEATURE] Floating panel Niestandardowe — scraping metadanych social media** — `_scrapeSocialMetrics()`: polubienia/udostępnienia/komentarze z DOM Twitter/X/Facebook/LinkedIn/YouTube/Reddit; IG zwraca null (auth wall — graceful fail); wyniki wpisywane do pól formularza — v0.24.9
+- [ ] **[FEATURE] Floating panel Niestandardowe — redesign UI** — styl main panelu: droplet avatary, cienie, CSS vars; realizacja na samym końcu
+
+- [ ] **[BUG/DIAGNOZA] News — badge ⏳ AI... wisi na stałe zamiast przejść w ✅/❌/🤖** — użytkownik widzi ⏳ na każdym artykule; możliwe przyczyny: (1) klucz API wygasł/błędny → przetestować nowym przyciskiem "Testuj klucz API" w ⚙, (2) GM_xmlhttpRequest nie trigguje callbacków (onload/onerror/ontimeout) — sprawdzić w Network Monitor czy request w ogóle wychodzi, (3) błąd parsowania odpowiedzi API — dodać `console.log` wewnątrz `_newsAiAnalyze` callbacków; po diagnozie zdecydować o naprawie
+- [ ] **[UX/TECH-DEBT] Drag panelu Niestandardowe — zmiana selektora headera** — drag używa `panelMain.querySelector('div')` zamiast ID; dodać `id="b24t-news-panel-header"` do headera w `_buildNewsPanels` i użyć go w `_wireNewsPanels`
+
+## UKOŃCZONE (sesja 2026-05-14, Sesja 86)
+
+- [x] **[ARCH] B24Bridge — centralny system danych cross-domain** — jeden klucz GM `b24t_bridge` zastępuje 4 rozproszone klucze; `token` (TTL 8h), `projects` (filtr fallbacków), `lastProject`; `GM_addValueChangeListener` reaktywne powiadomienia między kartami; jednorazowa migracja starych kluczy GM — v0.24.26
+- [x] **[REFACTOR] Migracja wszystkich callerów do B24Bridge** — `_gmGetProjects`, `_gmSaveProjects`, `_gmGetProjectNames`, `_gmSaveProjectNames`, `_pnSet`, token capture (origFetch interceptor), `_newsCheckTagDodane` base URL, przycisk "Reset i przebuduj", `b24t_mini_last_project`, ANNOTATOR TOOLS, `_customDupCheck` — v0.24.26
+- [x] **[BUG] Dup-check pokazywał "otwórz Brand24" mimo załadowanego tokenu** — pełna przebudowa `_customDupCheck` z B24Bridge.token.isValid(), sequence guard `_dupCheckSeq`, pid NaN guard; reaktywny `B24Bridge.onChange('custom-dupcheck')` w INIT auto-ponawia dupcheck gdy brand24.com zapisze token — v0.24.26
+- [x] **[DOCS] CLAUDE.md — nowa HARD RULE B24Bridge + mapa sekcji do 17 159 linii** — wszystkie numery linii zaktualizowane do Sesji 86
+
+## UKOŃCZONE (sesja 2026-05-13, Sesja 84)
+
+- [x] **[FEATURE] Ustawienia ⚙ — sekcja Projekty: Uzupełnij nazwy** — nowa sekcja w modalu ⚙; licznik projektów bez nazwy; przycisk "Uzupełnij nazwy"; GQL probe: `getProjects` batch (jeden request) + fallback `getProject(id)` per ID; updates `LS.PROJECT_NAMES` + `LS.PROJECTS[id].name` przez `_pnSet`; status ✓/⚠ po zakończeniu — v0.24.10
+- [x] **[FIX] Panel Niestandardowe — treść artykułu: tylko pierwszy akapit** — `_miniScrapeCurrentPage`: `cEl.querySelector('p')` zamiast całości kontenera; limit 600 znaków (poprzednio 3000); dotyczy obu formularzy (Brand24 + mini button) — v0.24.10
+- [x] **[FIX] Panel Niestandardowe — domyślna kategoria News zamiast Web** — `_detectCategoryFromUrl`: fallback `8`→`7` dla nierozpoznanych domen i null URL — v0.24.10
+
+## UKOŃCZONE (sesja 2026-05-13, Sesja 83)
+
+- [x] **[FEATURE] Floating panel Niestandardowe — skanowanie bieżącej strony** — `_customAutoFillFromPage()`: wrappuje `_miniScrapeCurrentPage()`, wypełnia pola URL/tytuł/treść/data/kategoria po `openNewsPanels('custom')` na zewnętrznych stronach (requestAnimationFrame po renderze) — v0.24.9
+- [x] **[FEATURE] Floating panel Niestandardowe — dark mode cross-domain** — `applyTheme()` mirroruje motyw do `GM_setValue('b24t_theme_mirror')`; mini button czyta GM przy pierwszym `injectStyles()` — v0.24.9
+- [x] **[UX] Floating panel Niestandardowe — przycisk ✚B24** — `top:33vh;right:18px`, 54×54px; poprzednio bottom-left, mały — v0.24.9
+- [x] **[UX] Floating panel Niestandardowe — projekt zawsze widoczny + cross-domain** — wiersz projektu nie chowa się po wyborze; `GM_setValue('b24t_mini_last_project')` + pre-select przy otwarciu — v0.24.9
+- [x] **[UX] Floating panel Niestandardowe — language check** — sprawdzenie języka `html[lang]` vs języka projektu przy zmianie projektu w `_wireNewsPanels` — v0.24.9
+- [x] **[UX] Floating panel Niestandardowe — tagi auto-expanded** — tagi otwarte domyślnie w custom mode (`_applyNewsMode`) — v0.24.9
+- [x] **[UX] Floating panel Niestandardowe — więcej wysokości** — overlay top padding 60→20px, `maxHeight: calc(100vh - 20px)` — v0.24.9
+- [x] **[UX] Floating panel Niestandardowe — usunięto "Importuj URLe"** — przycisk ukrywany w custom mode — v0.24.9
+- [x] **[BUG] `_parseNum` — błąd dziesiętny** — `.replace(/\./g,'')` niszczyło "1.2K" → 12000; fix: usunięto replace kropek — v0.24.9
+
+## UKOŃCZONE (sesja 2026-05-13, Sesja 82)
+
+- [x] **[BUG] Floating panel Niestandardowe — zakładki widoczne w trybie custom** — `_newsApplyResponsive()` nadpisywała `_toggleFormOnly(true)` przy każdym resize; fix: early return gdy `newsState.mode === 'custom'` ukrywający tabsBar — v0.24.7
+- [x] **[FEATURE] Floating panel Niestandardowe — AI toggle w headerze** — chip `🤖 AI` zmieniony na klikalny `<button>`; `_syncAiChip()` synchronizuje kolor z `s.custom.enabled`; klik zapisuje przez `_aiSaveSettings()` — v0.24.7
+- [x] **[BUG] Floating panel Niestandardowe — mini button nie pojawia się na zewnętrznych stronach** — root cause: `localStorage` izolowany per domena; dane projektów z Brand24 niedostępne na zewnętrznych stronach; fix: `GM_getValue`/`GM_setValue` grants + `_gmGetProjects()` (LS-first, fallback GM) + `_gmSaveProjects()` mirror przy załadowaniu projektu na Brand24; mini button klik używa `openNewsPanels('custom')` + `injectStyles()` — v0.24.8
+
+## UKOŃCZONE (sesja 2026-05-13, Sesja 81)
+
+- [x] **[FEATURE] Floating panel Niestandardowe — auto-scraping + dup-check + ostrzeżenie językowe + auto-kategoria** — `_miniScrapeCurrentPage()`, `_miniDupCheck()`, `_miniLangCheck()`; auto-fill content/date/kategoria przy otwarciu; badge URL nowy/duplikat; ostrzeżenie językowe z inference języka projektu z sufiksu nazwy — v0.24.6
+
+## UKOŃCZONE (sesja 2026-05-13, Sesja 80)
+
+- [x] **[BUG] Floating panel Niestandardowe niewidoczny — zasłonięty przez panel Taggera** — root cause: overlay z-index 2147483632 < panel Taggera 2147483647; fix: `_applyNewsMode()` podnosi overlay do 2147483647 w trybie custom; padding-right 12→52px eliminuje nakładanie na side tab; explicit `rgba(0,0,0,0.55)` w news mode naprawia transparent tło po custom→news switch — v0.24.2
+- [x] **[BUG] Floating panel Niestandardowe znikał po kliknięciu + gap Wzmianki/Net** — root cause: overlay `pointer-events:none` → kliknięcia przez 52px przerwę trafiały w side tab Wzmianki → `closeNewsPanels()`; fix: `_applyNewsMode()` custom mode ustawia `pointer-events:none` na side tab Wzmianki (przywracane w news mode i `closeNewsPanels()`); fix gap: Net tab `calc(50%+250px)` → `calc(50%+200px)` — v0.24.3
+- [x] **[BUG] Floating panel Niestandardowe znikał przy przeciąganiu** — root cause: drag handler ustawiał `left/top` jako absolutne koordynaty viewport na elemencie `position:relative` (flex child) → `left:1300px` na elemencie at 1300px = offset 2600px poza ekranem; fix: przy `mousedown` konwersja na `position:fixed` z aktualną pozycją z `getBoundingClientRect()` — v0.24.4
+- [x] **[UX] Custom mode — tylko formularz + fix lag przeciągania** — ukryto przyciski Stats (📊), Legenda (?), Języki (⚙ Języki) w headerze w custom mode; `offsetWidth`/`offsetHeight` cachowane raz przy `mousedown` zamiast wywoływania reflow na każdy `mousemove` — v0.24.5
+
+## UKOŃCZONE (sesja 2026-05-11, Sesja 78)
+
+- [x] **[FIX] Przyciski boczne Wzmianki i Net nachodzą na siebie** — `#b24t-nm-tab` przesunięty z `calc(50%+175px)` na `calc(50%+250px)` — v0.24.1
+- [x] **[UX] Tryb Niestandardowe jako floating panel** — overlay transparent + `pointer-events:none`; panelMain `pointer-events:auto`; auto formOnly; dragowalny za header — v0.24.1
+- [x] **[UX] ESC zamyka panel importu i overlay Wzmianek** — nie aktywuje się gdy fokus w INPUT/TEXTAREA/SELECT — v0.24.1
+- [x] **[UX] Import URLi w Niestandardowe ukrywa Słowa kluczowe i Opis marki** — obie sekcje ukryte gdy mode='custom'; spójne w modalOpenBtn i bottomImportBtn — v0.24.1
+- [x] **[UX] Prompt AI przeniesiony z ⚙ do paneli Wzmianek** — `b24t-news-import-prompt-sel` (News) + `b24t-news-custom-prompt-sel` (Niestandardowe); `_newsRefillPromptSelect(isCustom)`; `s.custom.activePromptId` — v0.24.1
+- [x] **[FIX] Usunięto opcję "auto (z domeny)" z dropdownu kategorii** — z formularza News i z mini-buttonu; domyślna kategoria = 8 (Web) — v0.24.1
+
+## DO ZROBIENIA (archiwalne, Sesja 72, po reset limitu)
+
+### Performance audit (z audytu Sesja 71, 2026-05-08) — uporządkowane po impact
+
+- [x] **[PERF/WYSOKI] Overall Stats — throttling 40 jednoczesnych requestów** — `STATS_FETCH_CONCURRENCY` 10→4 (4×4 queries = max 16 równoczesnych zamiast 40) — v0.23.94
+- [x] **[PERF/WYSOKI] Quick Delete — brak sleep między batchami** — `await sleep(50)` między batchami deletów — v0.23.94
+- [x] **[PERF/WYSOKI] `_bgFetchTagstats` — count-only query zamiast pełnych results** — count-only GQL przez origFetch, 2 queries per projekt równolegle — v0.23.94
+- [x] **[PERF/ŚREDNI] News re-check — sekwencyjne paginowanie** — równoległe pobieranie stron (10 naraz) zamiast while-loop — v0.23.94
+- [x] **[PERF/ŚREDNI] `fetchProjectTagCounts` — usunąć zbędne `tags{title}`** — zmieniono na `tags{id}` — v0.23.94
+- [x] **[PERF/ŚREDNI] `_bgFetchAllProjects` — sprawdzanie cache przed re-fetchem** — `_bgCacheFresh` check na starcie funkcji — v0.23.94
+- [x] **[PERF/NISKI] `_fetchProjectStats` — duplikat strony 1 w binary search** — p1Res cachowany, boundary page reużywa cache gdy lo=1 — v0.23.94
+- [x] **[PERF/NISKI] News URL matching — O(N²) pętla** — prefix index Map (15-char key), O(N+M) — v0.23.94
+
+### Miscellaneous (UI/UX)
+
+- [x] **[UX] Wskaźnik opóźnienia zapytań — ikonka ⚠ w nagłówku panelu** — p90 ostatnich 30 requestów z ring buffera NM; żółty (p90<800ms), pomarańczowy (<2000ms), czerwony (≥2000ms lub błędy); tooltip: błędy/p90/slow count; klik → Network Monitor; znika gdy brak slow/error — v0.23.95
+
+- [x] **[UX] Animacje pojawiania się danych w panelach statystyk** — count-up easeOutQuart, progress bar od 0% (podwójny rAF), stagger fade+slide-up wierszy (Overall Stats 40ms, Dashboard 60ms, Tag Stats 35ms); `_animateCountUp` helper; `prefers-reduced-motion` respektowane — v0.23.96
+
 ## BUGI DO NAPRAWY (sesja 2026-04-11, Sesja 19)
 
 - [x] **[BUG] Project-check pobiera tylko 60 wzmianek zamiast wszystkich** — fix: paginacja, nowy warunek break, wording komunikatu — v0.23.11
@@ -98,7 +195,8 @@
 
 - [x] **News: wykrywanie keyword w news teaserze / zajawce** — status teasermatch, badge "w polecanym art.", NEWS_TEASER_SELECTORS — v0.23.26
 - [ ] **News: wstępna blokada znanych nie-newsów (social media, mapy)** — domeny linkedin.com, facebook.com, twitter.com/x.com, maps.google.com, youtube.com oznaczać automatycznie jako nonArticle bez pobierania HTML — szybciej i precyzyjniej niż content scan
-- [ ] **News: integracja AI API (Claude Haiku 4.5) do analizy relevancji** — użytkownik podaje własny klucz API w ustawieniach; AI analizuje tylko URLe już odfiltrowane przez plugin (keyword match); zakres: (1) ocena relevancji 1–5 z krótkim uzasadnieniem widocznym jako badge, (2) lepszy dobór snippetu do auto-fill formularza, (3) ekstrakcja daty gdy parser zawodzi; koszt ~$0.001/URL → ~$0.05 za typową sesję 50 URLi
+- [x] **News: integracja AI API (Claude Haiku) do analizy relevancji** — badge 4 kategorii (✅/⚠️/❌/🚫), parsowanie `verdict` z fallbackiem na `relevant:bool`, legenda zaktualizowana — v0.23.98
+  - [ ] **Prompt do wtyczki** — `Tagger/work/news_ai_scoring.txt` gotowy do przeglądu i wklejenia do biblioteki promptów; rozważyć usunięcie `reason` z outputu
 - [ ] **AI Tagging — tagowanie wzmianek przez Claude API** — nowy tryb tagowania równoległy do standardowego; wtyczka wyciąga tekst, tytuł, autora, źródło z panelu Brand24 i wysyła do Claude API z ustalonym promptem; wynik mapowany na tag i nakładany na wzmiankę; klucz API użytkownika w ustawieniach (localStorage); zakres: (1) konfigurowalny prompt per projekt, (2) obsługiwane labele = tagi z projektu Brand24, (3) podgląd odpowiedzi AI przed zatwierdzeniem (opcjonalnie), (4) licznik kosztu sesji w logach
 
 ## NOWE ZADANIA (sesja 2026-04-10)
@@ -173,6 +271,25 @@
 - [ ] **AI chipy na artykułach — nowe etykiety po analizie** — etykiety AI (np. "Główny temat", "Wzmianka", "Współpraca", "OOT") jako kolorowe chipy w liście URLi i w karcie; tooltip z uzasadnieniem AI; wymaga rozbudowania `_newsAiAnalyze` i struktury danych wyników
 - [x] **Przeprojektowanie listy URLi — kafelki zamiast listy** — układ kart: status badge z etykietą + badże w górnym wierszu, pełny URL (11px, bez limitu 42 znaków), snippet poniżej — v0.23.51
 - [x] **System statystyk AI News — accuracy tracking** — per-sesja confusion matrix (TP/FP/FN/TN) w LS.NA_SESSION_STATS; _naAggSession() oblicza CM z live entries; _naCompute() agreguje sesje; eksport CSV per sesja — v0.23.79
+
+## UKOŃCZONE (sesja 2026-05-11, Sesja 77)
+
+- [x] **[BUG] News project-check — URL z projektu nigdy nie matchował gdy Brand24 ma różne m.url i m.openUrl** — `_processPage` dodawał tylko jeden URL per wzmianka (`m.url || m.openUrl`); gdy canonical URL w `m.url` różnił się od oryginalnego w `m.openUrl`, user-pasted URL nie był wykrywany; fix: helper `_addProjectUrl`, oba URL-e dodawane do zestawu gdy różne — v0.23.104
+- [x] **[BUG] wrongcountry nie nadpisywało blocked/timeout w skanerze News** — guard `!== 'blocked'` w sprawdzeniu kraju powodował że timed-out URL z obcego kraju pokazywał blocked zamiast wrongcountry; fix: usunięto guard, country check stosowany do wszystkich statusów — v0.23.105
+- [x] **[UX] Pre-scan skip dla obcokrajowych URLi** — jeśli URL sygnalizuje zły kraj przez domenę/ścieżkę, scan HTTP request w ogóle nie jest wysyłany — v0.23.105
+- [x] **[UX] Timeout: usunięcie retry** — retry przy timeout dublował czas oczekiwania (8s×2=16s/URL max 24s); teraz jeden szans 10s; strony blokujące failują 2.5× szybciej; base timeout 8s→10s — v0.23.105
+- [x] **[UX] Domain-skip po 2 timeoutach** — `_domainTimeouts` counter per domena; po 2 timeoutach z tej samej domeny kolejne URLe skipowane natychmiast jako `blocked/domain_timeout`; chroni przed wszystkimi workerami zajętymi jedną nieodpowiadającą domeną — v0.23.105
+- [x] **[UX] Timer ETA podczas skanowania** — `Skanowanie: X/Y — ~Xs pozostało` w progressLbl; liniowa ekstrapolacja z pomiaru throughput od 3. skanu — v0.23.105
+
+## UKOŃCZONE (sesja 2026-05-08, Sesja 70)
+
+- [x] **Fix: fallback bulkTag — concurrent 8× zamiast sekwencji, 2 retries zamiast 5** — przy błędzie batcha fallback tagował po 1 ID sekwencyjnie z 5 retries (max ~22 min na 50 IDs). Teraz: `FALLBACK_CONCURRENCY=8`, `retries=2`, log błędu batcha z `[BRAND24]/[SIEĆ]` + hint przed fallbackiem, podsumowanie X/N — v0.23.91
+- [x] **Fix: Stop zatrzymuje multiproject loop, runTagging i batch loop** — check `state.status !== 'running'` na początku każdego projektu w `runMultiProjectTagging`, po `buildUrlMap` w `runTagging`, w inner i outer batch loop — v0.23.92
+- [x] **Fix: per-project zakres dat w pliku zbiorczym (szybszy URL map, mniej NO_MATCH)** — `runMultiProjectTagging` przekazywał globalny zakres partycji do każdego projektu; teraz każdy projekt oblicza własny min/max dat ze swoich wierszy — v0.23.92
+- [x] **Fix: chip Untagged — brak fałszywego błędu gdy chip już aktywny** — `activateUntaggedFilter` szukało chipa który NIE jest `Mui-active`; gdy chip był aktywny → fałszywy warning. Naprawiono + degradacja do `info` — v0.23.92
+- [x] **Fix: warning gdy brak untaggedId w localStorage projektu (multi-projekt)** — v0.23.92
+- [x] **Fix: Aktualizacja MAPY SEKCJI w CLAUDE.md** — zaktualizowana do Sesji 70 (v0.23.92, 15 325 linii)
+- [x] **[BUG] Plik CSV ze zbiorczymi wynikami oceniania blokuje Start — "kolumna daty wykryta, ale wartości puste"** — `autoDetectColumns` używało regexa `/\d{4}-\d{2}-\d{2}/` bez kotwicy `^`; kolumna `source_file` (pierwsza w CSV) zawierała nazwy plików z datami (np. `defacto_flagging_dev_2026-04-01_...csv`) → wykrywana jako kolumna dat; fix: zmiana na `/^\d{4}-\d{2}-\d{2}/` — wartość musi zaczynać się od daty — v0.23.90
 
 ## UKOŃCZONE (sesja 2026-05-04, Sesja 69)
 

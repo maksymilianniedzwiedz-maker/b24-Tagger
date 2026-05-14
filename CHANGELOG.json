@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.24.23",
+    "date": "2026-05-14",
+    "label": "fix",
+    "changes": [
+      "fix: dup-check URL — sq używa tytułu artykułu zamiast segmentu URL; Brand24 GQL indeksuje tytuł (nie URL), więc dup-check teraz faktycznie znajduje istniejące wzmianki"
+    ]
+  },
+  {
     "version": "0.24.22",
     "date": "2026-05-14",
     "label": "feat",

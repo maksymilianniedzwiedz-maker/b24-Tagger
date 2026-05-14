@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.24.25",
+    "date": "2026-05-14",
+    "label": "fix",
+    "changes": [
+      "fix: dup-check cross-domain — tokenHeaders (Authorization) przechwytywane na brand24.com i zapisywane do GM; cross-domain GQL dostaje pełne auth headery zamiast pustych",
+      "fix: dup-check — zapisuje też base URL (panel.brand24.pl vs app.brand24.com) do GM; cross-domain dup-check trafia na właściwy serwer",
+      "fix: dup-check — błąd GQL (brak tokenu, timeout, sieć) pokazuje komunikat zamiast cichego 'URL nowy'"
+    ]
+  },
+  {
     "version": "0.24.24",
     "date": "2026-05-14",
     "label": "fix",
@@ -10,6 +20,12 @@
   },
   {
     "version": "0.24.23",
+    "date": "2026-05-14",
+    "label": "fix",
+    "changes": [
+      "fix: dup-check URL — przepisano logikę sq (poprzednia wersja tymczasowa przed przepisaniem na pełny scan miesiąca)"
+    ]
+  },
   {
     "version": "0.24.22",
     "date": "2026-05-14",

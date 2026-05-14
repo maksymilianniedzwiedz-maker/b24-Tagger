@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.24.22",
+    "date": "2026-05-14",
+    "label": "feat",
+    "changes": [
+      "feat: Niestandardowe — blokada przycisku Dodaj gdy CMS niezalogowany (sprawdzanie w toku lub błąd logowania)",
+      "feat: Niestandardowe — dup-check URL: po otwarciu panelu i przy zmianie URL/projektu sprawdza czy wzmianka z tym URL już istnieje w projekcie"
+    ]
+  },
+  {
     "version": "0.24.21",
     "date": "2026-05-14",
     "label": "fix",

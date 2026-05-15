@@ -1,5 +1,24 @@
 [
   {
+    "version": "0.24.28",
+    "date": "2026-05-15",
+    "label": "fix",
+    "changes": [
+      "fix: _autoResolveUnknownProjects przepisany na HTML fetch (/searches/add-new-mention/?sid={pid}) — pobiera nazwę projektu z tytułu strony i tagi z <select id=tag>; jeden request per projekt zamiast getUserProjects+getTags",
+      "fix: cross-account projekty (redirect) są pomijane z ostrzeżeniem zamiast rzucać błąd"
+    ]
+  },
+  {
+    "version": "0.24.27",
+    "date": "2026-05-15",
+    "label": "feat",
+    "changes": [
+      "feat: auto-resolve nieznanych projektów przy wgraniu pliku multi-project — wtyczka sama pobiera tagi i nazwy z konta (getUserProjects + getTags) zamiast blokować start",
+      "feat: renderMultiProjectWidget pokazuje stan ładowania ⏳ podczas auto-resolve; po sukcesie odblokowuje Start automatycznie",
+      "feat: projekty cross-account (poza kontem użytkownika) nadal wymagają ręcznej wizyty — właściwe fallback"
+    ]
+  },
+  {
     "version": "0.24.26",
     "date": "2026-05-14",
     "label": "feat",

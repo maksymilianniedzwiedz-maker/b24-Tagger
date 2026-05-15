@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.26
+// @version      0.24.27
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.26';
+  const VERSION = '0.24.27';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -926,6 +926,26 @@
       getTags { id title isProtected }
     }`);
     return data.getTags;
+  }
+
+  async function getUserProjects() {
+    if (!state.tokenHeaders) return [];
+    try {
+      const res = await origFetch('/api/graphql', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: state.tokenHeaders,
+        body: JSON.stringify({
+          operationName: 'getUserProjects',
+          variables: {},
+          query: 'query getUserProjects { getUserProjects { project { id name } } }',
+        }),
+      });
+      const data = await res.json();
+      return (data && data.data && data.data.getUserProjects) || [];
+    } catch(e) {
+      return [];
+    }
   }
 
   async function createTag(title) {
@@ -5187,7 +5207,35 @@
     addLog('🗑 Plik usunięty. Wgraj nowy plik.', 'info');
   }
 
-  function renderMultiProjectWidget(rows, colMap) {
+  async function _autoResolveUnknownProjects(unknownPids) {
+    try {
+      var accountRaw = await getUserProjects();
+      var accountPidMap = {};
+      accountRaw.forEach(function(p) { accountPidMap[String(p.project.id)] = p.project.name; });
+      var sameAccount = unknownPids.filter(function(pid) { return accountPidMap[pid]; });
+      if (!sameAccount.length) return;
+      var tags = await getTags();
+      var tagIds = {};
+      var untaggedId = 1;
+      tags.forEach(function(t) {
+        if (t.isProtected) { if (t.title === 'Untagged') untaggedId = t.id; }
+        else tagIds[t.title] = t.id;
+      });
+      var saved = lsGet(LS.PROJECTS, {});
+      sameAccount.forEach(function(pid) {
+        saved[pid] = { name: accountPidMap[pid], tagIds: tagIds, untaggedId: untaggedId, updatedAt: new Date().toISOString() };
+        _pnSet(pid, accountPidMap[pid]);
+      });
+      lsSet(LS.PROJECTS, saved);
+      _gmSaveProjects(saved);
+      var n = sameAccount.length;
+      addLog('✓ Auto-załadowano tagi dla ' + n + ' projekt' + (n === 1 ? 'u' : 'ów') + ': ' + sameAccount.map(function(pid) { return accountPidMap[pid]; }).join(', '), 'success');
+    } catch(e) {
+      addLog('⚠ Auto-resolve projektów: ' + (e && e.message || e), 'warn');
+    }
+  }
+
+  async function renderMultiProjectWidget(rows, colMap) {
     var el = document.getElementById('b24t-multiproject-section');
     if (!el) return;
     var savedProjects = lsGet(LS.PROJECTS, {});
@@ -5198,8 +5246,16 @@
       projectCounts[pid] = (projectCounts[pid] || 0) + 1;
     });
     var projectIds = Object.keys(projectCounts);
-    var hasUnknown = projectIds.some(function(pid) { return !savedProjects[pid]; });
+    var unknownPids = projectIds.filter(function(pid) { return !savedProjects[pid]; });
     el.style.display = 'block';
+    if (unknownPids.length) {
+      el.dataset.blocked = '1';
+      el.innerHTML = '<div style="padding:8px 10px;font-size:11px;color:var(--b24t-text-faint);">⏳ Pobieranie danych dla ' + unknownPids.length + ' nieznanych projektów…</div>';
+      _updateStartBtnBlock();
+      await _autoResolveUnknownProjects(unknownPids);
+      savedProjects = lsGet(LS.PROJECTS, {});
+    }
+    var hasUnknown = projectIds.some(function(pid) { return !savedProjects[pid]; });
     el.dataset.blocked = hasUnknown ? '1' : '';
     var borderColor = hasUnknown ? '#f87171' : 'var(--b24t-border)';
     var rows_html = projectIds.map(function(pid) {
@@ -11707,6 +11763,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.27",
+      "date": "2026-05-15",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "Auto-resolve nieznanych projektów przy wgraniu pliku multi-project — wtyczka sama pobiera tagi i nazwy z konta (getUserProjects + getTags)"},
+        {"type": "feat", "text": "renderMultiProjectWidget: stan ładowania ⏳ podczas auto-resolve; po sukcesie odblokowuje Start automatycznie"},
+        {"type": "feat", "text": "Projekty cross-account (poza kontem użytkownika) nadal wymagają ręcznej wizyty — właściwy fallback"}
+      ]
+    },
+    {
       "version": "0.24.26",
       "date": "2026-05-14",
       "label": "feat",
@@ -11794,15 +11861,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "Reset i przebuduj — guard: nie czyści mirrorów gdy LS pusty (non-brand24); komunikat kieruje na brand24.com zamiast kasowania danych i znikania przycisku"}
-      ]
-    },
-    {
-      "version": "0.24.17",
-      "date": "2026-05-13",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "ustawienia Niestandardowe (⚙) — przycisk Reset i przebuduj: czyści oba GM mirrory i odbudowuje wyłącznie z LS (brand24.com), usuwa stale fallbacki 'Projekt cyferki' nieodwracalnie"}
       ]
     },
   ];

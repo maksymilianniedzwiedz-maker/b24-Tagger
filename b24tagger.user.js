@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.30
+// @version      0.24.31
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.30';
+  const VERSION = '0.24.31';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5271,11 +5271,11 @@
     var projectIds = Object.keys(projectCounts);
     var unknownPids = projectIds.filter(function(pid) { return !savedProjects[pid]; });
     el.style.display = 'block';
-    if (unknownPids.length) {
-      el.dataset.blocked = '1';
-      el.innerHTML = '<div style="padding:8px 10px;font-size:11px;color:var(--b24t-text-faint);">⏳ Pobieranie danych dla ' + unknownPids.length + ' nieznanych projektów…</div>';
+    if (projectIds.length) {
+      if (unknownPids.length) el.dataset.blocked = '1';
+      el.innerHTML = '<div style="padding:8px 10px;font-size:11px;color:var(--b24t-text-faint);">⏳ Odświeżanie tagów dla ' + projectIds.length + ' projektów…</div>';
       _updateStartBtnBlock();
-      await _autoResolveUnknownProjects(unknownPids);
+      await _autoResolveUnknownProjects(projectIds);
       savedProjects = lsGet(LS.PROJECTS, {});
     }
     var hasUnknown = projectIds.some(function(pid) { return !savedProjects[pid]; });
@@ -11852,6 +11852,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.31",
+      "date": "2026-05-15",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Pokrycie tagów: odświeżanie tagIds dla wszystkich projektów z pliku przy wgraniu — naprawia fałszywe ✗ gdy tag dodano po ostatniej wizycie w projekcie Brand24"}
+      ]
+    },
+    {
       "version": "0.24.30",
       "date": "2026-05-15",
       "label": "feat",
@@ -11938,16 +11947,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "feat", "text": "Niestandardowe — blokada przycisku Dodaj gdy CMS niezalogowany (sprawdzanie w toku lub błąd logowania)"},
         {"type": "feat", "text": "Niestandardowe — dup-check URL: sprawdza czy wzmianka z tym URL już istnieje w projekcie; wynik pod polem URL"}
-      ]
-    },
-    {
-      "version": "0.24.21",
-      "date": "2026-05-14",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "tagi w panelu Niestandardowe — CSS reset !important neutralizuje style hosta; checkboxy nie są ogromne na obcych stronach"},
-        {"type": "fix", "text": "popup zgody na analitykę News nie wyskakuje przy otwieraniu panelu Niestandardowe"}
       ]
     },
   ];

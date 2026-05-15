@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.24.29",
+    "date": "2026-05-15",
+    "label": "feat",
+    "changes": [
+      "feat: multi-projekt — panel pokrycia tagów; po wyborze tagu w mapowaniu pokazuje ✓/✗ dla każdego projektu w pliku; aktualizacja live przy zmianie selecta"
+    ]
+  },
+  {
     "version": "0.24.28",
     "date": "2026-05-15",
     "label": "fix",

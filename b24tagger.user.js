@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.27
+// @version      0.24.28
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.27';
+  const VERSION = '0.24.28';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5208,30 +5208,37 @@
   }
 
   async function _autoResolveUnknownProjects(unknownPids) {
-    try {
-      var accountRaw = await getUserProjects();
-      var accountPidMap = {};
-      accountRaw.forEach(function(p) { accountPidMap[String(p.project.id)] = p.project.name; });
-      var sameAccount = unknownPids.filter(function(pid) { return accountPidMap[pid]; });
-      if (!sameAccount.length) return;
-      var tags = await getTags();
-      var tagIds = {};
-      var untaggedId = 1;
-      tags.forEach(function(t) {
-        if (t.isProtected) { if (t.title === 'Untagged') untaggedId = t.id; }
-        else tagIds[t.title] = t.id;
-      });
-      var saved = lsGet(LS.PROJECTS, {});
-      sameAccount.forEach(function(pid) {
-        saved[pid] = { name: accountPidMap[pid], tagIds: tagIds, untaggedId: untaggedId, updatedAt: new Date().toISOString() };
-        _pnSet(pid, accountPidMap[pid]);
-      });
-      lsSet(LS.PROJECTS, saved);
-      _gmSaveProjects(saved);
-      var n = sameAccount.length;
-      addLog('✓ Auto-załadowano tagi dla ' + n + ' projekt' + (n === 1 ? 'u' : 'ów') + ': ' + sameAccount.map(function(pid) { return accountPidMap[pid]; }).join(', '), 'success');
-    } catch(e) {
-      addLog('⚠ Auto-resolve projektów: ' + (e && e.message || e), 'warn');
+    var resolved = [];
+    for (var i = 0; i < unknownPids.length; i++) {
+      var pid = unknownPids[i];
+      try {
+        var res = await origFetch('/searches/add-new-mention/?sid=' + pid, { credentials: 'same-origin' });
+        if (res.redirected || !res.ok) continue;
+        var html = await res.text();
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(html, 'text/html');
+        var tagSel = doc.getElementById('tag');
+        if (!tagSel) continue;
+        var rawTitle = (doc.title || '').split(' - ')[0].trim();
+        var projName = (rawTitle && rawTitle !== 'Brand24') ? rawTitle : ('Project ' + pid);
+        var tagIds = {};
+        Array.from(tagSel.querySelectorAll('option')).forEach(function(o) {
+          if (!o.value) return;
+          tagIds[o.textContent.trim()] = parseInt(o.value, 10);
+        });
+        var saved = lsGet(LS.PROJECTS, {});
+        saved[pid] = { name: projName, tagIds: tagIds, untaggedId: 1, updatedAt: new Date().toISOString() };
+        lsSet(LS.PROJECTS, saved);
+        _gmSaveProjects(saved);
+        _pnSet(pid, projName);
+        resolved.push(projName);
+        addLog('✓ Auto-załadowano: ' + projName + ' (' + Object.keys(tagIds).length + ' tagów)', 'success');
+      } catch(e) {
+        addLog('⚠ Auto-resolve ' + pid + ': ' + (e && e.message || e), 'warn');
+      }
+    }
+    if (resolved.length === 0 && unknownPids.length > 0) {
+      addLog('⚠ Nie udało się auto-załadować projektów — mogą być cross-account. Odwiedź projekt w Brand24 ręcznie.', 'warn');
     }
   }
 
@@ -11763,6 +11770,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.28",
+      "date": "2026-05-15",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "_autoResolveUnknownProjects: HTML fetch /searches/add-new-mention/?sid={pid} — nazwa z tytułu + tagi z <select id=tag>; jeden request per projekt"},
+        {"type": "fix", "text": "cross-account projekty (redirect) pomijane z ostrzeżeniem zamiast błędu"}
+      ]
+    },
+    {
       "version": "0.24.27",
       "date": "2026-05-15",
       "label": "feat",
@@ -11852,15 +11869,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "_gmSaveProjects: filtruje fallbacki przed zapisem do GM mirror — złe nazwy z LS.PROJECTS nie wracają do mirrora po resecie ani przy kolejnych załadowaniach projektu"}
-      ]
-    },
-    {
-      "version": "0.24.18",
-      "date": "2026-05-13",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Reset i przebuduj — guard: nie czyści mirrorów gdy LS pusty (non-brand24); komunikat kieruje na brand24.com zamiast kasowania danych i znikania przycisku"}
       ]
     },
   ];

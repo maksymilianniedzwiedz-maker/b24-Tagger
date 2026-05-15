@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.29
+// @version      0.24.30
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.29';
+  const VERSION = '0.24.30';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4410,6 +4410,17 @@
 
         </div>
 
+        <!-- DELETE BY ASSESSMENT (optional feature, ukryte domyślnie) -->
+        <div id="b24t-dba-section" style="display:none;margin-top:8px;background:#1a0808;border:1px solid #7a2828;border-radius:9px;padding:10px 12px;">
+          <div style="font-size:11px;font-weight:700;color:#f87171;letter-spacing:0.04em;margin-bottom:6px;">⚠ Usuwanie po assessmencie</div>
+          <div style="font-size:10px;color:#c07070;line-height:1.5;margin-bottom:8px;">Wzmianka z zaznaczonymi ocenami zostanie <strong style="color:#f87171;">PERMANENTNIE</strong> usunięta z Brand24. Brak możliwości cofnięcia.</div>
+          <div id="b24t-dba-assessments" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;min-height:20px;">
+            <span style="font-size:10px;color:#886060;font-style:italic;">Wgraj plik aby zobaczyć oceny</span>
+          </div>
+          <button id="b24t-dba-run" style="width:100%;padding:7px 10px;background:#5a1010;color:#f87171;border:1px solid #9a3030;border-radius:7px;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;transition:background 0.15s;">🗑 Usuń zaznaczone wzmianki</button>
+          <div id="b24t-dba-status" style="margin-top:6px;font-size:10px;color:#886060;min-height:14px;"></div>
+        </div>
+
         <!-- POSTĘP -->
         <div class="b24t-section" id="b24t-progress-section">
           <div class="b24t-section-label primary">Postęp</div>
@@ -5045,6 +5056,9 @@
         noMatchLogs.map(l => l.message.replace('⚠ ', '')).join('\n'));
     });
 
+    // Delete by Assessment
+    panel.querySelector('#b24t-dba-run')?.addEventListener('click', function() { runDeleteByAssessment(); });
+
   }
 
   // ───────────────────────────────────────────
@@ -5099,6 +5113,7 @@
         (meta.noAssessment > 0 ? ` · ${meta.noAssessment} bez oceny ℹ` : '');
       const clearBtnEl = document.getElementById('b24t-btn-clear-file');
       if (clearBtnEl) clearBtnEl.style.display = 'block';
+      _updateDbaAssessments();
 
       if (meta.minDate && meta.maxDate) {
         document.getElementById('b24t-date-from').textContent = meta.minDate;
@@ -5203,6 +5218,7 @@
     const mappingRows = document.getElementById('b24t-mapping-rows');
     if (mappingRows) mappingRows.innerHTML = '';
 
+    _updateDbaAssessments();
     updateStatsUI();
     addLog('🗑 Plik usunięty. Wgraj nowy plik.', 'info');
   }
@@ -11836,6 +11852,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.30",
+      "date": "2026-05-15",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "Usuwanie po assessmencie — nowa opcjonalna sekcja (toggle w ⚙): wgraj plik, zaznacz assessmenty, usuń wzmianki bezpośrednio bez tagowania; działa cross-project"}
+      ]
+    },
+    {
       "version": "0.24.29",
       "date": "2026-05-15",
       "label": "feat",
@@ -11923,18 +11948,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "tagi w panelu Niestandardowe — CSS reset !important neutralizuje style hosta; checkboxy nie są ogromne na obcych stronach"},
         {"type": "fix", "text": "popup zgody na analitykę News nie wyskakuje przy otwieraniu panelu Niestandardowe"}
-      ]
-    },
-    {
-      "version": "0.24.20",
-      "date": "2026-05-14",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "panel Niestandardowe — blokada przycisku Dodaj podczas sprawdzania CMS; zablokowany gdy CMS ✗, odblokowany gdy ✓"},
-        {"type": "fix", "text": "panel Niestandardowe — usunięto duplikat dropdownu promptu AI z widoku głównego (jest w ⚙ ustawieniach panelu)"},
-        {"type": "fix", "text": "dup-check URL — is: null zamiast is: [0, 10]; sprawdza wzmianki ze wszystkich statusów (wcześniej pomijał otagowane)"},
-        {"type": "fix", "text": "_pnSet — merge z istniejącym GM mirror zamiast overwrite; zapobiega nadpisaniu całego mirrora nazw projektów jednym wpisem cross-domain"}
       ]
     },
   ];
@@ -12667,6 +12680,11 @@ function showOnboarding(onComplete) {
       label: '📡 Network Monitor',
       desc: 'Floating panel monitorujący ruch sieciowy na stronie Brand24 — pomaga diagnozować błędy tagowania i usuwania wzmianek.',
     },
+    {
+      id: 'delete_by_assessment',
+      label: '⚠ Usuwanie po assessmencie',
+      desc: 'Ryzykowna funkcja — bezpośrednio usuwa wzmianki z pliku na podstawie assessment. Działa cross-project. Wzmianka jest PERMANENTNIE usuwana bez wcześniejszego tagowania.',
+    },
   ];
 
   function loadFeatures() {
@@ -12704,6 +12722,9 @@ function showOnboarding(onComplete) {
     var nmTab = document.getElementById('b24t-nm-tab');
     if (nmTab) nmTab.style.display = features.network_monitor ? 'flex' : 'none';
     nmState.enabled = !!features.network_monitor;
+
+    // Delete by Assessment section
+    _updateDbaAssessments();
   }
 
   function showFeaturesModal() {
@@ -14363,6 +14384,233 @@ function showOnboarding(onComplete) {
     } catch (e) {
       addLog(`✕ Auto-Delete błąd: ${e.message}`, 'error');
       setStatus(`✕ Błąd: ${e.message}`);
+    }
+  }
+
+  // ───────────────────────────────────────────
+  // DELETE BY ASSESSMENT
+  // ───────────────────────────────────────────
+
+  function _updateDbaAssessments() {
+    var section = document.getElementById('b24t-dba-section');
+    var el = document.getElementById('b24t-dba-assessments');
+    if (!section || !el) return;
+
+    var features = loadFeatures();
+    if (!features.delete_by_assessment) {
+      section.style.display = 'none';
+      return;
+    }
+
+    if (!state.file || !state.file.meta || !state.file.meta.assessments) {
+      section.style.display = 'none';
+      el.innerHTML = '<span style="font-size:10px;color:#886060;font-style:italic;">Wgraj plik aby zobaczyć oceny</span>';
+      return;
+    }
+
+    section.style.display = 'block';
+    var statusEl = document.getElementById('b24t-dba-status');
+    if (statusEl) { statusEl.textContent = ''; }
+
+    var assessments = Object.keys(state.file.meta.assessments);
+    if (!assessments.length) {
+      el.innerHTML = '<span style="font-size:10px;color:#886060;">Brak ocen w pliku</span>';
+      return;
+    }
+    el.innerHTML = assessments.map(function(a) {
+      return '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;background:#2a1010;border:1px solid #6a2020;border-radius:5px;padding:3px 8px;transition:background 0.12s;">' +
+        '<input type="checkbox" class="b24t-dba-cb" value="' + a + '" style="accent-color:#f87171;cursor:pointer;flex-shrink:0;">' +
+        '<span style="font-size:11px;color:#f87171;">' + a + '</span>' +
+        '<span style="font-size:9px;color:#a07070;margin-left:2px;">(' + state.file.meta.assessments[a] + ')</span>' +
+      '</label>';
+    }).join('');
+  }
+
+  async function _dbaDeleteForProject(projectRows, colMap, dateFrom, dateTo, projectId, projectName, onStatus) {
+    onStatus(projectName + ': buduję mapę URL...');
+    var savedProjectId = state.projectId;
+    state.projectId = projectId;
+    var urlMap;
+    try {
+      urlMap = await buildUrlMap(dateFrom, dateTo, false);
+    } finally {
+      state.projectId = savedProjectId;
+    }
+
+    var mapKeys = Object.keys(urlMap);
+    var idsToDelete = [];
+    projectRows.forEach(function(row) {
+      var urlRaw = row[colMap.url] || '';
+      var normUrl = normalizeUrl(urlRaw);
+      var entry = urlMap[normUrl];
+      if (!entry) {
+        var fuzzy = mapKeys.find(function(k) {
+          return urlsMatch(normUrl, k) && Math.abs(normUrl.length - k.length) <= 5;
+        });
+        if (fuzzy) entry = urlMap[fuzzy];
+      }
+      if (entry && entry.id) {
+        idsToDelete.push(entry.id);
+      } else {
+        addLog('⚠ [DBA] Brak matcha: ' + urlRaw.substring(0, 70), 'warn');
+      }
+    });
+
+    if (!idsToDelete.length) {
+      addLog('ℹ [DBA] ' + projectName + ': brak dopasowań w mapie URL — nic do usunięcia', 'info');
+      return 0;
+    }
+
+    addLog('→ [DBA] ' + projectName + ': ' + idsToDelete.length + ' dopasowanych — usuwam...', 'warn');
+    var BATCH = _deleteBatch;
+    var deleted = 0;
+    for (var i = 0; i < idsToDelete.length; i += BATCH) {
+      if (state.status !== 'running') break;
+      var chunk = idsToDelete.slice(i, i + BATCH);
+      await Promise.all(chunk.map(function(id) { return deleteMention(id); }));
+      deleted += chunk.length;
+      onStatus(projectName + ': ' + deleted + '/' + idsToDelete.length);
+      if (deleted % 25 === 0 || deleted === idsToDelete.length) {
+        addLog('→ [DBA] ' + projectName + ': usunięto ' + deleted + '/' + idsToDelete.length, 'info');
+      }
+      if (i + BATCH < idsToDelete.length) await sleep(50);
+    }
+    addLog('✓ [DBA] ' + projectName + ': usunięto ' + deleted, 'success');
+    return deleted;
+  }
+
+  async function runDeleteByAssessment() {
+    if (!state.file) {
+      addLog('⚠ [DBA] Brak pliku — wgraj plik przed uruchomieniem', 'warn');
+      return;
+    }
+
+    var selectedAssessments = Array.from(
+      document.querySelectorAll('.b24t-dba-cb:checked')
+    ).map(function(cb) { return cb.value; });
+
+    if (!selectedAssessments.length) {
+      addLog('⚠ [DBA] Nie zaznaczono żadnych ocen', 'warn');
+      return;
+    }
+
+    var confirmed = await confirmDeleteWarning();
+    if (!confirmed) return;
+
+    if (!confirm('Usunąć wzmianki z ocenami: ' + selectedAssessments.join(', ') + '?\n\nTo jest NIEODWRACALNE i nie można tego cofnąć.')) return;
+
+    var statusEl = document.getElementById('b24t-dba-status');
+    var runBtn = document.getElementById('b24t-dba-run');
+    function setStatus(msg) {
+      if (statusEl) { statusEl.textContent = msg; statusEl.style.color = '#886060'; }
+    }
+
+    if (runBtn) { runBtn.disabled = true; runBtn.textContent = '⏳ Usuwam...'; }
+    state.status = 'running';
+    updateStatusUI();
+    startSessionTimer();
+    setStatus('Uruchamiam...');
+
+    var colMap = state.file.colMap;
+    var allRows = state.file.rows;
+
+    if (!colMap.url) {
+      addLog('✕ [DBA] Brak wykrytej kolumny URL — usuwanie niemożliwe. Sprawdź mapowanie kolumn.', 'error');
+      if (statusEl) { statusEl.textContent = 'Brak kolumny URL'; statusEl.style.color = '#f87171'; }
+      state.status = 'done';
+      updateStatusUI();
+      if (runBtn) { runBtn.disabled = false; runBtn.textContent = '🗑 Usuń zaznaczone wzmianki'; }
+      return;
+    }
+
+    var rowsToDelete = allRows.filter(function(row) {
+      var a = (row[colMap.assessment] || '').trim().toUpperCase();
+      var parts = a ? a.split('|').map(function(p) { return p.trim(); }) : [];
+      return parts.some(function(p) { return selectedAssessments.indexOf(p) !== -1; });
+    });
+
+    if (!rowsToDelete.length) {
+      addLog('ℹ [DBA] Brak wzmianek z wybranymi ocenami w pliku', 'info');
+      setStatus('Brak wzmianek do usunięcia');
+      state.status = 'done';
+      updateStatusUI();
+      if (runBtn) { runBtn.disabled = false; runBtn.textContent = '🗑 Usuń zaznaczone wzmianki'; }
+      return;
+    }
+
+    addLog('→ [DBA] Start: ' + rowsToDelete.length + ' wzmianek, oceny: ' + selectedAssessments.join(', '), 'warn');
+
+    var totalDeleted = 0;
+
+    try {
+      if (colMap.projectId) {
+        var projectGroups = {};
+        rowsToDelete.forEach(function(row) {
+          var pid = (row[colMap.projectId] || '').toString().trim();
+          if (!pid) return;
+          if (!projectGroups[pid]) projectGroups[pid] = [];
+          projectGroups[pid].push(row);
+        });
+
+        var savedProjects = lsGet(LS.PROJECTS, {});
+        var projectIds = Object.keys(projectGroups);
+        addLog('ℹ [DBA] Multi-projekt: ' + projectIds.length + ' projektów', 'info');
+
+        for (var pIdx = 0; pIdx < projectIds.length; pIdx++) {
+          if (state.status !== 'running') break;
+          var pid = projectIds[pIdx];
+          var projectData = savedProjects[pid];
+          if (!projectData) {
+            addLog('⚠ [DBA] Projekt ' + pid + ' nieznany — pomijam. Odwiedź projekt w Brand24 i odśwież.', 'warn');
+            continue;
+          }
+          var projectName = _pnResolve(pid);
+          var projectRows = projectGroups[pid];
+          addLog('\n══ [DBA] ' + projectName + ' (' + pid + ') — ' + projectRows.length + ' wzmianek ══', 'warn');
+
+          var colDate = colMap.date;
+          var projectDates = projectRows
+            .map(function(r) { return (r[colDate] || '').substring(0, 10); })
+            .filter(function(d) { return d && /^\d{4}-\d{2}-\d{2}$/.test(d); });
+          var dateFrom = projectDates.length
+            ? projectDates.reduce(function(m, d) { return d < m ? d : m; })
+            : state.file.meta.minDate;
+          var dateTo = projectDates.length
+            ? projectDates.reduce(function(m, d) { return d > m ? d : m; })
+            : state.file.meta.maxDate;
+
+          try {
+            var deleted = await _dbaDeleteForProject(projectRows, colMap, dateFrom, dateTo, parseInt(pid), projectName, setStatus);
+            totalDeleted += deleted;
+          } catch(e) {
+            addLog('✕ [DBA] Błąd dla ' + projectName + ': ' + e.message, 'error');
+          }
+        }
+      } else {
+        if (!state.projectId) {
+          addLog('⚠ [DBA] Brak projektu — przejdź do zakładki Mentions projektu w Brand24', 'warn');
+          setStatus('Brak projektu');
+          state.status = 'idle';
+          updateStatusUI();
+          if (runBtn) { runBtn.disabled = false; runBtn.textContent = '🗑 Usuń zaznaczone wzmianki'; }
+          return;
+        }
+        totalDeleted = await _dbaDeleteForProject(
+          rowsToDelete, colMap,
+          state.file.meta.minDate, state.file.meta.maxDate,
+          state.projectId, _pnResolve(state.projectId),
+          setStatus
+        );
+      }
+
+      addLog('✅ [DBA] Zakończone — usunięto ' + totalDeleted + ' wzmianek łącznie', 'success');
+      if (statusEl) { statusEl.textContent = '✓ Usunięto ' + totalDeleted + ' wzmianek'; statusEl.style.color = '#4ade80'; }
+    } catch(e) {
+      addLog('✕ [DBA] Błąd: ' + e.message, 'error');
+      if (statusEl) { statusEl.textContent = '✕ Błąd: ' + e.message; statusEl.style.color = '#f87171'; }
+    } finally {
+      if (state.status === 'running') { state.status = 'done'; updateStatusUI(); }
+      if (runBtn) { runBtn.disabled = false; runBtn.textContent = '🗑 Usuń zaznaczone wzmianki'; }
     }
   }
 

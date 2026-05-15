@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.31
+// @version      0.24.32
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.31';
+  const VERSION = '0.24.32';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1499,6 +1499,10 @@
       var projectMapping = {};
       Object.entries(savedMapping).forEach(function(_entry) {
         var label = _entry[0], m = _entry[1];
+        if (m.type === 'delete') {
+          projectMapping[label] = m;
+          return;
+        }
         var tagId = projectTags[m.tagName];
         if (tagId) {
           projectMapping[label] = { tagId: tagId, tagName: m.tagName, type: m.type };
@@ -1596,10 +1600,11 @@
 
     const { dateFrom, dateTo, rows } = partition;
 
-    // Build URL map — overwrite/multitag wymaga pełnej mapy (nie tylko Untagged)
-    const _forceFullMap = state.conflictMode === 'overwrite' || state.conflictMode === 'multitag';
+    // Build URL map — overwrite/multitag/delete wymaga pełnej mapy (nie tylko Untagged)
+    const _hasDeleteMappings = Object.values(state.mapping).some(function(m) { return m.type === 'delete'; });
+    const _forceFullMap = state.conflictMode === 'overwrite' || state.conflictMode === 'multitag' || _hasDeleteMappings;
     if (_forceFullMap && state.mapMode === 'untagged') {
-      addLog('ℹ Tryb overwrite/multitag: buduje mapę ze WSZYSTKICH wzmianek (ignoruje filtr Untagged)', 'info');
+      addLog('ℹ ' + (_hasDeleteMappings ? 'Usuwanie po assessmencie' : 'Tryb overwrite/multitag') + ': buduje mapę ze WSZYSTKICH wzmianek (ignoruje filtr Untagged)', 'info');
     }
     state.urlMap = await buildUrlMap(dateFrom, dateTo, !_forceFullMap && state.mapMode === 'untagged');
     if (state.status !== 'running') return;
@@ -1614,13 +1619,14 @@
     // Build batches
     const batches = {};          // tagId → [snowflakeIds]
     const overwriteBatches = {}; // {oldTagId_newTagId} → {oldIds, newIds}
+    const deleteBatch = [];      // mention IDs to delete (assessment mapped to __DELETE__)
     const skipped = [];
     const conflicts = [];
 
     // ── DIAG: analiza pliku przed matchowaniem ─────────────────────────
     const matchDiag = {
       total: rows.length, noAssessment: 0, noMapping: 0,
-      noMatch: 0, truncated: 0, alreadyTagged: 0, conflict: 0, willTag: 0, overwrite: 0,
+      noMatch: 0, truncated: 0, alreadyTagged: 0, conflict: 0, willTag: 0, overwrite: 0, toDelete: 0,
       exactMatch: 0, fuzzyShort: 0,
       mapSize: Object.keys(state.urlMap).length,
       // próbki URL-i z pliku vs z mapy (pierwsze 2 każdej domeny)
@@ -1740,6 +1746,11 @@
           return;
         }
 
+        if (mapping.type === 'delete') {
+          deleteBatch.push(entry.id);
+          return;
+        }
+
         const alreadyTagged = existingTagIds.includes(mapping.tagId);
         if (alreadyTagged) {
           skipped.push({ row, reason: 'ALREADY_TAGGED', tagId: mapping.tagId });
@@ -1775,6 +1786,7 @@
     // ── DIAG: raport matchowania ────────────────────────────────────────
     matchDiag.willTag    = Object.values(batches).reduce((s, ids) => s + ids.length, 0);
     matchDiag.overwrite  = Object.values(overwriteBatches).reduce((s, b) => s + b.ids.length, 0);
+    matchDiag.toDelete   = deleteBatch.length;
     matchDiag.alreadyTagged = skipped.filter(s => s.reason === 'ALREADY_TAGGED').length;
     matchDiag.conflict   = skipped.filter(s => s.reason === 'CONFLICT_IGNORED').length;
 
@@ -1783,6 +1795,7 @@
 ` +
       `  ✓ do otagowania: ${matchDiag.willTag}${matchDiag.overwrite > 0 ? ' + ' + matchDiag.overwrite + ' (podmiana tagu)' : ''}
 ` +
+      (matchDiag.toDelete > 0 ? `  🗑 do usunięcia: ${matchDiag.toDelete}\n` : '') +
       `  ✗ NO_MATCH: ${matchDiag.noMatch}
 ` +
       `  ✗ TRUNCATED_URL: ${matchDiag.truncated}
@@ -1975,6 +1988,24 @@
         `  → Sprawdź logi [FALLBACK] wyżej aby zobaczyć które IDs są problematyczne.`,
         'warn'
       );
+    }
+
+    // Execute delete batch (assessments mapped to "🗑 Usuń")
+    if (deleteBatch.length > 0 && state.status === 'running') {
+      const DEL_BATCH = _deleteBatch;
+      addLog('→ Usuwanie: ' + deleteBatch.length + ' wzmianek (po assessmencie)...', 'warn');
+      var _delOk = 0, _delFail = 0;
+      for (var _di = 0; _di < deleteBatch.length; _di += DEL_BATCH) {
+        if (state.status !== 'running') break;
+        var _dChunk = deleteBatch.slice(_di, _di + DEL_BATCH);
+        var _dRes = await Promise.allSettled(_dChunk.map(function(_id) { return deleteMention(_id); }));
+        _dRes.forEach(function(_r, _ci) {
+          if (_r.status === 'fulfilled') { _delOk++; }
+          else { _delFail++; addLog('✕ [DEL] ID ' + _dChunk[_ci] + ': ' + (_r.reason && _r.reason.message || _r.reason), 'error'); }
+        });
+        await sleep(50);
+      }
+      addLog((_delFail === 0 ? '✓' : '⚠') + ' Usunięto: ' + _delOk + '/' + deleteBatch.length + (_delFail > 0 ? ' (' + _delFail + ' błędów)' : ''), _delFail === 0 ? 'success' : 'warn');
     }
 
     // Persystuj pominięte wiersze do state (NO_MATCH, TRUNCATED_URL, NO_MAPPING, NO_ASSESSMENT)
@@ -4410,17 +4441,6 @@
 
         </div>
 
-        <!-- DELETE BY ASSESSMENT (optional feature, ukryte domyślnie) -->
-        <div id="b24t-dba-section" style="display:none;margin-top:8px;background:#1a0808;border:1px solid #7a2828;border-radius:9px;padding:10px 12px;">
-          <div style="font-size:11px;font-weight:700;color:#f87171;letter-spacing:0.04em;margin-bottom:6px;">⚠ Usuwanie po assessmencie</div>
-          <div style="font-size:10px;color:#c07070;line-height:1.5;margin-bottom:8px;">Wzmianka z zaznaczonymi ocenami zostanie <strong style="color:#f87171;">PERMANENTNIE</strong> usunięta z Brand24. Brak możliwości cofnięcia.</div>
-          <div id="b24t-dba-assessments" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;min-height:20px;">
-            <span style="font-size:10px;color:#886060;font-style:italic;">Wgraj plik aby zobaczyć oceny</span>
-          </div>
-          <button id="b24t-dba-run" style="width:100%;padding:7px 10px;background:#5a1010;color:#f87171;border:1px solid #9a3030;border-radius:7px;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;transition:background 0.15s;">🗑 Usuń zaznaczone wzmianki</button>
-          <div id="b24t-dba-status" style="margin-top:6px;font-size:10px;color:#886060;min-height:14px;"></div>
-        </div>
-
         <!-- POSTĘP -->
         <div class="b24t-section" id="b24t-progress-section">
           <div class="b24t-section-label primary">Postęp</div>
@@ -5056,9 +5076,6 @@
         noMatchLogs.map(l => l.message.replace('⚠ ', '')).join('\n'));
     });
 
-    // Delete by Assessment
-    panel.querySelector('#b24t-dba-run')?.addEventListener('click', function() { runDeleteByAssessment(); });
-
   }
 
   // ───────────────────────────────────────────
@@ -5113,7 +5130,6 @@
         (meta.noAssessment > 0 ? ` · ${meta.noAssessment} bez oceny ℹ` : '');
       const clearBtnEl = document.getElementById('b24t-btn-clear-file');
       if (clearBtnEl) clearBtnEl.style.display = 'block';
-      _updateDbaAssessments();
 
       if (meta.minDate && meta.maxDate) {
         document.getElementById('b24t-date-from').textContent = meta.minDate;
@@ -5218,7 +5234,6 @@
     const mappingRows = document.getElementById('b24t-mapping-rows');
     if (mappingRows) mappingRows.innerHTML = '';
 
-    _updateDbaAssessments();
     updateStatsUI();
     addLog('🗑 Plik usunięty. Wgraj nowy plik.', 'info');
   }
@@ -5312,7 +5327,7 @@
     if (!colMap || !colMap.projectId) { coverageEl.innerHTML = ''; return; }
 
     var mapping = state.mapping || {};
-    var tagEntries = Object.values(mapping).filter(function(m) { return m.tagName; });
+    var tagEntries = Object.values(mapping).filter(function(m) { return m.tagName && m.tagName !== '__DELETE__'; });
     if (!tagEntries.length) { coverageEl.innerHTML = ''; return; }
 
     // Deduplicate tag names
@@ -5491,17 +5506,25 @@
     const source = assessments || meta.assessments;
     container.innerHTML = '';
 
+    const deleteEnabled = loadFeatures().delete_by_assessment;
+
     Object.entries(source).forEach(([label, count]) => {
       const row = document.createElement('div');
       row.className = 'b24t-map-row';
       row.style.marginBottom = '6px';
 
+      const savedTagId = savedSchema?.mapping?.[label]?.tagId;
+      const savedIsDelete = savedTagId === '__DELETE__';
+
       // Tag select
+      const deleteOption = deleteEnabled
+        ? `<option value="__DELETE__" style="color:#f87171;" ${savedIsDelete ? 'selected' : ''}>🗑 Usuń</option>`
+        : '';
       const tagOptions = Object.entries(state.tags)
-        .map(([name, id]) => `<option value="${id}" ${savedSchema?.mapping?.[label]?.tagId === id ? 'selected' : ''}>${name}</option>`)
+        .map(([name, id]) => `<option value="${id}" ${!savedIsDelete && savedTagId === id ? 'selected' : ''}>${name}</option>`)
         .join('');
 
-      // Type select
+      // Type select (hidden when delete selected — managed by updateMappingState)
       const types = ['relevant', 'irrelevant', 'other'];
       const savedType = savedSchema?.mapping?.[label]?.type || 'other';
       const typeOptions = types.map(t =>
@@ -5515,6 +5538,7 @@
         </div>
         <select class="b24t-select b24t-tag-select" data-label="${label}">
           <option value="">— wybierz tag —</option>
+          ${deleteOption}
           ${tagOptions}
         </select>
         <select class="b24t-select b24t-type-select" data-label="${label}">
@@ -5561,9 +5585,15 @@
     state.mapping = {};
     container.querySelectorAll('.b24t-tag-select').forEach(tagSel => {
       const label = tagSel.dataset.label;
+      const typeSel = container.querySelector(`.b24t-type-select[data-label="${label}"]`);
+      if (tagSel.value === '__DELETE__') {
+        state.mapping[label.toUpperCase()] = { tagId: '__DELETE__', tagName: '__DELETE__', type: 'delete' };
+        if (typeSel) typeSel.style.display = 'none';
+        return;
+      }
+      if (typeSel) typeSel.style.display = '';
       const tagId = parseInt(tagSel.value);
       if (!tagId) return;
-      const typeSel = container.querySelector(`.b24t-type-select[data-label="${label}"]`);
       const type = typeSel?.value || 'other';
       const tagName = Object.entries(state.tags).find(([, id]) => id === tagId)?.[0] || '';
       state.mapping[label.toUpperCase()] = { tagId, tagName, type };
@@ -5692,6 +5722,19 @@
         return;
       }
     }
+    // Confirm if any delete mappings — one-time warning before start
+    const _deleteLabels = Object.entries(state.mapping).filter(function(_e) { return _e[1].type === 'delete'; }).map(function(_e) { return _e[0]; });
+    if (_deleteLabels.length > 0) {
+      const _deleteCount = (state.file.rows || []).filter(function(row) {
+        const _a = ((row[state.file.colMap.assessment] || '') + '').trim().toUpperCase().split('|').map(function(x) { return x.trim(); });
+        return _a.some(function(x) { return _deleteLabels.includes(x); });
+      }).length;
+      if (!confirm('⚠ Plik zawiera wzmianki do USUNIĘCIA\n\nOceny: ' + _deleteLabels.join(', ') + '\nLiczba wierszy: ' + _deleteCount + '\n\nUsunięcie jest NIEODWRACALNE. Czy na pewno kontynuować?')) {
+        addLog('⏹ Sesja anulowana przez użytkownika.', 'info');
+        return;
+      }
+    }
+
     if (!state.tokenHeaders) { showError('Token nie jest gotowy. Poczekaj chwilę aż strona się załaduje.'); return; }
 
     saveSchema();
@@ -11852,6 +11895,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.32",
+      "date": "2026-05-15",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "Usuwanie po assessmencie zintegrowane z mapowaniem: opcja 🗑 Usuń w dropdownie tagu (gdy funkcja włączona); usuwanie w trakcie normalnego przebiegu Start, cross-project, jeden confirm"}
+      ]
+    },
+    {
       "version": "0.24.31",
       "date": "2026-05-15",
       "label": "fix",
@@ -11937,16 +11989,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "dup-check URL — sq używa tytułu artykułu zamiast segmentu URL; Brand24 GQL indeksuje tytuł (nie URL), więc dup-check teraz faktycznie działa"}
-      ]
-    },
-    {
-      "version": "0.24.22",
-      "date": "2026-05-14",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "Niestandardowe — blokada przycisku Dodaj gdy CMS niezalogowany (sprawdzanie w toku lub błąd logowania)"},
-        {"type": "feat", "text": "Niestandardowe — dup-check URL: sprawdza czy wzmianka z tym URL już istnieje w projekcie; wynik pod polem URL"}
       ]
     },
   ];
@@ -12682,7 +12724,7 @@ function showOnboarding(onComplete) {
     {
       id: 'delete_by_assessment',
       label: '⚠ Usuwanie po assessmencie',
-      desc: 'Ryzykowna funkcja — bezpośrednio usuwa wzmianki z pliku na podstawie assessment. Działa cross-project. Wzmianka jest PERMANENTNIE usuwana bez wcześniejszego tagowania.',
+      desc: 'Ryzykowna funkcja — w mapowaniu pojawia się opcja "🗑 Usuń" dla każdego assessmentu. Wzmianki z tym assessmentem są PERMANENTNIE usuwane podczas normalnego przebiegu Start, razem z tagowaniem.',
     },
   ];
 
@@ -12722,8 +12764,6 @@ function showOnboarding(onComplete) {
     if (nmTab) nmTab.style.display = features.network_monitor ? 'flex' : 'none';
     nmState.enabled = !!features.network_monitor;
 
-    // Delete by Assessment section
-    _updateDbaAssessments();
   }
 
   function showFeaturesModal() {
@@ -14383,233 +14423,6 @@ function showOnboarding(onComplete) {
     } catch (e) {
       addLog(`✕ Auto-Delete błąd: ${e.message}`, 'error');
       setStatus(`✕ Błąd: ${e.message}`);
-    }
-  }
-
-  // ───────────────────────────────────────────
-  // DELETE BY ASSESSMENT
-  // ───────────────────────────────────────────
-
-  function _updateDbaAssessments() {
-    var section = document.getElementById('b24t-dba-section');
-    var el = document.getElementById('b24t-dba-assessments');
-    if (!section || !el) return;
-
-    var features = loadFeatures();
-    if (!features.delete_by_assessment) {
-      section.style.display = 'none';
-      return;
-    }
-
-    if (!state.file || !state.file.meta || !state.file.meta.assessments) {
-      section.style.display = 'none';
-      el.innerHTML = '<span style="font-size:10px;color:#886060;font-style:italic;">Wgraj plik aby zobaczyć oceny</span>';
-      return;
-    }
-
-    section.style.display = 'block';
-    var statusEl = document.getElementById('b24t-dba-status');
-    if (statusEl) { statusEl.textContent = ''; }
-
-    var assessments = Object.keys(state.file.meta.assessments);
-    if (!assessments.length) {
-      el.innerHTML = '<span style="font-size:10px;color:#886060;">Brak ocen w pliku</span>';
-      return;
-    }
-    el.innerHTML = assessments.map(function(a) {
-      return '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;background:#2a1010;border:1px solid #6a2020;border-radius:5px;padding:3px 8px;transition:background 0.12s;">' +
-        '<input type="checkbox" class="b24t-dba-cb" value="' + a + '" style="accent-color:#f87171;cursor:pointer;flex-shrink:0;">' +
-        '<span style="font-size:11px;color:#f87171;">' + a + '</span>' +
-        '<span style="font-size:9px;color:#a07070;margin-left:2px;">(' + state.file.meta.assessments[a] + ')</span>' +
-      '</label>';
-    }).join('');
-  }
-
-  async function _dbaDeleteForProject(projectRows, colMap, dateFrom, dateTo, projectId, projectName, onStatus) {
-    onStatus(projectName + ': buduję mapę URL...');
-    var savedProjectId = state.projectId;
-    state.projectId = projectId;
-    var urlMap;
-    try {
-      urlMap = await buildUrlMap(dateFrom, dateTo, false);
-    } finally {
-      state.projectId = savedProjectId;
-    }
-
-    var mapKeys = Object.keys(urlMap);
-    var idsToDelete = [];
-    projectRows.forEach(function(row) {
-      var urlRaw = row[colMap.url] || '';
-      var normUrl = normalizeUrl(urlRaw);
-      var entry = urlMap[normUrl];
-      if (!entry) {
-        var fuzzy = mapKeys.find(function(k) {
-          return urlsMatch(normUrl, k) && Math.abs(normUrl.length - k.length) <= 5;
-        });
-        if (fuzzy) entry = urlMap[fuzzy];
-      }
-      if (entry && entry.id) {
-        idsToDelete.push(entry.id);
-      } else {
-        addLog('⚠ [DBA] Brak matcha: ' + urlRaw.substring(0, 70), 'warn');
-      }
-    });
-
-    if (!idsToDelete.length) {
-      addLog('ℹ [DBA] ' + projectName + ': brak dopasowań w mapie URL — nic do usunięcia', 'info');
-      return 0;
-    }
-
-    addLog('→ [DBA] ' + projectName + ': ' + idsToDelete.length + ' dopasowanych — usuwam...', 'warn');
-    var BATCH = _deleteBatch;
-    var deleted = 0;
-    for (var i = 0; i < idsToDelete.length; i += BATCH) {
-      if (state.status !== 'running') break;
-      var chunk = idsToDelete.slice(i, i + BATCH);
-      await Promise.all(chunk.map(function(id) { return deleteMention(id); }));
-      deleted += chunk.length;
-      onStatus(projectName + ': ' + deleted + '/' + idsToDelete.length);
-      if (deleted % 25 === 0 || deleted === idsToDelete.length) {
-        addLog('→ [DBA] ' + projectName + ': usunięto ' + deleted + '/' + idsToDelete.length, 'info');
-      }
-      if (i + BATCH < idsToDelete.length) await sleep(50);
-    }
-    addLog('✓ [DBA] ' + projectName + ': usunięto ' + deleted, 'success');
-    return deleted;
-  }
-
-  async function runDeleteByAssessment() {
-    if (!state.file) {
-      addLog('⚠ [DBA] Brak pliku — wgraj plik przed uruchomieniem', 'warn');
-      return;
-    }
-
-    var selectedAssessments = Array.from(
-      document.querySelectorAll('.b24t-dba-cb:checked')
-    ).map(function(cb) { return cb.value; });
-
-    if (!selectedAssessments.length) {
-      addLog('⚠ [DBA] Nie zaznaczono żadnych ocen', 'warn');
-      return;
-    }
-
-    var confirmed = await confirmDeleteWarning();
-    if (!confirmed) return;
-
-    if (!confirm('Usunąć wzmianki z ocenami: ' + selectedAssessments.join(', ') + '?\n\nTo jest NIEODWRACALNE i nie można tego cofnąć.')) return;
-
-    var statusEl = document.getElementById('b24t-dba-status');
-    var runBtn = document.getElementById('b24t-dba-run');
-    function setStatus(msg) {
-      if (statusEl) { statusEl.textContent = msg; statusEl.style.color = '#886060'; }
-    }
-
-    if (runBtn) { runBtn.disabled = true; runBtn.textContent = '⏳ Usuwam...'; }
-    state.status = 'running';
-    updateStatusUI();
-    startSessionTimer();
-    setStatus('Uruchamiam...');
-
-    var colMap = state.file.colMap;
-    var allRows = state.file.rows;
-
-    if (!colMap.url) {
-      addLog('✕ [DBA] Brak wykrytej kolumny URL — usuwanie niemożliwe. Sprawdź mapowanie kolumn.', 'error');
-      if (statusEl) { statusEl.textContent = 'Brak kolumny URL'; statusEl.style.color = '#f87171'; }
-      state.status = 'done';
-      updateStatusUI();
-      if (runBtn) { runBtn.disabled = false; runBtn.textContent = '🗑 Usuń zaznaczone wzmianki'; }
-      return;
-    }
-
-    var rowsToDelete = allRows.filter(function(row) {
-      var a = (row[colMap.assessment] || '').trim().toUpperCase();
-      var parts = a ? a.split('|').map(function(p) { return p.trim(); }) : [];
-      return parts.some(function(p) { return selectedAssessments.indexOf(p) !== -1; });
-    });
-
-    if (!rowsToDelete.length) {
-      addLog('ℹ [DBA] Brak wzmianek z wybranymi ocenami w pliku', 'info');
-      setStatus('Brak wzmianek do usunięcia');
-      state.status = 'done';
-      updateStatusUI();
-      if (runBtn) { runBtn.disabled = false; runBtn.textContent = '🗑 Usuń zaznaczone wzmianki'; }
-      return;
-    }
-
-    addLog('→ [DBA] Start: ' + rowsToDelete.length + ' wzmianek, oceny: ' + selectedAssessments.join(', '), 'warn');
-
-    var totalDeleted = 0;
-
-    try {
-      if (colMap.projectId) {
-        var projectGroups = {};
-        rowsToDelete.forEach(function(row) {
-          var pid = (row[colMap.projectId] || '').toString().trim();
-          if (!pid) return;
-          if (!projectGroups[pid]) projectGroups[pid] = [];
-          projectGroups[pid].push(row);
-        });
-
-        var savedProjects = lsGet(LS.PROJECTS, {});
-        var projectIds = Object.keys(projectGroups);
-        addLog('ℹ [DBA] Multi-projekt: ' + projectIds.length + ' projektów', 'info');
-
-        for (var pIdx = 0; pIdx < projectIds.length; pIdx++) {
-          if (state.status !== 'running') break;
-          var pid = projectIds[pIdx];
-          var projectData = savedProjects[pid];
-          if (!projectData) {
-            addLog('⚠ [DBA] Projekt ' + pid + ' nieznany — pomijam. Odwiedź projekt w Brand24 i odśwież.', 'warn');
-            continue;
-          }
-          var projectName = _pnResolve(pid);
-          var projectRows = projectGroups[pid];
-          addLog('\n══ [DBA] ' + projectName + ' (' + pid + ') — ' + projectRows.length + ' wzmianek ══', 'warn');
-
-          var colDate = colMap.date;
-          var projectDates = projectRows
-            .map(function(r) { return (r[colDate] || '').substring(0, 10); })
-            .filter(function(d) { return d && /^\d{4}-\d{2}-\d{2}$/.test(d); });
-          var dateFrom = projectDates.length
-            ? projectDates.reduce(function(m, d) { return d < m ? d : m; })
-            : state.file.meta.minDate;
-          var dateTo = projectDates.length
-            ? projectDates.reduce(function(m, d) { return d > m ? d : m; })
-            : state.file.meta.maxDate;
-
-          try {
-            var deleted = await _dbaDeleteForProject(projectRows, colMap, dateFrom, dateTo, parseInt(pid), projectName, setStatus);
-            totalDeleted += deleted;
-          } catch(e) {
-            addLog('✕ [DBA] Błąd dla ' + projectName + ': ' + e.message, 'error');
-          }
-        }
-      } else {
-        if (!state.projectId) {
-          addLog('⚠ [DBA] Brak projektu — przejdź do zakładki Mentions projektu w Brand24', 'warn');
-          setStatus('Brak projektu');
-          state.status = 'idle';
-          updateStatusUI();
-          if (runBtn) { runBtn.disabled = false; runBtn.textContent = '🗑 Usuń zaznaczone wzmianki'; }
-          return;
-        }
-        totalDeleted = await _dbaDeleteForProject(
-          rowsToDelete, colMap,
-          state.file.meta.minDate, state.file.meta.maxDate,
-          state.projectId, _pnResolve(state.projectId),
-          setStatus
-        );
-      }
-
-      addLog('✅ [DBA] Zakończone — usunięto ' + totalDeleted + ' wzmianek łącznie', 'success');
-      if (statusEl) { statusEl.textContent = '✓ Usunięto ' + totalDeleted + ' wzmianek'; statusEl.style.color = '#4ade80'; }
-    } catch(e) {
-      addLog('✕ [DBA] Błąd: ' + e.message, 'error');
-      if (statusEl) { statusEl.textContent = '✕ Błąd: ' + e.message; statusEl.style.color = '#f87171'; }
-    } finally {
-      if (state.status === 'running') { state.status = 'done'; updateStatusUI(); }
-      if (runBtn) { runBtn.disabled = false; runBtn.textContent = '🗑 Usuń zaznaczone wzmianki'; }
     }
   }
 

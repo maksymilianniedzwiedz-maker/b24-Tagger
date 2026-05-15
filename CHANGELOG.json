@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.24.31",
+    "date": "2026-05-15",
+    "label": "fix",
+    "changes": [
+      "fix: pokrycie tagów — odświeżanie tagIds dla wszystkich projektów z pliku (nie tylko nieznanych); naprawia fałszywe ✗ gdy tag dodano po ostatniej wizycie w projekcie"
+    ]
+  },
+  {
     "version": "0.24.30",
     "date": "2026-05-15",
     "label": "feat",

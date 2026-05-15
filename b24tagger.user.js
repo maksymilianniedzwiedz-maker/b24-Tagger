@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.28
+// @version      0.24.29
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.28';
+  const VERSION = '0.24.29';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5283,8 +5283,73 @@
       '<div style="font-size:10px;font-weight:600;color:var(--b24t-text-faint);margin-bottom:6px;letter-spacing:.04em;">WYKRYTE PROJEKTY (' + projectIds.length + ')</div>' +
       rows_html +
       (hasUnknown ? '<div style="margin-top:6px;font-size:10px;color:#f87171;font-weight:600;">⛔ Start zablokowany — odwiedź nieznane projekty w Brand24 aby załadować ich tagi.</div>' : '') +
+      '<div id="b24t-tag-coverage"></div>' +
       '</div>';
     _updateStartBtnBlock();
+    _updateTagCoverage();
+  }
+
+  function _updateTagCoverage() {
+    var coverageEl = document.getElementById('b24t-tag-coverage');
+    if (!coverageEl) return;
+    var colMap = state.file && state.file.colMap;
+    if (!colMap || !colMap.projectId) { coverageEl.innerHTML = ''; return; }
+
+    var mapping = state.mapping || {};
+    var tagEntries = Object.values(mapping).filter(function(m) { return m.tagName; });
+    if (!tagEntries.length) { coverageEl.innerHTML = ''; return; }
+
+    // Deduplicate tag names
+    var tagNames = [];
+    var seenTags = {};
+    tagEntries.forEach(function(m) {
+      if (!seenTags[m.tagName]) { seenTags[m.tagName] = true; tagNames.push(m.tagName); }
+    });
+
+    var savedProjects = lsGet(LS.PROJECTS, {});
+
+    // Unique project IDs from file rows, in order of appearance
+    var projectIds = [];
+    var seenPids = {};
+    (state.file.rows || []).forEach(function(row) {
+      var pid = (row[colMap.projectId] || '').toString().trim();
+      if (pid && !seenPids[pid]) { seenPids[pid] = true; projectIds.push(pid); }
+    });
+    if (!projectIds.length) { coverageEl.innerHTML = ''; return; }
+
+    var singleTag = tagNames.length === 1;
+    var html = '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--b24t-border);">';
+    html += '<div style="font-size:10px;font-weight:600;color:var(--b24t-text-faint);margin-bottom:4px;letter-spacing:.04em;">'
+      + 'POKRYCIE TAGÓW'
+      + (singleTag ? ' — <span style="font-weight:400;">' + tagNames[0] + '</span>' : '')
+      + '</div>';
+
+    projectIds.forEach(function(pid) {
+      var projData = savedProjects[pid];
+      if (!projData) return;
+      var projName = _pnResolve(pid);
+      var tagIds = projData.tagIds || {};
+      var checks = tagNames.map(function(name, i) {
+        var has = !!tagIds[name];
+        var label = singleTag ? '' : (' <span style="font-size:10px;color:var(--b24t-text-faint);">[' + (i + 1) + ']</span>');
+        return '<span style="color:' + (has ? '#4ade80' : '#f87171') + ';font-weight:600;" title="' + name + '">' + (has ? '✓' : '✗') + '</span>' + label;
+      }).join(' ');
+      html += '<div style="display:flex;align-items:center;gap:8px;padding:2px 0;font-size:11px;">'
+        + '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--b24t-text-meta);" title="' + projName + '">' + projName + '</span>'
+        + '<span style="flex-shrink:0;">' + checks + '</span>'
+        + '</div>';
+    });
+
+    if (!singleTag) {
+      html += '<div style="margin-top:5px;font-size:10px;color:var(--b24t-text-faint);">';
+      tagNames.forEach(function(name, i) {
+        html += '<span style="margin-right:8px;">[' + (i + 1) + '] ' + name + '</span>';
+      });
+      html += '</div>';
+    }
+
+    html += '</div>';
+    coverageEl.innerHTML = html;
   }
 
   async function parseXLSXFile(file) {
@@ -5504,6 +5569,7 @@
     // F11: tag counts
     updateTagCountsInMapping();
     updateAutoDeleteSection();
+    if (state.file && state.file.colMap && state.file.colMap.projectId) _updateTagCoverage();
   }
 
   // ───────────────────────────────────────────
@@ -11770,6 +11836,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.29",
+      "date": "2026-05-15",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "Multi-projekt: panel pokrycia tagów — po wyborze tagu pokazuje dla każdego projektu czy tag istnieje (✓/✗); aktualizuje się na żywo przy zmianie mapowania"}
+      ]
+    },
+    {
       "version": "0.24.28",
       "date": "2026-05-15",
       "label": "fix",
@@ -11860,15 +11935,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "panel Niestandardowe — usunięto duplikat dropdownu promptu AI z widoku głównego (jest w ⚙ ustawieniach panelu)"},
         {"type": "fix", "text": "dup-check URL — is: null zamiast is: [0, 10]; sprawdza wzmianki ze wszystkich statusów (wcześniej pomijał otagowane)"},
         {"type": "fix", "text": "_pnSet — merge z istniejącym GM mirror zamiast overwrite; zapobiega nadpisaniu całego mirrora nazw projektów jednym wpisem cross-domain"}
-      ]
-    },
-    {
-      "version": "0.24.19",
-      "date": "2026-05-13",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "_gmSaveProjects: filtruje fallbacki przed zapisem do GM mirror — złe nazwy z LS.PROJECTS nie wracają do mirrora po resecie ani przy kolejnych załadowaniach projektu"}
       ]
     },
   ];

@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.24.30",
+    "date": "2026-05-15",
+    "label": "feat",
+    "changes": [
+      "feat: usuwanie po assessmencie — nowa opcjonalna sekcja (toggle w ⚙) do bezpośredniego usuwania wzmianek z pliku na podstawie assessment; działa cross-project; dwa kroki potwierdzenia"
+    ]
+  },
+  {
     "version": "0.24.29",
     "date": "2026-05-15",
     "label": "feat",

@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.24.32",
+    "date": "2026-05-15",
+    "label": "feat",
+    "changes": [
+      "feat: usuwanie po assessmencie zintegrowane z mapowaniem — opcja 🗑 Usuń w dropdownie tagu; usuwanie w trakcie przebiegu Start, cross-project; jeden confirm przed startem"
+    ]
+  },
+  {
     "version": "0.24.31",
     "date": "2026-05-15",
     "label": "fix",

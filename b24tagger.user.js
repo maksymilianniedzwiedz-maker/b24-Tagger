@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.32
+// @version      0.24.33
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.32';
+  const VERSION = '0.24.33';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -222,6 +222,18 @@
     try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
   };
 
+  // Escape HTML — używaj zawsze gdy wstawiamy do innerHTML wartość pochodzącą z pliku użytkownika,
+  // odpowiedzi API (tag name, project name, URL) lub treści wzmianki. Inaczej ryzyko XSS.
+  function _escHtml(s) {
+    if (s === null || s === undefined) return '';
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   // GM storage — cross-domain mirror dla kluczowych danych (GM_getValue działa na każdej stronie)
   function _gmGetProjects() {
     var fromLS = lsGet(LS.PROJECTS, null);
@@ -260,13 +272,6 @@
     }
     return B24Bridge.projects.names();
   }
-  function _gmSaveProjectNames(names) {
-    var _projs = {};
-    Object.keys(names).forEach(function(pid) { _projs[pid] = { name: names[pid] }; });
-    B24Bridge.projects.setAll(_projs);
-    _gmPNSynced = true;
-  }
-
   // ── AI SETTINGS HELPERS ────────────────────────────────────────────────────
 
   var _aiEditingPromptId = null;
@@ -274,7 +279,7 @@
   function _aiDefaultSettings() {
     return {
       apiKey: '', prompts: [],
-      tagging: { model: 'claude-haiku-4-5-20251001', activePromptId: null, batchSize: 10, firstUseWarningShown: false },
+      tagging: { model: 'claude-haiku-4-5-20251001', activePromptId: null },
       news: { model: 'claude-haiku-4-5-20251001', enabled: false },
       custom: { model: 'claude-haiku-4-5-20251001', enabled: false }
     };
@@ -653,12 +658,16 @@
   function urlsMatch(urlA, urlB) {
     if (!urlA || !urlB) return false;
     if (urlA === urlB) return true;
-    // Jeśli jeden jest prefiksem drugiego (obcięte ID) — uznaj za match
-    // Wymaga min 15 znaków wspólnych żeby uniknąć false positives
     const shorter = urlA.length < urlB.length ? urlA : urlB;
     const longer  = urlA.length < urlB.length ? urlB : urlA;
-    if (shorter.length >= 15 && longer.startsWith(shorter)) return true;
-    return false;
+    if (shorter.length < 15) return false;
+    if (!longer.startsWith(shorter)) return false;
+    // Wymaga min 6 wspólnych znaków PO ostatnim '/' w shorter,
+    // żeby uniknąć false-matchu między różnymi postami tej samej platformy
+    // (np. instagram.com/p/A vs instagram.com/p/AB... — różne shortcody).
+    const lastSlash = shorter.lastIndexOf('/');
+    if (shorter.length - (lastSlash + 1) < 6) return false;
+    return true;
   }
 
   // Wykrywa czy URL z pliku jest obciętą wersją URL z mapy Brand24.
@@ -694,18 +703,29 @@
 
   // Use unsafeWindow to access the real page fetch (not TM sandbox copy)
   const _win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+  const _isBrand24Host = window.location.hostname === 'app.brand24.com' || window.location.hostname === 'panel.brand24.pl';
   const origFetch = _win.fetch;
+  // Patchujemy fetch/XHR tylko na stronach Brand24 — na obcych stronach (Mini Mention Button, News date relay)
+  // nie potrzebujemy interceptora i nie chcemy modyfikować globals przeglądarki.
+  if (_isBrand24Host) {
   _win.fetch = async function (...args) {
     const _nmT0 = performance.now();
     const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
     const opts = args[1] || {};
     const bodyStr = typeof opts.body === 'string' ? opts.body : '';
-    var _isBrand24Host = window.location.hostname === 'app.brand24.com' || window.location.hostname === 'panel.brand24.pl';
-    if (url.includes('graphql') && opts.headers && !state.tokenHeaders && _isBrand24Host) {
-      state.tokenHeaders = { ...opts.headers };
-      var _b24tBase = window.location.hostname === 'panel.brand24.pl' ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
-      B24Bridge.token.save(state.tokenHeaders, _b24tBase);
-      updateTokenUI(true);
+    if (url.includes('graphql') && opts.headers) {
+      // Zawsze odświeżamy token — Brand24 może go rotować w trakcie sesji.
+      // B24Bridge.save i updateTokenUI wywołujemy tylko gdy auth się faktycznie zmienił (oszczędność GM_setValue).
+      var _newH = { ...opts.headers };
+      var _authChanged = !state.tokenHeaders
+        || state.tokenHeaders.authorization !== _newH.authorization
+        || state.tokenHeaders.Authorization !== _newH.Authorization;
+      state.tokenHeaders = _newH;
+      if (_authChanged) {
+        var _b24tBase = window.location.hostname === 'panel.brand24.pl' ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
+        B24Bridge.token.save(state.tokenHeaders, _b24tBase);
+        updateTokenUI(true);
+      }
     }
     // Capture last organic getMentions variables for Quick Tag filter mirroring
     if (url.includes('graphql') && bodyStr.includes('getMentions') && bodyStr.includes('"filters"')) {
@@ -799,6 +819,7 @@
     _PatchedXHR.prototype = _OXHR.prototype;
     _win.XMLHttpRequest = _PatchedXHR;
   })();
+  } // end if (_isBrand24Host)
 
   // ───────────────────────────────────────────
   // GRAPHQL HELPERS
@@ -2350,12 +2371,17 @@
   let healthCheckTimer = null;
 
   function startHealthCheck() {
+    // Guard przed re-startem (np. resume po pauzie) — wyczyść poprzedni interval żeby nie wyciekał.
+    if (healthCheckTimer) { clearInterval(healthCheckTimer); healthCheckTimer = null; }
+    var _hcFails = 0;
     healthCheckTimer = setInterval(async () => {
       if (state.status !== 'running') return;
       try {
         await getNotifications();
+        _hcFails = 0; // reset licznika po udanym checku — abortujemy tylko przy serii błędów
       } catch {
-        if (state.status === 'running') {
+        _hcFails++;
+        if (_hcFails >= 3 && state.status === 'running') {
           handleError(new Error('HEALTH_CHECK_FAILED'), 'health check');
         }
       }
@@ -2421,7 +2447,8 @@
 
     const div = document.createElement('div');
     div.className = `b24t-log-entry b24t-log-${type}`;
-    div.innerHTML = `<span class="b24t-log-time">${time}</span><span class="b24t-log-msg">${message}</span><span class="b24t-log-elapsed"></span>`;
+    // message może pochodzić z pliku CSV, odpowiedzi API, nazwy projektu — zawsze escape
+    div.innerHTML = `<span class="b24t-log-time">${time}</span><span class="b24t-log-msg">${_escHtml(message)}</span><span class="b24t-log-elapsed"></span>`;
     log.appendChild(div);
     requestAnimationFrame(function() { log.scrollTop = log.scrollHeight; });
 
@@ -5302,10 +5329,11 @@
       var count = projectCounts[pid];
       var icon = known ? '✓' : '✕';
       var iconColor = known ? '#4ade80' : '#f87171';
+      // pid pochodzi z pliku, name z odpowiedzi API/LS — escape przed wstawieniem do innerHTML
       return '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px;">' +
         '<span style="color:' + iconColor + ';flex-shrink:0;">' + icon + '</span>' +
-        '<span style="color:var(--b24t-text);font-family:monospace;font-size:10px;">' + pid + '</span>' +
-        (name ? '<span style="color:var(--b24t-text-meta);">' + name + '</span>' : '') +
+        '<span style="color:var(--b24t-text);font-family:monospace;font-size:10px;">' + _escHtml(pid) + '</span>' +
+        (name ? '<span style="color:var(--b24t-text-meta);">' + _escHtml(name) + '</span>' : '') +
         '<span style="color:var(--b24t-text-faint);margin-left:auto;">' + count + ' wierszy</span>' +
         (!known ? '<span style="color:#f87171;font-size:10px;">— odwiedź projekt w Brand24 najpierw</span>' : '') +
         '</div>';
@@ -5521,7 +5549,7 @@
         ? `<option value="__DELETE__" style="color:#f87171;" ${savedIsDelete ? 'selected' : ''}>🗑 Usuń</option>`
         : '';
       const tagOptions = Object.entries(state.tags)
-        .map(([name, id]) => `<option value="${id}" ${!savedIsDelete && savedTagId === id ? 'selected' : ''}>${name}</option>`)
+        .map(([name, id]) => `<option value="${id}" ${!savedIsDelete && savedTagId === id ? 'selected' : ''}>${_escHtml(name)}</option>`)
         .join('');
 
       // Type select (hidden when delete selected — managed by updateMappingState)
@@ -5531,17 +5559,19 @@
         `<option value="${t}" ${savedType === t ? 'selected' : ''}>${t}</option>`
       ).join('');
 
+      // label pochodzi z pliku CSV/XLSX użytkownika — zawsze escape przed wstawieniem do innerHTML
+      const labelEsc = _escHtml(label);
       row.innerHTML = `
         <div>
-          <div class="b24t-map-label" title="${label}">${label}</div>
+          <div class="b24t-map-label" title="${labelEsc}">${labelEsc}</div>
           <div class="b24t-map-count">(${count})</div>
         </div>
-        <select class="b24t-select b24t-tag-select" data-label="${label}">
+        <select class="b24t-select b24t-tag-select" data-label="${labelEsc}">
           <option value="">— wybierz tag —</option>
           ${deleteOption}
           ${tagOptions}
         </select>
-        <select class="b24t-select b24t-type-select" data-label="${label}">
+        <select class="b24t-select b24t-type-select" data-label="${labelEsc}">
           ${typeOptions}
         </select>
       `;
@@ -6642,6 +6672,11 @@ function showOnboarding(onComplete) {
       overlay.remove();
       spotlight.remove();
       bubble.remove();
+      // Usuń resize handler żeby closure nie trzymało DOM nodes / state'u onboarding
+      if (finishOnboarding._resizeHandler) {
+        window.removeEventListener('resize', finishOnboarding._resizeHandler);
+        finishOnboarding._resizeHandler = null;
+      }
       // Przywróć pozycję i rozmiar panelu
       if (panel && panelPosBackup) {
         panel.style.left   = panelPosBackup.left;
@@ -6661,9 +6696,9 @@ function showOnboarding(onComplete) {
     }, 350);
   }
 
-  // Resize handler
+  // Resize handler — named ref żeby można było usunąć w finishOnboarding (inaczej wyciek closure)
   let resizeTimer;
-  window.addEventListener('resize', () => {
+  const _obResizeHandler = () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
       if (!panel) return;
@@ -6681,7 +6716,10 @@ function showOnboarding(onComplete) {
       positionSpotlight(rect);
       positionBubble(rect, step.tail);
     }, 120);
-  });
+  };
+  window.addEventListener('resize', _obResizeHandler);
+  // Eksponujemy handler do finishOnboarding (declared above) — używamy property na funkcji żeby uniknąć hoisting issues.
+  finishOnboarding._resizeHandler = _obResizeHandler;
 
   renderStep(0);
 }
@@ -7226,8 +7264,8 @@ function showOnboarding(onComplete) {
       wrongHtml = '<div style="margin-top:12px;font-size:10px;color:var(--b24t-text-faint);">Błędne tagi (pierwsze 5):</div>';
       result.taggedWrong.slice(0,5).forEach(function(e) {
         wrongHtml += '<div style="font-size:9px;color:var(--b24t-text-faint);padding:3px 0;border-bottom:1px solid var(--b24t-border-sub);">' +
-          e.url.substring(0,50) + '<br>' +
-          '<span style="color:var(--b24t-err);">✗ ma: ' + e.actual + '</span> <span style="color:var(--b24t-ok);">\u2192 powinien: ' + e.expected + '</span></div>';
+          _escHtml((e.url || '').substring(0,50)) + '<br>' +
+          '<span style="color:var(--b24t-err);">✗ ma: ' + _escHtml(e.actual) + '</span> <span style="color:var(--b24t-ok);">\u2192 powinien: ' + _escHtml(e.expected) + '</span></div>';
       });
     }
     content.innerHTML =
@@ -7239,9 +7277,16 @@ function showOnboarding(onComplete) {
       '<div class="b24t-report-row"><span>~ W Brand24, brak w pliku</span><strong>' + result.notInFile + '</strong></div>' +
       wrongHtml +
       '<div style="display:flex;gap:6px;margin-top:16px;">' +
-        '<button onclick="document.getElementById(\'b24t-report-modal\').style.display=\'none\'" class="b24t-btn-secondary" style="flex:1;">Zamknij</button>' +
-        '<button onclick="window.B24Tagger.exportAuditReport()" class="b24t-btn-primary" style="flex:1;">\u2193 Eksport CSV</button>' +
+        '<button id="b24t-report-close" class="b24t-btn-secondary" style="flex:1;">Zamknij</button>' +
+        '<button id="b24t-report-export" class="b24t-btn-primary" style="flex:1;">\u2193 Eksport CSV</button>' +
       '</div>';
+    // Bez inline onclick (CSP-safe) \u2014 bind po wstawieniu HTML
+    var _closeBtn = content.querySelector('#b24t-report-close');
+    if (_closeBtn) _closeBtn.addEventListener('click', function() { modal.style.display = 'none'; });
+    var _expBtn = content.querySelector('#b24t-report-export');
+    if (_expBtn) _expBtn.addEventListener('click', function() {
+      try { window.B24Tagger && window.B24Tagger.exportAuditReport && window.B24Tagger.exportAuditReport(); } catch(e) {}
+    });
   }
 
   // ───────────────────────────────────────────
@@ -7402,6 +7447,7 @@ function showOnboarding(onComplete) {
   }
 
   var _newsChipsRenderer = null; // set by _wireNewsPanels, called on every panel open
+  var _newsListRenderer = null;  // set by _wireNewsPanels, called from module-scope (_newsAiAnalyze)
 
   var NEWS_DEFAULT_KEYWORDS = [
     'hm-', '-hm-', '-hm', '/hm/', '/hm',
@@ -8107,9 +8153,13 @@ function showOnboarding(onComplete) {
       var stats = lsGet(LS.NA_SESSION_STATS, []);
       stats.push(prevAgg);
       lsSet(LS.NA_SESSION_STATS, stats);
+      // Push poprzedniej sesji do GitHub żeby nie zgubiła się jeśli user nie zamknie panelu
+      // przed zamknięciem przeglądarki. closeNewsPanels by tego nie złapało.
+      try { _naPushSession({ session: prevAgg, sessionId: newsState.sessionId }, null); } catch(e) {}
     }
     newsState.sessionId = 'ses_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     newsState.naSessionStart = Date.now();
+    newsState.naManualAdds = 0;
     if (newsState.naVisChangeHandler) {
       document.removeEventListener('visibilitychange', newsState.naVisChangeHandler);
     }
@@ -8186,7 +8236,9 @@ function showOnboarding(onComplete) {
       mention:      { added: 0, skipped: 0 },
       match:        { added: 0, skipped: 0 },
     };
-    var manual_add = 0, blocked = 0;
+    // Manual adds — URL nie pojawił się w skanowanej liście (custom mode); liczymy w newsState.naManualAdds bo
+    // _naTagOutcome(null, ...) byłoby no-op-em i wpis nigdy by się nie zarejestrował.
+    var manual_add = newsState.naManualAdds || 0, blocked = 0;
     var ai = { tp: 0, fp: 0, fn: 0, tn: 0, errors: 0, ran: 0 };
     (newsState.urls || []).forEach(function(e) {
       var outcome = e.naOutcome;
@@ -8202,12 +8254,17 @@ function showOnboarding(onComplete) {
         else                     bucket.skipped++;
       }
       if (e.aiStatus === 'done') {
-        ai.ran++;
-        var rel = !!e.aiRelevant, add = outcome === 'added';
-        if (rel && add)  ai.tp++;
-        else if (rel)    ai.fp++;
-        else if (add)    ai.fn++;
-        else             ai.tn++;
+        // Tylko explicit decyzje wchodzą do confusion matrix — niezdecydowane wzmianki
+        // dawały fałszywe TN/FN i krzywiły accuracy/recall.
+        var hasOutcome = (outcome === 'added' || outcome === 'skipped' || outcome === 'duplicate' || outcome === 'error');
+        if (hasOutcome) {
+          ai.ran++;
+          var rel = !!e.aiRelevant, add = outcome === 'added';
+          if (rel && add)  ai.tp++;
+          else if (rel)    ai.fp++;
+          else if (add)    ai.fn++;
+          else             ai.tn++;
+        }
       } else if (e.aiStatus === 'error') {
         ai.errors++; ai.ran++;
       }
@@ -8672,7 +8729,7 @@ function showOnboarding(onComplete) {
     if (!systemPrompt) return;
     entry.aiStatus = 'pending';
     entry.aiError = '';
-    renderUrlList();
+    if (_newsListRenderer) _newsListRenderer();
     try {
       var s = _aiGetSettings();
       var model = (s.news && s.news.model) || 'claude-haiku-4-5-20251001';
@@ -8714,25 +8771,25 @@ function showOnboarding(onComplete) {
               _aiSaveSettings(cfg);
               entry.aiStatus = 'error';
               entry.aiError = 'błędny klucz API';
-              renderUrlList();
+              if (_newsListRenderer) _newsListRenderer();
               return;
             }
             if (resp.status === 429) {
               entry.aiStatus = 'error';
               entry.aiError = 'limit API (429)';
-              renderUrlList();
+              if (_newsListRenderer) _newsListRenderer();
               return;
             }
             if (resp.status >= 500) {
               entry.aiStatus = 'error';
               entry.aiError = 'błąd serwera (' + resp.status + ')';
-              renderUrlList();
+              if (_newsListRenderer) _newsListRenderer();
               return;
             }
             if (resp.status < 200 || resp.status >= 300) {
               entry.aiStatus = 'error';
               entry.aiError = 'HTTP ' + resp.status;
-              renderUrlList();
+              if (_newsListRenderer) _newsListRenderer();
               return;
             }
             var data = JSON.parse(resp.responseText);
@@ -8749,15 +8806,15 @@ function showOnboarding(onComplete) {
             entry.aiStatus = 'error';
             entry.aiError = 'błąd parsowania';
           }
-          renderUrlList();
+          if (_newsListRenderer) _newsListRenderer();
         },
-        onerror: function() { entry.aiStatus = 'error'; entry.aiError = 'brak połączenia'; renderUrlList(); },
-        ontimeout: function() { entry.aiStatus = 'error'; entry.aiError = 'timeout'; renderUrlList(); },
+        onerror: function() { entry.aiStatus = 'error'; entry.aiError = 'brak połączenia'; if (_newsListRenderer) _newsListRenderer(); },
+        ontimeout: function() { entry.aiStatus = 'error'; entry.aiError = 'timeout'; if (_newsListRenderer) _newsListRenderer(); },
       });
     } catch(e) {
       entry.aiStatus = 'error';
       entry.aiError = 'błąd wywołania';
-      renderUrlList();
+      if (_newsListRenderer) _newsListRenderer();
     }
   }
 
@@ -10437,6 +10494,7 @@ function showOnboarding(onComplete) {
       });
     }
     _newsChipsRenderer = renderChips;
+    _newsListRenderer = renderUrlList;
     renderChips();
 
     var addChipBtn = document.getElementById('b24t-news-add-chip-btn');
@@ -10673,7 +10731,6 @@ function showOnboarding(onComplete) {
       var list = document.getElementById('b24t-news-url-list');
       var empty = document.getElementById('b24t-news-empty');
       var progressWrap = document.getElementById('b24t-news-progress-wrap');
-      var progressBar  = document.getElementById('b24t-news-progress-bar');
       var progressLbl  = document.getElementById('b24t-news-progress-label');
       if (!list) return;
       list.querySelectorAll('.b24t-news-url-row').forEach(function(r) { r.remove(); });
@@ -11430,7 +11487,10 @@ function showOnboarding(onComplete) {
             // Język strony vs kraj projektu (tylko gdy skan się udał i mamy dane języka)
             if (result.status !== 'nomatch' && result.status !== 'blocked' &&
                 result.status !== 'wrongcountry' && result.pageLang && pc) {
-              var _expLangs = (_NEWS_LANG_MAP[pc.toLowerCase()] || []);
+              // User-editable mapa kraj→języki ma priorytet nad modułowym fallbackem.
+              // (Inaczej edycje w _newsOpenLangMapEditor nie wpływały na scan worker.)
+              var _userLangMap = (typeof _newsGetLangMap === 'function') ? _newsGetLangMap() : null;
+              var _expLangs = (_userLangMap && _userLangMap[pc]) || (_userLangMap && _userLangMap[pc.toLowerCase()]) || (_NEWS_LANG_MAP[pc.toLowerCase()] || []);
               if (_expLangs.length > 0 && _expLangs.indexOf(result.pageLang) === -1) {
                 result.status = 'wrongcountry';
               }
@@ -11603,7 +11663,8 @@ function showOnboarding(onComplete) {
             if (fld) fld.value = '';
           });
           var catSel = document.getElementById('b24t-news-f-category-select');
-          if (catSel) catSel.value = 'auto';
+          // Reset do auto-detected (jeśli było) lub fallback do '8' (Web). 'auto' nie jest opcją selectu — zostawiało pustą wartość.
+          if (catSel) catSel.value = catSel.dataset.autoDetected || '8';
         }
         var subStatus = document.getElementById('b24t-news-submit-status');
         if (subStatus) subStatus.textContent = '';
@@ -11738,7 +11799,12 @@ function showOnboarding(onComplete) {
             } else if (isOk) {
               _newsMarkSessionUrl(fUrl);
               var _naE = newsState.urls.find(function(e) { return e.url === fUrl; });
-              _naTagOutcome(_naE, _naE ? 'added' : 'manual_add');
+              if (_naE) {
+                _naTagOutcome(_naE, 'added');
+              } else {
+                // URL nie był w skanowanej liście — manual add (custom mode); zlicz w sesyjnym counter.
+                newsState.naManualAdds = (newsState.naManualAdds || 0) + 1;
+              }
               if (subStatus) { subStatus.textContent = '✓ Dodano do Brand24!'; subStatus.style.color = '#22c55e'; }
               if (newsState.activeIdx >= 0) newsState.urls[newsState.activeIdx].status = 'added';
               var tc = document.getElementById('b24t-news-f-content');
@@ -11895,6 +11961,25 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.33",
+      "date": "2026-05-19",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "IIFE patchuje window.fetch/XHR tylko na brand24-hostnames — nie marnuje CPU/pamięci na każdej karcie przeglądarki"},
+        {"type": "fix", "text": "AI News: lista odświeża się przy AI complete/error/timeout (renderUrlList dostępny przez module-scope _newsListRenderer)"},
+        {"type": "fix", "text": "Token capture: refresh w trakcie sesji (Brand24 rotuje token) + init hydratuje z B24Bridge przy starcie"},
+        {"type": "fix", "text": "urlsMatch wymaga 6 wspólnych znaków po ostatnim slashu — eliminuje false-match między różnymi shortcodami IG/TikToka"},
+        {"type": "fix", "text": "Health check: 3 kolejne błędy zamiast 1 zanim abortuje run; nie przerywa przy transient blip"},
+        {"type": "fix", "text": "XSS w 4 miejscach (addLog, mapowanie tagów, multi-projekt widget, audit report) — escape wartości z plików CSV i API"},
+        {"type": "fix", "text": "Onboarding: resize listener usuwany w finishOnboarding (wyciek closure)"},
+        {"type": "fix", "text": "News scan honoruje user-edytowalną LangMap (poprzednio czytał tylko hardcoded fallback)"},
+        {"type": "fix", "text": "News Analytics: push poprzedniej sesji do GitHub przy starcie nowej; confusion matrix tylko explicit decyzje; manual_add tracking osobnym counterem"},
+        {"type": "fix", "text": "News Custom mode Clear przywraca auto-wykrytą kategorię (zamiast nieistniejącego 'auto')"},
+        {"type": "perf", "text": "~250 linii martwego kodu usunięte (3 dawne funkcje DASHBOARD ANNOTATORA, 2 zastąpione w TAG STATS, sendSuggestion, _gmSaveProjectNames, duplikaty)"}
+      ]
+    },
+    {
       "version": "0.24.32",
       "date": "2026-05-15",
       "label": "feat",
@@ -11980,15 +12065,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "dup-check URL — pobiera wzmianki z miesiąca artykułu (bez sq), porównuje URL bezpośrednio; identyczna logika jak News (3-poziomowy match)"},
         {"type": "fix", "text": "usunięto ~400 linii martwego kodu (_openMiniMentionForm + helpery) — panel Niestandardowe używał openNewsPanels('custom') od początku"}
-      ]
-    },
-    {
-      "version": "0.24.23",
-      "date": "2026-05-14",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "dup-check URL — sq używa tytułu artykułu zamiast segmentu URL; Brand24 GQL indeksuje tytuł (nie URL), więc dup-check teraz faktycznie działa"}
       ]
     },
   ];
@@ -12174,8 +12250,6 @@ function showOnboarding(onComplete) {
 
   // Planned features list
   const PLANNED_FEATURES = [
-    { priority: 'high', text: 'Panel postępu tagowania — widoczny kafelek z liczbą pozostałych wzmianek, paskiem ukończenia i procentem postępu' },
-    { priority: 'high', text: 'Tryb domykania miesiąca — zamknięcie wszystkich projektów jednym kliknięciem z automatycznym oznaczeniem jako ukończone' },
     { priority: 'high', text: 'Czyszczenie tagów plikiem — naprawa funkcji usuwania tagów na podstawie dostarczonego pliku CSV' },
   ];
 
@@ -12274,21 +12348,6 @@ function showOnboarding(onComplete) {
     }
     blocks.push({ type: 'divider' });
     sendToSlack({ blocks }, onDone, function(err) { addLog('⚠ Błąd wysyłki Bug Report: ' + err, 'warn'); });
-  }
-
-  function sendSuggestion(text, onDone) {
-    const payload = { blocks: [
-      { type: 'header', text: { type: 'plain_text', text: '💡 B24 Tagger BETA — Suggestion', emoji: true } },
-      { type: 'section', fields: [
-        { type: 'mrkdwn', text: '*Wersja:*\n`' + VERSION + '`' },
-        { type: 'mrkdwn', text: '*Czas:*\n' + new Date().toLocaleString('pl-PL') },
-        { type: 'mrkdwn', text: '*Projekt:*\n' + (state.projectName || '—') },
-      ]},
-      { type: 'divider' },
-      { type: 'section', text: { type: 'mrkdwn', text: '*💡 Sugestia:*\n' + (text || '_(brak tekstu)_') } },
-      { type: 'divider' },
-    ]};
-    sendToSlack(payload, onDone, function(err) { addLog('⚠ Błąd wysyłki Suggestion: ' + err, 'warn'); });
   }
 
   // What's New modal - extended with tabs (Co nowego / Planowane / Feedback)
@@ -13260,301 +13319,6 @@ function showOnboarding(onComplete) {
     return allProjects;
   }
 
-  // Pobiera wszystkie strony wzmianek projektu równolegle (10x) i zlicza po tagach
-  async function fetchProjectTagCounts(projectId, reqVerId, toDeleteId, dateFrom, dateTo, onProgress) {
-    const bf = {
-      va: 1, rt: [], se: [], vi: null, gr: [], sq: '', do: '', au: '',
-      lem: false, ctr: [], nctr: false, is: [0, 10], tp: null, anom: '',
-      lang: [], nlang: false, aue: null, htg: null, mt: false, mtri: null, cxs: []
-    };
-    const gql = `query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){
-      getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){
-        count results{id tags{id}}
-      }
-    }`;
-
-    const doPage = function(page) {
-      return origFetch('/api/graphql', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { ...state.tokenHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          operationName: 'getMentions',
-          variables: { projectId, dateRange: { from: dateFrom, to: dateTo }, filters: bf, page, order: 0 },
-          query: gql
-        })
-      }).then(function(r) { return r.json(); });
-    };
-
-    // Krok 1: pobierz count i pierwszą stronę
-    const first = await doPage(1);
-    const total = first?.data?.getMentions?.count || 0;
-    if (total === 0) return { total: 0, reqVer: 0, toDelete: 0 };
-
-    const totalPages = Math.ceil(total / 60);
-    let reqVer = 0, toDelete = 0;
-
-    // Zlicz tagi z pierwszej strony
-    (first?.data?.getMentions?.results || []).forEach(function(m) {
-      m.tags?.forEach(function(t) {
-        if (t.id === reqVerId) reqVer++;
-        if (t.id === toDeleteId) toDelete++;
-      });
-    });
-
-    // Krok 2: pobierz pozostałe strony równolegle (batche po 10)
-    const remainingPages = [];
-    for (let p = 2; p <= totalPages; p++) remainingPages.push(p);
-
-    for (let i = 0; i < remainingPages.length; i += 10) {
-      const batch = remainingPages.slice(i, i + 10);
-      if (onProgress) onProgress(1 + i, totalPages);
-      const results = await Promise.all(batch.map(function(p) { return doPage(p); }));
-      results.forEach(function(d) {
-        (d?.data?.getMentions?.results || []).forEach(function(m) {
-          m.tags?.forEach(function(t) {
-            if (t.id === reqVerId) reqVer++;
-            if (t.id === toDeleteId) toDelete++;
-          });
-        });
-      });
-    }
-
-    return { total, reqVer, toDelete };
-  }
-
-  // Renderuje tabelę statystyk tagów
-  function renderTagStats(el, projectStats, dateFrom, dateTo) {
-    // Filtruj tylko projekty z reqVer > 0 lub toDelete > 0
-    const filtered = projectStats.filter(function(p) {
-      return p.reqVer > 0 || p.toDelete > 0;
-    }).sort(function(a, b) {
-      // Sortuj po reqVer malejąco
-      return (b.reqVer + b.toDelete) - (a.reqVer + a.toDelete);
-    });
-
-    if (filtered.length === 0) {
-      el.innerHTML = '<div style="padding:20px;text-align:center;color:#4ade80;font-size:12px;">✓ Wszystkie projekty oczyśczone!</div>';
-      return;
-    }
-
-    var rows = filtered.map(function(p) {
-      var reqColor = p.reqVer > 0 ? '#facc15' : '#444466';
-      var delColor = p.toDelete > 0 ? '#f87171' : '#444466';
-      return '<tr>' +
-        '<td style="padding:7px 10px;font-size:11px;color:#c0c0e0;border-bottom:1px solid var(--b24t-border-sub);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + p.name + '">' + p.name + '</td>' +
-        '<td style="padding:7px 10px;font-size:13px;font-weight:700;color:' + reqColor + ';text-align:center;border-bottom:1px solid var(--b24t-border-sub);">' + (p.reqVer || '—') + '</td>' +
-        '<td style="padding:7px 10px;font-size:13px;font-weight:700;color:' + delColor + ';text-align:center;border-bottom:1px solid var(--b24t-border-sub);">' + (p.toDelete || '—') + '</td>' +
-      '</tr>';
-    }).join('');
-
-    el.innerHTML =
-      '<div style="padding:10px 12px 0;">' +
-        '<div style="font-size:9px;color:var(--b24t-text-faint);margin-bottom:8px;">' + dateFrom + ' – ' + dateTo + '</div>' +
-        '<table style="width:100%;border-collapse:collapse;">' +
-          '<thead>' +
-            '<tr>' +
-              '<th style="padding:5px 10px;font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--b24t-text-faint);text-align:left;border-bottom:1px solid #2a2a35;">Projekt</th>' +
-              '<th style="padding:5px 10px;font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:#facc15;text-align:center;border-bottom:1px solid #2a2a35;">REQ VER</th>' +
-              '<th style="padding:5px 10px;font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:#f87171;text-align:center;border-bottom:1px solid #2a2a35;">TO DELETE</th>' +
-            '</tr>' +
-          '</thead>' +
-          '<tbody>' + rows + '</tbody>' +
-        '</table>' +
-      '</div>';
-    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      var _tagRows = el.querySelectorAll('tbody tr');
-      _tagRows.forEach(function(tr) { tr.style.opacity = '0'; });
-      void el.offsetHeight;
-      var _ti = 0;
-      _tagRows.forEach(function(tr) {
-        (function(row, delay) {
-          setTimeout(function() {
-            row.style.transition = 'opacity 220ms ease-out';
-            row.style.opacity = '1';
-          }, delay);
-        })(tr, _ti);
-        _ti += 40;
-      });
-    }
-  }
-
-  // ───────────────────────────────────────────
-  // DASHBOARD ANNOTATORA
-  // ───────────────────────────────────────────
-
-  // Pobiera statystyki dla bieżącego miesiąca (lub poprzedniego jeśli dzień 1-2)
-  async function fetchDashboardStats() {
-    if (!state.tokenHeaders) throw new Error('TOKEN_NOT_READY');
-    if (!state.projectId) throw new Error('Brak projektu');
-
-    const now = new Date();
-    const day = now.getDate();
-    let dateFrom, dateTo, label;
-
-    // Dzień 1-2 — pokaż poprzedni miesiąc
-    if (day <= 2) {
-      const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const last = new Date(now.getFullYear(), now.getMonth(), 0);
-      dateFrom = prev.toISOString().split('T')[0];
-      dateTo   = last.toISOString().split('T')[0];
-      label    = prev.toLocaleString('pl-PL', { month: 'long', year: 'numeric' });
-    } else {
-      dateFrom = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-      dateTo   = now.toISOString().split('T')[0];
-      label    = now.toLocaleString('pl-PL', { month: 'long', year: 'numeric' });
-    }
-
-    const baseFilters = {
-      va: 1, se: [], vi: null, gr: [], sq: '', lem: false, ctr: [], nctr: false,
-      is: [0, 10], tp: null, anom: '', lang: [], nlang: false, aue: null,
-      htg: null, mt: false, mtri: null, cxs: [], rt: []
-    };
-
-    const GQL_COUNT = 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count}}';
-    const GQL_TAGS  = 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count results{id tags{id}}}}';
-    const PER_PAGE  = 60;
-
-    const doQ = function(gql, page) {
-      return origFetch('/api/graphql', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { ...state.tokenHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          operationName: 'getMentions',
-          variables: { projectId: state.projectId, dateRange: { from: dateFrom, to: dateTo }, filters: baseFilters, page: page, order: 0 },
-          query: gql
-        })
-      }).then(function(r) { return r.json(); });
-    };
-
-    // Krok 1: pobierz łączną liczbę wzmianek
-    const countRes = await doQ(GQL_COUNT, 1);
-    const total = countRes?.data?.getMentions?.count || 0;
-    if (total === 0) {
-      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-      return { total: 0, tagged: 0, untagged: 0, pct: 0, dateFrom, dateTo, label, daysLeft: lastDay - day, day };
-    }
-
-    // Krok 2: binary search — znajdź granicę nieotagowane/otagowane
-    // Wzmianki są posortowane: nieotagowane najpierw, otagowane na końcu
-    // Szukamy pierwszej strony gdzie pojawiają się otagowane
-    const totalPages = Math.ceil(total / PER_PAGE);
-
-    async function hasTaggedOnPage(page) {
-      const res = await doQ(GQL_TAGS, page);
-      const results = res?.data?.getMentions?.results || [];
-      return results.some(function(m) { return m.tags && m.tags.length > 0; });
-    }
-
-    async function countUntaggedOnPage(page) {
-      const res = await doQ(GQL_TAGS, page);
-      const results = res?.data?.getMentions?.results || [];
-      return results.filter(function(m) { return !m.tags || m.tags.length === 0; }).length;
-    }
-
-    // Sprawdź czy strona 1 ma otagowane — jeśli tak, wszystkie są otagowane
-    const page1Tagged = await hasTaggedOnPage(1);
-    let untaggedCount = 0;
-
-    if (page1Tagged) {
-      // Strona 1 ma otagowane — sprawdź czy jest też nieotagowanych (granica na str 1)
-      const untaggedOnP1 = await countUntaggedOnPage(1);
-      untaggedCount = untaggedOnP1;
-    } else {
-      // Binary search: szukaj pierwszej strony z otagowanymi
-      let lo = 1, hi = totalPages;
-      while (lo < hi) {
-        const mid = Math.floor((lo + hi) / 2);
-        const tagged = await hasTaggedOnPage(mid);
-        if (tagged) hi = mid;
-        else lo = mid + 1;
-      }
-      // lo = pierwsza strona z otagowanymi
-      // Strony 1..(lo-1) = w pełni nieotagowane
-      // Strona lo = mieszana
-      const fullUntaggedPages = lo - 1;
-      const mixedUntagged = await countUntaggedOnPage(lo);
-      untaggedCount = fullUntaggedPages * PER_PAGE + mixedUntagged;
-    }
-
-    const tagged   = total - untaggedCount;
-    const pct      = total > 0 ? Math.round((tagged / total) * 100) : 0;
-    const lastDay  = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    const daysLeft = lastDay - day;
-
-    return { total, tagged, untagged: untaggedCount, pct, dateFrom, dateTo, label, daysLeft, day };
-  }
-
-  // Renderuj dashboard w elemencie
-  function renderDashboard(el, stats) {
-    const { total, tagged, untagged, pct, label, daysLeft, day } = stats;
-    const isLastMonth = day <= 2;
-
-    el.innerHTML =
-      '<div style="padding:14px 16px;">' +
-        // Nagłówek
-        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">' +
-          '<div style="font-size:11px;font-weight:700;color:#a0a0cc;letter-spacing:0.05em;text-transform:uppercase;">Dashboard Annotatora</div>' +
-          (isLastMonth
-            ? '<div style="font-size:9px;background:#facc1522;color:#facc15;padding:2px 6px;border-radius:99px;">poprzedni miesiąc</div>'
-            : '<div style="font-size:9px;color:var(--b24t-text-faint);">' + daysLeft + ' dni do końca miesiąca</div>'
-          ) +
-        '</div>' +
-        // Miesiąc
-        '<div style="font-size:10px;color:var(--b24t-text-faint);margin-bottom:10px;">' + label + ' · ' + stats.dateFrom + ' – ' + stats.dateTo + '</div>' +
-        // Progress bar
-        '<div style="background:var(--b24t-bg-input);border-radius:99px;height:6px;margin-bottom:12px;overflow:hidden;">' +
-          '<div id="b24t-dash-progress-bar" style="height:100%;border-radius:99px;background:' + (pct === 100 ? '#4ade80' : '#6c6cff') + ';width:0%;transition:width 0.6s cubic-bezier(0.25,1,0.5,1);"></div>' +
-        '</div>' +
-        // Statystyki — 3 kafelki
-        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
-          _dashTile('Wszystkie', total, '#7878aa') +
-          _dashTile('Otagowane', tagged, '#4ade80') +
-          _dashTile('Pozostałe', untagged, untagged === 0 ? '#4ade80' : '#f87171') +
-        '</div>' +
-        // Procent ukończenia
-        '<div style="margin-top:10px;text-align:center;font-size:11px;color:' + (pct === 100 ? '#4ade80' : '#7878aa') + ';">' +
-          (pct === 100 ? '✓ Gotowe!' : pct + '% ukończone') +
-        '</div>' +
-      '</div>';
-    var _b24tRMd = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    var _dpb = el.querySelector('#b24t-dash-progress-bar');
-    if (_dpb) {
-      if (_b24tRMd) _dpb.style.width = pct + '%';
-      else requestAnimationFrame(function() { requestAnimationFrame(function() { _dpb.style.width = pct + '%'; }); });
-    }
-    if (!_b24tRMd) {
-      var _dashItems = [];
-      el.querySelectorAll('[data-statval]').forEach(function(span) {
-        var t = parseInt(span.dataset.statval, 10);
-        if (!isNaN(t) && t > 0) {
-          span.style.opacity = '0';
-          span.style.transform = 'translateY(6px)';
-          _dashItems.push({ el: span, t: t });
-        }
-      });
-      void el.offsetHeight;
-      var _di = 0;
-      _dashItems.forEach(function(item) {
-        (function(s, target, delay) {
-          setTimeout(function() {
-            s.style.transition = 'opacity 300ms ease-out, transform 300ms ease-out';
-            s.style.opacity = '1';
-            s.style.transform = 'translateY(0)';
-            _animateCountUp(s, target, 450);
-          }, delay);
-        })(item.el, item.t, _di);
-        _di += 70;
-      });
-    }
-  }
-
-  function _dashTile(label, value, color) {
-    return '<div style="background:var(--b24t-bg-elevated);border:1px solid var(--b24t-border);border-radius:8px;padding:8px;text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,0.10);transition:background 0.3s,border-color 0.3s;">' +
-      '<div data-statval="' + (value != null ? value : '') + '" style="font-size:16px;font-weight:700;color:' + color + ';">' + (value ?? '—') + '</div>' +
-      '<div style="font-size:9px;color:var(--b24t-text-faint);margin-top:2px;">' + label + '</div>' +
-    '</div>';
-  }
-
   // ───────────────────────────────────────────
   // ANNOTATOR TOOLS — FLOATING PANEL
   // ───────────────────────────────────────────
@@ -14097,12 +13861,7 @@ function showOnboarding(onComplete) {
         '<div id="b24t-ann-ts-counter" style="font-size:10px;color:var(--b24t-text-faint);margin-top:6px;">0 / ' + projects.length + '</div>' +
       '</div>';
 
-    if (!document.getElementById('b24t-spin-style')) {
-      var s = document.createElement('style');
-      s.id = 'b24t-spin-style';
-      s.textContent = '@keyframes b24t-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}';
-      document.head.appendChild(s);
-    }
+    // @keyframes b24t-spin już zdefiniowany w głównym arkuszu (sekcja UI - STYLES) — nie dublujemy.
 
     var results = [];
     var done = 0;
@@ -17009,11 +16768,12 @@ Tej operacji nie można cofnąć.`)) {
       if (hourFld && !hourFld.value) { var _n = new Date(); hourFld.value = String(_n.getHours()).padStart(2,'0'); }
       if (minFld  && !minFld.value)  { var _n2 = new Date(); minFld.value  = String(_n2.getMinutes()).padStart(2,'0'); }
 
-      // Kategoria — auto-detect z URL
+      // Kategoria — auto-detect z URL; zapisujemy też w datasecie, żeby Clear mógł przywrócić auto-wartość
       var catSel = document.getElementById('b24t-news-f-category-select');
       if (catSel) {
         var _autoCat = String(_detectCategoryFromUrl(window.location.href));
         catSel.value = _autoCat;
+        catSel.dataset.autoDetected = _autoCat;
       }
 
       // Metryki social media — próba scrapowania z żywego DOM
@@ -17138,6 +16898,15 @@ Tej operacji nie można cofnąć.`)) {
       _initMiniMentionButton();
       return;
     }
+
+    // Hydratacja tokenu z B24Bridge — gdy inna karta Brand24 już go zapisała,
+    // unikamy TOKEN_NOT_READY do czasu pierwszego organicznego GQL z tej karty.
+    try {
+      var _bridged = B24Bridge.token.get();
+      if (_bridged && _bridged.headers && !state.tokenHeaders) {
+        state.tokenHeaders = Object.assign({ 'Content-Type': 'application/json' }, _bridged.headers);
+      }
+    } catch(e) {}
 
     // Bootstrap PROJECT_NAMES: przeskanuj LS.PROJECTS i zapisz dobre nazwy do resolvera
     (function() {
@@ -17339,13 +17108,6 @@ Tej operacji nie można cofnąć.`)) {
 
   // Sprawdź aktualizacje — wywołane bezpośrednio w scope IIFE gdzie GM jest dostępne
   // Czekamy 6s żeby init() zdążył się wykonać i panel był gotowy
-  setTimeout(function() {
-    if (typeof GM_xmlhttpRequest !== 'undefined') {
-      checkForUpdate(false);
-    } else {
-      // GM niedostępne — spróbuj przez fetch (może być blokowane przez CSP)
-      checkForUpdate(false);
-    }
-  }, 6000);
+  setTimeout(function() { checkForUpdate(false); }, 6000);
 
 })();

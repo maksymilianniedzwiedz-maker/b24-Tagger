@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.34
+// @version      0.24.35
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.34';
+  const VERSION = '0.24.35';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -11961,6 +11961,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.35",
+      "date": "2026-05-27",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Quick Delete: panel Wszystkie projekty pokazuje wszystkie znane projekty z LS — usuwanie po dowolnym tagu działa niezależnie od nazwy tagu (nie wymaga REQUIRES_VERIFICATION/TO_DELETE)"}
+      ]
+    },
+    {
       "version": "0.24.34",
       "date": "2026-05-26",
       "label": "feat",
@@ -12054,16 +12063,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "B24Bridge — centralny system cross-domain: token + projekty + lastProject w jednym kluczu GM (b24t_bridge)"},
         {"type": "feat", "text": "GM_addValueChangeListener — reaktywny: gdy brand24.com zapisze token, inne karty ponowią dupcheck automatycznie"},
         {"type": "fix", "text": "_customDupCheck: sequence guard anuluje stale requesty; pid NaN guard; B24Bridge.token.headers/base zamiast GM_getValue"}
-      ]
-    },
-    {
-      "version": "0.24.25",
-      "date": "2026-05-14",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "dup-check cross-domain: tokenHeaders (Authorization) zapisywane do GM na brand24.com; cross-domain GQL dostaje pełne auth headery"},
-        {"type": "fix", "text": "dup-check: błąd GQL (brak tokenu, timeout, sieć) pokazuje komunikat zamiast cichego 'URL nowy'"}
       ]
     },
   ];
@@ -13291,21 +13290,10 @@ function showOnboarding(onComplete) {
   // Pobiera z localStorage listę znanych projektów
   function getKnownProjects() {
     const projects = lsGet(LS.PROJECTS, {});
-    // Użyj tagów z aktualnego state.tags jako fallback
-    const globalReqVerId   = state.tags && state.tags['REQUIRES_VERIFICATION'];
-    const globalToDeleteId = state.tags && state.tags['TO_DELETE'];
-    var allProjects = Object.entries(projects).map(function([id, p]) {
-      const reqVerId   = (p.tagIds && p.tagIds['REQUIRES_VERIFICATION']) || globalReqVerId;
-      const toDeleteId = (p.tagIds && p.tagIds['TO_DELETE'])             || globalToDeleteId;
-      return {
-        id: parseInt(id),
-        name: _pnResolve(parseInt(id)),
-        reqVerId,
-        toDeleteId,
-      };
-    }).filter(function(p) {
-      return p.reqVerId && p.toDeleteId;
-    });
+    var allProjects = Object.entries(projects).map(function([id]) {
+      var pid = parseInt(id);
+      return { id: pid, name: _pnResolve(pid) };
+    }).filter(function(p) { return p.id > 0; });
     // Filtruj do wybranej grupy jeśli user ją wybrał w panelu cross-delete
     var groupSel = document.getElementById('b24t-ap-group-sel');
     if (groupSel && groupSel.value) {
@@ -15460,7 +15448,7 @@ To jest NIEODWRACALNE.`)) return;
     if (!projects.length) {
       if (list) list.innerHTML =
         '<div style="padding:16px;font-size:11px;color:var(--b24t-text-faint);line-height:1.6;">' +
-        'Brak znanych projektów z tagami <strong>REQUIRES_VERIFICATION</strong> i <strong>TO_DELETE</strong>.<br><br>' +
+        'Brak znanych projektów.<br><br>' +
         'Wejdź w widok Mentions każdego projektu — wtyczka zapamiętuje go automatycznie.' +
         '</div>';
       return;

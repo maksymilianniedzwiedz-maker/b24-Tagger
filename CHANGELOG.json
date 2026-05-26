@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.24.35",
+    "date": "2026-05-27",
+    "label": "fix",
+    "changes": [
+      "fix: Quick Delete — panel Wszystkie projekty pokazuje wszystkie znane projekty z LS (nie tylko te z tagami REQUIRES_VERIFICATION/TO_DELETE); usuwanie po dowolnym tagu działa niezależnie od nazwy tagu"
+    ]
+  },
+  {
     "version": "0.24.34",
     "date": "2026-05-26",
     "label": "feat",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.33
+// @version      0.24.34
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.33';
+  const VERSION = '0.24.34';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -11961,6 +11961,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.34",
+      "date": "2026-05-26",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "Overall Stats: konfigurowalne tagi RV i Irrelevant w ustawieniach grupy (⚙) — dropdown 'Do weryfikacji' i 'Irrelevant' obok 'Relevantne'; ustawienie grupy ma priorytet nad auto-detekcją per projekt"}
+      ]
+    },
+    {
       "version": "0.24.33",
       "date": "2026-05-19",
       "label": "fix",
@@ -12055,16 +12064,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "dup-check cross-domain: tokenHeaders (Authorization) zapisywane do GM na brand24.com; cross-domain GQL dostaje pełne auth headery"},
         {"type": "fix", "text": "dup-check: błąd GQL (brak tokenu, timeout, sieć) pokazuje komunikat zamiast cichego 'URL nowy'"}
-      ]
-    },
-    {
-      "version": "0.24.24",
-      "date": "2026-05-14",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "dup-check URL — pobiera wzmianki z miesiąca artykułu (bez sq), porównuje URL bezpośrednio; identyczna logika jak News (3-poziomowy match)"},
-        {"type": "fix", "text": "usunięto ~400 linii martwego kodu (_openMiniMentionForm + helpery) — panel Niestandardowe używał openNewsPanels('custom') od początku"}
       ]
     },
   ];
@@ -14950,6 +14949,18 @@ To jest NIEODWRACALNE.`)) return;
     if (g) { g.relevantTagId = tagId; saveGroups(groups); }
   }
 
+  function setGroupReqVerTagId(groupId, tagId) {
+    var groups = getGroups();
+    var g = groups.find(function(g) { return g.id === groupId; });
+    if (g) { g.reqVerTagId = tagId; saveGroups(groups); }
+  }
+
+  function setGroupIrrelevantTagId(groupId, tagId) {
+    var groups = getGroups();
+    var g = groups.find(function(g) { return g.id === groupId; });
+    if (g) { g.irrelevantTagId = tagId; saveGroups(groups); }
+  }
+
   async function _fetchOverallStats(group, onProgress) {
     var projects = lsGet(LS.PROJECTS, {});
     // Domykanie miesiąca: jeśli poprzedni miesiąc nie jest jeszcze domknięty dla grupy,
@@ -14974,13 +14985,8 @@ To jest NIEODWRACALNE.`)) return;
         }
         var name = _pnResolve(pid);
         var tagIds = pData.tagIds || {};
-        var reqVerId = null, toDelId = null;
-        Object.entries(tagIds).forEach(function(e) {
-          if (e[0] === 'REQUIRES_VERIFICATION') reqVerId = e[1];
-          if (e[0] === 'TO_DELETE') toDelId = e[1];
-        });
-        if (!reqVerId) reqVerId = 1154586;
-        if (!toDelId)  toDelId  = 1154757;
+        var reqVerId = group.reqVerTagId || tagIds['REQUIRES_VERIFICATION'] || 1154586;
+        var toDelId  = group.irrelevantTagId || tagIds['TO_DELETE'] || 1154757;
         var relTagId = group.relevantTagId || null;
         var queries = [
           getMentions(pid, dateFrom, dateTo, [], 1),
@@ -15378,21 +15384,33 @@ To jest NIEODWRACALNE.`)) return;
     if (!group) return;
     var overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483648;display:flex;align-items:center;justify-content:center;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;';
-    var tagOptions = Object.entries(state.tags).map(function(entry) {
-      return '<option value="' + entry[1] + '"' + (entry[1] === group.relevantTagId ? ' selected' : '') + '>' + entry[0] + ' (ID: ' + entry[1] + ')</option>';
-    }).join('');
+    var _tagEntries = Object.entries(state.tags);
+    function _makeOpts(selectedId) {
+      return _tagEntries.map(function(entry) {
+        return '<option value="' + entry[1] + '"' + (entry[1] === selectedId ? ' selected' : '') + '>' + entry[0] + ' (ID: ' + entry[1] + ')</option>';
+      }).join('');
+    }
+    var _selStyle = 'width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text);border-radius:7px;padding:7px 10px;font-size:12px;font-family:inherit;cursor:pointer;';
+    var _labelStyle = 'font-size:12px;color:var(--b24t-text-muted);margin-bottom:6px;margin-top:10px;';
     overlay.innerHTML =
       '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:320px;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.25s cubic-bezier(0.34,1.56,0.64,1);">' +
         '<div style="padding:12px 16px;background:var(--b24t-accent-grad);border-radius:14px 14px 0 0;display:flex;align-items:center;gap:10px;">' +
           '<span style="font-size:14px;font-weight:700;color:#fff;flex:1;">&#9881; Ustawienia: ' + group.name + '</span>' +
           '<button id="b24t-os-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;border-radius:5px;padding:2px 8px;font-size:16px;cursor:pointer;">x</button>' +
         '</div>' +
-        '<div style="padding:16px;">' +
-          '<div style="font-size:12px;color:var(--b24t-text-muted);margin-bottom:6px;">Tag oznaczajacy <strong>Relevantne</strong>:</div>' +
-          '<select id="b24t-os-rel-tag" style="width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text);border-radius:7px;padding:7px 10px;font-size:12px;font-family:inherit;cursor:pointer;">' +
-            '<option value="">— brak —</option>' + tagOptions +
+        '<div style="padding:16px 16px 8px;">' +
+          '<div style="' + _labelStyle + 'margin-top:0;">Tag oznaczajacy <strong>Relevantne</strong>:</div>' +
+          '<select id="b24t-os-rel-tag" style="' + _selStyle + '">' +
+            '<option value="">— brak —</option>' + _makeOpts(group.relevantTagId) +
           '</select>' +
-          '<div style="margin-top:12px;font-size:11px;color:var(--b24t-text-faint);line-height:1.6;padding:8px 10px;background:var(--b24t-bg-elevated);border-radius:7px;">REQUIRES_VERIFICATION i TO_DELETE sa odczytywane automatycznie.</div>' +
+          '<div style="' + _labelStyle + '">Tag oznaczajacy <strong>Do weryfikacji</strong> (RV):</div>' +
+          '<select id="b24t-os-rv-tag" style="' + _selStyle + '">' +
+            '<option value="">— auto (REQUIRES_VERIFICATION) —</option>' + _makeOpts(group.reqVerTagId) +
+          '</select>' +
+          '<div style="' + _labelStyle + '">Tag oznaczajacy <strong>Irrelevant</strong>:</div>' +
+          '<select id="b24t-os-irr-tag" style="' + _selStyle + '">' +
+            '<option value="">— auto (TO_DELETE) —</option>' + _makeOpts(group.irrelevantTagId) +
+          '</select>' +
         '</div>' +
         '<div style="padding:10px 16px;border-top:1px solid var(--b24t-border);display:flex;gap:8px;">' +
           '<button id="b24t-os-cancel" style="flex:1;background:var(--b24t-bg-input);color:var(--b24t-text-muted);border:1px solid var(--b24t-border);border-radius:8px;padding:9px;font-size:13px;font-family:inherit;cursor:pointer;">Anuluj</button>' +
@@ -15405,8 +15423,12 @@ To jest NIEODWRACALNE.`)) return;
     overlay.querySelector('#b24t-os-cancel').addEventListener('click', close);
     overlay.addEventListener('click', function(e) { if (e.target === overlay) close(); });
     overlay.querySelector('#b24t-os-save').addEventListener('click', function() {
-      var tagId = parseInt(overlay.querySelector('#b24t-os-rel-tag').value) || null;
-      setGroupRelevantTagId(group.id, tagId);
+      var relTagId = parseInt(overlay.querySelector('#b24t-os-rel-tag').value) || null;
+      var rvTagId  = parseInt(overlay.querySelector('#b24t-os-rv-tag').value)  || null;
+      var irrTagId = parseInt(overlay.querySelector('#b24t-os-irr-tag').value) || null;
+      setGroupRelevantTagId(group.id, relTagId);
+      setGroupReqVerTagId(group.id, rvTagId);
+      setGroupIrrelevantTagId(group.id, irrTagId);
       bgCache.overallStats = null;
       close();
       renderOverallStatsTab();

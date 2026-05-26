@@ -1,5 +1,32 @@
 [
   {
+    "version": "0.24.34",
+    "date": "2026-05-26",
+    "label": "feat",
+    "changes": [
+      "feat: Overall Stats — konfigurowalne tagi RV i Irrelevant w ustawieniach grupy (⚙); dropdown 'Do weryfikacji' i 'Irrelevant' obok istniejącego 'Relevantne'; ustawienie grupy ma priorytet nad auto-detekcją per projekt"
+    ]
+  },
+  {
+    "version": "0.24.33",
+    "date": "2026-05-19",
+    "label": "fix",
+    "changes": [
+      "fix: IIFE patchuje window.fetch/XHR tylko na brand24-hostnames (nie na każdej karcie przeglądarki)",
+      "fix: AI News — renderUrlList dostępny w module scope przez _newsListRenderer; lista odświeża się przy AI complete/error/timeout",
+      "fix: token capture odświeża się w trakcie sesji (Brand24 rotuje token) + init hydratuje z B24Bridge gdy inna karta już zapisała",
+      "fix: urlsMatch wymaga 6 wspólnych znaków po ostatnim slashu — eliminuje false-match między różnymi shortcodami IG/TikToka",
+      "fix: health check toleruje 3 kolejne błędy zanim abortuje run; nie przerywa przy transient blip sieci",
+      "fix: XSS w renderMappingRows / renderMultiProjectWidget / showAuditReport / addLog — wartości z plików CSV i API zawsze escapowane przez _escHtml",
+      "fix: showAuditReport używa addEventListener zamiast inline onclick (CSP-safe)",
+      "fix: onboarding — resize listener usuwany w finishOnboarding (zamiast trzymać closure z DOM nodes onboarding wiecznie)",
+      "fix: News scan worker honoruje user-edytowalną LangMap (poprzednio czytał tylko hardcoded fallback)",
+      "fix: News Analytics — push poprzedniej sesji do GitHub przy starcie nowej (mid-session); confusion matrix liczy tylko explicit decyzje; manual_add tracking osobnym counterem (newsState.naManualAdds)",
+      "fix: News Custom mode — Clear przywraca auto-wykrytą kategorię zamiast nieistniejącego 'auto'",
+      "refactor: ~250 linii martwego kodu usunięte (fetchProjectTagCounts, renderTagStats, fetchDashboardStats, renderDashboard, _dashTile, sendSuggestion, _gmSaveProjectNames, zduplikowany checkForUpdate, duplikat keyframes b24t-spin, nieużywane defaultsy AI)"
+    ]
+  },
+  {
     "version": "0.24.32",
     "date": "2026-05-15",
     "label": "feat",

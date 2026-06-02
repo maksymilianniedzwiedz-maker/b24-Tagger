@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.24.37",
+    "date": "2026-06-02",
+    "label": "fix",
+    "changes": [
+      "fix: News — popup domeny przy ✕ — dymek komiksowy ponad przyciskiem, z-index 2147483647, dziubek wskazuje X; light/dark mode"
+    ]
+  },
+  {
     "version": "0.24.36",
     "date": "2026-06-02",
     "label": "feat",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.37
+// @version      0.25.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.37';
+  const VERSION = '0.25.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -147,6 +147,7 @@
     DEL_BATCH:        'b24tagger_del_batch',
     DEL_BATCH_WARNED: 'b24tagger_del_batch_warned',
     AI_SETTINGS:      'b24t_ai_settings',
+    AI_TAG_PROJECT_CFG: 'b24t_ai_tag_project_cfg',
     NA_SESSION_STATS:   'b24t_na_session_stats',
     NA_PENDING:         'b24t_na_pending',
     NA_CONSENT:         'b24t_na_consent',
@@ -306,19 +307,36 @@
     var list = document.getElementById('b24t-ai-prompt-list');
     if (!list) return;
     var s = _aiGetSettings();
+    var t = _newsThemeVars();
     if (!s.prompts.length) {
-      list.innerHTML = '<div style="font-size:10px;color:#999;padding:4px 0;">Brak promptów — dodaj pierwszy.</div>';
+      list.innerHTML = '<div style="font-size:12px;color:' + t.textFaint + ';padding:20px 0;text-align:center;">Brak promptów — dodaj pierwszy poniżej.</div>';
       return;
     }
     function esc(str) { return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
     list.innerHTML = s.prompts.map(function(p) {
       var isActive = s.tagging.activePromptId === p.id;
-      return '<div style="display:flex;align-items:center;gap:4px;padding:5px 8px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:7px;">' +
-        '<span style="flex:1;font-size:12px;color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(p.name) + '">' + esc(p.name) + '</span>' +
-        '<button data-ai-set="' + esc(p.id) + '" style="font-size:10px;padding:2px 7px;background:transparent;border:1px solid #ccc;border-radius:5px;cursor:pointer;' + (isActive ? 'color:#6366f1;font-weight:700;border-color:#6366f1;' : 'color:#666;') + '">' + (isActive ? '● Aktywny' : 'Ustaw') + '</button>' +
-        '<button data-ai-edit="' + esc(p.id) + '" style="font-size:11px;padding:2px 7px;background:transparent;border:1px solid #ccc;color:#555;border-radius:5px;cursor:pointer;">✎</button>' +
-        '<button data-ai-del="' + esc(p.id) + '" style="font-size:11px;padding:2px 7px;background:transparent;border:1px solid #fca5a5;color:#ef4444;border-radius:5px;cursor:pointer;">✕</button>' +
-        '</div>';
+      var preview = (p.system || '').replace(/\s+/g, ' ').trim().substring(0, 160);
+      var cats = Array.isArray(p.knownAssessments) ? p.knownAssessments : [];
+      var catChips = cats.length
+        ? '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:9px;">' + cats.map(function(c) {
+            return '<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:' + t.accentAlpha + ';color:' + t.accent + ';border:1px solid ' + t.accentBorder + ';">' + esc(c) + '</span>';
+          }).join('') + '</div>'
+        : '<div style="font-size:10px;color:' + t.yellow + ';margin-top:9px;">⚠ Brak kategorii oceny — dodaj, by móc mapować na tagi</div>';
+      return '<div style="border:1px solid ' + (isActive ? t.accent : t.borderSub) + ';border-radius:11px;padding:12px 14px;background:' + (isActive ? t.accentAlpha : t.bgDeep) + ';transition:border-color 0.15s;">' +
+        '<div style="display:flex;align-items:flex-start;gap:10px;">' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-size:13px;font-weight:700;color:' + t.text + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(p.name) + '">' + esc(p.name) +
+              (isActive ? ' <span style="font-size:9px;color:' + t.accent + ';font-weight:700;letter-spacing:0.05em;vertical-align:middle;">● AKTYWNY</span>' : '') + '</div>' +
+            (preview ? '<div style="font-size:11px;color:' + t.textFaint + ';margin-top:5px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + esc(preview) + '</div>' : '') +
+          '</div>' +
+          '<div style="display:flex;gap:4px;flex-shrink:0;">' +
+            '<button data-ai-set="' + esc(p.id) + '" title="Ustaw jako aktywny" style="font-size:10px;padding:4px 9px;background:transparent;border:1px solid ' + (isActive ? t.accent : t.border) + ';border-radius:6px;cursor:pointer;color:' + (isActive ? t.accent : t.textMuted) + ';font-weight:' + (isActive ? '700' : '500') + ';">' + (isActive ? '✓' : 'Ustaw') + '</button>' +
+            '<button data-ai-edit="' + esc(p.id) + '" title="Edytuj" style="font-size:12px;padding:4px 8px;background:transparent;border:1px solid ' + t.border + ';color:' + t.textMuted + ';border-radius:6px;cursor:pointer;">✎</button>' +
+            '<button data-ai-del="' + esc(p.id) + '" title="Usuń" style="font-size:12px;padding:4px 8px;background:transparent;border:1px solid ' + t.red + ';color:' + t.red + ';border-radius:6px;cursor:pointer;">✕</button>' +
+          '</div>' +
+        '</div>' +
+        catChips +
+      '</div>';
     }).join('');
   }
 
@@ -328,24 +346,28 @@
     modal.id = 'b24t-prompt-lib-modal';
     modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;backdrop-filter:blur(4px);animation:b24t-fadein 0.2s ease;';
     modal.innerHTML =
-      '<div style="background:#fff;border:1px solid #e0e0e0;border-radius:16px;width:480px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,0.22);animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);">' +
-        '<div style="padding:14px 20px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:16px 16px 0 0;display:flex;align-items:center;gap:10px;flex-shrink:0;">' +
+      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:16px;width:720px;max-width:94vw;height:82vh;max-height:82vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);">' +
+        '<div style="padding:14px 20px;background:var(--b24t-accent-grad);border-radius:16px 16px 0 0;display:flex;align-items:center;gap:10px;flex-shrink:0;">' +
           '<span style="font-size:18px;">📚</span>' +
           '<div style="flex:1;">' +
-            '<div style="font-size:13px;font-weight:700;color:#fff;">Biblioteka promptów</div>' +
-            '<div style="font-size:10px;color:rgba(255,255,255,0.7);margin-top:2px;">Zarządzaj promptami systemowymi dla AI</div>' +
+            '<div style="font-size:14px;font-weight:700;color:#fff;">Biblioteka promptów</div>' +
+            '<div style="font-size:10px;color:rgba(255,255,255,0.7);margin-top:2px;">Prompty systemowe dla AI — News i Tagowanie</div>' +
           '</div>' +
           '<button id="b24t-prompt-lib-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:18px;line-height:1;padding:2px 8px;border-radius:5px;">✕</button>' +
         '</div>' +
         '<div style="overflow-y:auto;flex:1;padding:16px 20px;">' +
-          '<div id="b24t-ai-prompt-list" style="display:flex;flex-direction:column;gap:5px;margin-bottom:12px;"></div>' +
-          '<button id="b24t-ai-add-prompt" style="width:100%;font-size:12px;padding:7px 0;background:transparent;border:1px dashed #bbb;color:#666;border-radius:8px;cursor:pointer;font-family:inherit;">+ Dodaj nowy prompt</button>' +
-          '<div id="b24t-ai-prompt-editor" style="display:none;margin-top:12px;padding:12px;background:#f7f7f7;border:1px solid #e0e0e0;border-radius:10px;">' +
-            '<input type="text" id="b24t-ai-prompt-name" placeholder="Nazwa (np. InditexGroup TR)" style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:8px;border:1px solid #ddd;background:#fff;color:#333;font-size:12px;margin-bottom:7px;">' +
-            '<textarea id="b24t-ai-prompt-body" rows="5" placeholder="Treść system promptu..." style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:8px;border:1px solid #ddd;background:#fff;color:#333;font-size:11px;resize:vertical;font-family:monospace;"></textarea>' +
-            '<div style="display:flex;gap:6px;margin-top:8px;">' +
-              '<button id="b24t-ai-prompt-save" style="flex:1;font-size:12px;padding:6px 0;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;border-radius:7px;cursor:pointer;font-family:inherit;font-weight:600;">Zapisz</button>' +
-              '<button id="b24t-ai-prompt-cancel" style="flex:1;font-size:12px;padding:6px 0;background:transparent;border:1px solid #ddd;color:#666;border-radius:7px;cursor:pointer;font-family:inherit;">Anuluj</button>' +
+          '<div id="b24t-ai-prompt-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;"></div>' +
+          '<button id="b24t-ai-add-prompt" style="width:100%;font-size:12px;padding:9px 0;background:transparent;border:1px dashed var(--b24t-border);color:var(--b24t-text-muted);border-radius:9px;cursor:pointer;font-family:inherit;">+ Dodaj nowy prompt</button>' +
+          '<div id="b24t-ai-prompt-editor" style="display:none;margin-top:14px;padding:14px;background:var(--b24t-bg-deep);border:1px solid var(--b24t-border);border-radius:11px;">' +
+            '<label style="display:block;font-size:11px;font-weight:600;color:var(--b24t-text-muted);margin-bottom:4px;">Nazwa</label>' +
+            '<input type="text" id="b24t-ai-prompt-name" placeholder="np. InditexGroup TR" style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:12px;margin-bottom:12px;">' +
+            '<label style="display:block;font-size:11px;font-weight:600;color:var(--b24t-text-muted);margin-bottom:4px;">Treść promptu systemowego</label>' +
+            '<textarea id="b24t-ai-prompt-body" rows="12" placeholder="Kryteria oceny wzmianek..." style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;resize:vertical;font-family:monospace;line-height:1.5;margin-bottom:12px;"></textarea>' +
+            '<label style="display:block;font-size:11px;font-weight:600;color:var(--b24t-text-muted);margin-bottom:4px;">Kategorie oceny <span style="font-weight:400;color:var(--b24t-text-faint);">— oddziel przecinkiem; to wartości które AI ma zwracać</span></label>' +
+            '<input type="text" id="b24t-ai-prompt-assessments" placeholder="RELEVANT, IRRELEVANT, REQUIRES_VERIFICATION" style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:12px;font-family:monospace;">' +
+            '<div style="display:flex;gap:8px;margin-top:14px;">' +
+              '<button id="b24t-ai-prompt-save" style="flex:1;font-size:12px;padding:8px 0;background:var(--b24t-accent-grad);color:#fff;border:none;border-radius:8px;cursor:pointer;font-family:inherit;font-weight:700;">Zapisz</button>' +
+              '<button id="b24t-ai-prompt-cancel" style="flex:1;font-size:12px;padding:8px 0;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:8px;cursor:pointer;font-family:inherit;">Anuluj</button>' +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -360,6 +382,14 @@
     var promptEditor = document.getElementById('b24t-ai-prompt-editor');
     var promptNameInput = document.getElementById('b24t-ai-prompt-name');
     var promptBodyInput = document.getElementById('b24t-ai-prompt-body');
+    var promptAssessInput = document.getElementById('b24t-ai-prompt-assessments');
+
+    // Parsuje pole kategorii oceny: rozdziela po przecinku/nowej linii, trim, usuwa puste i duplikaty
+    function _parseAssessments(raw) {
+      var seen = {};
+      return String(raw || '').split(/[,\n]/).map(function(s) { return s.trim(); })
+        .filter(function(s) { if (!s || seen[s]) return false; seen[s] = true; return true; });
+    }
 
     function openEditor(id) {
       _aiEditingPromptId = id || null;
@@ -369,10 +399,12 @@
         if (p) {
           if (promptNameInput) promptNameInput.value = p.name;
           if (promptBodyInput) promptBodyInput.value = p.system;
+          if (promptAssessInput) promptAssessInput.value = (Array.isArray(p.knownAssessments) ? p.knownAssessments : []).join(', ');
         }
       } else {
         if (promptNameInput) promptNameInput.value = '';
         if (promptBodyInput) promptBodyInput.value = '';
+        if (promptAssessInput) promptAssessInput.value = '';
       }
       if (promptEditor) promptEditor.style.display = '';
     }
@@ -383,12 +415,13 @@
       var name = (promptNameInput && promptNameInput.value.trim()) || '';
       var system = (promptBodyInput && promptBodyInput.value.trim()) || '';
       if (!name || !system) return;
+      var assessments = _parseAssessments(promptAssessInput ? promptAssessInput.value : '');
       var cfg = _aiGetSettings();
       if (_aiEditingPromptId) {
         var p = cfg.prompts.find(function(x) { return x.id === _aiEditingPromptId; });
-        if (p) { p.name = name; p.system = system; }
+        if (p) { p.name = name; p.system = system; p.knownAssessments = assessments; }
       } else {
-        cfg.prompts.push({ id: _aiUuid(), name: name, system: system, createdAt: new Date().toISOString(), knownAssessments: [], tagMap: {} });
+        cfg.prompts.push({ id: _aiUuid(), name: name, system: system, createdAt: new Date().toISOString(), knownAssessments: assessments, tagMap: {} });
       }
       _aiSaveSettings(cfg);
       _aiEditingPromptId = null;
@@ -1084,6 +1117,176 @@
       }
     }`);
     return data.getMentions;
+  }
+
+  // getMentions z pełnymi polami potrzebnymi do tagowania AI (treść/tytuł/kategoria)
+  async function getMentionsForTagging(projectId, dateFrom, dateTo, filters, page) {
+    const variables = {
+      projectId,
+      dateRange: { from: dateFrom, to: dateTo },
+      filters: filters || {},
+      page: page || 1,
+      order: 0,
+    };
+    const data = await gqlRetry('getMentions', variables, `query getMentions(
+      $projectId: Int!, $dateRange: DateRangeInput!,
+      $filters: MentionFilterInput, $page: Int, $order: Int
+    ) {
+      getMentions(projectId: $projectId, dateRange: $dateRange,
+                  filters: $filters, page: $page, order: $order) {
+        count
+        results {
+          id openUrl url createdDate title content pageCategory
+          host { name }
+          author { name }
+          tags { id title }
+        }
+      }
+    }`);
+    return data.getMentions;
+  }
+
+  // ───────────────────────────────────────────
+  // AI TAGGING ENGINE
+  // ───────────────────────────────────────────
+  // Odwzorowuje pipeline notebooka: pola wzmianki → numerowany batch → Claude API
+  // (prompt cache'owany) → ustrukturyzowana ocena → tag w panelu.
+
+  // Konfiguracja tagowania per projekt: { [pid]: { promptId, tagMap, conflictMode, source, onlyUntagged } }
+  function _aiTagGetProjectCfg(projectId) {
+    var all = lsGet(LS.AI_TAG_PROJECT_CFG, {});
+    var c = all[String(projectId)] || {};
+    return {
+      promptId:     c.promptId || null,
+      tagMap:       c.tagMap || {},          // { assessmentLabel: tagId }
+      conflictMode: c.conflictMode || 'skip',// 'skip' | 'overwrite'
+      source:       c.source || 'range',     // 'view' | 'range'
+      onlyUntagged: c.onlyUntagged !== false, // domyślnie true
+      deleteMap:    c.deleteMap || {},       // { assessmentLabel: true } — usuń wzmiankę z tą oceną
+    };
+  }
+  function _aiTagSetProjectCfg(projectId, cfg) {
+    var all = lsGet(LS.AI_TAG_PROJECT_CFG, {});
+    all[String(projectId)] = Object.assign(_aiTagGetProjectCfg(projectId), cfg || {});
+    lsSet(LS.AI_TAG_PROJECT_CFG, all);
+  }
+
+  // Normalizacja pola wzmianki: spłaszcza whitespace, trim, limit 2000 znaków (jak notebook)
+  function _aiTagNormalize(s) {
+    return String(s == null ? '' : s).replace(/\s+/g, ' ').trim().substring(0, 2000);
+  }
+
+  // Buduje numerowany prompt batcha — identyczny układ jak build_batch_prompt_multi w notebooku
+  function _aiTagBuildBatchPrompt(items) {
+    var parts = items.map(function(item, i) {
+      var fieldsStr = Object.keys(item).map(function(label) {
+        return '  ' + label + ': ' + _aiTagNormalize(item[label]);
+      }).join('\n');
+      return '[' + (i + 1) + ']\n' + fieldsStr;
+    });
+    return 'Classify each of the following ' + items.length +
+      ' mentions. Return exactly ' + items.length + ' results in the same order.\n\n' +
+      parts.join('\n\n');
+  }
+
+  // Mapuje wzmiankę Brand24 → pola promptu (kolejność i etykiety jak w notebooku)
+  function _aiTagMentionToItem(m) {
+    return {
+      Date:    (m.createdDate || '').substring(0, 10),
+      Source:  (m.host && m.host.name) || '',
+      Author:  (m.author && m.author.name) || '',
+      Content: m.content || m.title || '',
+    };
+  }
+
+  // Wysyła batch do Claude API z cache'owanym promptem; wymusza ustrukturyzowaną odpowiedź
+  // (enum kategorii oceny, kolejność = kolejność wzmianek). Resolve: { assessments:[], usage }.
+  function _aiTagAnalyzeBatch(items, systemPrompt, model, assessments) {
+    return new Promise(function(resolve, reject) {
+      var s = _aiGetSettings();
+      if (!s.apiKey) { reject(new Error('Brak klucza API')); return; }
+      var tool = {
+        name: 'submit_assessments',
+        description: 'Return the assessment label for each mention, in the same order as provided.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            mentions: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: { assessment: { type: 'string', enum: assessments } },
+                required: ['assessment'],
+              },
+            },
+          },
+          required: ['mentions'],
+        },
+      };
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url: 'https://api.anthropic.com/v1/messages',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': s.apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-beta': 'prompt-caching-2024-07-31',
+        },
+        data: JSON.stringify({
+          model: model,
+          max_tokens: 1024,
+          system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
+          tools: [tool],
+          tool_choice: { type: 'tool', name: 'submit_assessments' },
+          messages: [{ role: 'user', content: _aiTagBuildBatchPrompt(items) }],
+        }),
+        timeout: 60000,
+        onload: function(resp) {
+          try {
+            if (resp.status === 401) { reject(new Error('Błędny klucz API (401)')); return; }
+            if (resp.status === 429) { reject(new Error('Limit API (429)')); return; }
+            if (resp.status >= 500)  { reject(new Error('Błąd serwera API (' + resp.status + ')')); return; }
+            if (resp.status !== 200) { reject(new Error('Błąd API ' + resp.status)); return; }
+            var data = JSON.parse(resp.responseText);
+            var block = (data.content || []).find(function(b) {
+              return b.type === 'tool_use' && b.name === 'submit_assessments';
+            });
+            if (!block || !block.input || !Array.isArray(block.input.mentions)) {
+              reject(new Error('Brak ustrukturyzowanej odpowiedzi')); return;
+            }
+            resolve({
+              assessments: block.input.mentions.map(function(x) { return x && x.assessment; }),
+              usage: data.usage || null,
+            });
+          } catch(e) { reject(new Error('Parse error: ' + e.message)); }
+        },
+        onerror:   function() { reject(new Error('Brak połączenia z API')); },
+        ontimeout: function() { reject(new Error('Timeout API')); },
+      });
+    });
+  }
+
+  // Pobiera wzmianki do tagowania (paginacja z limitem bezpieczeństwa); zwraca { results, total, truncated }.
+  async function _aiTagFetchMentions(projectId, dateFrom, dateTo, filters, maxMentions) {
+    var cap = maxMentions || 3000;
+    var first = await getMentionsForTagging(projectId, dateFrom, dateTo, filters, 1);
+    if (!first) return { results: [], total: 0, truncated: false };
+    var total = first.count || 0;
+    var results = (first.results || []).slice();
+    var pageSize = (first.results || []).length || 60;
+    var totalPages = total > 0 ? Math.ceil(total / pageSize) : 1;
+    var capPages = Math.ceil(cap / pageSize);
+    var lastPage = Math.min(totalPages, capPages);
+    var pages = [];
+    for (var p = 2; p <= lastPage; p++) pages.push(p);
+    for (var i = 0; i < pages.length; i += 10) {
+      var batch = pages.slice(i, i + 10);
+      var resArr = await Promise.all(batch.map(function(pg) {
+        return getMentionsForTagging(projectId, dateFrom, dateTo, filters, pg);
+      }));
+      resArr.forEach(function(r) { if (r && r.results) results.push.apply(results, r.results); });
+    }
+    return { results: results.slice(0, cap), total: total, truncated: total > results.length };
   }
 
   // ───────────────────────────────────────────
@@ -4314,6 +4517,7 @@
       <div id="b24t-tabs">
         <button class="b24t-tab b24t-tab-active" data-tab="main">📄 Plik</button>
         <button class="b24t-tab" data-tab="quicktag">⚡ Quick Tag</button>
+        <button class="b24t-tab" data-tab="aitag" id="b24t-aitag-tab-btn" style="display:none;">🤖 AI Tag</button>
         <button class="b24t-tab" data-tab="delete">🗑 Quick Delete</button>
         <button class="b24t-tab" data-tab="history">📋 Historia</button>
         <!-- Annotator Tools uses floating panel, no tab here -->
@@ -4512,6 +4716,9 @@
 
       <!-- QUICK TAG TAB (injected by JS) -->
       <div id="b24t-quicktag-tab-placeholder"></div>
+
+      <!-- AI TAG TAB (injected by JS) -->
+      <div id="b24t-aitag-tab-placeholder"></div>
 
       <!-- HISTORY TAB (injected by JS) -->\n      <div id=\"b24t-history-tab-placeholder\"></div>\n\n      <!-- NEWS TAB (injected by JS) -->\n      <div id="b24t-news-tab-placeholder"></div>
 
@@ -12089,6 +12296,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.25.0",
+      "date": "2026-06-02",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "AI Tagowanie: nowa karta 🤖 AI Tag — pobiera wzmianki z panelu, ocenia promptem przez Claude i nadaje tagi na bieżąco, bez notebooka i CSV"},
+        {"type": "feat", "text": "AI Tagowanie: źródło z widoku lub zakresu dat, mapowanie ocena→tag per projekt, tryb konfliktu pomiń/nadpisz, usuwanie po ocenie i po tagu"},
+        {"type": "feat", "text": "Ustawienia ⚙ podzielone na karty: Ogólne, AI, Analityka"},
+        {"type": "feat", "text": "Biblioteka promptów przebudowana — większy panel, motyw dark/light, kafelki, pole kategorii oceny"}
+      ]
+    },
+    {
       "version": "0.24.37",
       "date": "2026-06-02",
       "label": "fix",
@@ -12179,16 +12398,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#6366f1",
       "changes": [
         {"type": "feat", "text": "Multi-projekt: panel pokrycia tagów — po wyborze tagu pokazuje dla każdego projektu czy tag istnieje (✓/✗); aktualizuje się na żywo przy zmianie mapowania"}
-      ]
-    },
-    {
-      "version": "0.24.28",
-      "date": "2026-05-15",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "_autoResolveUnknownProjects: HTML fetch /searches/add-new-mention/?sid={pid} — nazwa z tytułu + tagi z <select id=tag>; jeden request per projekt"},
-        {"type": "fix", "text": "cross-account projekty (redirect) pomijane z ostrzeżeniem zamiast błędu"}
       ]
     },
   ];
@@ -13010,7 +13219,7 @@ function showOnboarding(onComplete) {
       (_naLastPushStr ? 'Ostatni push: ' + _naLastPushStr + (_naPendCount ? ' · ' + _naPendCount + ' w kolejce' : '') :
       'PAT ustawiony — nie pushowano jeszcze.' + (_naPendCount ? ' · ' + _naPendCount + ' w kolejce' : ''));
     var analyticsHtml =
-      '<div style="padding:12px 20px 16px;border-top:1px solid var(--b24t-border-sub);">' +
+      '<div style="padding:12px 20px 16px;">' +
         '<div style="font-size:11px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Analityka</div>' +
         '<label style="display:flex;gap:10px;align-items:center;cursor:pointer;padding:4px 0;margin-bottom:8px;">' +
           '<input type="checkbox" id="b24t-na-enabled" ' + (_naS.enabled ? 'checked' : '') + ' style="accent-color:var(--b24t-primary);width:14px;height:14px;flex-shrink:0;cursor:pointer;">' +
@@ -13037,7 +13246,7 @@ function showOnboarding(onComplete) {
       '</div>';
 
     modal.innerHTML =
-      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:16px;width:400px;max-height:90vh;overflow-y:auto;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);">' +
+      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:16px;width:400px;max-height:90vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);">' +
         '<div style="padding:14px 0;background:var(--b24t-accent-grad);border-radius:16px 16px 0 0;display:flex;align-items:center;gap:10px;padding:14px 20px;">' +
           '<span style="font-size:18px;">⚙</span>' +
           '<div style="flex:1;">' +
@@ -13046,6 +13255,16 @@ function showOnboarding(onComplete) {
           '</div>' +
           '<button id="b24t-features-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:18px;line-height:1;padding:2px 8px;border-radius:5px;">✕</button>' +
         '</div>' +
+        // ── PASEK KART ────────────────────────────────────────────────────
+        '<div style="display:flex;background:var(--b24t-bg-elevated);border-bottom:1px solid var(--b24t-border);padding:0 4px;flex-shrink:0;">' +
+          '<button class="b24t-set-tab" data-pane="general" style="flex:1;background:none;border:none;border-bottom:2px solid var(--b24t-primary);color:var(--b24t-primary);font-size:11px;font-weight:600;padding:9px 4px;cursor:pointer;font-family:inherit;">⚙ Ogólne</button>' +
+          '<button class="b24t-set-tab" data-pane="ai" style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:var(--b24t-text-muted);font-size:11px;font-weight:500;padding:9px 4px;cursor:pointer;font-family:inherit;">🤖 AI</button>' +
+          '<button class="b24t-set-tab" data-pane="analytics" style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:var(--b24t-text-muted);font-size:11px;font-weight:500;padding:9px 4px;cursor:pointer;font-family:inherit;">📊 Analityka</button>' +
+        '</div>' +
+        // ── KONTENER SCROLLA ──────────────────────────────────────────────
+        '<div style="overflow-y:auto;flex:1;">' +
+        // ── PANEL: OGÓLNE ─────────────────────────────────────────────────
+        '<div class="b24t-set-pane" data-pane="general">' +
         themeRowHtml +
         '<div style="padding:4px 20px 0;">' + checkboxesHtml + '</div>' +
         '<div style="padding:12px 20px 4px;border-top:1px solid var(--b24t-border-sub);">' +
@@ -13062,11 +13281,14 @@ function showOnboarding(onComplete) {
             '<span id="b24t-pn-status" style="font-size:10px;color:var(--b24t-text-faint);"></span>' +
           '</div>' +
         '</div>' +
-        '<div style="padding:12px 20px 16px;border-top:1px solid var(--b24t-border-sub);">' +
+        '</div>' + // koniec panelu OGÓLNE
+        // ── PANEL: AI ─────────────────────────────────────────────────────
+        '<div class="b24t-set-pane" data-pane="ai" style="display:none;">' +
+        '<div style="padding:12px 20px 16px;">' +
           '<div style="font-size:11px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Ustawienia AI</div>' +
           '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">' +
             '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">Klucz API:</span>' +
-            '<input type="text" id="b24t-ai-api-key" autocomplete="off" spellcheck="false" placeholder="sk-ant-api03-..." style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:monospace;">' +
+            '<input type="password" id="b24t-ai-api-key" autocomplete="off" spellcheck="false" placeholder="sk-ant-api03-..." style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:monospace;">' +
             '<button id="b24t-ai-key-toggle" title="Pokaż/ukryj" style="padding:3px 7px;flex-shrink:0;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;cursor:pointer;font-size:13px;">👁</button>' +
           '</div>' +
           '<div style="display:flex;align-items:center;gap:6px;margin-top:-4px;margin-bottom:10px;">' +
@@ -13098,10 +13320,20 @@ function showOnboarding(onComplete) {
               '<option value="claude-sonnet-4-6">Sonnet 4.6 — mocniejszy</option>' +
             '</select>' +
           '</div>' +
+          '<label style="display:flex;gap:10px;align-items:center;cursor:pointer;padding:4px 0;margin-bottom:8px;">' +
+            '<input type="checkbox" id="b24t-ai-tagging-enabled" style="accent-color:var(--b24t-primary);width:14px;height:14px;flex-shrink:0;cursor:pointer;">' +
+            '<div>' +
+              '<div style="font-size:12px;font-weight:600;color:var(--b24t-text);">Tryb AI Tagowanie (karta w panelu)</div>' +
+              '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Pokazuje kartę 🤖 AI Tag — ocena i tagowanie wzmianek przez Claude</div>' +
+            '</div>' +
+          '</label>' +
           '<button id="b24t-ai-open-prompts" style="width:100%;box-sizing:border-box;padding:7px 12px;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:8px;cursor:pointer;font-family:inherit;font-size:11px;display:flex;align-items:center;justify-content:space-between;">📚 Biblioteka promptów<span style="font-size:10px;opacity:0.6;">→</span></button>' +
-        '</div>' +
-        analyticsHtml +
-        '<div style="padding:14px 20px;border-top:1px solid var(--b24t-border-sub);text-align:right;">' +
+        '</div>' + // koniec bloku Ustawienia AI
+        '</div>' + // koniec panelu AI
+        // ── PANEL: ANALITYKA ──────────────────────────────────────────────
+        '<div class="b24t-set-pane" data-pane="analytics" style="display:none;">' + analyticsHtml + '</div>' +
+        '</div>' + // koniec kontenera scrolla
+        '<div style="padding:14px 20px;border-top:1px solid var(--b24t-border);text-align:right;flex-shrink:0;">' +
           '<button id="b24t-features-save" style="background:var(--b24t-accent-grad);color:#fff;border:none;border-radius:8px;padding:9px 24px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px var(--b24t-primary-glow);transition:opacity 0.15s;">Zapisz</button>' +
         '</div>' +
       '</div>';
@@ -13113,6 +13345,22 @@ function showOnboarding(onComplete) {
     document.getElementById('b24t-features-close').addEventListener('click', close);
     modal.addEventListener('click', function(e) { if (e.target === modal) close(); });
 
+    // Przełączanie kart ustawień (Ogólne / AI / Analityka)
+    (function() {
+      var tabs  = modal.querySelectorAll('.b24t-set-tab');
+      var panes = modal.querySelectorAll('.b24t-set-pane');
+      function activate(name) {
+        tabs.forEach(function(t) {
+          var on = t.dataset.pane === name;
+          t.style.color = on ? 'var(--b24t-primary)' : 'var(--b24t-text-muted)';
+          t.style.borderBottom = '2px solid ' + (on ? 'var(--b24t-primary)' : 'transparent');
+          t.style.fontWeight = on ? '600' : '500';
+        });
+        panes.forEach(function(p) { p.style.display = p.dataset.pane === name ? '' : 'none'; });
+      }
+      tabs.forEach(function(t) { t.addEventListener('click', function() { activate(t.dataset.pane); }); });
+    })();
+
     // AI Settings wiring
     (function() {
       var s = _aiGetSettings();
@@ -13120,11 +13368,13 @@ function showOnboarding(onComplete) {
       var newsModelSelect = document.getElementById('b24t-ai-model-news');
       var taggingModelSelect = document.getElementById('b24t-ai-model-tagging');
       var newsEnabledCb = document.getElementById('b24t-ai-news-enabled');
+      var taggingEnabledCb = document.getElementById('b24t-ai-tagging-enabled');
 
       if (apiKeyInput) apiKeyInput.value = s.apiKey || '';
       if (newsModelSelect) newsModelSelect.value = (s.news && s.news.model) || 'claude-haiku-4-5-20251001';
       if (taggingModelSelect) taggingModelSelect.value = (s.tagging && s.tagging.model) || 'claude-haiku-4-5-20251001';
       if (newsEnabledCb) newsEnabledCb.checked = !!(s.news && s.news.enabled);
+      if (taggingEnabledCb) taggingEnabledCb.checked = !!(s.tagging && s.tagging.enabled);
 
       if (apiKeyInput) {
         apiKeyInput.addEventListener('change', function() {
@@ -13195,6 +13445,14 @@ function showOnboarding(onComplete) {
           var cfg = _aiGetSettings();
           if (!cfg.news) cfg.news = {};
           cfg.news.enabled = newsEnabledCb.checked; _aiSaveSettings(cfg);
+        });
+      }
+      if (taggingEnabledCb) {
+        taggingEnabledCb.addEventListener('change', function() {
+          var cfg = _aiGetSettings();
+          if (!cfg.tagging) cfg.tagging = {};
+          cfg.tagging.enabled = taggingEnabledCb.checked; _aiSaveSettings(cfg);
+          _aitSyncTabVisibility();
         });
       }
       var openPromptsBtn = document.getElementById('b24t-ai-open-prompts');
@@ -16377,6 +16635,384 @@ Tej operacji nie można cofnąć.`)) {
   }
 
   // ───────────────────────────────────────────
+  // AI TAGGING — KARTA
+  // ───────────────────────────────────────────
+
+  function _aitEsc(x) { return String(x == null ? '' : x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  // Pokazuje/ukrywa przycisk karty AI Tag zależnie od ustawienia tagging.enabled
+  function _aitSyncTabVisibility() {
+    var btn = document.getElementById('b24t-aitag-tab-btn');
+    if (!btn) return;
+    var s = _aiGetSettings();
+    btn.style.display = (s.tagging && s.tagging.enabled) ? '' : 'none';
+  }
+
+  function buildAiTagTab() {
+    const div = document.createElement('div');
+    div.id = 'b24t-aitag-tab';
+    div.style.display = 'none';
+    div.innerHTML = `
+      <div class="b24t-section">
+        <div class="b24t-section-label">AI Tagowanie</div>
+        <div style="font-size:12px;color:var(--b24t-text-muted);margin-bottom:10px;line-height:1.6;">
+          Pobiera wzmianki z panelu, ocenia je promptem przez Claude i nadaje tagi — bez notebooka i CSV.
+        </div>
+
+        <!-- Źródło -->
+        <div style="font-size:12px;font-weight:700;color:var(--b24t-primary);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:5px;">Źródło wzmianek</div>
+        <div class="b24t-radio-group" style="margin-bottom:8px;">
+          <label class="b24t-radio" style="font-size:13px;">
+            <input type="radio" name="b24t-ait-source" value="view">
+            <span style="font-size:13px;color:var(--b24t-text-muted);">Z aktualnego widoku Brand24 (filtry + zakres)</span>
+          </label>
+          <label class="b24t-radio" style="font-size:13px;">
+            <input type="radio" name="b24t-ait-source" value="range" checked>
+            <span style="font-size:13px;color:var(--b24t-text-muted);">Zakres dat</span>
+          </label>
+        </div>
+
+        <!-- Opcje zakresu -->
+        <div id="b24t-ait-range-wrap" style="margin-bottom:10px;">
+          <div style="display:flex;gap:8px;margin-bottom:8px;">
+            <input type="date" id="b24t-ait-date-from" class="b24t-select" style="flex:1;">
+            <input type="date" id="b24t-ait-date-to" class="b24t-select" style="flex:1;">
+          </div>
+          <div class="b24t-radio-group">
+            <label class="b24t-radio" style="font-size:13px;">
+              <input type="radio" name="b24t-ait-untagged" value="untagged" checked>
+              <span style="font-size:13px;color:var(--b24t-text-muted);">Tylko nieotagowane</span>
+            </label>
+            <label class="b24t-radio" style="font-size:13px;">
+              <input type="radio" name="b24t-ait-untagged" value="all">
+              <span style="font-size:13px;color:var(--b24t-text-muted);">Wszystkie</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Prompt -->
+        <div style="font-size:12px;font-weight:700;color:var(--b24t-primary);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:5px;">Prompt</div>
+        <select class="b24t-select" id="b24t-ait-prompt" style="width:100%;margin-bottom:10px;">
+          <option value="">— wybierz prompt —</option>
+        </select>
+
+        <!-- Mapowanie ocena → tag -->
+        <div id="b24t-ait-map" style="margin-bottom:10px;"></div>
+
+        <!-- Tryb konfliktu -->
+        <div style="font-size:12px;font-weight:700;color:var(--b24t-primary);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:5px;">Gdy wzmianka ma już ten tag</div>
+        <div class="b24t-radio-group" style="margin-bottom:10px;">
+          <label class="b24t-radio" style="font-size:13px;">
+            <input type="radio" name="b24t-ait-conflict" value="skip" checked>
+            <span style="font-size:13px;color:var(--b24t-text-muted);">Pomiń</span>
+          </label>
+          <label class="b24t-radio" style="font-size:13px;">
+            <input type="radio" name="b24t-ait-conflict" value="overwrite">
+            <span style="font-size:13px;color:var(--b24t-text-muted);">Nadaj mimo to</span>
+          </label>
+        </div>
+
+        <!-- Pasek postępu -->
+        <div class="b24t-progress-bar-track" style="margin-bottom:6px;">
+          <div id="b24t-ait-progress" style="height:100%;background:var(--b24t-accent-grad);border-radius:99px;width:0%;"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <div id="b24t-ait-status" style="font-size:12px;color:var(--b24t-text-muted);min-height:16px;flex:1;"></div>
+          <div id="b24t-ait-counter" style="font-size:13px;color:var(--b24t-text-muted);margin-left:8px;font-weight:500;"></div>
+        </div>
+
+        <button class="b24t-btn-primary" id="b24t-ait-run" style="width:100%;">🤖 Taguj przez AI</button>
+
+        <!-- Usuwanie po tagu (osobne) -->
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--b24t-border-sub);">
+          <div style="font-size:11px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Usuń wzmianki po tagu</div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <select class="b24t-select" id="b24t-ait-deltag" style="flex:1;"><option value="">— wybierz tag —</option></select>
+            <button id="b24t-ait-deltag-btn" class="b24t-btn-danger" style="font-size:12px;padding:6px 12px;white-space:nowrap;">Usuń</button>
+          </div>
+          <div id="b24t-ait-deltag-status" style="font-size:11px;color:var(--b24t-text-faint);margin-top:6px;"></div>
+        </div>
+      </div>
+    `;
+    return div;
+  }
+
+  // Renderuje wiersze mapowania ocena → tag dla wybranego promptu
+  function _aitRenderMap(panel) {
+    const container = panel.querySelector('#b24t-ait-map');
+    const sel = panel.querySelector('#b24t-ait-prompt');
+    if (!container || !sel) return;
+    const s = _aiGetSettings();
+    const prompt = (s.prompts || []).find(p => p.id === sel.value);
+    if (!prompt) { container.innerHTML = ''; return; }
+    const cats = Array.isArray(prompt.knownAssessments) ? prompt.knownAssessments : [];
+    if (!cats.length) {
+      container.innerHTML = '<div style="font-size:11px;color:#f87171;padding:6px 0;line-height:1.5;">Ten prompt nie ma zdefiniowanych kategorii oceny. Dodaj je w bibliotece promptów (Ustawienia → AI → 📚 → ✎).</div>';
+      return;
+    }
+    const cfg = state.projectId ? _aiTagGetProjectCfg(state.projectId) : { tagMap: {}, deleteMap: {} };
+    const tagOpts = Object.entries(state.tags || {}).map(e => ({ name: e[0], id: e[1] }));
+    container.innerHTML = '<div style="font-size:12px;font-weight:700;color:var(--b24t-primary);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px;">Mapowanie ocena → tag</div>' +
+      cats.map(label => {
+        const cur = (cfg.deleteMap && cfg.deleteMap[label]) ? '__delete__'
+                  : (cfg.tagMap && cfg.tagMap[label] != null ? String(cfg.tagMap[label]) : '');
+        const opts = '<option value="">— pomiń —</option>' +
+          tagOpts.map(t => '<option value="' + t.id + '"' + (String(t.id) === cur ? ' selected' : '') + '>' + _aitEsc(t.name) + '</option>').join('') +
+          '<option value="__delete__"' + (cur === '__delete__' ? ' selected' : '') + '>🗑 Usuń wzmiankę</option>';
+        return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
+          '<span style="flex:0 0 42%;font-size:12px;color:var(--b24t-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + _aitEsc(label) + '">' + _aitEsc(label) + '</span>' +
+          '<select class="b24t-select b24t-ait-mapsel" data-label="' + _aitEsc(label) + '" style="flex:1;">' + opts + '</select>' +
+        '</div>';
+      }).join('');
+  }
+
+  // Zbiera i zapisuje konfigurację z UI do LS (per projekt)
+  function _aitSaveCfgFromUI(panel) {
+    if (!state.projectId) return;
+    const promptSel = panel.querySelector('#b24t-ait-prompt');
+    const tagMap = {}, deleteMap = {};
+    panel.querySelectorAll('.b24t-ait-mapsel').forEach(sel => {
+      const v = sel.value;
+      if (v === '__delete__') deleteMap[sel.dataset.label] = true;
+      else if (v) tagMap[sel.dataset.label] = parseInt(v);
+    });
+    _aiTagSetProjectCfg(state.projectId, {
+      promptId:     (promptSel && promptSel.value) || null,
+      tagMap, deleteMap,
+      conflictMode: (panel.querySelector('input[name="b24t-ait-conflict"]:checked') || {}).value || 'skip',
+      source:       (panel.querySelector('input[name="b24t-ait-source"]:checked') || {}).value || 'range',
+      onlyUntagged: ((panel.querySelector('input[name="b24t-ait-untagged"]:checked') || {}).value || 'untagged') === 'untagged',
+    });
+  }
+
+  function wireAiTagEvents(panel) {
+    const tab = panel.querySelector('#b24t-aitag-tab');
+    if (!tab) return;
+
+    // Wypełnij dropdown promptów
+    const fillPrompts = () => {
+      const sel = panel.querySelector('#b24t-ait-prompt');
+      if (!sel) return;
+      const cur = sel.value;
+      const s = _aiGetSettings();
+      sel.innerHTML = '<option value="">— wybierz prompt —</option>' +
+        (s.prompts || []).map(p => '<option value="' + _aitEsc(p.id) + '">' + _aitEsc(p.name) + '</option>').join('');
+      if (cur) sel.value = cur;
+    };
+
+    // Wypełnij dropdowny tagów (mapowanie renderuje własne; tu tylko delete-by-tag)
+    const fillDelTag = () => {
+      const sel = panel.querySelector('#b24t-ait-deltag');
+      if (!sel) return;
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">— wybierz tag —</option>' +
+        Object.entries(state.tags || {}).map(e => '<option value="' + e[1] + '">' + _aitEsc(e[0]) + '</option>').join('');
+      if (cur) sel.value = cur;
+    };
+
+    // Przywróć zapisaną konfigurację per projekt
+    const restoreCfg = () => {
+      if (!state.projectId) return;
+      const cfg = _aiTagGetProjectCfg(state.projectId);
+      const promptSel = panel.querySelector('#b24t-ait-prompt');
+      if (promptSel && cfg.promptId) promptSel.value = cfg.promptId;
+      const srcRadio = panel.querySelector('input[name="b24t-ait-source"][value="' + cfg.source + '"]');
+      if (srcRadio) srcRadio.checked = true;
+      const untRadio = panel.querySelector('input[name="b24t-ait-untagged"][value="' + (cfg.onlyUntagged ? 'untagged' : 'all') + '"]');
+      if (untRadio) untRadio.checked = true;
+      const confRadio = panel.querySelector('input[name="b24t-ait-conflict"][value="' + cfg.conflictMode + '"]');
+      if (confRadio) confRadio.checked = true;
+      syncRangeWrap();
+      _aitRenderMap(panel);
+    };
+
+    // Pokaż/ukryj opcje zakresu zależnie od źródła
+    const syncRangeWrap = () => {
+      const wrap = panel.querySelector('#b24t-ait-range-wrap');
+      const isRange = (panel.querySelector('input[name="b24t-ait-source"]:checked') || {}).value !== 'view';
+      if (wrap) wrap.style.display = isRange ? '' : 'none';
+    };
+
+    // Domyślny zakres dat
+    const df = panel.querySelector('#b24t-ait-date-from');
+    const dt = panel.querySelector('#b24t-ait-date-to');
+    try {
+      const d = getAnnotatorDates();
+      if (df && !df.value) df.value = d.dateFrom;
+      if (dt && !dt.value) dt.value = d.dateTo;
+    } catch(e) {}
+
+    panel.querySelector('#b24t-ait-prompt')?.addEventListener('change', () => { _aitRenderMap(panel); _aitSaveCfgFromUI(panel); });
+    panel.querySelectorAll('input[name="b24t-ait-source"]').forEach(r => r.addEventListener('change', () => { syncRangeWrap(); _aitSaveCfgFromUI(panel); }));
+    panel.querySelectorAll('input[name="b24t-ait-untagged"]').forEach(r => r.addEventListener('change', () => _aitSaveCfgFromUI(panel)));
+    panel.querySelectorAll('input[name="b24t-ait-conflict"]').forEach(r => r.addEventListener('change', () => _aitSaveCfgFromUI(panel)));
+    panel.querySelector('#b24t-ait-map')?.addEventListener('change', e => { if (e.target.classList.contains('b24t-ait-mapsel')) _aitSaveCfgFromUI(panel); });
+
+    // Run / Stop
+    panel.querySelector('#b24t-ait-run')?.addEventListener('click', () => {
+      if (state._aitRunning) { state._aitStop = true; return; }
+      _aiTagRun(panel);
+    });
+
+    // Usuń po tagu
+    panel.querySelector('#b24t-ait-deltag-btn')?.addEventListener('click', async () => {
+      const sel = panel.querySelector('#b24t-ait-deltag');
+      const statusEl = panel.querySelector('#b24t-ait-deltag-status');
+      const tagId = sel && parseInt(sel.value);
+      if (!tagId) { if (statusEl) { statusEl.textContent = 'Wybierz tag'; statusEl.style.color = '#f87171'; } return; }
+      const tagName = sel.options[sel.selectedIndex].textContent;
+      // Zakres dat: z pól karty, fallback na domyślny zakres annotatora
+      const dfEl = panel.querySelector('#b24t-ait-date-from');
+      const dtEl = panel.querySelector('#b24t-ait-date-to');
+      let delFrom = dfEl && dfEl.value, delTo = dtEl && dtEl.value;
+      if (!delFrom || !delTo) { const d = getAnnotatorDates(); delFrom = d.dateFrom; delTo = d.dateTo; }
+      if (!confirm('Usunąć wszystkie wzmianki z tagiem „' + tagName + '" w zakresie ' + delFrom + ' → ' + delTo + '? Tej operacji nie można cofnąć.')) return;
+      try {
+        if (statusEl) { statusEl.textContent = '⟳ Usuwam...'; statusEl.style.color = '#a78bfa'; }
+        await runDeleteByTag(tagId, tagName, delFrom, delTo, function(done, total) {
+          if (statusEl) statusEl.textContent = '⟳ Usuwam ' + done + '/' + total + '...';
+        }, state.projectId);
+        if (statusEl) { statusEl.textContent = '✓ Gotowe'; statusEl.style.color = '#22c55e'; }
+      } catch(e) { if (statusEl) { statusEl.textContent = '✗ ' + e.message; statusEl.style.color = '#f87171'; } }
+    });
+
+    // Odśwież gdy karta staje się widoczna
+    const observer = new MutationObserver(() => {
+      if (tab.style.display !== 'none') { fillPrompts(); fillDelTag(); restoreCfg(); }
+    });
+    observer.observe(tab, { attributes: true, attributeFilter: ['style'] });
+
+    fillPrompts(); fillDelTag(); restoreCfg();
+  }
+
+  // Główna pętla tagowania AI
+  async function _aiTagRun(panel) {
+    if (state._aitRunning) return;
+    const statusEl  = panel.querySelector('#b24t-ait-status');
+    const counterEl = panel.querySelector('#b24t-ait-counter');
+    const barEl     = panel.querySelector('#b24t-ait-progress');
+    const runBtn    = panel.querySelector('#b24t-ait-run');
+    const setStatus = (msg, color) => { if (statusEl) { statusEl.textContent = msg; if (color) statusEl.style.color = color; } };
+    const setBar    = pct => { if (barEl) barEl.style.width = Math.max(0, Math.min(100, pct)) + '%'; };
+
+    const s = _aiGetSettings();
+    if (!s.apiKey)        { setStatus('✗ Brak klucza API (Ustawienia → AI)', '#f87171'); return; }
+    if (!state.projectId) { setStatus('✗ Brak wykrytego projektu', '#f87171'); return; }
+    const promptSel = panel.querySelector('#b24t-ait-prompt');
+    const prompt = (s.prompts || []).find(p => p.id === (promptSel && promptSel.value));
+    if (!prompt) { setStatus('✗ Wybierz prompt', '#f87171'); return; }
+    const cats = Array.isArray(prompt.knownAssessments) ? prompt.knownAssessments : [];
+    if (!cats.length) { setStatus('✗ Prompt nie ma kategorii oceny', '#f87171'); return; }
+
+    _aitSaveCfgFromUI(panel);
+    const cfg = _aiTagGetProjectCfg(state.projectId);
+    const tagMap = cfg.tagMap, deleteMap = cfg.deleteMap;
+    if (!Object.keys(tagMap).length && !Object.keys(deleteMap).length) {
+      setStatus('✗ Zmapuj przynajmniej jedną ocenę na tag', '#f87171'); return;
+    }
+    const conflictMode = cfg.conflictMode;
+    const source = cfg.source;
+
+    // Okno czasu + filtry
+    let dateFrom, dateTo, filters, projectId = state.projectId;
+    if (source === 'view') {
+      const view = getCurrentViewFilters();
+      if (!view.dateFrom || !view.dateTo) { setStatus('✗ Brak widoku — otwórz wzmianki w Brand24', '#f87171'); return; }
+      dateFrom = view.dateFrom; dateTo = view.dateTo; filters = view.filters; projectId = view.projectId || state.projectId;
+    } else {
+      const df = panel.querySelector('#b24t-ait-date-from');
+      const dt = panel.querySelector('#b24t-ait-date-to');
+      dateFrom = df && df.value; dateTo = dt && dt.value;
+      if (!dateFrom || !dateTo) { setStatus('✗ Ustaw zakres dat', '#f87171'); return; }
+      filters = { va: 1, rt: [], se: [], vi: null, gr: [], sq: '', do: '', au: '', lem: false, ctr: [], nctr: false, is: [0, 10], tp: null, lang: [], nlang: false };
+    }
+
+    state._aitRunning = true; state._aitStop = false;
+    if (runBtn) { runBtn.textContent = '⏹ Zatrzymaj'; }
+    setStatus('⟳ Pobieram wzmianki...', '#a78bfa'); setBar(0);
+    addLog('🤖 AI Tagowanie — start (projekt ' + _pnResolve(projectId) + ', ' + dateFrom + '→' + dateTo + ', źródło: ' + source + ')', 'info');
+
+    try {
+      const fetched = await _aiTagFetchMentions(projectId, dateFrom, dateTo, filters);
+      let mentions = fetched.results || [];
+      if (fetched.truncated) addLog('⚠ AI Tagowanie — limit ' + mentions.length + ' z ' + fetched.total + ' wzmianek (reszta pominięta)', 'warn');
+      if (source !== 'view' && cfg.onlyUntagged) mentions = mentions.filter(m => !(m.tags && m.tags.length));
+      if (!mentions.length) { setStatus('Brak wzmianek do otagowania', '#f59e0b'); return; }
+
+      const batchSize = 10, total = mentions.length, model = (s.tagging && s.tagging.model) || 'claude-haiku-4-5-20251001';
+      let done = 0, applied = 0, deleted = 0, skipped = 0, unmapped = 0, errors = 0;
+      let usageIn = 0, usageOut = 0, cacheRead = 0;
+      const tagBuckets = {}, deleteIds = [];
+
+      for (let bi = 0; bi < mentions.length; bi += batchSize) {
+        if (state._aitStop) { addLog('⏹ AI Tagowanie — zatrzymane przez użytkownika', 'warn'); break; }
+        const batch = mentions.slice(bi, bi + batchSize);
+        let res;
+        try {
+          res = await _aiTagAnalyzeBatch(batch.map(_aiTagMentionToItem), prompt.system, model, cats);
+        } catch(e) {
+          errors += batch.length;
+          addLog('✕ AI batch ' + (Math.floor(bi / batchSize) + 1) + ' błąd: ' + e.message, 'error');
+          if (/401/.test(e.message)) { setStatus('✗ ' + e.message, '#f87171'); break; }
+          if (/429/.test(e.message)) { setStatus('✗ Limit API (429) — przerwano. Spróbuj później.', '#f87171'); addLog('⏹ AI Tagowanie — przerwano na limicie API (429)', 'warn'); break; }
+          done += batch.length; setBar(done / total * 100); continue;
+        }
+        if (res.usage) { usageIn += res.usage.input_tokens || 0; usageOut += res.usage.output_tokens || 0; cacheRead += res.usage.cache_read_input_tokens || 0; }
+        const assess = res.assessments || [];
+        batch.forEach((m, idx) => {
+          const label = assess[idx];
+          if (!label) { unmapped++; return; }
+          if (deleteMap[label]) { deleteIds.push(m.id); return; }
+          const tagId = tagMap[label];
+          if (tagId == null) { unmapped++; return; }
+          const hasTag = (m.tags || []).some(t => parseInt(t.id) === tagId);
+          if (hasTag && conflictMode === 'skip') { skipped++; return; }
+          (tagBuckets[tagId] = tagBuckets[tagId] || []).push(m.id);
+        });
+        done += batch.length; setBar(done / total * 100);
+        setStatus('⟳ Oceniono ' + done + '/' + total + '...', '#a78bfa');
+        if (counterEl) counterEl.textContent = done + '/' + total;
+      }
+
+      // Nałóż tagi
+      setStatus('⟳ Nakładam tagi...', '#a78bfa');
+      for (const tid in tagBuckets) {
+        const ids = tagBuckets[tid];
+        for (let i = 0; i < ids.length; i += MAX_BATCH_SIZE) {
+          const chunk = ids.slice(i, i + MAX_BATCH_SIZE);
+          try { await bulkTagMentions(chunk, parseInt(tid)); applied += chunk.length; }
+          catch(e) { errors += chunk.length; addLog('✕ bulkTag (tagId ' + tid + ') błąd: ' + e.message, 'error'); }
+          await sleep(50);
+        }
+      }
+      // Usuń oznaczone
+      if (deleteIds.length) {
+        setStatus('⟳ Usuwam ' + deleteIds.length + ' wzmianek...', '#a78bfa');
+        for (let di = 0; di < deleteIds.length; di += DEL_BATCH_DEFAULT) {
+          const dchunk = deleteIds.slice(di, di + DEL_BATCH_DEFAULT);
+          const r = await Promise.allSettled(dchunk.map(id => deleteMention(id)));
+          deleted += r.filter(x => x.status === 'fulfilled').length;
+          await sleep(50);
+        }
+      }
+
+      const summary = '✓ Otagowano ' + applied +
+        (deleted ? ' · usunięto ' + deleted : '') +
+        (skipped ? ' · pominięto ' + skipped : '') +
+        (unmapped ? ' · bez mapowania ' + unmapped : '') +
+        (errors ? ' · błędy ' + errors : '');
+      setStatus(summary, errors ? '#f59e0b' : '#22c55e');
+      addLog('🤖 AI Tagowanie — koniec. ' + summary + ' | tokeny in=' + usageIn + ' out=' + usageOut + ' cache_read=' + cacheRead, 'success');
+    } catch(e) {
+      setStatus('✗ Błąd: ' + (e && e.message || e), '#f87171');
+      addLog('✕ AI Tagowanie błąd: ' + (e && e.message || e), 'error');
+    } finally {
+      state._aitRunning = false;
+      if (runBtn) { runBtn.textContent = '🤖 Taguj przez AI'; }
+    }
+  }
+
+  // ───────────────────────────────────────────
   // NETWORK MONITOR
   // ───────────────────────────────────────────
 
@@ -17080,6 +17716,11 @@ Tej operacji nie można cofnąć.`)) {
     const placeholder = panel.querySelector('#b24t-quicktag-tab-placeholder');
     if (placeholder) placeholder.replaceWith(qtTab);
 
+    // Inject AI Tag tab
+    const aitTab = buildAiTagTab();
+    const aitPlaceholder = panel.querySelector('#b24t-aitag-tab-placeholder');
+    if (aitPlaceholder) aitPlaceholder.replaceWith(aitTab);
+
     document.body.appendChild(panel);
 
     // ── MAIN PANEL SIDE TAB ──
@@ -17145,12 +17786,15 @@ Tej operacji nie można cofnąć.`)) {
     wireEvents(panel);
     wireDeleteEvents(panel);
     wireQuickTagEvents(panel);
+    wireAiTagEvents(panel);
+    _aitSyncTabVisibility();
     wireHistoryTab();
 
     // Tab switching — DOM refs cached once after panel is in DOM
     const tabEls = {
       main:     document.getElementById('b24t-main-tab'),
       quicktag: document.getElementById('b24t-quicktag-tab'),
+      aitag:    document.getElementById('b24t-aitag-tab'),
       delete:   document.getElementById('b24t-delete-tab'),
       history:  document.getElementById('b24t-history-tab'),
       actions:  document.getElementById('b24t-actions'),
@@ -17163,6 +17807,7 @@ Tej operacji nie można cofnąć.`)) {
         const tab = btn.dataset.tab;
         if (tabEls.main)     tabEls.main.style.display     = tab === 'main'     ? 'block' : 'none';
         if (tabEls.quicktag) tabEls.quicktag.style.display = tab === 'quicktag' ? 'block' : 'none';
+        if (tabEls.aitag)    tabEls.aitag.style.display    = tab === 'aitag'    ? 'block' : 'none';
         if (tabEls.delete)   tabEls.delete.style.display   = tab === 'delete'   ? 'block' : 'none';
         if (tabEls.history)  tabEls.history.style.display  = tab === 'history'  ? 'block' : 'none';
         if (tabEls.actions)  tabEls.actions.style.display  = tab === 'main'     ? 'flex'  : 'none';

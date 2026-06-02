@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.24.36",
+    "date": "2026-06-02",
+    "label": "feat",
+    "changes": [
+      "feat: News — popup domeny przy ✕ (usuń tylko ten URL lub wszystkie z domeny)",
+      "feat: News — bulk bar: przyciski 'Usuń błędy HTTP' (404/429/4xx) i 'Stare daty (przed poprzednim miesiącem)'",
+      "fix: News — URLe dodane wcześniej (session URLs) oznaczane jako inproject przy wczytaniu listy; ominięte w skanowaniu; lepszy komunikat przy submicie"
+    ]
+  },
+  {
     "version": "0.24.35",
     "date": "2026-05-27",
     "label": "fix",

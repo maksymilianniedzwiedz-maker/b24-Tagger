@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.35
+// @version      0.24.36
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.35';
+  const VERSION = '0.24.36';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -10561,6 +10561,17 @@ function showOnboarding(onComplete) {
       renderUrlList();
     }
 
+    function _newsIsOldArticle(articleDate) {
+      if (!articleDate) return false;
+      var now = new Date();
+      var d = new Date(articleDate + 'T12:00:00');
+      var prevY = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+      var prevM = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
+      if (d.getFullYear() < prevY) return true;
+      if (d.getFullYear() === prevY && d.getMonth() < prevM) return true;
+      return false;
+    }
+
     function _newsUpdateBulkBar() {
       var bar = document.getElementById('b24t-news-bulk-bar');
       if (!bar) return;
@@ -10590,6 +10601,17 @@ function showOnboarding(onComplete) {
         });
         bar.appendChild(bblk);
       }
+      var httpErrCount = newsState.urls.filter(function(u) { return u.status === 'blocked' && u.blockReason === 'http'; }).length;
+      if (httpErrCount > 0) {
+        var bhttp = document.createElement('button');
+        bhttp.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid rgba(239,68,68,0.35);background:rgba(239,68,68,0.08);color:#f87171;cursor:pointer;white-space:nowrap;';
+        bhttp.textContent = '✕ Usuń błędy HTTP (' + httpErrCount + ')';
+        bhttp.title = 'Usuwa strony które zwróciły błąd HTTP (404, 429, 403 itp.)';
+        bhttp.addEventListener('click', function() {
+          _newsRemoveByStatus(function(u) { return u.status === 'blocked' && u.blockReason === 'http'; });
+        });
+        bar.appendChild(bhttp);
+      }
       if (handledCount > 0) {
         var b2 = document.createElement('button');
         b2.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid ' + t.borderSub + ';background:transparent;color:' + t.textMuted + ';cursor:pointer;white-space:nowrap;';
@@ -10609,6 +10631,21 @@ function showOnboarding(onComplete) {
           _newsRemoveByStatus(function(u) { return u.status === 'inproject'; });
         });
         bar.appendChild(bip);
+      }
+      var _mnNames = ['sty','lut','mar','kwi','maj','cze','lip','sie','wrz','paź','lis','gru'];
+      var _nowBulk = new Date();
+      var _prevMBulk = _nowBulk.getMonth() === 0 ? 11 : _nowBulk.getMonth() - 1;
+      var _prevYBulk = _nowBulk.getMonth() === 0 ? _nowBulk.getFullYear() - 1 : _nowBulk.getFullYear();
+      var oldDateCount = newsState.urls.filter(function(u) { return _newsIsOldArticle(u.articleDate); }).length;
+      if (oldDateCount > 0) {
+        var bold = document.createElement('button');
+        bold.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid rgba(245,158,11,0.4);background:rgba(245,158,11,0.08);color:#f59e0b;cursor:pointer;white-space:nowrap;';
+        bold.textContent = '✕ Stare daty (przed ' + _mnNames[_prevMBulk] + ' ' + _prevYBulk + ') (' + oldDateCount + ')';
+        bold.title = 'Usuwa artykuły starsze niż poprzedni miesiąc — bieżący i poprzedni miesiąc są zachowywane';
+        bold.addEventListener('click', function() {
+          _newsRemoveByStatus(function(u) { return _newsIsOldArticle(u.articleDate); });
+        });
+        bar.appendChild(bold);
       }
       var bcheck = document.createElement('button');
       bcheck.id = 'b24t-news-recheck-btn';
@@ -10983,14 +11020,59 @@ function showOnboarding(onComplete) {
         if (delBtn) {
           delBtn.addEventListener('click', function(e) {
             e.stopPropagation();
-            var wasActive = newsState.activeIdx === idx;
-            newsState.urls.splice(idx, 1);
-            if (wasActive) {
-              newsState.activeIdx = -1;
-            } else if (newsState.activeIdx > idx) {
-              newsState.activeIdx--;
+            var _existing = document.getElementById('b24t-news-domain-popup');
+            if (_existing) { _existing.remove(); return; }
+            var _entry = newsState.urls[idx];
+            if (!_entry) return;
+            var _dom = '';
+            try { _dom = new URL(_entry.url).hostname.replace(/^www\./, ''); } catch(_ex) {}
+            var _domCount = 0;
+            if (_dom) newsState.urls.forEach(function(u) {
+              try { if (new URL(u.url).hostname.replace(/^www\./, '') === _dom) _domCount++; } catch(_ex) {}
+            });
+            var popup = document.createElement('div');
+            popup.id = 'b24t-news-domain-popup';
+            popup.style.cssText = 'position:fixed;z-index:99999;background:#1e1e2e;border:1px solid rgba(255,255,255,0.14);border-radius:9px;padding:10px 12px;box-shadow:0 4px 20px rgba(0,0,0,0.5);display:flex;flex-direction:column;gap:6px;min-width:190px;';
+            popup.style.left = Math.min(e.clientX, window.innerWidth - 210) + 'px';
+            popup.style.top = (e.clientY + 8) + 'px';
+            var _pLabel = document.createElement('div');
+            _pLabel.style.cssText = 'font-size:10px;color:#94a3b8;padding-bottom:5px;border-bottom:1px solid rgba(255,255,255,0.08);';
+            _pLabel.textContent = 'Usuń z listy:';
+            popup.appendChild(_pLabel);
+            var _btn1 = document.createElement('button');
+            _btn1.style.cssText = 'font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.06);color:#e2e8f0;cursor:pointer;text-align:left;';
+            _btn1.textContent = 'Tylko ten URL';
+            _btn1.addEventListener('click', function(ev) {
+              ev.stopPropagation();
+              popup.remove();
+              var wasActive = newsState.activeIdx === idx;
+              newsState.urls.splice(idx, 1);
+              if (wasActive) { newsState.activeIdx = -1; }
+              else if (newsState.activeIdx > idx) { newsState.activeIdx--; }
+              renderUrlList();
+            });
+            popup.appendChild(_btn1);
+            if (_dom && _domCount > 1) {
+              var _btn2 = document.createElement('button');
+              _btn2.style.cssText = 'font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.08);color:#f87171;cursor:pointer;text-align:left;';
+              _btn2.textContent = 'Wszystkie z ' + _dom + ' (' + _domCount + ')';
+              _btn2.addEventListener('click', function(ev) {
+                ev.stopPropagation();
+                popup.remove();
+                _newsRemoveByStatus(function(u) {
+                  try { return new URL(u.url).hostname.replace(/^www\./, '') === _dom; } catch(_ex) { return false; }
+                });
+              });
+              popup.appendChild(_btn2);
             }
-            renderUrlList();
+            document.body.appendChild(popup);
+            function _closePopup(ev) {
+              if (!popup.contains(ev.target)) {
+                popup.remove();
+                document.removeEventListener('click', _closePopup, true);
+              }
+            }
+            setTimeout(function() { document.addEventListener('click', _closePopup, true); }, 0);
           });
         }
       });
@@ -11396,6 +11478,8 @@ function showOnboarding(onComplete) {
             matchedChips: urlChips,
           };
         });
+        var _suSimple = _newsGetSessionUrls();
+        newsState.urls.forEach(function(e) { if (_suSimple[e.url]) { e.status = 'inproject'; e.scanStatus = 'inproject'; } });
 
         renderChips();
         renderUrlList();
@@ -11412,12 +11496,14 @@ function showOnboarding(onComplete) {
       newsState.urls = deduped.map(function(u) {
         return { url: u, status: 'scanning', opened: false, score: 0, snippet: '', matchedChips: [] };
       });
+      var _suScan = _newsGetSessionUrls();
+      newsState.urls.forEach(function(e) { if (_suScan[e.url]) { e.status = 'inproject'; e.scanStatus = 'inproject'; } });
 
       renderChips();
       renderUrlList();
       if (pasteArea) pasteArea.value = '';
 
-      var toScan = newsState.urls.slice(); // wszystkie do skanowania
+      var toScan = newsState.urls.filter(function(e) { return e.status === 'scanning'; });
 
       // Skanowanie treści — zablokuj przycisk
       newsState.scanning      = true;
@@ -11699,7 +11785,15 @@ function showOnboarding(onComplete) {
         if (!fTitle.trim())   { showErr('⚠ Tytuł jest wymagany.'); return; }
         if (!fContent.trim()) { showErr('⚠ Treść jest wymagana.'); return; }
         if (!/^\d{4}-\d{2}-\d{2}$/.test(fDate)) { showErr('⚠ Nieprawidłowy format daty — wymagany: YYYY-MM-DD'); return; }
-        if (_newsGetSessionUrls()[fUrl]) { showErr('⚠ Ten URL był już dodany w tej sesji.'); return; }
+        if (_newsGetSessionUrls()[fUrl]) {
+          var _ipEntry = newsState.urls.find(function(e) { return e.url === fUrl || normalizeUrl(e.url) === normalizeUrl(fUrl); });
+          if (_ipEntry && _ipEntry.status === 'inproject') {
+            showErr('⚠ Ten URL jest już w projekcie Brand24.');
+          } else {
+            showErr('⚠ Ten URL był już wcześniej dodany do Brand24 (w tej lub poprzedniej sesji).');
+          }
+          return;
+        }
         // W trybie Niestandardowe — pomijamy walidację zgodności kraju (użytkownik może nadpisać)
         if (newsState.mode !== 'custom') {
           var pc = _newsProjectCountry();
@@ -11961,6 +12055,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.36",
+      "date": "2026-06-02",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "News: popup domeny przy ✕ — usuń tylko ten URL lub wszystkie z danej domeny"},
+        {"type": "feat", "text": "News: bulk bar — przyciski 'Usuń błędy HTTP' (404/429/4xx) i 'Stare daty (przed poprzednim miesiącem)'"},
+        {"type": "fix", "text": "News: URLe dodane wcześniej oznaczane jako 'w projekcie' przy wczytaniu listy — ominięte w skanowaniu, lepszy komunikat przy submicie"}
+      ]
+    },
+    {
       "version": "0.24.35",
       "date": "2026-05-27",
       "label": "fix",
@@ -12052,17 +12157,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "Auto-resolve nieznanych projektów przy wgraniu pliku multi-project — wtyczka sama pobiera tagi i nazwy z konta (getUserProjects + getTags)"},
         {"type": "feat", "text": "renderMultiProjectWidget: stan ładowania ⏳ podczas auto-resolve; po sukcesie odblokowuje Start automatycznie"},
         {"type": "feat", "text": "Projekty cross-account (poza kontem użytkownika) nadal wymagają ręcznej wizyty — właściwy fallback"}
-      ]
-    },
-    {
-      "version": "0.24.26",
-      "date": "2026-05-14",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "B24Bridge — centralny system cross-domain: token + projekty + lastProject w jednym kluczu GM (b24t_bridge)"},
-        {"type": "feat", "text": "GM_addValueChangeListener — reaktywny: gdy brand24.com zapisze token, inne karty ponowią dupcheck automatycznie"},
-        {"type": "fix", "text": "_customDupCheck: sequence guard anuluje stale requesty; pid NaN guard; B24Bridge.token.headers/base zamiast GM_getValue"}
       ]
     },
   ];

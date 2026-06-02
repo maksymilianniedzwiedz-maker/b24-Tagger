@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.25.0",
+    "date": "2026-06-02",
+    "label": "feat",
+    "changes": [
+      "feat: AI Tagowanie — nowa karta 🤖 AI Tag (między Quick Tag i Quick Delete): pobiera wzmianki z panelu, ocenia promptem z biblioteki przez Claude i nadaje tagi na bieżąco — bez notebooka i CSV",
+      "feat: AI Tagowanie — źródło z aktualnego widoku lub zakresu dat (nieotagowane/wszystkie), mapowanie ocena→tag per projekt, tryb konfliktu pomiń/nadpisz, opcja usuwania wzmianek po ocenie i po tagu",
+      "feat: Ustawienia ⚙ podzielone na karty: Ogólne, AI, Analityka",
+      "feat: Biblioteka promptów przebudowana — większy panel, motyw dark/light, prompty jako kafelki, pole kategorii oceny w edytorze",
+      "feat: cache'owanie promptu systemowego (jak w notebookach) + ustrukturyzowana odpowiedź AI; licznik tokenów w logach"
+    ]
+  },
+  {
     "version": "0.24.37",
     "date": "2026-06-02",
     "label": "fix",

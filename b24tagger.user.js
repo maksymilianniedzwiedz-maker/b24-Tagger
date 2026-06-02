@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.24.36
+// @version      0.24.37
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.24.36';
+  const VERSION = '0.24.37';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -11030,17 +11030,26 @@ function showOnboarding(onComplete) {
             if (_dom) newsState.urls.forEach(function(u) {
               try { if (new URL(u.url).hostname.replace(/^www\./, '') === _dom) _domCount++; } catch(_ex) {}
             });
+            var _dk = _newsIsDark();
+            var _pbg  = _dk ? '#1e1e2e'                    : '#ffffff';
+            var _pbor = _dk ? 'rgba(255,255,255,0.13)'     : 'rgba(0,0,0,0.12)';
+            var _pbsb = _dk ? 'rgba(255,255,255,0.07)'     : 'rgba(0,0,0,0.06)';
+            var _ptxt = _dk ? '#e2e8f0'                    : '#1e293b';
+            var _pmut = _dk ? '#94a3b8'                    : '#64748b';
+            var _pbtn = _dk ? 'rgba(255,255,255,0.06)'     : 'rgba(0,0,0,0.04)';
+            var TW = 8; // tail half-width (px)
+            var TH = 8; // tail height (px)
+            var GAP = 4;
+            var PW = 200;
             var popup = document.createElement('div');
             popup.id = 'b24t-news-domain-popup';
-            popup.style.cssText = 'position:fixed;z-index:99999;background:#1e1e2e;border:1px solid rgba(255,255,255,0.14);border-radius:9px;padding:10px 12px;box-shadow:0 4px 20px rgba(0,0,0,0.5);display:flex;flex-direction:column;gap:6px;min-width:190px;';
-            popup.style.left = Math.min(e.clientX, window.innerWidth - 210) + 'px';
-            popup.style.top = (e.clientY + 8) + 'px';
+            popup.style.cssText = 'position:fixed;z-index:2147483647;background:' + _pbg + ';border:1px solid ' + _pbor + ';border-radius:9px;padding:10px 12px;box-shadow:0 8px 32px rgba(0,0,0,0.4);display:flex;flex-direction:column;gap:6px;min-width:' + PW + 'px;visibility:hidden;font-family:\'Geist\',\'Segoe UI\',system-ui,sans-serif;';
             var _pLabel = document.createElement('div');
-            _pLabel.style.cssText = 'font-size:10px;color:#94a3b8;padding-bottom:5px;border-bottom:1px solid rgba(255,255,255,0.08);';
+            _pLabel.style.cssText = 'font-size:10px;color:' + _pmut + ';padding-bottom:5px;border-bottom:1px solid ' + _pbsb + ';';
             _pLabel.textContent = 'Usuń z listy:';
             popup.appendChild(_pLabel);
             var _btn1 = document.createElement('button');
-            _btn1.style.cssText = 'font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.06);color:#e2e8f0;cursor:pointer;text-align:left;';
+            _btn1.style.cssText = 'font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid ' + _pbsb + ';background:' + _pbtn + ';color:' + _ptxt + ';cursor:pointer;text-align:left;';
             _btn1.textContent = 'Tylko ten URL';
             _btn1.addEventListener('click', function(ev) {
               ev.stopPropagation();
@@ -11065,7 +11074,32 @@ function showOnboarding(onComplete) {
               });
               popup.appendChild(_btn2);
             }
+            // Tail divs — pozycja ustalana po zmierzeniu popupu
+            var tailOuter = document.createElement('div');
+            var tailFill  = document.createElement('div');
+            popup.appendChild(tailOuter);
+            popup.appendChild(tailFill);
             document.body.appendChild(popup);
+            // Mierzymy i pozycjonujemy PO dodaniu do DOM
+            var btnRect = delBtn.getBoundingClientRect();
+            var popupH  = popup.offsetHeight;
+            var popupW  = popup.offsetWidth;
+            var btnCX   = Math.round(btnRect.left + btnRect.width / 2);
+            var popupLeft = Math.max(4, Math.min(btnCX - Math.round(popupW / 2), window.innerWidth - popupW - 4));
+            var tailX = Math.max(TW + 4, Math.min(btnCX - popupLeft - TW, popupW - TW * 2 - 4));
+            var popupTop = btnRect.top - popupH - TH - GAP;
+            var flipDown = popupTop < 8;
+            if (flipDown) {
+              popupTop = btnRect.bottom + TH + GAP;
+              tailOuter.style.cssText = 'position:absolute;top:-' + (TH + 1) + 'px;left:' + tailX + 'px;width:0;height:0;border-left:' + TW + 'px solid transparent;border-right:' + TW + 'px solid transparent;border-bottom:' + (TH + 1) + 'px solid ' + _pbor + ';';
+              tailFill.style.cssText  = 'position:absolute;top:-' + TH + 'px;left:' + tailX + 'px;width:0;height:0;border-left:' + TW + 'px solid transparent;border-right:' + TW + 'px solid transparent;border-bottom:' + TH + 'px solid ' + _pbg + ';';
+            } else {
+              tailOuter.style.cssText = 'position:absolute;bottom:-' + (TH + 1) + 'px;left:' + tailX + 'px;width:0;height:0;border-left:' + TW + 'px solid transparent;border-right:' + TW + 'px solid transparent;border-top:' + (TH + 1) + 'px solid ' + _pbor + ';';
+              tailFill.style.cssText  = 'position:absolute;bottom:-' + TH + 'px;left:' + tailX + 'px;width:0;height:0;border-left:' + TW + 'px solid transparent;border-right:' + TW + 'px solid transparent;border-top:' + TH + 'px solid ' + _pbg + ';';
+            }
+            popup.style.left = popupLeft + 'px';
+            popup.style.top  = popupTop + 'px';
+            popup.style.visibility = '';
             function _closePopup(ev) {
               if (!popup.contains(ev.target)) {
                 popup.remove();
@@ -12055,6 +12089,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.24.37",
+      "date": "2026-06-02",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "News: popup domeny przy ✕ — dymek komiksowy ponad przyciskiem, z-index 2147483647, dziubek wskazuje X; light/dark mode"}
+      ]
+    },
+    {
       "version": "0.24.36",
       "date": "2026-06-02",
       "label": "feat",
@@ -12146,17 +12189,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "_autoResolveUnknownProjects: HTML fetch /searches/add-new-mention/?sid={pid} — nazwa z tytułu + tagi z <select id=tag>; jeden request per projekt"},
         {"type": "fix", "text": "cross-account projekty (redirect) pomijane z ostrzeżeniem zamiast błędu"}
-      ]
-    },
-    {
-      "version": "0.24.27",
-      "date": "2026-05-15",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "Auto-resolve nieznanych projektów przy wgraniu pliku multi-project — wtyczka sama pobiera tagi i nazwy z konta (getUserProjects + getTags)"},
-        {"type": "feat", "text": "renderMultiProjectWidget: stan ładowania ⏳ podczas auto-resolve; po sukcesie odblokowuje Start automatycznie"},
-        {"type": "feat", "text": "Projekty cross-account (poza kontem użytkownika) nadal wymagają ręcznej wizyty — właściwy fallback"}
       ]
     },
   ];

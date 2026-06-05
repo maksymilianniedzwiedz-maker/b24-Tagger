@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.25.1",
+    "date": "2026-06-05",
+    "label": "feat",
+    "changes": [
+      "feat: AI Tag — trzy tryby gdy wzmianka ma już tag: Pomiń (zostaw bez zmian), Nadpisz (usuń stary tag AI z mapowania i nadaj nowy), Dopisz (dodaj nowy obok starego)",
+      "feat: AI Tag — batche zapytań do Claude lecą równolegle (po 6, z nagrzaniem cache promptu na pierwszym batchu) zamiast sekwencyjnie — kilkukrotne przyspieszenie przy większych zakresach",
+      "feat: AI Tag — log widoczny też w karcie AI Tag (jak w karcie Plik), z historią bieżącej sesji i przyciskami wyczyść/pełny widok"
+    ]
+  },
+  {
     "version": "0.25.0",
     "date": "2026-06-02",
     "label": "feat",

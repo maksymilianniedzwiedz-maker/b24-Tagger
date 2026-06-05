@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.25.2",
+    "date": "2026-06-05",
+    "label": "fix",
+    "changes": [
+      "fix: zakładka Tagi i tagowanie pliku przestają sypać błędami API dla projektów bez kompletu tagów (Required Verification / To Delete / Untagged) — zamiast pytać o pusty filtr pokazują dla nich 0",
+      "fix: bezpiecznik na filtrze grup (gr) we wszystkich zapytaniach o wzmianki — usuwa puste wartości zanim trafią do Brand24, eliminuje błąd \"Expected non-nullable type Int!\""
+    ]
+  },
+  {
     "version": "0.25.1",
     "date": "2026-06-05",
     "label": "feat",

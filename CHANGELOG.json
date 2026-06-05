@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.26.0",
+    "date": "2026-06-05",
+    "label": "feat",
+    "changes": [
+      "feat: Trafność AI — nowa zakładka 🤖 obok Overall, mierzy precyzję, recall i F1 tagowania AI względem oceny człowieka (tag relevancji = prawda pozytywna, brak tagu = nierelevantne)",
+      "feat: Trafność AI — tabela trafności 2×2 (trafienia/fałszywe alarmy/przeoczenia/poprawne odrzucenia), liczba AI_Verify, wzmianki nieocenione przez AI, pasek pokrycia AI oraz rozbicie per-projekt",
+      "feat: Trafność AI — wybór grupy projektów albo tylko bieżącego projektu z panelu, liczenie na przycisk, logika miesiąca z domykaniem jak w Overall (osobny licznik); zakładka widoczna tylko gdy tagowanie AI jest skonfigurowane",
+      "feat: liczenie przez filtr tag-AND (tan) z zabezpieczeniem wykrywającym niespójne wyniki"
+    ]
+  },
+  {
     "version": "0.25.2",
     "date": "2026-06-05",
     "label": "fix",

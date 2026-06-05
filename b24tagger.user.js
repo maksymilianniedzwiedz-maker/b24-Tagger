@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.25.0
+// @version      0.25.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.25.0';
+  const VERSION = '0.25.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1159,7 +1159,7 @@
     return {
       promptId:     c.promptId || null,
       tagMap:       c.tagMap || {},          // { assessmentLabel: tagId }
-      conflictMode: c.conflictMode || 'skip',// 'skip' | 'overwrite'
+      conflictMode: c.conflictMode || 'skip',// 'skip' | 'overwrite' | 'append'
       source:       c.source || 'range',     // 'view' | 'range'
       onlyUntagged: c.onlyUntagged !== false, // domyślnie true
       deleteMap:    c.deleteMap || {},       // { assessmentLabel: true } — usuń wzmiankę z tą oceną
@@ -2645,21 +2645,25 @@
     if (state.logs.length > 500) state.logs.shift(); // keep last 500 in memory
     state.lastActionTime = Date.now();
 
-    const log = document.getElementById('b24t-log');
-    if (!log) return;
+    // Renderuj do logu karty Plik oraz (jeśli istnieje) logu karty AI Tag
+    _appendLogEntryDom(document.getElementById('b24t-log'), time, message, type);
+    _appendLogEntryDom(document.getElementById('b24t-ait-log'), time, message, type);
 
+    // Live-update log panel jeśli otwarty
+    _syncLogPanel(entry);
+  }
+
+  // Dopisuje jeden wpis do danego kontenera logu (współdzielone przez log karty Plik i AI Tag)
+  function _appendLogEntryDom(log, time, message, type) {
+    if (!log) return;
     const div = document.createElement('div');
     div.className = `b24t-log-entry b24t-log-${type}`;
     // message może pochodzić z pliku CSV, odpowiedzi API, nazwy projektu — zawsze escape
     div.innerHTML = `<span class="b24t-log-time">${time}</span><span class="b24t-log-msg">${_escHtml(message)}</span><span class="b24t-log-elapsed"></span>`;
     log.appendChild(div);
     requestAnimationFrame(function() { log.scrollTop = log.scrollHeight; });
-
     // Keep max 200 entries in DOM
     while (log.children.length > 200) log.removeChild(log.firstChild);
-
-    // Live-update log panel jeśli otwarty
-    _syncLogPanel(entry);
   }
 
   // Build comprehensive bug report data
@@ -12296,6 +12300,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.25.1",
+      "date": "2026-06-05",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "AI Tag: trzy tryby gdy wzmianka ma już tag — Pomiń, Nadpisz (usuń stary tag AI, nadaj nowy), Dopisz (dodaj obok)"},
+        {"type": "feat", "text": "AI Tag: batche do Claude lecą równolegle (po 6) zamiast jeden po drugim — kilkukrotnie szybsze tagowanie większych zakresów"},
+        {"type": "feat", "text": "AI Tag: log widoczny też w karcie AI Tag (jak w karcie Plik) — z historią sesji"}
+      ]
+    },
+    {
       "version": "0.25.0",
       "date": "2026-06-02",
       "label": "feat",
@@ -12389,15 +12404,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#6366f1",
       "changes": [
         {"type": "feat", "text": "Usuwanie po assessmencie — nowa opcjonalna sekcja (toggle w ⚙): wgraj plik, zaznacz assessmenty, usuń wzmianki bezpośrednio bez tagowania; działa cross-project"}
-      ]
-    },
-    {
-      "version": "0.24.29",
-      "date": "2026-05-15",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "Multi-projekt: panel pokrycia tagów — po wyborze tagu pokazuje dla każdego projektu czy tag istnieje (✓/✗); aktualizuje się na żywo przy zmianie mapowania"}
       ]
     },
   ];
@@ -16700,15 +16706,19 @@ Tej operacji nie można cofnąć.`)) {
         <div id="b24t-ait-map" style="margin-bottom:10px;"></div>
 
         <!-- Tryb konfliktu -->
-        <div style="font-size:12px;font-weight:700;color:var(--b24t-primary);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:5px;">Gdy wzmianka ma już ten tag</div>
-        <div class="b24t-radio-group" style="margin-bottom:10px;">
+        <div style="font-size:12px;font-weight:700;color:var(--b24t-primary);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:5px;">Gdy wzmianka ma już tag AI</div>
+        <div class="b24t-radio-group" style="flex-direction:column;gap:5px;margin-bottom:10px;">
           <label class="b24t-radio" style="font-size:13px;">
             <input type="radio" name="b24t-ait-conflict" value="skip" checked>
-            <span style="font-size:13px;color:var(--b24t-text-muted);">Pomiń</span>
+            <span style="font-size:13px;color:var(--b24t-text-muted);">Pomiń — zostaw wzmiankę bez zmian</span>
           </label>
           <label class="b24t-radio" style="font-size:13px;">
             <input type="radio" name="b24t-ait-conflict" value="overwrite">
-            <span style="font-size:13px;color:var(--b24t-text-muted);">Nadaj mimo to</span>
+            <span style="font-size:13px;color:var(--b24t-text-muted);">Nadpisz — usuń stary tag AI, nadaj nowy</span>
+          </label>
+          <label class="b24t-radio" style="font-size:13px;">
+            <input type="radio" name="b24t-ait-conflict" value="append">
+            <span style="font-size:13px;color:var(--b24t-text-muted);">Dopisz — dodaj nowy obok starego</span>
           </label>
         </div>
 
@@ -16732,9 +16742,27 @@ Tej operacji nie można cofnąć.`)) {
           </div>
           <div id="b24t-ait-deltag-status" style="font-size:11px;color:var(--b24t-text-faint);margin-top:6px;"></div>
         </div>
+
+        <!-- LOG -->
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--b24t-border-sub);">
+          <div class="b24t-section-label tertiary" style="margin-bottom:6px;">
+            Log
+            <button class="b24t-log-clear" id="b24t-ait-log-clear">wyczyść</button>
+            <button class="b24t-log-expand" id="b24t-ait-log-expand" title="Pełny widok loga">↗</button>
+          </div>
+          <div id="b24t-ait-log" style="max-height:220px;overflow-y:auto;font-size:11px;line-height:1.5;background:var(--b24t-bg-deep);border:1px solid var(--b24t-border-sub);border-radius:6px;padding:4px 0;"></div>
+        </div>
       </div>
     `;
     return div;
+  }
+
+  // Wypełnia log karty AI Tag historią z state.logs (ostatnie 200 wpisów)
+  function _aitRenderLogHistory() {
+    const log = document.getElementById('b24t-ait-log');
+    if (!log) return;
+    log.innerHTML = '';
+    state.logs.slice(-200).forEach(e => _appendLogEntryDom(log, e.time, e.message, e.type));
   }
 
   // Renderuje wiersze mapowania ocena → tag dla wybranego promptu
@@ -16876,13 +16904,23 @@ Tej operacji nie można cofnąć.`)) {
       } catch(e) { if (statusEl) { statusEl.textContent = '✗ ' + e.message; statusEl.style.color = '#f87171'; } }
     });
 
+    // Log — czyszczenie i pełny widok (jak w karcie Plik)
+    panel.querySelector('#b24t-ait-log-clear')?.addEventListener('click', () => {
+      const log = document.getElementById('b24t-ait-log');
+      if (log) log.innerHTML = '';
+      state.logs = [];
+      const mainLog = document.getElementById('b24t-log');
+      if (mainLog) mainLog.innerHTML = '';
+    });
+    panel.querySelector('#b24t-ait-log-expand')?.addEventListener('click', () => openLogPanel());
+
     // Odśwież gdy karta staje się widoczna
     const observer = new MutationObserver(() => {
-      if (tab.style.display !== 'none') { fillPrompts(); fillDelTag(); restoreCfg(); }
+      if (tab.style.display !== 'none') { fillPrompts(); fillDelTag(); restoreCfg(); _aitRenderLogHistory(); }
     });
     observer.observe(tab, { attributes: true, attributeFilter: ['style'] });
 
-    fillPrompts(); fillDelTag(); restoreCfg();
+    fillPrompts(); fillDelTag(); restoreCfg(); _aitRenderLogHistory();
   }
 
   // Główna pętla tagowania AI
@@ -16940,48 +16978,95 @@ Tej operacji nie można cofnąć.`)) {
       if (!mentions.length) { setStatus('Brak wzmianek do otagowania', '#f59e0b'); return; }
 
       const batchSize = 10, total = mentions.length, model = (s.tagging && s.tagging.model) || 'claude-haiku-4-5-20251001';
-      let done = 0, applied = 0, deleted = 0, skipped = 0, unmapped = 0, errors = 0;
+      const AIT_CONCURRENCY = 6; // ile batchy do Claude leci równolegle (notebook: 20; tu ostrożniej przez limity API)
+      let done = 0, applied = 0, deleted = 0, skipped = 0, unmapped = 0, errors = 0, replaced = 0;
       let usageIn = 0, usageOut = 0, cacheRead = 0;
-      const tagBuckets = {}, deleteIds = [];
+      const tagBuckets = {}, untagBuckets = {}, deleteIds = [];
+      const aiTagIds = new Set(Object.values(tagMap).map(v => parseInt(v)));
 
-      for (let bi = 0; bi < mentions.length; bi += batchSize) {
-        if (state._aitStop) { addLog('⏹ AI Tagowanie — zatrzymane przez użytkownika', 'warn'); break; }
-        const batch = mentions.slice(bi, bi + batchSize);
+      // Decyzja per wzmianka — wypełnia kubełki tagów / odtagowań / usunięć
+      const decide = (m, label) => {
+        if (!label) { unmapped++; return; }
+        if (deleteMap[label]) { deleteIds.push(m.id); return; }
+        const tagId = tagMap[label];
+        if (tagId == null) { unmapped++; return; }
+        const existing = (m.tags || []).map(t => parseInt(t.id));
+        const hasTag = existing.indexOf(tagId) !== -1;
+        const otherAi = existing.filter(id => aiTagIds.has(id) && id !== tagId); // tylko inne tagi z mapowania AI
+        if (conflictMode === 'overwrite') {
+          otherAi.forEach(oldId => { (untagBuckets[oldId] = untagBuckets[oldId] || []).push(m.id); });
+          if (otherAi.length) replaced++;
+          if (!hasTag) (tagBuckets[tagId] = tagBuckets[tagId] || []).push(m.id);
+        } else if (conflictMode === 'append') {
+          if (hasTag) { skipped++; return; }
+          (tagBuckets[tagId] = tagBuckets[tagId] || []).push(m.id);
+        } else { // skip — zostaw wzmianki które mają już jakiś tag AI
+          if (hasTag || otherAi.length) { skipped++; return; }
+          (tagBuckets[tagId] = tagBuckets[tagId] || []).push(m.id);
+        }
+      };
+
+      // Podziel wzmianki na batche po 10
+      const batchDefs = [];
+      for (let bi = 0; bi < mentions.length; bi += batchSize) batchDefs.push(mentions.slice(bi, bi + batchSize));
+
+      let fatal = null;
+      const runBatch = async (batch, num) => {
+        if (state._aitStop || fatal) return;
         let res;
         try {
           res = await _aiTagAnalyzeBatch(batch.map(_aiTagMentionToItem), prompt.system, model, cats);
         } catch(e) {
           errors += batch.length;
-          addLog('✕ AI batch ' + (Math.floor(bi / batchSize) + 1) + ' błąd: ' + e.message, 'error');
-          if (/401/.test(e.message)) { setStatus('✗ ' + e.message, '#f87171'); break; }
-          if (/429/.test(e.message)) { setStatus('✗ Limit API (429) — przerwano. Spróbuj później.', '#f87171'); addLog('⏹ AI Tagowanie — przerwano na limicie API (429)', 'warn'); break; }
-          done += batch.length; setBar(done / total * 100); continue;
+          addLog('✕ AI batch ' + num + ' błąd: ' + e.message, 'error');
+          if (/401/.test(e.message)) fatal = e.message;
+          else if (/429/.test(e.message)) fatal = 'Limit API (429)';
+          done += batch.length; setBar(done / total * 100);
+          return;
         }
         if (res.usage) { usageIn += res.usage.input_tokens || 0; usageOut += res.usage.output_tokens || 0; cacheRead += res.usage.cache_read_input_tokens || 0; }
         const assess = res.assessments || [];
-        batch.forEach((m, idx) => {
-          const label = assess[idx];
-          if (!label) { unmapped++; return; }
-          if (deleteMap[label]) { deleteIds.push(m.id); return; }
-          const tagId = tagMap[label];
-          if (tagId == null) { unmapped++; return; }
-          const hasTag = (m.tags || []).some(t => parseInt(t.id) === tagId);
-          if (hasTag && conflictMode === 'skip') { skipped++; return; }
-          (tagBuckets[tagId] = tagBuckets[tagId] || []).push(m.id);
-        });
+        batch.forEach((m, idx) => decide(m, assess[idx]));
         done += batch.length; setBar(done / total * 100);
         setStatus('⟳ Oceniono ' + done + '/' + total + '...', '#a78bfa');
         if (counterEl) counterEl.textContent = done + '/' + total;
-      }
+      };
 
-      // Nałóż tagi
-      setStatus('⟳ Nakładam tagi...', '#a78bfa');
+      // Pierwszy batch sam — zapisuje prompt w cache, kolejne batche trafiają w cache (taniej)
+      let nextIdx = 0;
+      if (batchDefs.length) { await runBatch(batchDefs[0], 1); nextIdx = 1; }
+      // Pozostałe batche równolegle z limitem współbieżności
+      const worker = async () => {
+        while (!state._aitStop && !fatal) {
+          const i = nextIdx++;
+          if (i >= batchDefs.length) return;
+          await runBatch(batchDefs[i], i + 1);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(AIT_CONCURRENCY, Math.max(0, batchDefs.length - 1)) }, worker));
+
+      if (state._aitStop) addLog('⏹ AI Tagowanie — zatrzymane przez użytkownika', 'warn');
+      if (fatal) { setStatus('✗ ' + fatal + ' — przerwano', '#f87171'); addLog('⏹ AI Tagowanie — przerwano: ' + fatal, 'warn'); }
+
+      // Nałóż nowe tagi
+      if (Object.keys(tagBuckets).length) setStatus('⟳ Nakładam tagi...', '#a78bfa');
       for (const tid in tagBuckets) {
         const ids = tagBuckets[tid];
         for (let i = 0; i < ids.length; i += MAX_BATCH_SIZE) {
           const chunk = ids.slice(i, i + MAX_BATCH_SIZE);
           try { await bulkTagMentions(chunk, parseInt(tid)); applied += chunk.length; }
           catch(e) { errors += chunk.length; addLog('✕ bulkTag (tagId ' + tid + ') błąd: ' + e.message, 'error'); }
+          await sleep(50);
+        }
+      }
+      // Usuń stare tagi AI (tryb Nadpisz)
+      if (Object.keys(untagBuckets).length) setStatus('⟳ Usuwam stare tagi...', '#a78bfa');
+      for (const tid in untagBuckets) {
+        const ids = untagBuckets[tid];
+        for (let i = 0; i < ids.length; i += MAX_BATCH_SIZE) {
+          const chunk = ids.slice(i, i + MAX_BATCH_SIZE);
+          try { await bulkUntagMentions(chunk, parseInt(tid)); }
+          catch(e) { addLog('✕ bulkUntag (tagId ' + tid + ') błąd: ' + e.message, 'error'); }
           await sleep(50);
         }
       }
@@ -16997,6 +17082,7 @@ Tej operacji nie można cofnąć.`)) {
       }
 
       const summary = '✓ Otagowano ' + applied +
+        (replaced ? ' · nadpisano ' + replaced : '') +
         (deleted ? ' · usunięto ' + deleted : '') +
         (skipped ? ' · pominięto ' + skipped : '') +
         (unmapped ? ' · bez mapowania ' + unmapped : '') +

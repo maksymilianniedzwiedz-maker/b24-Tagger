@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.25.2
+// @version      0.26.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.25.2';
+  const VERSION = '0.26.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -12305,6 +12305,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.0",
+      "date": "2026-06-05",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "Trafność AI: nowa zakładka 🤖 obok Overall — mierzy precyzję, recall i F1 tagowania AI względem Twojej oceny (tag relevancji = prawda, brak = nierelevantne)"},
+        {"type": "feat", "text": "Trafność AI: tabela trafności (trafienia/fałszywe alarmy/przeoczenia), liczba AI_Verify i wzmianek nieocenionych przez AI, pasek pokrycia AI"},
+        {"type": "feat", "text": "Trafność AI: wybór grupy lub tylko bieżącego projektu, liczenie na przycisk, logika miesiąca i domykanie jak w Overall (osobny licznik); widoczna gdy tagowanie AI włączone"}
+      ]
+    },
+    {
       "version": "0.25.2",
       "date": "2026-06-05",
       "label": "fix",
@@ -12401,15 +12412,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#6366f1",
       "changes": [
         {"type": "feat", "text": "Usuwanie po assessmencie zintegrowane z mapowaniem: opcja 🗑 Usuń w dropdownie tagu (gdy funkcja włączona); usuwanie w trakcie normalnego przebiegu Start, cross-project, jeden confirm"}
-      ]
-    },
-    {
-      "version": "0.24.31",
-      "date": "2026-05-15",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Pokrycie tagów: odświeżanie tagIds dla wszystkich projektów z pliku przy wgraniu — naprawia fałszywe ✗ gdy tag dodano po ostatniej wizycie w projekcie Brand24"}
       ]
     },
   ];
@@ -13958,6 +13960,7 @@ function showOnboarding(onComplete) {
         '<button class="b24t-tab b24t-ann-tab" data-ann-tab="tagstats">🏷 Tagi</button>' +
         '<button class="b24t-tab b24t-ann-tab" data-ann-tab="groups">🗂 Grupy</button>' +
         '<button class="b24t-tab b24t-ann-tab" data-ann-tab="overall">📈 Overall</button>' +
+        '<button class="b24t-tab b24t-ann-tab" data-ann-tab="aitag" id="b24t-ann-tab-btn-aitag" style="display:none;">🤖 Trafność AI</button>' +
       '</div>' +
       // Project tab
       '<div id="b24t-ann-tab-project" class="b24t-ann-content" style="display:block;background:var(--b24t-bg);flex:1;overflow-y:auto;min-height:0;">' +
@@ -13974,6 +13977,10 @@ function showOnboarding(onComplete) {
       // Overall Stats tab
       '<div id="b24t-ann-tab-overall" class="b24t-ann-content" style="display:none;background:var(--b24t-bg);flex:1;overflow-y:auto;min-height:0;flex-direction:column;">' +
         '<div id="b24t-ann-tab-overall-content" style="flex:1;min-height:0;display:flex;flex-direction:column;"></div>' +
+      '</div>' +
+      // Trafność AI tab
+      '<div id="b24t-ann-tab-aitag" class="b24t-ann-content" style="display:none;background:var(--b24t-bg);flex:1;overflow-y:auto;min-height:0;flex-direction:column;">' +
+        '<div id="b24t-ann-tab-aitag-content" style="flex:1;min-height:0;display:flex;flex-direction:column;"></div>' +
       '</div>';
 
     // Apply panel border/shadow via attribute (CSS vars pick it up)
@@ -14043,6 +14050,9 @@ function showOnboarding(onComplete) {
         if (tabName === 'overall') {
           renderOverallStatsTab();
         }
+        if (tabName === 'aitag') {
+          renderAiAccTab();
+        }
       });
     });
 
@@ -14101,6 +14111,7 @@ function showOnboarding(onComplete) {
     // Grupy i Overall — inicjalizuj zawsze przy otwarciu (lekka operacja, tylko render z danych)
     renderGroupsTab();
     renderOverallStatsTab();
+    _aiAccUpdateTabVisibility();
   }
 
   // Formatuje lokalną datę jako YYYY-MM-DD (bez UTC shift)
@@ -15818,6 +15829,513 @@ To jest NIEODWRACALNE.`)) return;
       renderOverallStatsTab();
       loadOverallStats();
     });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AI ACCURACY — TRAFNOŚĆ TAGOWANIA AI (precyzja / recall vs ocena człowieka)
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Mierzy jak dobrze AI (tagi AI_Relevant / AI_NonRelevant / AI_Verify) zgadza się
+  // z oceną człowieka. Prawda = tag relevancji grupy (np. "Turkey"): ma tag = relevantne,
+  // brak tagu = nierelevantne. Liczenie przez filtr `tan` (tag-AND = wzmianka ma wszystkie
+  // podane tagi naraz). Niezależny stan miesiąca od Overall (namespace group.id + '::ai').
+
+  var AIACC_CONCURRENCY = 2;     // równoległość projektów (2×7 zapytań = max 14 równoczesnych)
+  var _aiAccInFlight = false;
+  var _aiAccLast = null;         // { groupId, scopeCurrent, results, dateFrom, dateTo, label }
+
+  function _aiAccNsId(group) { return group.id + '::ai'; }
+
+  // Czy tagowanie AI jest skonfigurowane (klucz API + aktywny prompt) — od tego zależy widoczność zakładki
+  function _aiAccConfigured() {
+    try {
+      var s = _aiGetSettings();
+      return !!(s && s.apiKey && s.tagging && s.tagging.activePromptId);
+    } catch(e) { return false; }
+  }
+
+  function setGroupAiRelTagId(groupId, tagId) {
+    var groups = getGroups();
+    var g = groups.find(function(g) { return g.id === groupId; });
+    if (g) { g.aiRelTagId = tagId; saveGroups(groups); }
+  }
+  function setGroupAiNonRelTagId(groupId, tagId) {
+    var groups = getGroups();
+    var g = groups.find(function(g) { return g.id === groupId; });
+    if (g) { g.aiNonRelTagId = tagId; saveGroups(groups); }
+  }
+  function setGroupAiVerifyTagId(groupId, tagId) {
+    var groups = getGroups();
+    var g = groups.find(function(g) { return g.id === groupId; });
+    if (g) { g.aiVerifyTagId = tagId; saveGroups(groups); }
+  }
+
+  // Zlicza wzmianki z filtrem tag-AND (tan). gql() = surowy origFetch (zgodnie z hard rule, bez gqlRetry)
+  async function _aiAccCount(projectId, dateFrom, dateTo, tanIds) {
+    var variables = {
+      projectId: projectId,
+      dateRange: { from: dateFrom, to: dateTo },
+      filters: {
+        va: 1, rt: [], se: [], vi: null, gr: [],
+        tan: (tanIds || []).filter(function(x) { return x != null; }),
+        sq: '', do: '', au: '', lem: false,
+        ctr: [], nctr: false, is: [0, 10],
+        tp: null, lang: [], nlang: false,
+      },
+      page: 1, order: 0,
+    };
+    var data = await gql('getMentions', variables,
+      'query getMentions($projectId: Int!, $dateRange: DateRangeInput!, $filters: MentionFilterInput, $page: Int, $order: Int) {' +
+      ' getMentions(projectId: $projectId, dateRange: $dateRange, filters: $filters, page: $page, order: $order) { count } }');
+    return (data && data.getMentions && data.getMentions.count) || 0;
+  }
+
+  async function _aiAccFetchProject(pid, relId, aiRelId, aiNonId, aiVerId, dateFrom, dateTo) {
+    var name = _pnResolve(pid) || ('ID:' + pid);
+    if (!aiRelId || !aiNonId) return { pid: pid, name: name, error: 'brak tagów AI w ustawieniach' };
+    try {
+      var c = await Promise.all([
+        _aiAccCount(pid, dateFrom, dateTo, []),                       // 0 total
+        relId ? _aiAccCount(pid, dateFrom, dateTo, [relId]) : Promise.resolve(null),         // 1 rel (Turkey)
+        _aiAccCount(pid, dateFrom, dateTo, [aiRelId]),                // 2 aiRel
+        _aiAccCount(pid, dateFrom, dateTo, [aiNonId]),                // 3 aiNon
+        aiVerId ? _aiAccCount(pid, dateFrom, dateTo, [aiVerId]) : Promise.resolve(0),        // 4 aiVer
+        relId ? _aiAccCount(pid, dateFrom, dateTo, [aiRelId, relId]) : Promise.resolve(null),// 5 tp
+        relId ? _aiAccCount(pid, dateFrom, dateTo, [aiNonId, relId]) : Promise.resolve(null),// 6 fn
+      ]);
+      return {
+        pid: pid, name: name,
+        total: c[0], rel: c[1], aiRel: c[2], aiNon: c[3], aiVer: c[4], tp: c[5], fn: c[6],
+        dateFrom: dateFrom, dateTo: dateTo,
+      };
+    } catch(e) {
+      addLog('✕ [AI-Acc] getMentions(' + pid + '): ' + e.message, 'diag');
+      return { pid: pid, name: name, error: e.message };
+    }
+  }
+
+  async function _fetchAiAccStats(group, pidList, onProgress) {
+    var dates = _overallGetEffectiveDates({ id: _aiAccNsId(group), projectIds: pidList, relevantTagId: group.relevantTagId });
+    var relId   = group.relevantTagId || null;
+    var aiRelId = group.aiRelTagId || null;
+    var aiNonId = group.aiNonRelTagId || null;
+    var aiVerId = group.aiVerifyTagId || null;
+    var results = [];
+    if (onProgress) onProgress(pidList.map(function(pid) { return { pid: pid, name: _pnResolve(pid) || ('ID:' + pid), loading: true }; }), dates);
+    for (var bi = 0; bi < pidList.length; bi += AIACC_CONCURRENCY) {
+      var batch = pidList.slice(bi, bi + AIACC_CONCURRENCY);
+      var br = await Promise.all(batch.map(function(pid) {
+        return _aiAccFetchProject(pid, relId, aiRelId, aiNonId, aiVerId, dates.dateFrom, dates.dateTo);
+      }));
+      results.push.apply(results, br);
+      if (onProgress) onProgress(results.concat(pidList.slice(bi + AIACC_CONCURRENCY).map(function(p) {
+        return { pid: p, name: _pnResolve(p) || ('ID:' + p), loading: true };
+      })), dates);
+    }
+    return { results: results, dateFrom: dates.dateFrom, dateTo: dates.dateTo, label: dates.label };
+  }
+
+  function _aiPct(x) { return x == null ? '—' : Math.round(x * 100) + '%'; }
+
+  function renderAiAccTab() {
+    var el = document.getElementById('b24t-ann-tab-aitag-content');
+    if (!el) return;
+    if (!_aiAccConfigured()) {
+      el.innerHTML = '<div style="padding:24px 16px;text-align:center;">' +
+        '<div style="font-size:28px;margin-bottom:10px;">🤖</div>' +
+        '<div style="font-size:13px;font-weight:600;color:var(--b24t-text);margin-bottom:8px;">Tagowanie AI wyłączone</div>' +
+        '<div style="font-size:12px;color:var(--b24t-text-faint);line-height:1.6;">Włącz tagowanie AI (klucz API + aktywny prompt)<br>w karcie <strong style="color:var(--b24t-primary);">🤖 AI Tag</strong>, aby mierzyć trafność.</div>' +
+      '</div>';
+      return;
+    }
+    var groups = getGroups();
+    if (!groups.length) {
+      el.innerHTML = '<div style="padding:24px 16px;text-align:center;">' +
+        '<div style="font-size:28px;margin-bottom:10px;">📊</div>' +
+        '<div style="font-size:13px;font-weight:600;color:var(--b24t-text);margin-bottom:8px;">Brak grup projektów</div>' +
+        '<div style="font-size:12px;color:var(--b24t-text-faint);line-height:1.6;">Stwórz grupę w zakładce <strong style="color:var(--b24t-primary);">Grupy</strong>.</div>' +
+      '</div>';
+      return;
+    }
+    var cfg = getStatsConfig();
+    var selId = cfg.aiSelectedGroupId || null;
+    var selGroup = groups.find(function(g) { return g.id === selId; }) || null;
+    var scopeCurrent = !!cfg.aiScopeCurrent;
+    var curName = state.projectName || (state.projectId ? ('ID:' + state.projectId) : null);
+    var selectorHtml =
+      '<div style="padding:10px 12px;border-bottom:1px solid var(--b24t-border-sub);display:flex;align-items:center;gap:6px;">' +
+        '<select id="b24t-aiacc-group-sel" style="flex:1;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text);border-radius:6px;font-size:12px;padding:5px 8px;font-family:inherit;cursor:pointer;">' +
+          '<option value="">— wybierz grupę —</option>' +
+          groups.map(function(g) {
+            return '<option value="' + g.id + '"' + (g.id === selId ? ' selected' : '') + '>' + g.name + ' (' + g.projectIds.length + ' proj.)</option>';
+          }).join('') +
+        '</select>' +
+        '<button id="b24t-aiacc-settings-btn" title="Ustawienia tagów" style="background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;padding:5px 9px;font-size:13px;cursor:pointer;flex-shrink:0;">&#9881;</button>' +
+      '</div>';
+    var scopeHtml = selGroup
+      ? '<div style="padding:8px 12px;border-bottom:1px solid var(--b24t-border-sub);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+          '<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--b24t-text-muted);cursor:pointer;">' +
+            '<input type="checkbox" id="b24t-aiacc-scope" ' + (scopeCurrent ? 'checked' : '') + ' style="cursor:pointer;">' +
+            'Tylko bieżący projekt' +
+          '</label>' +
+          (scopeCurrent ? '<span style="font-size:10px;color:' + (curName ? 'var(--b24t-primary)' : 'var(--b24t-err)') + ';">' + (curName ? '› ' + curName : '› brak otwartego projektu') + '</span>' : '') +
+        '</div>'
+      : '';
+    var buttonHtml = selGroup
+      ? '<div style="padding:10px 12px;border-bottom:1px solid var(--b24t-border-sub);">' +
+          '<button id="b24t-aiacc-run" style="width:100%;background:var(--b24t-accent-grad);color:#fff;border:none;border-radius:8px;padding:9px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;">🤖 Policz trafność</button>' +
+        '</div>'
+      : '';
+    var bodyHtml = selGroup
+      ? '<div id="b24t-aiacc-data" style="padding:12px;"></div>'
+      : '<div style="padding:24px 16px;text-align:center;"><div style="font-size:24px;margin-bottom:8px;">&#128070;</div><div style="font-size:12px;color:var(--b24t-text-faint);line-height:1.6;">Wybierz grupę projektów,<br>aby zmierzyć trafność AI.</div></div>';
+    el.innerHTML = selectorHtml + scopeHtml + buttonHtml + bodyHtml;
+
+    var selEl = el.querySelector('#b24t-aiacc-group-sel');
+    selEl.addEventListener('change', function() {
+      var cfg = getStatsConfig();
+      cfg.aiSelectedGroupId = selEl.value || null;
+      saveStatsConfig(cfg);
+      _aiAccLast = null;
+      renderAiAccTab();
+    });
+    var scopeEl = el.querySelector('#b24t-aiacc-scope');
+    if (scopeEl) scopeEl.addEventListener('change', function() {
+      var cfg = getStatsConfig();
+      cfg.aiScopeCurrent = scopeEl.checked;
+      saveStatsConfig(cfg);
+      _aiAccLast = null;
+      renderAiAccTab();
+    });
+    var settingsBtn = el.querySelector('#b24t-aiacc-settings-btn');
+    if (settingsBtn) settingsBtn.addEventListener('click', function() { showAiAccSettings(selGroup); });
+    var runBtn = el.querySelector('#b24t-aiacc-run');
+    if (runBtn) runBtn.addEventListener('click', function() { loadAiAccStats(); });
+
+    // Przywróć ostatni wynik jeśli pasuje do bieżącego wyboru (bez ponownego liczenia)
+    var dataEl = el.querySelector('#b24t-aiacc-data');
+    if (selGroup && dataEl) {
+      if (_aiAccLast && _aiAccLast.groupId === selGroup.id && _aiAccLast.scopeCurrent === scopeCurrent) {
+        renderAiAccData(dataEl, _aiAccLast.results, selGroup, _aiAccLast, scopeCurrent);
+      } else {
+        dataEl.innerHTML = '<div style="padding:18px 8px;text-align:center;font-size:12px;color:var(--b24t-text-faint);line-height:1.6;">Kliknij <strong style="color:var(--b24t-primary);">Policz trafność</strong>,<br>aby zebrać dane.</div>';
+      }
+    }
+  }
+
+  async function loadAiAccStats() {
+    if (_aiAccInFlight) return;
+    var el = document.getElementById('b24t-ann-tab-aitag-content');
+    var dataEl = el && el.querySelector('#b24t-aiacc-data');
+    if (!dataEl) return;
+    var cfg = getStatsConfig();
+    var group = getGroups().find(function(g) { return g.id === cfg.aiSelectedGroupId; });
+    if (!group) return;
+    var pidList;
+    if (cfg.aiScopeCurrent) {
+      if (!state.projectId) {
+        dataEl.innerHTML = '<div style="padding:18px 8px;text-align:center;font-size:12px;color:var(--b24t-err);line-height:1.6;">Brak otwartego projektu w panelu.<br>Wejdź w widok Mentions projektu Brand24.</div>';
+        return;
+      }
+      pidList = [parseInt(state.projectId)];
+    } else {
+      pidList = group.projectIds.slice();
+    }
+    _aiAccInFlight = true;
+    addLog('🤖 [AI-Acc] Liczenie trafności: ' + group.name + (cfg.aiScopeCurrent ? ' (bieżący projekt)' : ' (' + pidList.length + ' proj.)'), 'info');
+    try {
+      var fresh = await _fetchAiAccStats(group, pidList, function(partial, dates) {
+        var _e = document.querySelector('#b24t-aiacc-data');
+        if (_e) renderAiAccData(_e, partial, group, { dateFrom: dates.dateFrom, dateTo: dates.dateTo, label: dates.label }, cfg.aiScopeCurrent);
+      });
+      _aiAccLast = { groupId: group.id, scopeCurrent: cfg.aiScopeCurrent, results: fresh.results, dateFrom: fresh.dateFrom, dateTo: fresh.dateTo, label: fresh.label };
+      var _e = document.querySelector('#b24t-aiacc-data');
+      if (_e) renderAiAccData(_e, fresh.results, group, fresh, cfg.aiScopeCurrent, true);
+    } finally {
+      _aiAccInFlight = false;
+    }
+  }
+
+  function renderAiAccData(el, results, group, meta, scopeCurrent, animateAll) {
+    if (!el) return;
+    var nsId = _aiAccNsId(group);
+    var hasRel = group.relevantTagId != null;
+    var hasAiTags = !!(group.aiRelTagId && group.aiNonRelTagId);
+    var dateFrom = (meta && meta.dateFrom) || (results[0] && results[0].dateFrom) || '';
+    var dateTo   = (meta && meta.dateTo)   || (results[0] && results[0].dateTo)   || '';
+    var label    = (meta && meta.label)    || '';
+    var dataMonth = dateFrom ? dateFrom.slice(0, 7) : '';
+    var curMonth  = _localDateStr(new Date()).slice(0, 7);
+    var isMonthClosing = !scopeCurrent && !!(dataMonth && curMonth > dataMonth);
+    var completedPids = isMonthClosing ? getMcCompletedPids(dataMonth, nsId) : [];
+
+    // Sumy
+    var sTotal = 0, sRel = 0, sAiRel = 0, sAiNon = 0, sAiVer = 0, sTp = 0, sFn = 0;
+    results.forEach(function(r) {
+      if (!r.error && !r.loading) {
+        sTotal += r.total || 0;
+        if (r.rel != null) sRel += r.rel;
+        sAiRel += r.aiRel || 0;
+        sAiNon += r.aiNon || 0;
+        sAiVer += r.aiVer || 0;
+        if (r.tp != null) sTp += r.tp;
+        if (r.fn != null) sFn += r.fn;
+      }
+    });
+    var sFp = Math.max(0, sAiRel - sTp);
+    var sTn = Math.max(0, sAiNon - sFn);
+    var precision = (sTp + sFp) > 0 ? sTp / (sTp + sFp) : null;
+    var recall    = (sTp + sFn) > 0 ? sTp / (sTp + sFn) : null;
+    var f1 = (precision != null && recall != null && (precision + recall) > 0) ? 2 * precision * recall / (precision + recall) : null;
+    var aiTagged = sAiRel + sAiNon + sAiVer;
+    var coverage = sTotal > 0 ? aiTagged / sTotal : null;
+    var untagged = Math.max(0, sTotal - aiTagged);
+    var inconsistent = (sTp > sAiRel) || (hasRel && sTp > sRel) || (sFn > sAiNon);
+
+    // Ostrzeżenia konfiguracyjne
+    var warnHtml = '';
+    if (!hasAiTags) {
+      warnHtml += '<div style="margin-bottom:8px;padding:7px 10px;background:var(--b24t-warn-bg);border:1px solid color-mix(in srgb,var(--b24t-warn) 30%,transparent);border-radius:7px;font-size:11px;color:var(--b24t-warn);line-height:1.5;">Ustaw tagi <strong>AI_Relevant</strong> i <strong>AI_NonRelevant</strong> w ustawieniach (⚙).</div>';
+    }
+    if (!hasRel) {
+      warnHtml += '<div style="margin-bottom:8px;padding:7px 10px;background:var(--b24t-warn-bg);border:1px solid color-mix(in srgb,var(--b24t-warn) 30%,transparent);border-radius:7px;font-size:11px;color:var(--b24t-warn);line-height:1.5;">Ustaw <strong>tag relevancji</strong> (np. Turkey) w ustawieniach (⚙) — bez niego nie da się policzyć trafności.</div>';
+    }
+    if (inconsistent) {
+      warnHtml += '<div style="margin-bottom:8px;padding:7px 10px;background:var(--b24t-err-bg);border:1px solid color-mix(in srgb,var(--b24t-err) 40%,transparent);border-radius:7px;font-size:11px;color:var(--b24t-err);line-height:1.5;">⚠ Liczby niespójne (przecięcie większe niż całość) — filtr tag-AND mógł nie zadziałać. Wyniki niepewne, zgłoś to.</div>';
+    }
+
+    // Karty metryk
+    var metricsHtml = (hasRel && hasAiTags)
+      ? '<div style="display:flex;gap:8px;margin-bottom:10px;">' +
+          _aiAccMetricCard('Precyzja', _aiPct(precision), 'var(--b24t-ok)') +
+          _aiAccMetricCard('Recall',   _aiPct(recall),    'var(--b24t-primary)') +
+          _aiAccMetricCard('F1',       _aiPct(f1),        'var(--b24t-text-muted)') +
+        '</div>'
+      : '';
+
+    // Tabela trafności 2×2
+    var matrixHtml = (hasRel && hasAiTags)
+      ? '<div style="border:1px solid var(--b24t-border);border-radius:8px;overflow:hidden;margin-bottom:10px;">' +
+          '<table style="width:100%;border-collapse:collapse;">' +
+            '<tr style="background:var(--b24t-bg-deep);">' +
+              '<th style="padding:6px 8px;font-size:10px;color:var(--b24t-text-faint);text-align:left;font-weight:600;">Ocena AI \\ Człowiek</th>' +
+              '<th style="padding:6px 8px;font-size:10px;color:var(--b24t-ok);text-align:right;font-weight:600;">Relevantne</th>' +
+              '<th style="padding:6px 8px;font-size:10px;color:var(--b24t-err);text-align:right;font-weight:600;">Nierelevantne</th>' +
+            '</tr>' +
+            '<tr style="border-top:1px solid var(--b24t-border-sub);">' +
+              '<td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">AI: Relevant</td>' +
+              '<td style="padding:6px 8px;font-size:13px;font-weight:700;color:var(--b24t-ok);text-align:right;" title="Trafienie (TP)">' + sTp + ' ✅</td>' +
+              '<td style="padding:6px 8px;font-size:13px;font-weight:700;color:var(--b24t-err);text-align:right;" title="Fałszywy alarm (FP)">' + sFp + ' ❌</td>' +
+            '</tr>' +
+            '<tr style="border-top:1px solid var(--b24t-border-sub);">' +
+              '<td style="padding:6px 8px;font-size:11px;color:var(--b24t-text);">AI: NonRelevant</td>' +
+              '<td style="padding:6px 8px;font-size:13px;font-weight:700;color:var(--b24t-err);text-align:right;" title="Przeoczenie (FN)">' + sFn + ' ❌</td>' +
+              '<td style="padding:6px 8px;font-size:13px;font-weight:700;color:var(--b24t-ok);text-align:right;" title="Poprawne odrzucenie (TN)">' + sTn + ' ✅</td>' +
+            '</tr>' +
+          '</table>' +
+        '</div>'
+      : '';
+
+    // Dodatkowe liczby
+    var extraHtml =
+      '<div style="display:flex;flex-direction:column;margin-bottom:10px;">' +
+        _statsCard('Wszystkie wzmianki', sTotal, 'var(--b24t-text-muted)') +
+        _statsCard('Relevantne (człowiek)', hasRel ? sRel : null, 'var(--b24t-ok)') +
+        _statsCard('AI_Verify (wstrzymane)', sAiVer, 'var(--b24t-warn)') +
+        _statsCard('Nieocenione przez AI', untagged, 'var(--b24t-text-faint)') +
+      '</div>';
+
+    // Pasek pokrycia AI
+    var coverageHtml = '';
+    if (coverage != null) {
+      var covPct = Math.round(coverage * 100);
+      coverageHtml =
+        '<div style="margin-bottom:10px;padding:10px 12px;background:var(--b24t-bg-elevated);border-radius:8px;">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+            '<span style="font-size:11px;font-weight:600;color:var(--b24t-text-faint);">Pokrycie AI</span>' +
+            '<span style="font-size:13px;font-weight:800;color:var(--b24t-primary);">' + covPct + '%</span>' +
+          '</div>' +
+          '<div style="background:var(--b24t-bg-deep);border-radius:99px;height:7px;overflow:hidden;">' +
+            '<div id="b24t-aiacc-cov-bar" style="width:0%;height:100%;background:var(--b24t-accent-grad);border-radius:99px;transition:width 0.6s cubic-bezier(0.25,1,0.5,1);"></div>' +
+          '</div>' +
+          '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:4px;text-align:right;">' + aiTagged + ' / ' + sTotal + ' otagowanych przez AI</div>' +
+        '</div>';
+    }
+
+    // Baner domykania miesiąca (tylko widok grupy)
+    var monthClosingHtml = '';
+    if (isMonthClosing) {
+      var _nonPending = results.filter(function(r) { return !r.loading && !r.error; });
+      var _doneCount  = _nonPending.filter(function(r) { return completedPids.includes(r.pid); }).length;
+      var _allDone    = results.every(function(r) { return r.error || completedPids.includes(r.pid); }) && _nonPending.length > 0;
+      if (_allDone) {
+        monthClosingHtml =
+          '<div style="margin-bottom:10px;padding:10px 12px;background:var(--b24t-ok-bg);border:1px solid color-mix(in srgb,var(--b24t-ok) 40%,transparent);border-radius:8px;display:flex;align-items:center;gap:10px;">' +
+            '<span style="font-size:20px;">✅</span><div><div style="font-size:12px;font-weight:700;color:var(--b24t-ok-text);">Miesiąc domknięty</div>' +
+            '<div style="font-size:11px;color:var(--b24t-ok);margin-top:1px;">Wszystkie projekty zmierzone</div></div></div>';
+      } else {
+        monthClosingHtml =
+          '<div style="margin-bottom:10px;padding:10px 12px;background:var(--b24t-warn-bg);border:1px solid color-mix(in srgb,var(--b24t-warn) 40%,transparent);border-radius:8px;display:flex;align-items:center;gap:10px;">' +
+            '<span style="font-size:20px;">🗓</span><div style="flex:1;"><div style="font-size:12px;font-weight:700;color:var(--b24t-warn-text);">Domykanie miesiąca</div>' +
+            '<div style="font-size:11px;color:var(--b24t-warn);margin-top:1px;">' + _doneCount + ' z ' + _nonPending.length + ' projektów zmierzonych</div></div>' +
+            '<button id="b24t-aiacc-mc-close" style="background:var(--b24t-warn);color:#fff;border:none;border-radius:7px;padding:6px 12px;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer;flex-shrink:0;">Zamknij miesiąc</button></div>';
+      }
+    }
+
+    // Tabela per-projekt (tylko widok grupy z >1 projektem)
+    var perProjectHtml = '';
+    if (!scopeCurrent && results.length > 1) {
+      var rows = results.map(function(r) {
+        if (r.loading) return '<tr style="border-top:1px solid var(--b24t-border-sub);"><td style="padding:5px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="5" style="padding:5px 8px;font-size:10px;color:var(--b24t-text-faint);text-align:center;">⏳ ładowanie…</td></tr>';
+        if (r.error)   return '<tr style="border-top:1px solid var(--b24t-border-sub);"><td style="padding:5px 8px;font-size:11px;color:var(--b24t-text);">' + r.name + '</td><td colspan="5" style="padding:5px 8px;font-size:10px;color:var(--b24t-err);">błąd: ' + r.error + '</td></tr>';
+        var tp = r.tp != null ? r.tp : 0, fn = r.fn != null ? r.fn : 0;
+        var fp = Math.max(0, (r.aiRel || 0) - tp);
+        var prec = (tp + fp) > 0 ? _aiPct(tp / (tp + fp)) : '—';
+        var rec  = (tp + fn) > 0 ? _aiPct(tp / (tp + fn)) : '—';
+        return '<tr style="border-top:1px solid var(--b24t-border-sub);">' +
+          '<td style="padding:5px 8px;font-size:11px;color:var(--b24t-text);max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + r.name + '">' + r.name + '</td>' +
+          '<td style="padding:5px 8px;font-size:11px;font-weight:600;color:var(--b24t-ok);text-align:right;">' + tp + '</td>' +
+          '<td style="padding:5px 8px;font-size:11px;font-weight:600;color:var(--b24t-err);text-align:right;">' + fp + '</td>' +
+          '<td style="padding:5px 8px;font-size:11px;font-weight:600;color:var(--b24t-err);text-align:right;">' + fn + '</td>' +
+          '<td style="padding:5px 8px;font-size:11px;font-weight:700;color:var(--b24t-ok);text-align:right;">' + prec + '</td>' +
+          '<td style="padding:5px 8px;font-size:11px;font-weight:700;color:var(--b24t-primary);text-align:right;">' + rec + '</td>' +
+        '</tr>';
+      }).join('');
+      perProjectHtml =
+        '<div style="border:1px solid var(--b24t-border);border-radius:8px;overflow:hidden;">' +
+          '<table style="width:100%;border-collapse:collapse;">' +
+            '<tr style="background:var(--b24t-bg-deep);">' +
+              '<th style="padding:5px 8px;font-size:10px;color:var(--b24t-text-faint);text-align:left;font-weight:600;">Projekt</th>' +
+              '<th style="padding:5px 8px;font-size:10px;color:var(--b24t-ok);text-align:right;font-weight:600;">TP</th>' +
+              '<th style="padding:5px 8px;font-size:10px;color:var(--b24t-err);text-align:right;font-weight:600;">FP</th>' +
+              '<th style="padding:5px 8px;font-size:10px;color:var(--b24t-err);text-align:right;font-weight:600;">FN</th>' +
+              '<th style="padding:5px 8px;font-size:10px;color:var(--b24t-ok);text-align:right;font-weight:600;">Prec</th>' +
+              '<th style="padding:5px 8px;font-size:10px;color:var(--b24t-primary);text-align:right;font-weight:600;">Rec</th>' +
+            '</tr>' + rows +
+          '</table>' +
+        '</div>';
+    }
+
+    // Okres + nawigacja miesięczna (tylko widok grupy)
+    var periodHtml = '';
+    if (!scopeCurrent && dateFrom && dateTo) {
+      var _navOverride = getOverallActiveMonth(nsId);
+      var _navCurDate = new Date();
+      var _navMinMonth = _localDateStr(new Date(_navCurDate.getFullYear(), _navCurDate.getMonth() - 12, 1)).slice(0, 7);
+      var _navCanForward = !!(dataMonth && dataMonth < curMonth);
+      var _navCanBack    = !!(dataMonth && dataMonth > _navMinMonth);
+      var _navBtnCss = 'background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:5px;padding:2px 7px;font-size:11px;font-family:inherit;cursor:pointer;line-height:1;';
+      var _navBtnDisCss = 'background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-faint);border-radius:5px;padding:2px 7px;font-size:11px;font-family:inherit;cursor:not-allowed;opacity:0.45;line-height:1;';
+      periodHtml = '<div style="display:flex;align-items:center;gap:6px;padding:6px 0;margin-bottom:8px;border-bottom:1px solid var(--b24t-border-sub);flex-wrap:wrap;">' +
+        '<span style="font-size:11px;color:var(--b24t-text-faint);">📅</span>' +
+        '<button id="b24t-aiacc-prev" style="' + (_navCanBack ? _navBtnCss : _navBtnDisCss) + '" title="Poprzedni miesiąc"' + (_navCanBack ? '' : ' disabled') + '>←</button>' +
+        '<span style="font-size:11px;font-weight:600;color:var(--b24t-text-muted);">' + (label || '') + '</span>' +
+        '<button id="b24t-aiacc-next" style="' + (_navCanForward ? _navBtnCss : _navBtnDisCss) + '" title="Następny miesiąc"' + (_navCanForward ? '' : ' disabled') + '>→</button>' +
+        (_navOverride ? '<button id="b24t-aiacc-auto" style="' + _navBtnCss + 'margin-left:4px;" title="Wróć do auto-wyboru">↺ Auto</button>' : '') +
+        '<span style="font-size:10px;color:var(--b24t-text-faint);margin-left:4px;">' + dateFrom + ' → ' + dateTo + '</span>' +
+      '</div>';
+    }
+
+    var footerHtml = '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:6px;text-align:right;">' +
+      group.name + (scopeCurrent ? ' · bieżący projekt' : ' · ' + results.length + ' projektów') + '</div>';
+
+    el.innerHTML = periodHtml + warnHtml + metricsHtml + matrixHtml + extraHtml + coverageHtml + monthClosingHtml + perProjectHtml + footerHtml;
+
+    // Animacje
+    var _rm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var _cb = el.querySelector('#b24t-aiacc-cov-bar');
+    if (_cb && coverage != null) {
+      var _cv = Math.round(coverage * 100);
+      if (_rm) _cb.style.width = _cv + '%';
+      else requestAnimationFrame(function() { requestAnimationFrame(function() { _cb.style.width = _cv + '%'; }); });
+    }
+    if (!_rm) {
+      el.querySelectorAll('[data-statval]').forEach(function(span) {
+        var t = parseInt(span.dataset.statval, 10);
+        if (!isNaN(t) && t > 0) _animateCountUp(span, t, 600);
+      });
+    }
+
+    // Nawigacja miesięczna
+    function _navShift(monthKey, delta) {
+      var p = monthKey.split('-');
+      return _localDateStr(new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1 + delta, 1)).slice(0, 7);
+    }
+    function _navGoTo(monthKey) { setOverallActiveMonth(nsId, monthKey); loadAiAccStats(); }
+    var _pv = el.querySelector('#b24t-aiacc-prev');
+    if (_pv) _pv.addEventListener('click', function() { if (dataMonth && /^\d{4}-\d{2}$/.test(dataMonth)) _navGoTo(_navShift(dataMonth, -1)); });
+    var _nx = el.querySelector('#b24t-aiacc-next');
+    if (_nx) _nx.addEventListener('click', function() { if (dataMonth && /^\d{4}-\d{2}$/.test(dataMonth)) _navGoTo(_navShift(dataMonth, +1)); });
+    var _au = el.querySelector('#b24t-aiacc-auto');
+    if (_au) _au.addEventListener('click', function() { setOverallActiveMonth(nsId, null); loadAiAccStats(); });
+    var _mc = el.querySelector('#b24t-aiacc-mc-close');
+    if (_mc) _mc.addEventListener('click', function() {
+      var allPids = results.filter(function(r) { return !r.error; }).map(function(r) { return r.pid; });
+      setMcCompletedPids(dataMonth, nsId, allPids);
+      setOverallActiveMonth(nsId, null);
+      loadAiAccStats();
+    });
+  }
+
+  function _aiAccMetricCard(label, value, color) {
+    return '<div style="flex:1;text-align:center;padding:10px 4px;background:var(--b24t-bg-elevated);border-radius:8px;">' +
+      '<div style="font-size:20px;font-weight:800;color:' + color + ';font-variant-numeric:tabular-nums;">' + value + '</div>' +
+      '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:2px;">' + label + '</div>' +
+    '</div>';
+  }
+
+  function showAiAccSettings(group) {
+    if (!group) return;
+    var overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483648;display:flex;align-items:center;justify-content:center;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;';
+    var _tagEntries = Object.entries(state.tags);
+    function _makeOpts(selectedId) {
+      return _tagEntries.map(function(entry) {
+        return '<option value="' + entry[1] + '"' + (entry[1] === selectedId ? ' selected' : '') + '>' + entry[0] + ' (ID: ' + entry[1] + ')</option>';
+      }).join('');
+    }
+    var _selStyle = 'width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text);border-radius:7px;padding:7px 10px;font-size:12px;font-family:inherit;cursor:pointer;';
+    var _labelStyle = 'font-size:12px;color:var(--b24t-text-muted);margin-bottom:6px;margin-top:10px;';
+    overlay.innerHTML =
+      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:340px;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.25s cubic-bezier(0.34,1.56,0.64,1);">' +
+        '<div style="padding:12px 16px;background:var(--b24t-accent-grad);border-radius:14px 14px 0 0;display:flex;align-items:center;gap:10px;">' +
+          '<span style="font-size:14px;font-weight:700;color:#fff;flex:1;">🤖 Tagi trafności: ' + group.name + '</span>' +
+          '<button id="b24t-aiset-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;border-radius:5px;padding:2px 8px;font-size:16px;cursor:pointer;">x</button>' +
+        '</div>' +
+        '<div style="padding:16px 16px 8px;">' +
+          '<div style="' + _labelStyle + 'margin-top:0;">Tag <strong>relevancji</strong> (prawda — np. Turkey):</div>' +
+          '<select id="b24t-aiset-rel" style="' + _selStyle + '"><option value="">— brak —</option>' + _makeOpts(group.relevantTagId) + '</select>' +
+          '<div style="' + _labelStyle + '">Tag <strong>AI_Relevant</strong>:</div>' +
+          '<select id="b24t-aiset-airel" style="' + _selStyle + '"><option value="">— brak —</option>' + _makeOpts(group.aiRelTagId) + '</select>' +
+          '<div style="' + _labelStyle + '">Tag <strong>AI_NonRelevant</strong>:</div>' +
+          '<select id="b24t-aiset-ainon" style="' + _selStyle + '"><option value="">— brak —</option>' + _makeOpts(group.aiNonRelTagId) + '</select>' +
+          '<div style="' + _labelStyle + '">Tag <strong>AI_Verify</strong> (opcjonalny):</div>' +
+          '<select id="b24t-aiset-aiver" style="' + _selStyle + '"><option value="">— brak —</option>' + _makeOpts(group.aiVerifyTagId) + '</select>' +
+        '</div>' +
+        '<div style="padding:10px 16px;border-top:1px solid var(--b24t-border);display:flex;gap:8px;">' +
+          '<button id="b24t-aiset-cancel" style="flex:1;background:var(--b24t-bg-input);color:var(--b24t-text-muted);border:1px solid var(--b24t-border);border-radius:8px;padding:9px;font-size:13px;font-family:inherit;cursor:pointer;">Anuluj</button>' +
+          '<button id="b24t-aiset-save" style="flex:2;background:var(--b24t-accent-grad);color:#fff;border:none;border-radius:8px;padding:9px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;">Zapisz</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    function close() { overlay.remove(); }
+    overlay.querySelector('#b24t-aiset-close').addEventListener('click', close);
+    overlay.querySelector('#b24t-aiset-cancel').addEventListener('click', close);
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) close(); });
+    overlay.querySelector('#b24t-aiset-save').addEventListener('click', function() {
+      setGroupRelevantTagId(group.id, parseInt(overlay.querySelector('#b24t-aiset-rel').value) || null);
+      setGroupAiRelTagId(group.id, parseInt(overlay.querySelector('#b24t-aiset-airel').value) || null);
+      setGroupAiNonRelTagId(group.id, parseInt(overlay.querySelector('#b24t-aiset-ainon').value) || null);
+      setGroupAiVerifyTagId(group.id, parseInt(overlay.querySelector('#b24t-aiset-aiver').value) || null);
+      _aiAccLast = null;
+      close();
+      renderAiAccTab();
+    });
+  }
+
+  // Pokazuje/ukrywa przycisk zakładki "Trafność AI" zależnie od konfiguracji AI
+  function _aiAccUpdateTabVisibility() {
+    var btn = document.getElementById('b24t-ann-tab-btn-aitag');
+    if (btn) btn.style.display = _aiAccConfigured() ? '' : 'none';
   }
 
   async function refreshAllProjectsPanel() {

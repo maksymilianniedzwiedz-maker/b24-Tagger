@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.26.2",
+    "date": "2026-06-05",
+    "label": "fix",
+    "changes": [
+      "fix: Trafność AI — zakres dat i miesiąc teraz dokładnie takie same jak w Overall. Wcześniej zakładka miała osobny licznik domykania miesiąca, przez co pokazywała inny miesiąc (np. cały poprzedni ~1302 wzmianki zamiast bieżącego 1–5 ~215). Teraz wspólny stan z Overall.",
+      "fix: Trafność AI — w trybie 'tylko bieżący projekt' widać teraz zakres dat, za który liczone są metryki"
+    ]
+  },
+  {
     "version": "0.26.1",
     "date": "2026-06-05",
     "label": "fix",

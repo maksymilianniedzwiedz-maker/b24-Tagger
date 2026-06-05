@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.26.1",
+    "date": "2026-06-05",
+    "label": "fix",
+    "changes": [
+      "fix: Trafność AI — naprawione liczenie. Filtr tag-AND (tan) w API Brand24 wymaga ID tagów jako tekst (String), nie liczba — wcześniej Brand24 odrzucał każde zapytanie błędem typu i żadne metryki się nie liczyły"
+    ]
+  },
+  {
     "version": "0.26.0",
     "date": "2026-06-05",
     "label": "feat",

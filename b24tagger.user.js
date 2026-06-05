@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.25.1
+// @version      0.25.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.25.1';
+  const VERSION = '0.25.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1011,13 +1011,18 @@
     return data.createTag;
   }
 
+  // Usuwa null/undefined z listy grup (gr). Brand24 GQL oczekuje Int!, więc [null] powoduje błąd API.
+  function _grSafe(gr) {
+    return (Array.isArray(gr) ? gr : []).filter(function(x) { return x != null; });
+  }
+
   async function getMentions(projectId, dateFrom, dateTo, gr, page, opts) {
     const variables = {
       projectId,
       dateRange: { from: dateFrom, to: dateTo },
       filters: {
         va: 1, rt: [], se: [], vi: null,
-        gr: gr || [],
+        gr: _grSafe(gr),
         sq: '', do: '', au: '', lem: false,
         ctr: [], nctr: false, is: [0, 10],
         tp: null, lang: [], nlang: false,
@@ -1478,7 +1483,7 @@
   // ───────────────────────────────────────────
 
   async function buildUrlMap(dateFrom, dateTo, untaggedOnly) {
-    const gr = untaggedOnly ? [state.untaggedId] : [];
+    const gr = (untaggedOnly && state.untaggedId) ? [state.untaggedId] : [];
     const map = {};
     const diag = {
       step: 'init',
@@ -12300,6 +12305,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.25.2",
+      "date": "2026-06-05",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Zakładka Tagi i tagowanie pliku przestają sypać błędami API dla projektów bez kompletu tagów (Required Verification / To Delete / Untagged) — pokazują dla nich 0 zamiast pytać o pusty filtr"},
+        {"type": "fix", "text": "Bezpiecznik na filtrze grup we wszystkich zapytaniach o wzmianki — usuwa puste wartości zanim trafią do Brand24, eliminuje błąd \"Expected non-nullable type Int!\""}
+      ]
+    },
+    {
       "version": "0.25.1",
       "date": "2026-06-05",
       "label": "feat",
@@ -12395,15 +12410,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "Pokrycie tagów: odświeżanie tagIds dla wszystkich projektów z pliku przy wgraniu — naprawia fałszywe ✗ gdy tag dodano po ostatniej wizycie w projekcie Brand24"}
-      ]
-    },
-    {
-      "version": "0.24.30",
-      "date": "2026-05-15",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "Usuwanie po assessmencie — nowa opcjonalna sekcja (toggle w ⚙): wgraj plik, zaznacz assessmenty, usuń wzmianki bezpośrednio bez tagowania; działa cross-project"}
       ]
     },
   ];
@@ -13732,7 +13738,7 @@ function showOnboarding(onComplete) {
         headers: { ...state.tokenHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({ operationName:'getMentions', variables:{
           projectId: pid, dateRange:{ from:dates.dateFrom, to:dates.dateTo },
-          filters:{ va:1,rt:[],se:[],vi:null,gr:gr,sq:'',do:'',au:'',lem:false,ctr:[],nctr:false,is:[0,10],tp:null,lang:[],nlang:false },
+          filters:{ va:1,rt:[],se:[],vi:null,gr:_grSafe(gr),sq:'',do:'',au:'',lem:false,ctr:[],nctr:false,is:[0,10],tp:null,lang:[],nlang:false },
           page:1, order:0
         }, query:_GQL_COUNT })
       }).then(function(r){ return r.json(); }).then(function(j){ return j?.data?.getMentions?.count || 0; });
@@ -13744,8 +13750,8 @@ function showOnboarding(onComplete) {
         try {
           // 2 count queries w równolegle zamiast 2 sekwencyjnych getMentions z pełnymi results
           var counts = await Promise.all([
-            _doCount(p.id, [p.reqVerId]),
-            _doCount(p.id, [p.toDeleteId])
+            p.reqVerId   ? _doCount(p.id, [p.reqVerId])   : Promise.resolve(0),
+            p.toDeleteId ? _doCount(p.id, [p.toDeleteId]) : Promise.resolve(0)
           ]);
           var reqVer   = counts[0];
           var toDelete = counts[1];
@@ -13810,7 +13816,7 @@ function showOnboarding(onComplete) {
     var GQL_TAGS  = 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count results{id tags{id}}}}';
     var PER_PAGE  = 60;
     var mkFilter = function(gr) {
-      return { va:1,rt:[],se:[],vi:null,gr:gr||[],sq:'',do:'',au:'',lem:false,ctr:[],nctr:false,is:[0,10],tp:null,anom:'',lang:[],nlang:false,aue:null,htg:null,mt:false,mtri:null,cxs:[] };
+      return { va:1,rt:[],se:[],vi:null,gr:_grSafe(gr),sq:'',do:'',au:'',lem:false,ctr:[],nctr:false,is:[0,10],tp:null,anom:'',lang:[],nlang:false,aue:null,htg:null,mt:false,mtri:null,cxs:[] };
     };
     var doCount = function(gr) {
       return origFetch('/api/graphql', { method:'POST', credentials:'same-origin',

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.0
+// @version      0.26.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.0';
+  const VERSION = '0.26.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -12305,6 +12305,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.1",
+      "date": "2026-06-05",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Trafność AI: naprawione liczenie — filtr tag-AND (tan) wymaga ID tagów jako tekst; wcześniej Brand24 odrzucał zapytania błędem typu i nic się nie liczyło"}
+      ]
+    },
+    {
       "version": "0.26.0",
       "date": "2026-06-05",
       "label": "feat",
@@ -12403,15 +12412,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "News Analytics: push poprzedniej sesji do GitHub przy starcie nowej; confusion matrix tylko explicit decyzje; manual_add tracking osobnym counterem"},
         {"type": "fix", "text": "News Custom mode Clear przywraca auto-wykrytą kategorię (zamiast nieistniejącego 'auto')"},
         {"type": "perf", "text": "~250 linii martwego kodu usunięte (3 dawne funkcje DASHBOARD ANNOTATORA, 2 zastąpione w TAG STATS, sendSuggestion, _gmSaveProjectNames, duplikaty)"}
-      ]
-    },
-    {
-      "version": "0.24.32",
-      "date": "2026-05-15",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "Usuwanie po assessmencie zintegrowane z mapowaniem: opcja 🗑 Usuń w dropdownie tagu (gdy funkcja włączona); usuwanie w trakcie normalnego przebiegu Start, cross-project, jeden confirm"}
       ]
     },
   ];
@@ -15876,7 +15876,8 @@ To jest NIEODWRACALNE.`)) return;
       dateRange: { from: dateFrom, to: dateTo },
       filters: {
         va: 1, rt: [], se: [], vi: null, gr: [],
-        tan: (tanIds || []).filter(function(x) { return x != null; }),
+        // tan to [String] w API Brand24 (inaczej niż gr=[Int]) — ID tagów muszą być tekstem
+        tan: (tanIds || []).filter(function(x) { return x != null; }).map(String),
         sq: '', do: '', au: '', lem: false,
         ctr: [], nctr: false, is: [0, 10],
         tp: null, lang: [], nlang: false,

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.1
+// @version      0.26.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.1';
+  const VERSION = '0.26.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -12305,6 +12305,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.2",
+      "date": "2026-06-05",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Trafność AI: zakres dat i miesiąc teraz identyczne jak w Overall (wspólny licznik domykania) — wcześniej zakładka pokazywała inny miesiąc (np. cały poprzedni zamiast bieżącego 1–5); w trybie bieżącego projektu widać też zakres dat"}
+      ]
+    },
+    {
       "version": "0.26.1",
       "date": "2026-06-05",
       "label": "fix",
@@ -12393,25 +12402,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#6366f1",
       "changes": [
         {"type": "feat", "text": "Overall Stats: konfigurowalne tagi RV i Irrelevant w ustawieniach grupy (⚙) — dropdown 'Do weryfikacji' i 'Irrelevant' obok 'Relevantne'; ustawienie grupy ma priorytet nad auto-detekcją per projekt"}
-      ]
-    },
-    {
-      "version": "0.24.33",
-      "date": "2026-05-19",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "IIFE patchuje window.fetch/XHR tylko na brand24-hostnames — nie marnuje CPU/pamięci na każdej karcie przeglądarki"},
-        {"type": "fix", "text": "AI News: lista odświeża się przy AI complete/error/timeout (renderUrlList dostępny przez module-scope _newsListRenderer)"},
-        {"type": "fix", "text": "Token capture: refresh w trakcie sesji (Brand24 rotuje token) + init hydratuje z B24Bridge przy starcie"},
-        {"type": "fix", "text": "urlsMatch wymaga 6 wspólnych znaków po ostatnim slashu — eliminuje false-match między różnymi shortcodami IG/TikToka"},
-        {"type": "fix", "text": "Health check: 3 kolejne błędy zamiast 1 zanim abortuje run; nie przerywa przy transient blip"},
-        {"type": "fix", "text": "XSS w 4 miejscach (addLog, mapowanie tagów, multi-projekt widget, audit report) — escape wartości z plików CSV i API"},
-        {"type": "fix", "text": "Onboarding: resize listener usuwany w finishOnboarding (wyciek closure)"},
-        {"type": "fix", "text": "News scan honoruje user-edytowalną LangMap (poprzednio czytał tylko hardcoded fallback)"},
-        {"type": "fix", "text": "News Analytics: push poprzedniej sesji do GitHub przy starcie nowej; confusion matrix tylko explicit decyzje; manual_add tracking osobnym counterem"},
-        {"type": "fix", "text": "News Custom mode Clear przywraca auto-wykrytą kategorię (zamiast nieistniejącego 'auto')"},
-        {"type": "perf", "text": "~250 linii martwego kodu usunięte (3 dawne funkcje DASHBOARD ANNOTATORA, 2 zastąpione w TAG STATS, sendSuggestion, _gmSaveProjectNames, duplikaty)"}
       ]
     },
   ];
@@ -15837,13 +15827,12 @@ To jest NIEODWRACALNE.`)) return;
   // Mierzy jak dobrze AI (tagi AI_Relevant / AI_NonRelevant / AI_Verify) zgadza się
   // z oceną człowieka. Prawda = tag relevancji grupy (np. "Turkey"): ma tag = relevantne,
   // brak tagu = nierelevantne. Liczenie przez filtr `tan` (tag-AND = wzmianka ma wszystkie
-  // podane tagi naraz). Niezależny stan miesiąca od Overall (namespace group.id + '::ai').
+  // podane tagi naraz). Okres i domykanie miesiąca WSPÓLNE z Overall (ten sam group.id) —
+  // dzięki temu zakładka pokazuje dokładnie ten sam miesiąc/zakres dat co Overall.
 
   var AIACC_CONCURRENCY = 2;     // równoległość projektów (2×7 zapytań = max 14 równoczesnych)
   var _aiAccInFlight = false;
   var _aiAccLast = null;         // { groupId, scopeCurrent, results, dateFrom, dateTo, label }
-
-  function _aiAccNsId(group) { return group.id + '::ai'; }
 
   // Czy tagowanie AI jest skonfigurowane (klucz API + aktywny prompt) — od tego zależy widoczność zakładki
   function _aiAccConfigured() {
@@ -15915,7 +15904,8 @@ To jest NIEODWRACALNE.`)) return;
   }
 
   async function _fetchAiAccStats(group, pidList, onProgress) {
-    var dates = _overallGetEffectiveDates({ id: _aiAccNsId(group), projectIds: pidList, relevantTagId: group.relevantTagId });
+    // Okres dat z PEŁNEJ grupy (jak Overall) — także w trybie bieżącego projektu, żeby zakres był identyczny
+    var dates = _overallGetEffectiveDates(group);
     var relId   = group.relevantTagId || null;
     var aiRelId = group.aiRelTagId || null;
     var aiNonId = group.aiNonRelTagId || null;
@@ -16058,7 +16048,7 @@ To jest NIEODWRACALNE.`)) return;
 
   function renderAiAccData(el, results, group, meta, scopeCurrent, animateAll) {
     if (!el) return;
-    var nsId = _aiAccNsId(group);
+    var nsId = group.id;  // wspólny stan miesiąca z Overall — identyczny okres, nawigacja i domykanie
     var hasRel = group.relevantTagId != null;
     var hasAiTags = !!(group.aiRelTagId && group.aiNonRelTagId);
     var dateFrom = (meta && meta.dateFrom) || (results[0] && results[0].dateFrom) || '';
@@ -16232,6 +16222,13 @@ To jest NIEODWRACALNE.`)) return;
         '<span style="font-size:11px;font-weight:600;color:var(--b24t-text-muted);">' + (label || '') + '</span>' +
         '<button id="b24t-aiacc-next" style="' + (_navCanForward ? _navBtnCss : _navBtnDisCss) + '" title="Następny miesiąc"' + (_navCanForward ? '' : ' disabled') + '>→</button>' +
         (_navOverride ? '<button id="b24t-aiacc-auto" style="' + _navBtnCss + 'margin-left:4px;" title="Wróć do auto-wyboru">↺ Auto</button>' : '') +
+        '<span style="font-size:10px;color:var(--b24t-text-faint);margin-left:4px;">' + dateFrom + ' → ' + dateTo + '</span>' +
+      '</div>';
+    } else if (scopeCurrent && dateFrom && dateTo) {
+      // Tryb bieżącego projektu — pokaż sam okres (bez nawigacji), ten sam co Overall
+      periodHtml = '<div style="display:flex;align-items:center;gap:6px;padding:6px 0;margin-bottom:8px;border-bottom:1px solid var(--b24t-border-sub);flex-wrap:wrap;">' +
+        '<span style="font-size:11px;color:var(--b24t-text-faint);">📅</span>' +
+        '<span style="font-size:11px;font-weight:600;color:var(--b24t-text-muted);">' + (label || '') + '</span>' +
         '<span style="font-size:10px;color:var(--b24t-text-faint);margin-left:4px;">' + dateFrom + ' → ' + dateTo + '</span>' +
       '</div>';
     }

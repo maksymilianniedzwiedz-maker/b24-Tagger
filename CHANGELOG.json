@@ -1,5 +1,21 @@
 [
   {
+    "version": "0.26.3",
+    "date": "2026-06-09",
+    "label": "fix",
+    "changes": [
+      "fix: Zakładka Tagi — poprawne liczniki REQ VER / TO DELETE per projekt. Tagi w Brand24 są osobne dla każdego projektu, a lista znanych projektów nie niosła ich ID — efekt: kolumny pokazywały łączną liczbę wzmianek projektu, a cichy prefetch w tle zawsze zwracał 0 ('wszystkie projekty czyste'). Teraz ID tagów czytane są z zapisanej konfiguracji projektu, a projekty bez tych tagów dostają 0 zamiast fałszywego totala",
+      "fix: Timer sesji — zabezpieczenie przed dublowaniem licznika po wznowieniu z pauzy lub 'ponów akcję' (stare interwały nie były gaszone i nawarstwiały się)",
+      "perf: News — lista URL podczas skanowania odświeża się maksymalnie ~3 razy na sekundę zamiast po każdym zeskanowanym adresie (przy 200 URL-ach było to 200 pełnych przerysowań listy)",
+      "perf: Tagowanie — dopasowywanie fuzzy URL w jednym przejściu po mapie zamiast dwóch (szybsze pliki z dużą liczbą niedopasowań)",
+      "fix: News — zamknięcie karty/nawigacja bez zamknięcia panelu domyka sesję statystyk i gasi 5-minutowy licznik w tle",
+      "fix: Eksport CSV (raport, partycje) — cudzysłowy w treści są poprawnie escapowane, kolumny się nie rozjeżdżają",
+      "fix: Quick Delete / Wszystkie projekty — licznik postępu (x / N) faktycznie się aktualizuje podczas pobierania",
+      "fix: Panel logów Quick Delete — komunikaty escapowane przed wstawieniem do HTML (zabezpieczenie XSS)",
+      "chore: Porządki w kodzie — usunięty martwy kod (nieużywana funkcja getUserProjects, CSS i krok samouczka po usuniętym pasku narzędzi, przełącznik motywu ze starego miejsca), deduplikacja dropdownów tagów, banera domykania miesiąca, nawigacji miesięcznej i wierszy Network Monitora (plik krótszy o ~90 linii)"
+    ]
+  },
+  {
     "version": "0.26.2",
     "date": "2026-06-05",
     "label": "fix",

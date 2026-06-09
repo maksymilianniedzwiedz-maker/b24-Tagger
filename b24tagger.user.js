@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.2
+// @version      0.26.3
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.2';
+  const VERSION = '0.26.3';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -980,26 +980,6 @@
       getTags { id title isProtected }
     }`);
     return data.getTags;
-  }
-
-  async function getUserProjects() {
-    if (!state.tokenHeaders) return [];
-    try {
-      const res = await origFetch('/api/graphql', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: state.tokenHeaders,
-        body: JSON.stringify({
-          operationName: 'getUserProjects',
-          variables: {},
-          query: 'query getUserProjects { getUserProjects { project { id name } } }',
-        }),
-      });
-      const data = await res.json();
-      return (data && data.data && data.data.getUserProjects) || [];
-    } catch(e) {
-      return [];
-    }
   }
 
   async function createTag(title) {
@@ -1893,19 +1873,23 @@
         matchConfidence = 'EXACT';
       }
 
+      // Jedno przejście po mapie zamiast dwóch .find — fuzzy short (diff ≤5) ma priorytet,
+      // pierwszy długi fuzzy zapamiętany jako fallback (semantyka identyczna jak 2 osobne scany)
+      let longFuzzyKey = null;
       if (!entry) {
-        const fuzzyKey = _mapKeys.find(k => {
-          if (!urlsMatch(normalizedUrl, k)) return false;
-          return Math.abs(normalizedUrl.length - k.length) <= 5;
-        });
-        if (fuzzyKey) {
-          entry = state.urlMap[fuzzyKey];
-          matchConfidence = 'FUZZY_SHORT';
+        for (let _ki = 0; _ki < _mapKeys.length; _ki++) {
+          const k = _mapKeys[_ki];
+          if (!urlsMatch(normalizedUrl, k)) continue;
+          if (Math.abs(normalizedUrl.length - k.length) <= 5) {
+            entry = state.urlMap[k];
+            matchConfidence = 'FUZZY_SHORT';
+            break;
+          }
+          if (!longFuzzyKey) longFuzzyKey = k;
         }
       }
 
       if (!entry) {
-        const longFuzzyKey = _mapKeys.find(k => urlsMatch(normalizedUrl, k));
         if (longFuzzyKey) {
           addLog(`[MATCH WARN] Długi fuzzy match (>5 znaków diff) — pomijam tagowanie. URL z pliku: "${normalizedUrl.substring(0, 70)}" → mapa: "${longFuzzyKey.substring(0, 70)}"`, 'warn');
           skipped.push({ row, reason: 'FUZZY_LONG_SKIPPED', url: urlRaw, candidate: longFuzzyKey });
@@ -2607,17 +2591,16 @@
   let sessionTimerInterval = null;
 
   function startSessionTimer() {
+    // Guard przed re-startem (resume po pauzie, retry) — wyczyść poprzedni interval żeby nie wyciekał.
+    if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }
     sessionTimerInterval = setInterval(() => {
       const el = document.getElementById('b24t-session-timer');
-      const subEl = document.getElementById('b24t-session-timer-sub');
-      if ((!el && !subEl) || !state.sessionStart) return;
+      if (!el || !state.sessionStart) return;
       const elapsed = Math.floor((Date.now() - state.sessionStart) / 1000);
       const h = String(Math.floor(elapsed / 3600)).padStart(2, '0');
       const m = String(Math.floor((elapsed % 3600) / 60)).padStart(2, '0');
       const s = String(elapsed % 60).padStart(2, '0');
-      const timeStr = `${h}:${m}:${s}`;
-      if (el) el.textContent = timeStr;
-      if (subEl) subEl.textContent = timeStr;
+      el.textContent = `${h}:${m}:${s}`;
 
       // Check last action time
       if (state.lastActionTime && state.status === 'running') {
@@ -3090,7 +3073,7 @@
   function exportReport() {
     const rows = [['czas', 'typ', 'wiadomość']];
     state.logs.forEach(l => rows.push([l.time, l.type, l.message]));
-    const csv = rows.map(r => r.map(v => `"${v}"`).join(',')).join('\n');
+    const csv = rows.map(r => r.map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -3156,7 +3139,7 @@
     if (!state.partitions.length) return;
     const rows = [['partycja', 'dateFrom', 'dateTo', 'wzmianek', 'status']];
     state.partitions.forEach(p => rows.push([p.id, p.dateFrom, p.dateTo, p.rows.length, p.status]));
-    const csv = rows.map(r => r.map(v => `"${v}"`).join(',')).join('\n');
+    const csv = rows.map(r => r.map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url;
@@ -3672,13 +3655,6 @@
       #b24t-topbar-right { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
 
       /* ── DARK MODE TOGGLE SLIDER ── */
-      #b24t-theme-toggle {
-        display: flex; align-items: center; gap: 5px;
-      }
-      #b24t-theme-toggle .b24t-toggle-icon {
-        font-size: 11px; line-height: 1; transition: opacity 0.2s;
-        user-select: none;
-      }
       .b24t-slider-track {
         position: relative; width: 34px; height: 18px;
         background: rgba(0,0,0,0.25);
@@ -3755,24 +3731,7 @@
       }
       .b24t-meta-btn-wrap:hover .b24t-meta-tooltip { opacity: 1; }
 
-      /* ── SUBBAR ── */
-      #b24t-subbar {
-        flex: 0 0 auto;
-        background: var(--b24t-bg-deep) !important;
-        border-bottom: 1px solid var(--b24t-border-sub) !important;
-        transition: background 0.3s, border-color 0.3s;
-      }
-      #b24t-subbar .b24t-icon-btn {
-        background: var(--b24t-primary-bg) !important;
-        border: 1px solid color-mix(in srgb, var(--b24t-primary) 30%, transparent) !important;
-        color: var(--b24t-primary) !important;
-        box-shadow: none !important;
-      }
-      #b24t-subbar .b24t-icon-btn:hover { background: var(--b24t-primary-bg) !important; filter: brightness(1.2); }
-      /* Fix hardcoded dark colors on subbar buttons */
       #b24t-btn-changelog { color: var(--b24t-primary) !important; border-color: color-mix(in srgb, var(--b24t-primary) 25%, transparent) !important; }
-      #b24t-btn-check-update { color: var(--b24t-text-faint) !important; border-color: var(--b24t-border) !important; }
-      #b24t-session-timer-sub { color: var(--b24t-text-faint) !important; }
 
       /* ── FLEX CONTRACT (panel vertical layout) ───────────────────────────
          #b24t-panel          flex col, explicit height (set by resize JS)
@@ -6509,16 +6468,7 @@ function getOnboardingSteps() {
         <strong>Timer sesji</strong> — mierzy czas trwania aktualnej operacji tagowania.`,
       tail: 'bottom',
     },
-    // 4 — Subbar (changelog + update)
-    {
-      target: '#b24t-subbar',
-      title: '📋 Pasek narzędzi',
-      body: `Dwa przyciski QoL:<br><br>
-        <strong>📋 Changelog & Feedback</strong> — lista zmian w każdej wersji, planowane funkcje i możliwość wysłania feedbacku bezpośrednio na Slack.<br><br>
-        <strong>↑ Sprawdź aktualizacje</strong> — ręczne sprawdzenie nowej wersji. Btw — wtyczka <strong>aktualizuje się automatycznie</strong> przez Tampermonkey! 🎉`,
-      tail: 'bottom',
-    },
-    // 5 — Zakładki
+    // 4 — Zakładki
     {
       target: '#b24t-tabs',
       title: '📑 Zakładki — tryby pracy',
@@ -6956,11 +6906,6 @@ function showOnboarding(onComplete) {
         desc: 'Możesz przeciągać panel trzymając za ten obszar. Zawiera: status sesji, zmianę motywu, przyciski funkcji dodatkowych, pomocy i zwijania.',
       },
       {
-        selector: '#b24t-theme-toggle',
-        title: '☀️🌙 Przełącznik motywu',
-        desc: 'Przełącza między jasnym (Brand24) a ciemnym (fioletowy gradient) motywem. Ustawienie jest zapamiętywane.',
-      },
-      {
         selector: '#b24t-status-badge',
         title: 'Status badge',
         desc: 'Aktualny stan wtyczki: Idle (gotowa), Running (taguje), Paused (wstrzymana), Done (zakończone), Error (błąd).',
@@ -6984,11 +6929,6 @@ function showOnboarding(onComplete) {
         selector: '#b24t-meta-bar',
         title: 'Pasek statusu API',
         desc: 'Zielona kropka = token API aktywny, wtyczka połączona z Brand24. Żółta = oczekuje. Timer pokazuje czas bieżącej sesji tagowania.',
-      },
-      {
-        selector: '#b24t-subbar',
-        title: 'Pasek narzędzi',
-        desc: '"Changelog & Feedback" otwiera dziennik zmian i zakładkę opinii. "Sprawdź aktualizacje" ręcznie sprawdza czy jest nowa wersja.',
       },
       {
         selector: '#b24t-tabs',
@@ -8388,6 +8328,17 @@ function showOnboarding(onComplete) {
     document.addEventListener('visibilitychange', newsState.naVisChangeHandler);
     if (newsState.naFlushInterval) clearInterval(newsState.naFlushInterval);
     newsState.naFlushInterval = setInterval(_naTryPeriodicPush, 5 * 60 * 1000);
+    // Jednorazowy hook: opuszczenie strony (zamknięcie karty / nawigacja) bez zamknięcia
+    // panelu News zostawiało żywy interval 5-min — push ostatnich danych i finalizacja
+    if (!newsState.naPagehideHooked) {
+      newsState.naPagehideHooked = true;
+      window.addEventListener('pagehide', function() {
+        if (newsState.sessionId) {
+          try { _naPushSession(_naBuildSessionData(), null); } catch(e) {}
+          _naFinalizeSession();
+        }
+      });
+    }
   }
 
   function _naFinalizeSession() {
@@ -11772,6 +11723,25 @@ function showOnboarding(onComplete) {
       // Sliding window — NEWS_CONTENT_SCAN_CONCURRENCY równoległych workerów
       var nextScanIdx = 0;
       var _domainTimeouts = {}; // licznik timeoutów per domena (reset na każdy import)
+      // Throttle renderu listy podczas skanu — pełny rebuild DOM po każdym URL-u zabijał
+      // płynność przy dużych importach; max 1 render / 300ms + trailing render na końcu okna
+      var _scanLastRender = 0;
+      var _scanRenderPending = false;
+      function _scanRenderThrottled() {
+        var now = Date.now();
+        var elapsed = now - _scanLastRender;
+        if (elapsed >= 300) {
+          _scanLastRender = now;
+          try { renderUrlList(); } catch(e) {}
+        } else if (!_scanRenderPending) {
+          _scanRenderPending = true;
+          setTimeout(function() {
+            _scanRenderPending = false;
+            _scanLastRender = Date.now();
+            try { renderUrlList(); } catch(e) {}
+          }, 300 - elapsed);
+        }
+      }
       async function _scanWorker() {
         while (true) {
           var i = nextScanIdx++;
@@ -11787,7 +11757,7 @@ function showOnboarding(onComplete) {
               entry.score = 0; entry.snippet = ''; entry.matchedChips = [];
               newsState.scanDone++;
               if (importBtn) importBtn.textContent = '⟳ Skanowanie ' + newsState.scanDone + '/' + newsState.scanTotal + '...';
-              try { renderUrlList(); } catch(e) {}
+              _scanRenderThrottled();
               continue;
             }
           }
@@ -11800,7 +11770,7 @@ function showOnboarding(onComplete) {
             entry.score = 0; entry.snippet = ''; entry.matchedChips = [];
             newsState.scanDone++;
             if (importBtn) importBtn.textContent = '⟳ Skanowanie ' + newsState.scanDone + '/' + newsState.scanTotal + '...';
-            try { renderUrlList(); } catch(e) {}
+            _scanRenderThrottled();
             continue;
           }
 
@@ -11867,7 +11837,7 @@ function showOnboarding(onComplete) {
           }
           newsState.scanDone++;
           if (importBtn) importBtn.textContent = '⟳ Skanowanie ' + newsState.scanDone + '/' + newsState.scanTotal + '...';
-          try { renderUrlList(); } catch(e) {}
+          _scanRenderThrottled();
         }
       }
       await Promise.all(Array.from({ length: NEWS_CONTENT_SCAN_CONCURRENCY }, _scanWorker));
@@ -12305,6 +12275,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.3",
+      "date": "2026-06-09",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Zakładka Tagi: poprawne liczniki REQ VER / TO DELETE per projekt (wcześniej pokazywały łączną liczbę wzmianek albo zawsze 0 z cache w tle)"},
+        {"type": "fix", "text": "Timer sesji nie dubluje się po wznowieniu z pauzy / ponowieniu akcji"},
+        {"type": "perf", "text": "News: płynniejsze skanowanie dużych list URL (lista odświeża się max ~3×/s zamiast po każdym adresie); szybsze dopasowywanie URL przy dużych plikach"},
+        {"type": "fix", "text": "Eksport CSV raportu i partycji nie psuje kolumn gdy treść zawiera cudzysłów; licznik postępu w panelu Wszystkie projekty faktycznie się aktualizuje; porządki w kodzie (martwy kod, deduplikacje, escapowanie logów)"}
+      ]
+    },
+    {
       "version": "0.26.2",
       "date": "2026-06-05",
       "label": "fix",
@@ -12393,15 +12375,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "Quick Delete: panel Wszystkie projekty pokazuje wszystkie znane projekty z LS — usuwanie po dowolnym tagu działa niezależnie od nazwy tagu (nie wymaga REQUIRES_VERIFICATION/TO_DELETE)"}
-      ]
-    },
-    {
-      "version": "0.24.34",
-      "date": "2026-05-26",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "Overall Stats: konfigurowalne tagi RV i Irrelevant w ustawieniach grupy (⚙) — dropdown 'Do weryfikacji' i 'Irrelevant' obok 'Relevantne'; ustawienie grupy ma priorytet nad auto-detekcją per projekt"}
       ]
     },
   ];
@@ -13676,11 +13649,18 @@ function showOnboarding(onComplete) {
   // ───────────────────────────────────────────
 
   // Pobiera z localStorage listę znanych projektów
+  // Zwraca też per-projekt ID tagów REQUIRES_VERIFICATION / TO_DELETE (tagi w Brand24 są per projekt)
   function getKnownProjects() {
     const projects = lsGet(LS.PROJECTS, {});
-    var allProjects = Object.entries(projects).map(function([id]) {
+    var allProjects = Object.entries(projects).map(function([id, pData]) {
       var pid = parseInt(id);
-      return { id: pid, name: _pnResolve(pid) };
+      var tagIds = (pData && pData.tagIds) || {};
+      return {
+        id: pid,
+        name: _pnResolve(pid),
+        reqVerId: tagIds['REQUIRES_VERIFICATION'] || null,
+        toDeleteId: tagIds['TO_DELETE'] || null,
+      };
     }).filter(function(p) { return p.id > 0; });
     // Filtruj do wybranej grupy jeśli user ją wybrał w panelu cross-delete
     var groupSel = document.getElementById('b24t-ap-group-sel');
@@ -13692,6 +13672,72 @@ function showOnboarding(onComplete) {
       }
     }
     return allProjects;
+  }
+
+  // ── Wspólne helpery dropdownów tagów (Delete / Quick Tag / AI Tag / modale ustawień) ──
+  // Wypełnia <select> opcjami tagów bieżącego projektu, zachowując aktualny wybór
+  function _fillTagSelect(sel) {
+    if (!sel) return;
+    var current = sel.value;
+    sel.innerHTML = '<option value="">— wybierz tag —</option>' +
+      Object.entries(state.tags || {})
+        .map(function(e) { return '<option value="' + e[1] + '">' + _escHtml(e[0]) + '</option>'; })
+        .join('');
+    if (current) sel.value = current;
+  }
+
+  // Opcje tagów z ID w etykiecie (modale ustawień Overall Stats / Trafność AI)
+  function _tagOptionsWithId(selectedId) {
+    return Object.entries(state.tags || {}).map(function(entry) {
+      return '<option value="' + entry[1] + '"' + (entry[1] === selectedId ? ' selected' : '') + '>' + _escHtml(entry[0]) + ' (ID: ' + entry[1] + ')</option>';
+    }).join('');
+  }
+
+  // ── Wspólne helpery widoków miesięcznych (Overall Stats / Trafność AI) ──
+  // Baner domykania miesiąca (✅ domknięty / 🗓 w trakcie + przycisk "Zamknij miesiąc")
+  function _mcBannerHtml(results, completedPids, closeBtnId, donePlural, doneAll) {
+    var nonPending = results.filter(function(r) { return !r.loading && !r.error; });
+    var doneCount  = nonPending.filter(function(r) { return completedPids.includes(r.pid); }).length;
+    var allDone    = results.every(function(r) { return r.error || completedPids.includes(r.pid); }) && nonPending.length > 0;
+    if (allDone) {
+      return '<div style="margin-bottom:10px;padding:10px 12px;background:var(--b24t-ok-bg);border:1px solid color-mix(in srgb,var(--b24t-ok) 40%,transparent);border-radius:8px;display:flex;align-items:center;gap:10px;">' +
+        '<span style="font-size:20px;">✅</span>' +
+        '<div><div style="font-size:12px;font-weight:700;color:var(--b24t-ok-text);">Miesiąc domknięty</div>' +
+        '<div style="font-size:11px;color:var(--b24t-ok);margin-top:1px;">Wszystkie projekty ' + doneAll + '</div></div>' +
+      '</div>';
+    }
+    return '<div style="margin-bottom:10px;padding:10px 12px;background:var(--b24t-warn-bg);border:1px solid color-mix(in srgb,var(--b24t-warn) 40%,transparent);border-radius:8px;display:flex;align-items:center;gap:10px;">' +
+      '<span style="font-size:20px;">🗓</span>' +
+      '<div style="flex:1;"><div style="font-size:12px;font-weight:700;color:var(--b24t-warn-text);">Domykanie miesiąca</div>' +
+      '<div style="font-size:11px;color:var(--b24t-warn);margin-top:1px;">' + doneCount + ' z ' + nonPending.length + ' projektów ' + donePlural + '</div></div>' +
+      '<button id="' + closeBtnId + '" style="background:var(--b24t-warn);color:#fff;border:none;border-radius:7px;padding:6px 12px;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer;flex-shrink:0;">Zamknij miesiąc</button>' +
+    '</div>';
+  }
+
+  // Pasek okresu z nawigacją ←/→/↺ Auto; idPrefix np. 'b24t-mc' / 'b24t-aiacc'
+  function _monthNavBarHtml(idPrefix, dataMonth, label, dateFrom, dateTo, hasOverride) {
+    var curMonth = _localDateStr(new Date()).slice(0, 7);
+    var now = new Date();
+    // Limit cofania: 12 miesięcy wstecz od bieżącego miesiąca (chroni przed spamem ←)
+    var minMonth = _localDateStr(new Date(now.getFullYear(), now.getMonth() - 12, 1)).slice(0, 7);
+    var canFwd  = !!(dataMonth && dataMonth < curMonth);
+    var canBack = !!(dataMonth && dataMonth > minMonth);
+    var btn = 'background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:5px;padding:2px 7px;font-size:11px;font-family:inherit;cursor:pointer;line-height:1;';
+    var dis = 'background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-faint);border-radius:5px;padding:2px 7px;font-size:11px;font-family:inherit;cursor:not-allowed;opacity:0.45;line-height:1;';
+    return '<div style="display:flex;align-items:center;gap:6px;padding:6px 0;margin-bottom:8px;border-bottom:1px solid var(--b24t-border-sub);flex-wrap:wrap;">' +
+      '<span style="font-size:11px;color:var(--b24t-text-faint);">📅</span>' +
+      '<button id="' + idPrefix + '-prev" style="' + (canBack ? btn : dis) + '" title="Poprzedni miesiąc"' + (canBack ? '' : ' disabled') + '>←</button>' +
+      '<span style="font-size:11px;font-weight:600;color:var(--b24t-text-muted);">' + (label || '') + '</span>' +
+      '<button id="' + idPrefix + '-next" style="' + (canFwd ? btn : dis) + '" title="Następny miesiąc"' + (canFwd ? '' : ' disabled') + '>→</button>' +
+      (hasOverride ? '<button id="' + idPrefix + '-auto" style="' + btn + 'margin-left:4px;" title="Wróć do auto-wyboru">↺ Auto</button>' : '') +
+      '<span style="font-size:10px;color:var(--b24t-text-faint);margin-left:4px;">' + dateFrom + ' → ' + dateTo + '</span>' +
+    '</div>';
+  }
+
+  // Przesuwa klucz miesiąca "YYYY-MM" o delta miesięcy
+  function _monthKeyShift(monthKey, delta) {
+    var p = monthKey.split('-');
+    return _localDateStr(new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1 + delta, 1)).slice(0, 7);
   }
 
   // ───────────────────────────────────────────
@@ -13762,7 +13808,7 @@ function showOnboarding(onComplete) {
   }
 
   // Cicha wersja fetch danych dla cross-delete — per tagId
-  async function _bgFetchAllProjects(tagId) {
+  async function _bgFetchAllProjects(tagId, onProgress) {
     if (!state.tokenHeaders || !tagId) return;
     if (_bgCacheFresh(bgCache.allProjects[tagId])) return bgCache.allProjects[tagId];
     var projects = getKnownProjects();
@@ -13790,6 +13836,7 @@ function showOnboarding(onComplete) {
         }
       }));
       results.push.apply(results, chunkResults.filter(Boolean));
+      if (onProgress) { try { onProgress(Math.min(i + BG_CONCURRENCY, projects.length), projects.length); } catch(e) {} }
     }
     bgCache.allProjects[tagId] = { results: results, ts: Date.now() };
     var withData = results.filter(function(r){ return r.count > 0; });
@@ -14251,8 +14298,9 @@ function showOnboarding(onComplete) {
     var done = 0;
     await Promise.all(projects.map(function(p) {
       return Promise.all([
-        getMentions(p.id, dates.dateFrom, dates.dateTo, [p.reqVerId],   1).catch(function(){ return { count: 0 }; }),
-        getMentions(p.id, dates.dateFrom, dates.dateTo, [p.toDeleteId], 1).catch(function(){ return { count: 0 }; }),
+        // Bez ID tagu nie odpytujemy — pusty filtr gr zwróciłby total projektu zamiast licznika tagu
+        p.reqVerId   ? getMentions(p.id, dates.dateFrom, dates.dateTo, [p.reqVerId],   1).catch(function(){ return { count: 0 }; }) : Promise.resolve({ count: 0 }),
+        p.toDeleteId ? getMentions(p.id, dates.dateFrom, dates.dateTo, [p.toDeleteId], 1).catch(function(){ return { count: 0 }; }) : Promise.resolve({ count: 0 }),
       ]).then(function(pages) {
         done++;
         var counter = document.getElementById('b24t-ann-ts-counter');
@@ -14590,7 +14638,8 @@ function showOnboarding(onComplete) {
     if (!body) return;
     var colors = { info: 'var(--b24t-text-muted)', success: 'var(--b24t-ok)', warn: 'var(--b24t-warn)', error: 'var(--b24t-err)' };
     var msgColor = colors[entry.type] || 'var(--b24t-text-muted)';
-    var msgHtml = entry.message;
+    // message może zawierać nazwy projektów / komunikaty błędów API — zawsze escape (jak _appendLogEntryDom)
+    var msgHtml = _escHtml(entry.message);
     var row = document.createElement('div');
     row.dataset.logType = entry.type;
     row.style.cssText = 'display:flex;gap:8px;padding:2px 0;border-bottom:1px solid var(--b24t-border-sub);font-size:12px;line-height:1.5;';
@@ -15584,32 +15633,8 @@ To jest NIEODWRACALNE.`)) return;
         '</div>';
     }
     // Baner domykania miesiąca
-    var monthClosingHtml = '';
-    if (isMonthClosing) {
-      var _nonPending = results.filter(function(r) { return !r.loading && !r.error; });
-      var _doneCount  = _nonPending.filter(function(r) { return completedPids.includes(r.pid); }).length;
-      var _allDone    = results.every(function(r) { return r.error || completedPids.includes(r.pid); }) && _nonPending.length > 0;
-      if (_allDone) {
-        monthClosingHtml =
-          '<div style="margin-bottom:10px;padding:10px 12px;background:var(--b24t-ok-bg);border:1px solid color-mix(in srgb,var(--b24t-ok) 40%,transparent);border-radius:8px;display:flex;align-items:center;gap:10px;">' +
-            '<span style="font-size:20px;">✅</span>' +
-            '<div>' +
-              '<div style="font-size:12px;font-weight:700;color:var(--b24t-ok-text);">Miesiąc domknięty</div>' +
-              '<div style="font-size:11px;color:var(--b24t-ok);margin-top:1px;">Wszystkie projekty ukończone</div>' +
-            '</div>' +
-          '</div>';
-      } else {
-        monthClosingHtml =
-          '<div style="margin-bottom:10px;padding:10px 12px;background:var(--b24t-warn-bg);border:1px solid color-mix(in srgb,var(--b24t-warn) 40%,transparent);border-radius:8px;display:flex;align-items:center;gap:10px;">' +
-            '<span style="font-size:20px;">🗓</span>' +
-            '<div style="flex:1;">' +
-              '<div style="font-size:12px;font-weight:700;color:var(--b24t-warn-text);">Domykanie miesiąca</div>' +
-              '<div style="font-size:11px;color:var(--b24t-warn);margin-top:1px;">' + _doneCount + ' z ' + _nonPending.length + ' projektów ukończonych</div>' +
-            '</div>' +
-            '<button id="b24t-mc-force-close" style="background:var(--b24t-warn);color:#fff;border:none;border-radius:7px;padding:6px 12px;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer;flex-shrink:0;">Zamknij miesiąc</button>' +
-          '</div>';
-      }
-    }
+    var monthClosingHtml = isMonthClosing
+      ? _mcBannerHtml(results, completedPids, 'b24t-mc-force-close', 'ukończonych', 'ukończone') : '';
     // Kafelki
     var thREL = '';
     var cards;
@@ -15659,25 +15684,8 @@ To jest NIEODWRACALNE.`)) return;
       '</tr>';
     }).join('');
     var _navOverride = getOverallActiveMonth(group.id);
-    var _navCurMonth = _localDateStr(new Date()).slice(0, 7);
-    // Limit cofania: 12 miesięcy wstecz od bieżącego miesiąca (chroni przed spamem ←)
-    var _navCurDate = new Date();
-    var _navMinDate = new Date(_navCurDate.getFullYear(), _navCurDate.getMonth() - 12, 1);
-    var _navMinMonth = _localDateStr(_navMinDate).slice(0, 7);
-    var _navCanForward = !!(dataMonth && dataMonth < _navCurMonth);
-    var _navCanBack    = !!(dataMonth && dataMonth > _navMinMonth);
-    var _navBtnCss = 'background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:5px;padding:2px 7px;font-size:11px;font-family:inherit;cursor:pointer;line-height:1;';
-    var _navBtnDisabledCss = 'background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-faint);border-radius:5px;padding:2px 7px;font-size:11px;font-family:inherit;cursor:not-allowed;opacity:0.45;line-height:1;';
     var periodHtml = (dateFrom && dateTo)
-      ? '<div style="display:flex;align-items:center;gap:6px;padding:6px 0;margin-bottom:8px;border-bottom:1px solid var(--b24t-border-sub);flex-wrap:wrap;">' +
-          '<span style="font-size:11px;color:var(--b24t-text-faint);">📅</span>' +
-          '<button id="b24t-mc-prev" style="' + (_navCanBack ? _navBtnCss : _navBtnDisabledCss) + '" title="Poprzedni miesiąc"' + (_navCanBack ? '' : ' disabled') + '>←</button>' +
-          '<span style="font-size:11px;font-weight:600;color:var(--b24t-text-muted);">' + (label ? label : '') + '</span>' +
-          '<button id="b24t-mc-next" style="' + (_navCanForward ? _navBtnCss : _navBtnDisabledCss) + '" title="Następny miesiąc"' + (_navCanForward ? '' : ' disabled') + '>→</button>' +
-          (_navOverride ? '<button id="b24t-mc-auto" style="' + _navBtnCss + 'margin-left:4px;" title="Wróć do auto-wyboru">↺ Auto</button>' : '') +
-          '<span style="font-size:10px;color:var(--b24t-text-faint);margin-left:4px;">' + dateFrom + ' → ' + dateTo + '</span>' +
-        '</div>'
-      : '';
+      ? _monthNavBarHtml('b24t-mc', dataMonth, label, dateFrom, dateTo, !!_navOverride) : '';
     el.innerHTML = periodHtml + progressHtml + monthClosingHtml + warnHtml + cards +
       '<div style="border:1px solid var(--b24t-border);border-radius:8px;overflow:hidden;">' +
         '<table style="width:100%;border-collapse:collapse;">' +
@@ -15735,13 +15743,7 @@ To jest NIEODWRACALNE.`)) return;
         if (typeof loadOverallStats === 'function') loadOverallStats();
       });
     }
-    // Nawigacja miesięczna ← / → / ↺ Auto
-    function _navShiftMonth(monthKey, delta) {
-      var p = monthKey.split('-');
-      var y = parseInt(p[0], 10), m = parseInt(p[1], 10) - 1 + delta;
-      var d = new Date(y, m, 1);
-      return _localDateStr(d).slice(0, 7);
-    }
+    // Nawigacja miesięczna ← / → / ↺ Auto (disabled przyciski nie odpalają click — guard zbędny)
     function _navGoTo(monthKey) {
       setOverallActiveMonth(group.id, monthKey);
       bgCache.overallStats = null;
@@ -15749,13 +15751,13 @@ To jest NIEODWRACALNE.`)) return;
     }
     var _prevBtn = el.querySelector('#b24t-mc-prev');
     if (_prevBtn) _prevBtn.addEventListener('click', function() {
-      if (!dataMonth || !/^\d{4}-\d{2}$/.test(dataMonth) || !_navCanBack) return;
-      _navGoTo(_navShiftMonth(dataMonth, -1));
+      if (!dataMonth || !/^\d{4}-\d{2}$/.test(dataMonth)) return;
+      _navGoTo(_monthKeyShift(dataMonth, -1));
     });
     var _nextBtn = el.querySelector('#b24t-mc-next');
     if (_nextBtn) _nextBtn.addEventListener('click', function() {
-      if (!dataMonth || !/^\d{4}-\d{2}$/.test(dataMonth) || !_navCanForward) return;
-      _navGoTo(_navShiftMonth(dataMonth, +1));
+      if (!dataMonth || !/^\d{4}-\d{2}$/.test(dataMonth)) return;
+      _navGoTo(_monthKeyShift(dataMonth, +1));
     });
     var _autoBtn = el.querySelector('#b24t-mc-auto');
     if (_autoBtn) _autoBtn.addEventListener('click', function() {
@@ -15769,12 +15771,7 @@ To jest NIEODWRACALNE.`)) return;
     if (!group) return;
     var overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483648;display:flex;align-items:center;justify-content:center;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;';
-    var _tagEntries = Object.entries(state.tags);
-    function _makeOpts(selectedId) {
-      return _tagEntries.map(function(entry) {
-        return '<option value="' + entry[1] + '"' + (entry[1] === selectedId ? ' selected' : '') + '>' + entry[0] + ' (ID: ' + entry[1] + ')</option>';
-      }).join('');
-    }
+    var _makeOpts = _tagOptionsWithId;
     var _selStyle = 'width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text);border-radius:7px;padding:7px 10px;font-size:12px;font-family:inherit;cursor:pointer;';
     var _labelStyle = 'font-size:12px;color:var(--b24t-text-muted);margin-bottom:6px;margin-top:10px;';
     overlay.innerHTML =
@@ -16153,24 +16150,8 @@ To jest NIEODWRACALNE.`)) return;
     }
 
     // Baner domykania miesiąca (tylko widok grupy)
-    var monthClosingHtml = '';
-    if (isMonthClosing) {
-      var _nonPending = results.filter(function(r) { return !r.loading && !r.error; });
-      var _doneCount  = _nonPending.filter(function(r) { return completedPids.includes(r.pid); }).length;
-      var _allDone    = results.every(function(r) { return r.error || completedPids.includes(r.pid); }) && _nonPending.length > 0;
-      if (_allDone) {
-        monthClosingHtml =
-          '<div style="margin-bottom:10px;padding:10px 12px;background:var(--b24t-ok-bg);border:1px solid color-mix(in srgb,var(--b24t-ok) 40%,transparent);border-radius:8px;display:flex;align-items:center;gap:10px;">' +
-            '<span style="font-size:20px;">✅</span><div><div style="font-size:12px;font-weight:700;color:var(--b24t-ok-text);">Miesiąc domknięty</div>' +
-            '<div style="font-size:11px;color:var(--b24t-ok);margin-top:1px;">Wszystkie projekty zmierzone</div></div></div>';
-      } else {
-        monthClosingHtml =
-          '<div style="margin-bottom:10px;padding:10px 12px;background:var(--b24t-warn-bg);border:1px solid color-mix(in srgb,var(--b24t-warn) 40%,transparent);border-radius:8px;display:flex;align-items:center;gap:10px;">' +
-            '<span style="font-size:20px;">🗓</span><div style="flex:1;"><div style="font-size:12px;font-weight:700;color:var(--b24t-warn-text);">Domykanie miesiąca</div>' +
-            '<div style="font-size:11px;color:var(--b24t-warn);margin-top:1px;">' + _doneCount + ' z ' + _nonPending.length + ' projektów zmierzonych</div></div>' +
-            '<button id="b24t-aiacc-mc-close" style="background:var(--b24t-warn);color:#fff;border:none;border-radius:7px;padding:6px 12px;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer;flex-shrink:0;">Zamknij miesiąc</button></div>';
-      }
-    }
+    var monthClosingHtml = isMonthClosing
+      ? _mcBannerHtml(results, completedPids, 'b24t-aiacc-mc-close', 'zmierzonych', 'zmierzone') : '';
 
     // Tabela per-projekt (tylko widok grupy z >1 projektem)
     var perProjectHtml = '';
@@ -16209,21 +16190,7 @@ To jest NIEODWRACALNE.`)) return;
     // Okres + nawigacja miesięczna (tylko widok grupy)
     var periodHtml = '';
     if (!scopeCurrent && dateFrom && dateTo) {
-      var _navOverride = getOverallActiveMonth(nsId);
-      var _navCurDate = new Date();
-      var _navMinMonth = _localDateStr(new Date(_navCurDate.getFullYear(), _navCurDate.getMonth() - 12, 1)).slice(0, 7);
-      var _navCanForward = !!(dataMonth && dataMonth < curMonth);
-      var _navCanBack    = !!(dataMonth && dataMonth > _navMinMonth);
-      var _navBtnCss = 'background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:5px;padding:2px 7px;font-size:11px;font-family:inherit;cursor:pointer;line-height:1;';
-      var _navBtnDisCss = 'background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text-faint);border-radius:5px;padding:2px 7px;font-size:11px;font-family:inherit;cursor:not-allowed;opacity:0.45;line-height:1;';
-      periodHtml = '<div style="display:flex;align-items:center;gap:6px;padding:6px 0;margin-bottom:8px;border-bottom:1px solid var(--b24t-border-sub);flex-wrap:wrap;">' +
-        '<span style="font-size:11px;color:var(--b24t-text-faint);">📅</span>' +
-        '<button id="b24t-aiacc-prev" style="' + (_navCanBack ? _navBtnCss : _navBtnDisCss) + '" title="Poprzedni miesiąc"' + (_navCanBack ? '' : ' disabled') + '>←</button>' +
-        '<span style="font-size:11px;font-weight:600;color:var(--b24t-text-muted);">' + (label || '') + '</span>' +
-        '<button id="b24t-aiacc-next" style="' + (_navCanForward ? _navBtnCss : _navBtnDisCss) + '" title="Następny miesiąc"' + (_navCanForward ? '' : ' disabled') + '>→</button>' +
-        (_navOverride ? '<button id="b24t-aiacc-auto" style="' + _navBtnCss + 'margin-left:4px;" title="Wróć do auto-wyboru">↺ Auto</button>' : '') +
-        '<span style="font-size:10px;color:var(--b24t-text-faint);margin-left:4px;">' + dateFrom + ' → ' + dateTo + '</span>' +
-      '</div>';
+      periodHtml = _monthNavBarHtml('b24t-aiacc', dataMonth, label, dateFrom, dateTo, !!getOverallActiveMonth(nsId));
     } else if (scopeCurrent && dateFrom && dateTo) {
       // Tryb bieżącego projektu — pokaż sam okres (bez nawigacji), ten sam co Overall
       periodHtml = '<div style="display:flex;align-items:center;gap:6px;padding:6px 0;margin-bottom:8px;border-bottom:1px solid var(--b24t-border-sub);flex-wrap:wrap;">' +
@@ -16254,15 +16221,11 @@ To jest NIEODWRACALNE.`)) return;
     }
 
     // Nawigacja miesięczna
-    function _navShift(monthKey, delta) {
-      var p = monthKey.split('-');
-      return _localDateStr(new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1 + delta, 1)).slice(0, 7);
-    }
     function _navGoTo(monthKey) { setOverallActiveMonth(nsId, monthKey); loadAiAccStats(); }
     var _pv = el.querySelector('#b24t-aiacc-prev');
-    if (_pv) _pv.addEventListener('click', function() { if (dataMonth && /^\d{4}-\d{2}$/.test(dataMonth)) _navGoTo(_navShift(dataMonth, -1)); });
+    if (_pv) _pv.addEventListener('click', function() { if (dataMonth && /^\d{4}-\d{2}$/.test(dataMonth)) _navGoTo(_monthKeyShift(dataMonth, -1)); });
     var _nx = el.querySelector('#b24t-aiacc-next');
-    if (_nx) _nx.addEventListener('click', function() { if (dataMonth && /^\d{4}-\d{2}$/.test(dataMonth)) _navGoTo(_navShift(dataMonth, +1)); });
+    if (_nx) _nx.addEventListener('click', function() { if (dataMonth && /^\d{4}-\d{2}$/.test(dataMonth)) _navGoTo(_monthKeyShift(dataMonth, +1)); });
     var _au = el.querySelector('#b24t-aiacc-auto');
     if (_au) _au.addEventListener('click', function() { setOverallActiveMonth(nsId, null); loadAiAccStats(); });
     var _mc = el.querySelector('#b24t-aiacc-mc-close');
@@ -16285,12 +16248,7 @@ To jest NIEODWRACALNE.`)) return;
     if (!group) return;
     var overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483648;display:flex;align-items:center;justify-content:center;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;';
-    var _tagEntries = Object.entries(state.tags);
-    function _makeOpts(selectedId) {
-      return _tagEntries.map(function(entry) {
-        return '<option value="' + entry[1] + '"' + (entry[1] === selectedId ? ' selected' : '') + '>' + entry[0] + ' (ID: ' + entry[1] + ')</option>';
-      }).join('');
-    }
+    var _makeOpts = _tagOptionsWithId;
     var _selStyle = 'width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text);border-radius:7px;padding:7px 10px;font-size:12px;font-family:inherit;cursor:pointer;';
     var _labelStyle = 'font-size:12px;color:var(--b24t-text-muted);margin-bottom:6px;margin-top:10px;';
     overlay.innerHTML =
@@ -16386,7 +16344,10 @@ To jest NIEODWRACALNE.`)) return;
     if (totalEl) totalEl.innerHTML = '';
     if (delBtn) delBtn.style.display = 'none';
 
-    var freshData = await _bgFetchAllProjects(tagId);
+    var freshData = await _bgFetchAllProjects(tagId, function(done, total) {
+      var c = document.getElementById('b24t-ap-spinner-counter');
+      if (c) c.textContent = done + ' / ' + total;
+    });
     if (freshData) _renderAllProjectsList(freshData.results, tagName);
   }
 
@@ -16621,16 +16582,7 @@ To jest NIEODWRACALNE.`)) return;
     }
 
     // Populate tag dropdown when tab becomes visible
-    const updateDelTags = () => {
-      const sel = document.getElementById('b24t-del-tag');
-      if (!sel) return;
-      const current = sel.value;
-      sel.innerHTML = '<option value="">— wybierz tag —</option>' +
-        Object.entries(state.tags)
-          .map(([name, id]) => `<option value="${id}">${name}</option>`)
-          .join('');
-      if (current) sel.value = current;
-    };
+    const updateDelTags = () => _fillTagSelect(document.getElementById('b24t-del-tag'));
 
     const updateDelDateInfo = () => {
       const el = document.getElementById('b24t-del-dateinfo');
@@ -17060,16 +17012,7 @@ Tej operacji nie można cofnąć.`)) {
     if (!qtTab) return;
 
     // Populate tag dropdown when tab becomes visible
-    const updateQtTags = () => {
-      const sel = document.getElementById('b24t-qt-tag');
-      if (!sel) return;
-      const current = sel.value;
-      sel.innerHTML = '<option value="">— wybierz tag —</option>' +
-        Object.entries(state.tags)
-          .map(([name, id]) => `<option value="${id}">${name}</option>`)
-          .join('');
-      if (current) sel.value = current;
-    };
+    const updateQtTags = () => _fillTagSelect(document.getElementById('b24t-qt-tag'));
 
     // Update view info
     const updateViewInfo = () => {
@@ -17351,14 +17294,7 @@ Tej operacji nie można cofnąć.`)) {
     };
 
     // Wypełnij dropdowny tagów (mapowanie renderuje własne; tu tylko delete-by-tag)
-    const fillDelTag = () => {
-      const sel = panel.querySelector('#b24t-ait-deltag');
-      if (!sel) return;
-      const cur = sel.value;
-      sel.innerHTML = '<option value="">— wybierz tag —</option>' +
-        Object.entries(state.tags || {}).map(e => '<option value="' + e[1] + '">' + _aitEsc(e[0]) + '</option>').join('');
-      if (cur) sel.value = cur;
-    };
+    const fillDelTag = () => _fillTagSelect(panel.querySelector('#b24t-ait-deltag'));
 
     // Przywróć zapisaną konfigurację per projekt
     const restoreCfg = () => {
@@ -17704,15 +17640,9 @@ Tej operacji nie można cofnąć.`)) {
     badge.style.cssText = 'display:inline-flex;align-items:center;cursor:pointer;font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;line-height:1.4;color:' + color + ';background:' + bg + ';border:1px solid ' + border + ';';
   }
 
-  function _nmPushRow(entry) {
-    var panel = document.getElementById('b24t-nm-panel');
-    if (!panel || panel.style.display === 'none') return;
-    var tbody = document.getElementById('b24t-nm-tbody');
-    if (!tbody) return;
-    var filter = document.getElementById('b24t-nm-filter') ? document.getElementById('b24t-nm-filter').value : 'all';
-    if (filter === 'errors' && !entry.isError) return;
-    if (filter === 'gql' && !entry.url.includes('graphql')) return;
-    while (tbody.children.length >= 200) tbody.removeChild(tbody.lastChild);
+  // Buduje parę wierszy tabeli NM (główny + rozwijane szczegóły) — wspólne dla push i rebuild
+  function _nmBuildRowPair(entry) {
+    function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
     var statusColor = _nmStatusColor(entry.status, entry.isError);
     var methodColor = entry.method === 'POST' ? '#818cf8' : '#60a5fa';
     var tr = document.createElement('tr');
@@ -17723,7 +17653,6 @@ Tej operacji nie można cofnąć.`)) {
       '<td style="padding:3px 6px;font-size:10px;color:#e2e8f0;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + entry.url + '">' + _nmFmtUrl(entry.url, entry.opName) + '</td>' +
       '<td style="padding:3px 6px;font-size:10px;font-weight:700;color:' + statusColor + ';text-align:center;">' + (entry.status || '—') + '</td>' +
       '<td style="padding:3px 6px;font-size:10px;color:#9ca3af;text-align:right;white-space:nowrap;">' + entry.duration + 'ms</td>';
-    function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
     var detTr = document.createElement('tr');
     detTr.style.display = 'none';
     detTr.innerHTML = '<td colspan="5" style="padding:4px 8px 8px;background:#0f1117;border-bottom:1px solid #2a2a35;">' +
@@ -17740,8 +17669,21 @@ Tej operacji nie można cofnąć.`)) {
     });
     tr.addEventListener('mouseenter', function() { if (detTr.style.display === 'none') tr.style.background = '#1e1e30'; });
     tr.addEventListener('mouseleave', function() { if (detTr.style.display === 'none') tr.style.background = ''; });
-    tbody.insertBefore(detTr, tbody.firstChild);
-    tbody.insertBefore(tr, tbody.firstChild);
+    return { tr: tr, detTr: detTr };
+  }
+
+  function _nmPushRow(entry) {
+    var panel = document.getElementById('b24t-nm-panel');
+    if (!panel || panel.style.display === 'none') return;
+    var tbody = document.getElementById('b24t-nm-tbody');
+    if (!tbody) return;
+    var filter = document.getElementById('b24t-nm-filter') ? document.getElementById('b24t-nm-filter').value : 'all';
+    if (filter === 'errors' && !entry.isError) return;
+    if (filter === 'gql' && !entry.url.includes('graphql')) return;
+    while (tbody.children.length >= 200) tbody.removeChild(tbody.lastChild);
+    var pair = _nmBuildRowPair(entry);
+    tbody.insertBefore(pair.detTr, tbody.firstChild);
+    tbody.insertBefore(pair.tr, tbody.firstChild);
   }
 
   function _nmRebuildTable() {
@@ -17754,35 +17696,9 @@ Tej operacji nie można cofnąć.`)) {
       if (shown >= 100) return;
       if (filter === 'errors' && !entry.isError) return;
       if (filter === 'gql' && !entry.url.includes('graphql')) return;
-      var statusColor = _nmStatusColor(entry.status, entry.isError);
-      var methodColor = entry.method === 'POST' ? '#818cf8' : '#60a5fa';
-      function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-      var tr = document.createElement('tr');
-      tr.id = 'b24t-nm-row-' + entry.id;
-      tr.innerHTML =
-        '<td style="padding:3px 6px;font-size:10px;color:#6b7280;white-space:nowrap;font-family:monospace;">' + _nmFmtTime(entry.ts) + '</td>' +
-        '<td style="padding:3px 6px;font-size:10px;font-weight:700;color:' + methodColor + ';">' + entry.method + '</td>' +
-        '<td style="padding:3px 6px;font-size:10px;color:#e2e8f0;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + entry.url + '">' + _nmFmtUrl(entry.url, entry.opName) + '</td>' +
-        '<td style="padding:3px 6px;font-size:10px;font-weight:700;color:' + statusColor + ';text-align:center;">' + (entry.status || '—') + '</td>' +
-        '<td style="padding:3px 6px;font-size:10px;color:#9ca3af;text-align:right;white-space:nowrap;">' + entry.duration + 'ms</td>';
-      var detTr = document.createElement('tr');
-      detTr.style.display = 'none';
-      detTr.innerHTML = '<td colspan="5" style="padding:4px 8px 8px;background:#0f1117;border-bottom:1px solid #2a2a35;">' +
-        '<div style="font-size:9px;color:#9ca3af;word-break:break-all;margin-bottom:3px;">URL: <span style="color:#e2e8f0;">' + esc(entry.url) + '</span></div>' +
-        (entry.reqSnippet ? '<div style="font-size:9px;color:#9ca3af;margin-bottom:2px;">Request:<br><pre style="margin:2px 0 4px;color:#c4b5fd;font-size:9px;background:#1a1a2e;padding:4px 6px;border-radius:4px;overflow:auto;max-height:70px;white-space:pre-wrap;">' + esc(entry.reqSnippet) + '</pre></div>' : '') +
-        '<div style="font-size:9px;color:#9ca3af;">Response:<br><pre class="b24t-nm-res" style="margin:2px 0;color:' + (entry.isError ? '#f87171' : '#a7f3d0') + ';font-size:9px;background:#1a1a2e;padding:4px 6px;border-radius:4px;overflow:auto;max-height:70px;white-space:pre-wrap;">' + esc(entry.resSnippet || '(oczekiwanie...)') + '</pre></div>' +
-        '</td>';
-      tr._nmDetail = detTr;
-      tr.style.cursor = 'pointer';
-      tr.addEventListener('click', function() {
-        var open = detTr.style.display !== 'none';
-        detTr.style.display = open ? 'none' : 'table-row';
-        tr.style.background = open ? '' : '#1a1a2e';
-      });
-      tr.addEventListener('mouseenter', function() { if (detTr.style.display === 'none') tr.style.background = '#1e1e30'; });
-      tr.addEventListener('mouseleave', function() { if (detTr.style.display === 'none') tr.style.background = ''; });
-      tbody.appendChild(tr);
-      tbody.appendChild(detTr);
+      var pair = _nmBuildRowPair(entry);
+      tbody.appendChild(pair.tr);
+      tbody.appendChild(pair.detTr);
       shown++;
     });
     _nmUpdateCount();

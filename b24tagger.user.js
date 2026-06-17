@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.3
+// @version      0.26.4
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -9236,6 +9236,21 @@ function showOnboarding(onComplete) {
       '</label>';
     }).join('');
     _newsCheckTagDodane();
+    _newsFilterTags();
+  }
+
+  // Filtruje listę tagów wg pola szukania (#b24t-news-tag-search) — podciąg, bez rozróżniania wielkości liter.
+  // Ukrycie filtrem nie odznacza checkboxa — zaznaczone-ale-ukryte tagi nadal są nadawane przy dodawaniu.
+  function _newsFilterTags() {
+    var list = document.getElementById('b24t-news-tag-list');
+    if (!list) return;
+    var inp = document.getElementById('b24t-news-tag-search');
+    var q = (inp && inp.value ? inp.value : '').trim().toLowerCase();
+    list.querySelectorAll('label').forEach(function(lab) {
+      var span = lab.querySelector('span');
+      var nm = (span && span.textContent ? span.textContent : '').toLowerCase();
+      lab.style.display = (!q || nm.indexOf(q) !== -1) ? 'flex' : 'none';
+    });
   }
 
   function _syncAiChip() {
@@ -9368,6 +9383,8 @@ function showOnboarding(onComplete) {
       var _tagChev = document.getElementById('b24t-news-tag-chevron');
       if (_tagList && _tagList.style.display === 'none') {
         _tagList.style.display = 'flex';
+        var _tagSearch = document.getElementById('b24t-news-tag-search-wrap');
+        if (_tagSearch) _tagSearch.style.display = 'block';
         if (_tagChev) _tagChev.style.transform = 'rotate(180deg)';
       }
     } else {
@@ -10019,6 +10036,9 @@ function showOnboarding(onComplete) {
             '<span id="b24t-news-tag-summary" style="font-size:10px;color:' + t.textFaint + ';">Dodane</span>' +
             '<span id="b24t-news-tag-chevron" style="font-size:10px;color:' + t.textFaint + ';transition:transform 0.2s;">▼</span>' +
           '</div>' +
+        '</div>' +
+        '<div id="b24t-news-tag-search-wrap" style="display:none;padding:0 10px 7px;">' +
+          '<input id="b24t-news-tag-search" type="text" placeholder="🔍 Filtruj tagi…" autocomplete="off" spellcheck="false" style="width:100%;box-sizing:border-box;font-size:10px;padding:5px 8px;border-radius:6px;border:1px solid ' + t.borderSub + ';background:' + t.bgInput + ';color:' + t.text + ';font-family:Geist,\'Segoe UI\',system-ui,sans-serif;outline:none;">' +
         '</div>' +
         '<div id="b24t-news-tag-list" style="display:none;flex-wrap:wrap;gap:5px;padding:0 10px 8px;max-height:160px;overflow-y:auto;"></div>' +
       '</div>',
@@ -12151,6 +12171,8 @@ function showOnboarding(onComplete) {
       var tagList = document.getElementById('b24t-news-tag-list');
       var chevron = document.getElementById('b24t-news-tag-chevron');
       var summary = document.getElementById('b24t-news-tag-summary');
+      var searchWrap = document.getElementById('b24t-news-tag-search-wrap');
+      var searchInp  = document.getElementById('b24t-news-tag-search');
       if (!toggle || !tagList) return;
 
       function _updateTagSummary() {
@@ -12167,9 +12189,13 @@ function showOnboarding(onComplete) {
       toggle.addEventListener('click', function() {
         var isOpen = tagList.style.display !== 'none';
         tagList.style.display = isOpen ? 'none' : 'flex';
+        if (searchWrap) searchWrap.style.display = isOpen ? 'none' : 'block';
         if (chevron) chevron.style.transform = isOpen ? '' : 'rotate(180deg)';
-        if (!isOpen) _updateTagSummary();
+        if (!isOpen) { _updateTagSummary(); if (searchInp) searchInp.focus(); }
       });
+
+      // Filtrowanie listy tagów w locie podczas pisania
+      if (searchInp) searchInp.addEventListener('input', function() { _newsFilterTags(); });
 
       // Aktualizuj summary przy zmianie checkboxów
       tagList.addEventListener('change', function() { _updateTagSummary(); });
@@ -12274,6 +12300,15 @@ function showOnboarding(onComplete) {
 
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
+    {
+      "version": "0.26.4",
+      "date": "2026-06-17",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "Dodawanie wzmianek (News i Niestandardowe): pole filtrowania nad listą tagów — wpisz dowolny fragment nazwy, a lista pokaże tylko pasujące tagi (np. 'Bad' znajdzie 'Zara x Bad Bunny'). Przydatne przy projektach z dużą, nieuporządkowaną listą tagów"}
+      ]
+    },
     {
       "version": "0.26.3",
       "date": "2026-06-09",

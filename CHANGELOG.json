@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.26.4",
+    "date": "2026-06-17",
+    "label": "feat",
+    "changes": [
+      "feat: Dodawanie wzmianek (News i Niestandardowe) — nad listą tagów pojawia się pole filtrowania. Wpisanie dowolnego fragmentu nazwy zawęża listę do pasujących tagów (np. 'Bad' znajdzie 'Zara x Bad Bunny'), reszta się chowa. Filtr działa na podciągu, bez rozróżniania wielkości liter; ukrycie tagu filtrem nie odznacza go. Ułatwia pracę przy projektach z dużą i nieuporządkowaną alfabetycznie listą tagów"
+    ]
+  },
+  {
     "version": "0.26.3",
     "date": "2026-06-09",
     "label": "fix",

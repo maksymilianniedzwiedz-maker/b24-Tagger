@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.5
+// @version      0.26.6
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.5';
+  const VERSION = '0.26.6';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -580,16 +580,15 @@
     var _projects = {
       setAll: function(map) {
         var d = _read();
-        var merged = {};
-        var existing = d.projects || {};
-        Object.keys(existing).forEach(function(pid) {
-          if (!_isFallback((existing[pid] || {}).name)) merged[pid] = existing[pid];
-        });
+        // Zachowaj wszystkie istniejące rekordy — NIE gub tagów tylko dlatego, że nazwa jest słaba
+        var merged = Object.assign({}, d.projects || {});
         Object.keys(map || {}).forEach(function(pid) {
           var p = map[pid] || {};
-          if (!_isFallback(p.name)) {
-            merged[String(pid)] = Object.assign({}, merged[String(pid)] || {}, p, { updatedAt: Date.now() });
-          }
+          var prev = merged[String(pid)] || {};
+          var rec = Object.assign({}, prev, p, { updatedAt: Date.now() });
+          // Nie nadpisuj dobrej nazwy fallbackiem, ale resztę danych (np. tagIds) zapisz zawsze
+          if (_isFallback(p.name) && !_isFallback(prev.name)) rec.name = prev.name;
+          merged[String(pid)] = rec;
         });
         _write({ projects: merged });
       },
@@ -9102,7 +9101,7 @@ function showOnboarding(onComplete) {
     // 3. GM fetch /searches/add-new-mention/?sid=ID — Django page that always has tknB24 hidden input
     var sid = state.projectId || '';
     if (!sid) { cb(null, '\u26a0 Brak ID projektu. Przejd\u017a na stron\u0119 projektu Brand24.'); return; }
-    var _b24base = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
+    var _b24base = _b24PanelBase();
     var fetchUrl = _b24base + '/searches/add-new-mention/?sid=' + sid;
     GM_xmlhttpRequest({
       method: 'GET',
@@ -9488,7 +9487,10 @@ function showOnboarding(onComplete) {
       requestAnimationFrame(function() {
         if (_newsChipsRenderer) _newsChipsRenderer();
         _newsRefillTags();
-        if (newsState.mode === 'custom' && _isExternal) _customAutoFillFromPage();
+        if (newsState.mode === 'custom' && _isExternal) {
+          if (state.projectId && (!state.tags || Object.keys(state.tags).length === 0)) _extEnsureTags(state.projectId);
+          _customAutoFillFromPage();
+        }
       });
       return;
     }
@@ -9500,6 +9502,7 @@ function showOnboarding(onComplete) {
     if (newsState.mode === 'custom' && _isExternal) {
       requestAnimationFrame(function() {
         _newsRefillTags();
+        if (state.projectId && (!state.tags || Object.keys(state.tags).length === 0)) _extEnsureTags(state.projectId);
         _customAutoFillFromPage();
       });
     }
@@ -10380,7 +10383,7 @@ function showOnboarding(onComplete) {
       var panelDot = document.getElementById('b24t-news-panel-dot');
       if (!panelDot || panelDot.dataset.checked) return;
       panelDot.dataset.checked = '1';
-      var base = window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
+      var base = _b24PanelBase();
       GM_xmlhttpRequest({
         method: 'GET',
         url: base + '/panel/',
@@ -10390,11 +10393,11 @@ function showOnboarding(onComplete) {
           if (loggedIn) {
             panelDot.textContent = '✓ Panel';
             panelDot.style.color = 'rgba(74,222,128,0.9)';
-            panelDot.title = 'Zalogowany do Brand24';
+            panelDot.title = 'Zalogowany do Brand24 (' + base.replace(/^https?:\/\//, '') + ')';
           } else {
             panelDot.textContent = '✗ Panel';
             panelDot.style.color = 'rgba(248,113,113,0.9)';
-            panelDot.title = 'Nie zalogowany — otwórz app.brand24.com';
+            panelDot.title = 'Nie zalogowany — otwórz ' + base.replace(/^https?:\/\//, '');
           }
         },
         onerror: function() {
@@ -10417,6 +10420,7 @@ function showOnboarding(onComplete) {
         state.tags = pData.tagIds || {};
         B24Bridge.lastProject.set(pid);
         lsSet('b24tagger_mini_last_project', pid);
+        var _tagsCached = Object.keys(state.tags).length > 0;
         var countryInput = document.getElementById('b24t-news-f-country');
         if (countryInput) {
           var m = (pData.name || '').toUpperCase().match(/_([A-Z]{2})$/);
@@ -10436,7 +10440,8 @@ function showOnboarding(onComplete) {
             _langWarnEl.style.display = 'none';
           }
         }
-        _newsRefillTags();
+        if (_tagsCached) _newsRefillTags();
+        else _extEnsureTags(state.projectId); // brak w cache → dociągnij z API i odśwież
       });
     }
 
@@ -10456,16 +10461,24 @@ function showOnboarding(onComplete) {
         var btn = e.target;
         btn.textContent = '⏳';
         btn.disabled = true;
+        var _doneBtn = function() { btn.disabled = false; btn.textContent = '↺ Sprawdź ponownie'; };
+        if (!_isBrand24Host) {
+          // Strona zewnętrzna — getTags() (same-origin) nie zadziała; dociągnij cross-domain
+          _extFetchTags(state.projectId, function(tags, err) {
+            if (tags && tags.length) _extApplyFetchedTags(state.projectId, tags);
+            else _newsCheckTagDodane();
+            _doneBtn();
+          });
+          return;
+        }
         getTags().then(function(tags) {
           state.tags = {};
           tags.forEach(function(t) { if (!t.isProtected) state.tags[t.title] = t.id; });
           _newsRefillTags();
-          btn.disabled = false;
-          btn.textContent = '↺ Sprawdź ponownie';
+          _doneBtn();
         }).catch(function() {
           _newsCheckTagDodane();
-          btn.disabled = false;
-          btn.textContent = '↺ Sprawdź ponownie';
+          _doneBtn();
         });
       }
     });
@@ -12108,7 +12121,7 @@ function showOnboarding(onComplete) {
 
         GM_xmlhttpRequest({
           method: 'POST',
-          url: (window.location.hostname.indexOf('brand24.pl') !== -1 ? 'https://panel.brand24.pl' : 'https://app.brand24.com') + '/searches/add-new-mention/?sid=' + sid,
+          url: _b24PanelBase() + '/searches/add-new-mention/?sid=' + sid,
           headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
           data: body,
           onload: function(resp) {
@@ -12300,6 +12313,17 @@ function showOnboarding(onComplete) {
 
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
+    {
+      "version": "0.26.6",
+      "date": "2026-06-23",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Dodawanie wzmianek na stronach zewnętrznych: gdy tagi projektu nie są jeszcze w pamięci tej przeglądarki, panel sam dociąga je z Brand24 (wcześniej lista tagów bywała pusta, mimo że projekt był widoczny)"},
+        {"type": "fix", "text": "Obsługa polskiego panelu (panel.brand24.pl): poprawne wykrycie zalogowania (znacznik Panel), pobranie tokenu i wysyłka wzmianki trafiają teraz na właściwy panel (.pl/.com) także ze stron zewnętrznych — wcześniej zawsze celowało w .com"},
+        {"type": "fix", "text": "Tagi projektu nie znikają już z pamięci współdzielonej, gdy nazwa projektu jest słabo rozpoznana"}
+      ]
+    },
     {
       "version": "0.26.5",
       "date": "2026-06-23",
@@ -17921,6 +17945,76 @@ Tej operacji nie można cofnąć.`)) {
       result.content = txt;
     }
     return result;
+  }
+
+  // Baza panelu Brand24. Na stronie Brand24 — z bieżącego hosta. Na stronie zewnętrznej (TikTok itp.)
+  // — z B24Bridge, gdzie zapisano .pl/.com w momencie logowania. NIE zgaduj z hosta strony zewnętrznej.
+  function _b24PanelBase() {
+    var h = window.location.hostname;
+    if (h === 'app.brand24.com') return 'https://app.brand24.com';
+    if (h === 'panel.brand24.pl') return 'https://panel.brand24.pl';
+    return B24Bridge.token.base();
+  }
+
+  // Cross-domain pobranie listy tagów wybranego projektu (gdy brak w cache). getTags nie przyjmuje
+  // projectId — bierze projekt z sesji — więc najpierw "rozgrzewamy" sesję na właściwy projekt przez
+  // GET add-new-mention?sid=pid (endpoint przypisany do projektu), dopiero potem getTags.
+  function _extFetchTags(pid, cb) {
+    if (!B24Bridge.token.isValid()) { cb(null, 'no-token'); return; }
+    var base = B24Bridge.token.base();
+    var headers = B24Bridge.token.headers();
+    var _gqlBody = JSON.stringify({ operationName: 'getTags', variables: {}, query: 'query getTags{getTags{id title isProtected}}' });
+    function _doGetTags() {
+      GM_xmlhttpRequest({
+        method: 'POST', url: base + '/api/graphql', headers: headers, data: _gqlBody, timeout: 10000,
+        onload: function(resp) {
+          try {
+            var d = JSON.parse(resp.responseText);
+            var t = d && d.data && d.data.getTags;
+            if (t) cb(t, null); else cb(null, 'gql');
+          } catch(e) { cb(null, 'parse'); }
+        },
+        onerror: function() { cb(null, 'net'); },
+        ontimeout: function() { cb(null, 'timeout'); }
+      });
+    }
+    // rozgrzewka sesji (best-effort) — wynik ignorujemy, idziemy dalej niezależnie
+    GM_xmlhttpRequest({
+      method: 'GET', url: base + '/searches/add-new-mention/?sid=' + pid, timeout: 9000,
+      onload: _doGetTags, onerror: _doGetTags, ontimeout: _doGetTags
+    });
+  }
+
+  // Zapisuje pobrane tagi do state + cache (B24Bridge) i odświeża listę w panelu.
+  function _extApplyFetchedTags(pid, tags) {
+    var map = {};
+    (tags || []).forEach(function(t) { if (!t.isProtected) map[t.title] = t.id; });
+    state.tags = map;
+    var projs = _gmGetProjects();
+    var pdata = projs[String(pid)] || {};
+    pdata.tagIds = map;
+    if (!pdata.name) pdata.name = _pnResolve(pid);
+    projs[String(pid)] = pdata;
+    _gmSaveProjects(projs);
+    _newsRefillTags();
+  }
+
+  // Dociąga tagi z API gdy cache pusty (strona zewnętrzna). Pokazuje stan w nagłówku listy tagów.
+  function _extEnsureTags(pid) {
+    if (!pid) return;
+    if (state.tags && Object.keys(state.tags).length > 0) return; // mamy z cache
+    var tagList = document.getElementById('b24t-news-tag-list');
+    if (!B24Bridge.token.isValid()) {
+      if (tagList) tagList.innerHTML = '<div style="padding:6px 9px;font-size:10px;color:#9ca3af;">⏳ Otwórz Brand24 w tej przeglądarce — token załaduje się automatycznie, wtedy tagi się pojawią.</div>';
+      return;
+    }
+    if (tagList) tagList.innerHTML = '<div style="padding:6px 9px;font-size:10px;color:#9ca3af;">⏳ Pobieram tagi projektu z Brand24…</div>';
+    _extFetchTags(pid, function(tags, err) {
+      if (tags && tags.length) { _extApplyFetchedTags(pid, tags); }
+      else if (tagList) {
+        tagList.innerHTML = '<div style="padding:6px 9px;font-size:10px;color:#f59e0b;">⚠ Nie udało się pobrać tagów (' + (err || 'błąd') + '). Otwórz ten projekt raz na panelu Brand24, by je zapisać.</div>';
+      }
+    });
   }
 
   var _dupCheckSeq = 0; // sequence counter — anuluje stare requesty gdy nowe wywołanie przychodzi

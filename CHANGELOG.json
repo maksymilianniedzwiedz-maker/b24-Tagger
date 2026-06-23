@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.26.6",
+    "date": "2026-06-23",
+    "label": "fix",
+    "changes": [
+      "fix: Dodawanie wzmianek na stronach zewnętrznych (TikTok itp.) — gdy tagi wybranego projektu nie były jeszcze zapisane w pamięci danej przeglądarki, lista tagów bywała pusta mimo że projekt był widoczny. Teraz panel sam dociąga tagi z API Brand24 (po tokenie współdzielonym między domenami) i zapisuje je do pamięci, więc kolejnym razem są od razu",
+      "fix: Obsługa polskiego panelu panel.brand24.pl — wykrywanie zalogowania (znacznik Panel), pobranie tokenu CSRF i wysyłka wzmianki trafiają teraz na właściwy panel (.pl albo .com) także ze stron zewnętrznych. Wcześniej baza była zgadywana z adresu bieżącej strony i ze stron zewnętrznych zawsze celowała w .com, przez co dodawanie do projektów .pl nie działało",
+      "fix: Tagi projektu nie znikają już z pamięci współdzielonej między domenami, gdy nazwa projektu jest słabo rozpoznana (wcześniej cały rekord projektu — łącznie z tagami — bywał pomijany przy zapisie)"
+    ]
+  },
+  {
     "version": "0.26.5",
     "date": "2026-06-23",
     "label": "feat",

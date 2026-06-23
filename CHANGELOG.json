@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.26.7",
+    "date": "2026-06-23",
+    "label": "feat",
+    "changes": [
+      "feat: Dodawanie wzmianek z YouTube — zwykłe filmy (/watch) i Shorts (/shorts/). Panel automatycznie wypełnia tytuł, dokładną datę i godzinę publikacji, autora, liczbę polubień oraz wyświetlenia, prosto z otwartej strony filmu. Dane czytane są z ytInitialPlayerResponse, a data tylko gdy ID filmu z danych zgadza się z adresem — dzięki temu przewinięcie kolejnego Shorta nie podstawi daty z poprzedniego. Drugi (po TikToku) dedykowany scraper social media"
+    ]
+  },
+  {
     "version": "0.26.6",
     "date": "2026-06-23",
     "label": "fix",

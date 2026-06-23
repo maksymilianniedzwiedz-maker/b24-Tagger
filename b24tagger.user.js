@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.6
+// @version      0.26.7
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.6';
+  const VERSION = '0.26.7';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -12314,6 +12314,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.7",
+      "date": "2026-06-23",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "Dodawanie wzmianek z YouTube (zwykłe filmy i Shorts): panel sam wypełnia tytuł, datę i godzinę publikacji, autora, liczbę polubień oraz wyświetlenia. Data jest dokładna (z danych filmu), a przy przewijaniu Shortsów nie podstawia danych z poprzedniego filmu"}
+      ]
+    },
+    {
       "version": "0.26.6",
       "date": "2026-06-23",
       "label": "fix",
@@ -18165,7 +18174,9 @@ Tej operacji nie można cofnąć.`)) {
       if (_social) {
         if (_social.content) scraped.content = _social.content;
         if (_social.date)    scraped.date = _social.date;
-        if (_social.lang)    scraped.lang = _social.lang;
+        // Gdy adapter zadziałał, ufamy jego językowi — także gdy null (np. YouTube: język UI ≠ język
+        // filmu, więc lepiej nie ustawiać niż wywołać fałszywe ostrzeżenie o niezgodności z projektem)
+        scraped.lang = _social.lang;
       }
 
       // URL — zawsze ustaw z bieżącego okna
@@ -18219,10 +18230,12 @@ Tej operacji nie można cofnąć.`)) {
       }
 
       // Metryki social media — z adaptera platformy jeśli są, inaczej generyczny scrape z DOM
-      var _metrics = (_social && (_social.likes !== null || _social.comments !== null || _social.shares !== null)) ? _social : _scrapeSocialMetrics();
-      if (_metrics.likes   !== null) { var lF = document.getElementById('b24t-news-f-likes');    if (lF && !lF.value) lF.value = _metrics.likes; }
-      if (_metrics.shares  !== null) { var sF = document.getElementById('b24t-news-f-shares');   if (sF && !sF.value) sF.value = _metrics.shares; }
-      if (_metrics.comments!== null) { var cF = document.getElementById('b24t-news-f-comments'); if (cF && !cF.value) cF.value = _metrics.comments; }
+      var _hasSocialMetric = _social && (_social.likes != null || _social.comments != null || _social.shares != null || _social.pageviews != null);
+      var _metrics = _hasSocialMetric ? _social : _scrapeSocialMetrics();
+      if (_metrics.likes    != null) { var lF = document.getElementById('b24t-news-f-likes');     if (lF && !lF.value) lF.value = _metrics.likes; }
+      if (_metrics.shares   != null) { var sF = document.getElementById('b24t-news-f-shares');    if (sF && !sF.value) sF.value = _metrics.shares; }
+      if (_metrics.comments != null) { var cF = document.getElementById('b24t-news-f-comments');  if (cF && !cF.value) cF.value = _metrics.comments; }
+      if (_metrics.pageviews!= null) { var pF = document.getElementById('b24t-news-f-pageviews'); if (pF && !pF.value) pF.value = _metrics.pageviews; }
 
       // Sprawdź zgodność języka z projektem
       if (scraped.lang && state.projectId) {
@@ -18359,11 +18372,57 @@ Tej operacji nie można cofnąć.`)) {
     return r;
   }
 
+  // Scraper dedykowany YouTube — zwykłe filmy (/watch) i Shorts (/shorts/). Dane czyta z
+  // ytInitialPlayerResponse przez unsafeWindow (_win) — userscript jest w sandboxie, page-globals
+  // nie są widoczne przez zwykły window. Datę bierze z microformat.publishDate TYLKO gdy ID z danych
+  // zgadza się z ID w URL — dzięki temu przewinięcie Shortsa nie podstawi daty z poprzedniego filmu.
+  function _scrapeYouTube() {
+    var r = { content: '', date: '', hour: '', minute: '', author: '', likes: null, shares: null, comments: null, pageviews: null, lang: null };
+    var href = window.location.href;
+    var idm = href.match(/[?&]v=([\w-]{6,})/) || href.match(/\/shorts\/([\w-]{6,})/) || href.match(/youtu\.be\/([\w-]{6,})/);
+    var curId = idm ? idm[1] : null;
+    var pr = null;
+    try { pr = _win.ytInitialPlayerResponse; } catch(e) {}
+    var vd = (pr && pr.videoDetails) || {};
+    var mf = (pr && pr.microformat && pr.microformat.playerMicroformatRenderer) || {};
+    var prMatches = !!(curId && vd.videoId === curId);
+
+    var ogT = (document.querySelector('meta[property="og:title"]') || {}).content || '';
+    r.content = ((prMatches && vd.title) ? vd.title : ogT).replace(/\s+/g, ' ').trim().slice(0, 400);
+    r.author  = (prMatches && (vd.author || mf.ownerChannelName)) || '';
+
+    if (prMatches && mf.publishDate) {
+      try {
+        var d = new Date(mf.publishDate);
+        if (!isNaN(d.getTime())) {
+          r.date   = _localDateStr(d);
+          r.hour   = String(d.getHours()).padStart(2, '0');
+          r.minute = String(d.getMinutes()).padStart(2, '0');
+        }
+      } catch(e) {}
+    }
+    if (prMatches && vd.viewCount) { var vc = parseInt(vd.viewCount, 10); if (!isNaN(vc)) r.pageviews = vc; }
+
+    // Polubienia — z aria-label konkretnego przycisku "lubię" (NIE generyczne *="like", bo to złapałoby
+    // też "dislike"). Aria-label zawiera dokładną liczbę i aktualizuje się przy przewijaniu Shortsów.
+    try {
+      var lb = document.querySelector('like-button-view-model button[aria-label], #like-button button[aria-label], #segmented-like-button button[aria-label]');
+      if (lb) {
+        var al = lb.getAttribute('aria-label') || '';
+        var m = al.match(/\d[\d.   ,]*\d|\d/);
+        if (m) { var ln = parseInt(m[0].replace(/[^\d]/g, ''), 10); if (!isNaN(ln)) r.likes = ln; }
+      }
+    } catch(e) {}
+    // Język UI YouTube != język filmu — celowo NIE ustawiamy lang (uniknięcie fałszywego ostrzeżenia)
+    return r;
+  }
+
   // Dyspozytor adapterów social media — zwraca komplet danych posta albo null (wtedy działa
   // generyczny scrape artykułowy). Punkt rozszerzeń na kolejne platformy (X, Instagram, FB…).
   function _scrapeSocialPost() {
     var h = window.location.hostname;
     if (/(^|\.)tiktok\.com$/.test(h)) return _scrapeTikTok();
+    if (/(^|\.)youtube\.com$/.test(h) || /(^|\.)youtu\.be$/.test(h)) return _scrapeYouTube();
     return null;
   }
 

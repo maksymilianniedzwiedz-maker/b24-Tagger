@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.4
+// @version      0.26.5
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.4';
+  const VERSION = '0.26.5';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -12301,6 +12301,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.5",
+      "date": "2026-06-23",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "Dodawanie wzmianek na TikToku: panel sam wypełnia opis filmu, dokładną datę i godzinę publikacji oraz liczbę polubień i komentarzy — nie trzeba już ręcznie przeklejać tekstu ani wybierać daty. Data liczona jest niezawodnie z adresu filmu (działa niezależnie od layoutu i logowania)"}
+      ]
+    },
+    {
       "version": "0.26.4",
       "date": "2026-06-17",
       "label": "feat",
@@ -18057,6 +18066,14 @@ Tej operacji nie można cofnąć.`)) {
     requestAnimationFrame(function() {
       var scraped = _miniScrapeCurrentPage();
 
+      // Adapter social media (na razie TikTok) — nadpisuje generyczny scrape, gdy zna dokładniejsze dane
+      var _social = _scrapeSocialPost();
+      if (_social) {
+        if (_social.content) scraped.content = _social.content;
+        if (_social.date)    scraped.date = _social.date;
+        if (_social.lang)    scraped.lang = _social.lang;
+      }
+
       // URL — zawsze ustaw z bieżącego okna
       var urlFld = document.getElementById('b24t-news-f-url');
       if (urlFld && !urlFld.value) {
@@ -18093,11 +18110,11 @@ Tej operacji nie można cofnąć.`)) {
         dateFld.value = _now.getFullYear() + '-' + String(_now.getMonth()+1).padStart(2,'0') + '-' + String(_now.getDate()).padStart(2,'0');
       }
 
-      // Godzina i minuty z bieżącego czasu jeśli puste
+      // Godzina i minuty — z posta social media jeśli znane, inaczej z bieżącego czasu
       var hourFld = document.getElementById('b24t-news-f-hour');
       var minFld  = document.getElementById('b24t-news-f-minute');
-      if (hourFld && !hourFld.value) { var _n = new Date(); hourFld.value = String(_n.getHours()).padStart(2,'0'); }
-      if (minFld  && !minFld.value)  { var _n2 = new Date(); minFld.value  = String(_n2.getMinutes()).padStart(2,'0'); }
+      if (hourFld && !hourFld.value) { hourFld.value = (_social && _social.hour) ? _social.hour : String(new Date().getHours()).padStart(2,'0'); }
+      if (minFld  && !minFld.value)  { minFld.value  = (_social && _social.minute) ? _social.minute : String(new Date().getMinutes()).padStart(2,'0'); }
 
       // Kategoria — auto-detect z URL; zapisujemy też w datasecie, żeby Clear mógł przywrócić auto-wartość
       var catSel = document.getElementById('b24t-news-f-category-select');
@@ -18107,8 +18124,8 @@ Tej operacji nie można cofnąć.`)) {
         catSel.dataset.autoDetected = _autoCat;
       }
 
-      // Metryki social media — próba scrapowania z żywego DOM
-      var _metrics = _scrapeSocialMetrics();
+      // Metryki social media — z adaptera platformy jeśli są, inaczej generyczny scrape z DOM
+      var _metrics = (_social && (_social.likes !== null || _social.comments !== null || _social.shares !== null)) ? _social : _scrapeSocialMetrics();
       if (_metrics.likes   !== null) { var lF = document.getElementById('b24t-news-f-likes');    if (lF && !lF.value) lF.value = _metrics.likes; }
       if (_metrics.shares  !== null) { var sF = document.getElementById('b24t-news-f-shares');   if (sF && !sF.value) sF.value = _metrics.shares; }
       if (_metrics.comments!== null) { var cF = document.getElementById('b24t-news-f-comments'); if (cF && !cF.value) cF.value = _metrics.comments; }
@@ -18193,6 +18210,67 @@ Tej operacji nie można cofnąć.`)) {
     }
     // Instagram — metryki ukryte za auth, pomijamy
     return result;
+  }
+
+  // Parser liczb social media: "85.6K" → 85600, "1,2M" → 1200000, "83" → 83
+  function _parseSocialNum(txt) {
+    if (!txt) return null;
+    var s = String(txt).replace(/[^0-9KkMmBb.,]/g, '').trim();
+    var m = s.match(/^([\d.,]+)\s*([KkMmBb]?)$/);
+    if (!m) return null;
+    var n = parseFloat(m[1].replace(/,/g, ''));
+    var sfx = m[2].toLowerCase();
+    if (sfx === 'k') n = Math.round(n * 1000);
+    else if (sfx === 'm') n = Math.round(n * 1000000);
+    else if (sfx === 'b') n = Math.round(n * 1000000000);
+    return isNaN(n) ? null : n;
+  }
+
+  // Scraper dedykowany TikTokowi — opis, dokładna data (z ID filmu), polubienia i komentarze
+  // z żywej strony. Obsługuje oba layouty: modal ("browse-*") i pełną stronę ("video-*").
+  // Udostępnień TikTok nie pokazuje jako liczby w DOM → zostaje puste.
+  function _scrapeTikTok() {
+    var r = { content: '', date: '', hour: '', minute: '', author: '', likes: null, shares: null, comments: null, lang: null };
+    function _pick(names) {
+      for (var i = 0; i < names.length; i++) {
+        try {
+          var el = document.querySelector('[data-e2e="' + names[i] + '"]');
+          if (el) { var t = (el.innerText || el.textContent || '').trim(); if (t) return t; }
+        } catch(e) {}
+      }
+      return '';
+    }
+    r.content  = _pick(['browse-video-desc', 'video-desc', 'new-desc-span']).replace(/\s+/g, ' ').trim().slice(0, 600);
+    r.author   = _pick(['browse-username', 'author-uniqueId', 'user-title']);
+    r.likes    = _parseSocialNum(_pick(['browse-like-count', 'like-count']));
+    r.comments = _parseSocialNum(_pick(['browse-comment-count', 'comment-count']));
+    // Data + godzina z ID filmu (górne 32 bity = unix w sekundach) — niezależne od logowania i layoutu,
+    // a data względna ("1 dn. temu") jest bezużyteczna do dokładnego wpisu
+    try {
+      var idm = window.location.href.match(/\/video\/(\d+)/);
+      if (idm) {
+        var ts = Number(BigInt(idm[1]) >> 32n);
+        if (ts > 1000000000 && ts < 4000000000) {
+          var d = new Date(ts * 1000);
+          r.date   = _localDateStr(d);
+          r.hour   = String(d.getHours()).padStart(2, '0');
+          r.minute = String(d.getMinutes()).padStart(2, '0');
+        }
+      }
+    } catch(e) {}
+    try {
+      var hl = (document.documentElement.getAttribute('lang') || '').match(/^([a-z]{2})/i);
+      if (hl) r.lang = hl[1].toLowerCase();
+    } catch(e) {}
+    return r;
+  }
+
+  // Dyspozytor adapterów social media — zwraca komplet danych posta albo null (wtedy działa
+  // generyczny scrape artykułowy). Punkt rozszerzeń na kolejne platformy (X, Instagram, FB…).
+  function _scrapeSocialPost() {
+    var h = window.location.hostname;
+    if (/(^|\.)tiktok\.com$/.test(h)) return _scrapeTikTok();
+    return null;
   }
 
   function _initMiniMentionButton() {

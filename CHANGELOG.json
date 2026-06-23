@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.26.5",
+    "date": "2026-06-23",
+    "label": "feat",
+    "changes": [
+      "feat: Dodawanie wzmianek na TikToku — panel automatycznie wypełnia opis filmu, dokładną datę i godzinę publikacji oraz liczbę polubień i komentarzy prosto z otwartej strony. Wcześniej dla social media trzeba było ręcznie przeklejać tekst i wybierać datę. Data jest liczona z adresu filmu (TikTok koduje w nim czas publikacji), więc działa niezawodnie niezależnie od wyglądu strony i tego czy jesteś zalogowany. Udostępnień TikTok nie udostępnia jako liczby, więc to pole zostaje do ręcznego uzupełnienia. To pierwszy z dedykowanych scraperów social media — kolejne platformy (X, Instagram, Facebook) w planach"
+    ]
+  },
+  {
     "version": "0.26.4",
     "date": "2026-06-17",
     "label": "feat",

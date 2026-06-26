@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.7
+// @version      0.26.8
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.7';
+  const VERSION = '0.26.8';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1702,7 +1702,15 @@
       var projectRows = projectGroups[projectId];
       addLog('\n══ Projekt: ' + projectName + ' (' + projectId + ') — ' + projectRows.length + ' wierszy ══', 'info');
 
-      // Resolve mapping for this project by tag name
+      // Resolve mapping for this project by tag name — najpierw świeże tagi z Brand24
+      // (krytyczne: bez tego nowo dodane tagi w nieodwiedzonych projektach są po cichu pomijane)
+      var _freshTags = await _tagsFetchFreshAsync(projectId);
+      if (_freshTags) {
+        projectData.tagIds = _freshTags;
+        addLog('↻ Tagi projektu odświeżone z Brand24 (' + Object.keys(_freshTags).length + ')', 'info');
+      } else {
+        addLog('⚠ Nie udało się odświeżyć tagów projektu ' + projectName + ' — używam zapisanych z pamięci', 'warn');
+      }
       var projectTags = projectData.tagIds || {};
       var projectMapping = {};
       Object.entries(savedMapping).forEach(function(_entry) {
@@ -12314,6 +12322,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.8",
+      "date": "2026-06-26",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Tagowanie pliku w wielu projektach: przed otagowaniem każdego projektu wtyczka dociąga z Brand24 jego aktualną listę tagów. Wcześniej, jeśli nie odwiedziłeś projektu po dodaniu nowego tagu, ten tag był po cichu pomijany — przez co część projektów zostawała bez niego. Gdy dociągnięcie się nie uda, używane są tagi zapisane wcześniej (bez pogorszenia)"}
+      ]
+    },
+    {
       "version": "0.26.7",
       "date": "2026-06-23",
       "label": "feat",
@@ -12400,58 +12417,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "Zakładka Tagi i tagowanie pliku przestają sypać błędami API dla projektów bez kompletu tagów (Required Verification / To Delete / Untagged) — pokazują dla nich 0 zamiast pytać o pusty filtr"},
         {"type": "fix", "text": "Bezpiecznik na filtrze grup we wszystkich zapytaniach o wzmianki — usuwa puste wartości zanim trafią do Brand24, eliminuje błąd \"Expected non-nullable type Int!\""}
-      ]
-    },
-    {
-      "version": "0.25.1",
-      "date": "2026-06-05",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "AI Tag: trzy tryby gdy wzmianka ma już tag — Pomiń, Nadpisz (usuń stary tag AI, nadaj nowy), Dopisz (dodaj obok)"},
-        {"type": "feat", "text": "AI Tag: batche do Claude lecą równolegle (po 6) zamiast jeden po drugim — kilkukrotnie szybsze tagowanie większych zakresów"},
-        {"type": "feat", "text": "AI Tag: log widoczny też w karcie AI Tag (jak w karcie Plik) — z historią sesji"}
-      ]
-    },
-    {
-      "version": "0.25.0",
-      "date": "2026-06-02",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "AI Tagowanie: nowa karta 🤖 AI Tag — pobiera wzmianki z panelu, ocenia promptem przez Claude i nadaje tagi na bieżąco, bez notebooka i CSV"},
-        {"type": "feat", "text": "AI Tagowanie: źródło z widoku lub zakresu dat, mapowanie ocena→tag per projekt, tryb konfliktu pomiń/nadpisz, usuwanie po ocenie i po tagu"},
-        {"type": "feat", "text": "Ustawienia ⚙ podzielone na karty: Ogólne, AI, Analityka"},
-        {"type": "feat", "text": "Biblioteka promptów przebudowana — większy panel, motyw dark/light, kafelki, pole kategorii oceny"}
-      ]
-    },
-    {
-      "version": "0.24.37",
-      "date": "2026-06-02",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "News: popup domeny przy ✕ — dymek komiksowy ponad przyciskiem, z-index 2147483647, dziubek wskazuje X; light/dark mode"}
-      ]
-    },
-    {
-      "version": "0.24.36",
-      "date": "2026-06-02",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "News: popup domeny przy ✕ — usuń tylko ten URL lub wszystkie z danej domeny"},
-        {"type": "feat", "text": "News: bulk bar — przyciski 'Usuń błędy HTTP' (404/429/4xx) i 'Stare daty (przed poprzednim miesiącem)'"},
-        {"type": "fix", "text": "News: URLe dodane wcześniej oznaczane jako 'w projekcie' przy wczytaniu listy — ominięte w skanowaniu, lepszy komunikat przy submicie"}
-      ]
-    },
-    {
-      "version": "0.24.35",
-      "date": "2026-05-27",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Quick Delete: panel Wszystkie projekty pokazuje wszystkie znane projekty z LS — usuwanie po dowolnym tagu działa niezależnie od nazwy tagu (nie wymaga REQUIRES_VERIFICATION/TO_DELETE)"}
       ]
     },
   ];
@@ -17994,17 +17959,13 @@ Tej operacji nie można cofnąć.`)) {
     });
   }
 
-  // Zapisuje pobrane tagi do state + cache (B24Bridge) i odświeża listę w panelu.
+  // Zapisuje pobrane tagi do state + magazyny (localStorage + B24Bridge) i odświeża listę w panelu.
   function _extApplyFetchedTags(pid, tags) {
     var map = {};
     (tags || []).forEach(function(t) { if (!t.isProtected) map[t.title] = t.id; });
+    var unt = (tags || []).find(function(t) { return t.isProtected && t.title === 'Untagged'; });
     state.tags = map;
-    var projs = _gmGetProjects();
-    var pdata = projs[String(pid)] || {};
-    pdata.tagIds = map;
-    if (!pdata.name) pdata.name = _pnResolve(pid);
-    projs[String(pid)] = pdata;
-    _gmSaveProjects(projs);
+    _tagsSaveToProject(pid, map, unt ? unt.id : null);
     _newsRefillTags();
   }
 
@@ -18023,6 +17984,52 @@ Tej operacji nie można cofnąć.`)) {
       else if (tagList) {
         tagList.innerHTML = '<div style="padding:6px 9px;font-size:10px;color:#f59e0b;">⚠ Nie udało się pobrać tagów (' + (err || 'błąd') + '). Otwórz ten projekt raz na panelu Brand24, by je zapisać.</div>';
       }
+    });
+  }
+
+  // ── ŚWIEŻE TAGI — uniwersalny silnik (same-origin + cross-domain) ──
+  // Zapisuje tagi projektu do localStorage (źródło prawdy dla autotagowania/usuwania/quick-tag)
+  // ORAZ mirror do B24Bridge (panele zewnętrzne / News). Stempluje czas pobrania (tagsFetchedAt).
+  function _tagsSaveToProject(pid, map, untaggedId) {
+    var projs = lsGet(LS.PROJECTS, {});
+    var pdata = projs[String(pid)] || {};
+    pdata.tagIds = map;
+    if (untaggedId) pdata.untaggedId = untaggedId;
+    if (!pdata.name) pdata.name = _pnResolve(pid);
+    pdata.tagsFetchedAt = Date.now();
+    projs[String(pid)] = pdata;
+    lsSet(LS.PROJECTS, projs);
+    try { B24Bridge.projects.update(pid, { tagIds: map, tagsFetchedAt: pdata.tagsFetchedAt }); } catch(e) {}
+  }
+
+  // Pobiera świeże tagi projektu z Brand24 i zapisuje. Promise → {title:id} | null (gdy fetch padł).
+  function _tagsFetchFreshAsync(pid) {
+    return new Promise(function(resolve) {
+      _extFetchTags(pid, function(tags, err) {
+        if (!tags) { resolve(null); return; }
+        var map = {};
+        tags.forEach(function(t) { if (!t.isProtected) map[t.title] = t.id; });
+        var unt = tags.find(function(t) { return t.isProtected && t.title === 'Untagged'; });
+        _tagsSaveToProject(pid, map, unt ? unt.id : null);
+        resolve(map);
+      });
+    });
+  }
+
+  var TAGS_TTL_MS = 5 * 60 * 1000; // smart-odświeżanie dropdownów: świeże <5 min → cache, inaczej dociągnij
+
+  // Smart: zwraca tagi z cache jeśli świeże (<maxAgeMs), inaczej dociąga z Brand24 i zapisuje.
+  // cb(map, fromCache). Gdy fetch padnie, zwraca to co jest w cache (graceful).
+  function _tagsEnsureFresh(pid, maxAgeMs, cb) {
+    if (!pid) { cb && cb({}, true); return; }
+    var projs = lsGet(LS.PROJECTS, {});
+    var pdata = projs[String(pid)] || {};
+    var age = pdata.tagsFetchedAt ? (Date.now() - pdata.tagsFetchedAt) : Infinity;
+    if (pdata.tagIds && Object.keys(pdata.tagIds).length > 0 && age < maxAgeMs) {
+      cb && cb(pdata.tagIds, true); return;
+    }
+    _tagsFetchFreshAsync(pid).then(function(map) {
+      cb && cb(map || pdata.tagIds || {}, false);
     });
   }
 

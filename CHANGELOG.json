@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.26.10",
+    "date": "2026-06-26",
+    "label": "fix",
+    "changes": [
+      "fix: Tagowanie pliku — większe partycje (2000 zamiast 1000 wzmianek na partycję), krótsza przerwa w trybie Auto między partycjami (10s zamiast 30s) oraz szybsza obsługa błędu Brand24: gdy partia wzmianek dostanie błąd serwera (Internal server error), wtyczka nie traci już czasu na powtórki bulk (które i tak nie pomagały), tylko od razu przechodzi do tagowania pojedynczo (fallback), który działa skuteczniej"
+    ]
+  },
+  {
     "version": "0.26.9",
     "date": "2026-06-26",
     "label": "fix",

@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.26.8",
+    "date": "2026-06-26",
+    "label": "fix",
+    "changes": [
+      "fix: Tagowanie pliku obejmującego wiele projektów — przed otagowaniem każdego projektu wtyczka dociąga z Brand24 jego aktualną listę tagów. Wcześniej, gdy nie odwiedziłeś projektu po dodaniu nowego tagu, ten tag był po cichu pomijany i część projektów zostawała bez niego. Jeśli dociągnięcie się nie powiedzie, używane są tagi zapisane wcześniej (bez pogorszenia względem dotychczasowego zachowania). Pod spodem: wspólny silnik świeżych tagów zapisujący do pamięci lokalnej i współdzielonej między domenami"
+    ]
+  },
+  {
     "version": "0.26.7",
     "date": "2026-06-23",
     "label": "feat",

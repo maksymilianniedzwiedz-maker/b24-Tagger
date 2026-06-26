@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.26.9",
+    "date": "2026-06-26",
+    "label": "fix",
+    "changes": [
+      "fix: Listy tagów w całej wtyczce zawsze aktualne — karty Usuwanie, Quick Tag i AI Tag oraz okna ustawień (Overall Stats i Trafność AI) same dociągają z Brand24 świeże tagi projektu przy otwarciu, gdy zapisane są starsze niż ~5 minut. Dzięki temu nowo dodany tag jest od razu widoczny do wyboru, bez konieczności wcześniejszego odwiedzenia projektu na panelu. Wpięte w ten sam silnik świeżych tagów co naprawa autotagowania z 0.26.8"
+    ]
+  },
+  {
     "version": "0.26.8",
     "date": "2026-06-26",
     "label": "fix",

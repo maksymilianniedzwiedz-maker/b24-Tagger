@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.8
+// @version      0.26.9
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.8';
+  const VERSION = '0.26.9';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -12322,6 +12322,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.9",
+      "date": "2026-06-26",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Listy tagów w całej wtyczce zawsze aktualne: karty Usuwanie, Quick Tag i AI Tag oraz okna ustawień (Overall i Trafność AI) same dociągają z Brand24 świeże tagi projektu przy otwarciu (jeśli zapisane są starsze niż ~5 min). Koniec sytuacji, gdy nowo dodany tag nie był widoczny do wyboru, dopóki nie odwiedziłeś projektu na panelu"}
+      ]
+    },
+    {
       "version": "0.26.8",
       "date": "2026-06-26",
       "label": "fix",
@@ -12407,16 +12416,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "Trafność AI: nowa zakładka 🤖 obok Overall — mierzy precyzję, recall i F1 tagowania AI względem Twojej oceny (tag relevancji = prawda, brak = nierelevantne)"},
         {"type": "feat", "text": "Trafność AI: tabela trafności (trafienia/fałszywe alarmy/przeoczenia), liczba AI_Verify i wzmianek nieocenionych przez AI, pasek pokrycia AI"},
         {"type": "feat", "text": "Trafność AI: wybór grupy lub tylko bieżącego projektu, liczenie na przycisk, logika miesiąca i domykanie jak w Overall (osobny licznik); widoczna gdy tagowanie AI włączone"}
-      ]
-    },
-    {
-      "version": "0.25.2",
-      "date": "2026-06-05",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Zakładka Tagi i tagowanie pliku przestają sypać błędami API dla projektów bez kompletu tagów (Required Verification / To Delete / Untagged) — pokazują dla nich 0 zamiast pytać o pusty filtr"},
-        {"type": "fix", "text": "Bezpiecznik na filtrze grup we wszystkich zapytaniach o wzmianki — usuwa puste wartości zanim trafią do Brand24, eliminuje błąd \"Expected non-nullable type Int!\""}
       ]
     },
   ];
@@ -15842,6 +15841,14 @@ To jest NIEODWRACALNE.`)) return;
         '</div>' +
       '</div>';
     document.body.appendChild(overlay);
+    // Smart-odświeżenie tagów: gdy cache nieświeży, dociągnij z Brand24 i przebuduj listy
+    _tagsEnsureFresh(state.projectId, TAGS_TTL_MS, function(map, fromCache) {
+      if (fromCache) return;
+      if (map && Object.keys(map).length) state.tags = map;
+      _refillTagSettingSelect(overlay.querySelector('#b24t-os-rel-tag'), '<option value="">— brak —</option>', group.relevantTagId);
+      _refillTagSettingSelect(overlay.querySelector('#b24t-os-rv-tag'), '<option value="">— auto (REQUIRES_VERIFICATION) —</option>', group.reqVerTagId);
+      _refillTagSettingSelect(overlay.querySelector('#b24t-os-irr-tag'), '<option value="">— auto (TO_DELETE) —</option>', group.irrelevantTagId);
+    });
     function close() { overlay.remove(); }
     overlay.querySelector('#b24t-os-close').addEventListener('click', close);
     overlay.querySelector('#b24t-os-cancel').addEventListener('click', close);
@@ -16315,6 +16322,15 @@ To jest NIEODWRACALNE.`)) return;
         '</div>' +
       '</div>';
     document.body.appendChild(overlay);
+    // Smart-odświeżenie tagów: gdy cache nieświeży, dociągnij z Brand24 i przebuduj listy
+    _tagsEnsureFresh(state.projectId, TAGS_TTL_MS, function(map, fromCache) {
+      if (fromCache) return;
+      if (map && Object.keys(map).length) state.tags = map;
+      _refillTagSettingSelect(overlay.querySelector('#b24t-aiset-rel'), '<option value="">— brak —</option>', group.relevantTagId);
+      _refillTagSettingSelect(overlay.querySelector('#b24t-aiset-airel'), '<option value="">— brak —</option>', group.aiRelTagId);
+      _refillTagSettingSelect(overlay.querySelector('#b24t-aiset-ainon'), '<option value="">— brak —</option>', group.aiNonRelTagId);
+      _refillTagSettingSelect(overlay.querySelector('#b24t-aiset-aiver'), '<option value="">— brak —</option>', group.aiVerifyTagId);
+    });
     function close() { overlay.remove(); }
     overlay.querySelector('#b24t-aiset-close').addEventListener('click', close);
     overlay.querySelector('#b24t-aiset-cancel').addEventListener('click', close);
@@ -16843,7 +16859,7 @@ Tej operacji nie można cofnąć.`)) {
 
     const observer = new MutationObserver(() => {
       if (delTab.style.display !== 'none') {
-        updateDelTags();
+        _refreshTagsThenRender(updateDelTags);
         updateDelDateInfo();
         updateDelViewInfo();
       }
@@ -17131,7 +17147,7 @@ Tej operacji nie można cofnąć.`)) {
     // Refresh view info when tab is shown
     const observer = new MutationObserver(() => {
       if (qtTab.style.display !== 'none') {
-        updateQtTags();
+        _refreshTagsThenRender(updateQtTags);
         updateViewInfo();
       }
     });
@@ -17416,11 +17432,15 @@ Tej operacji nie można cofnąć.`)) {
 
     // Odśwież gdy karta staje się widoczna
     const observer = new MutationObserver(() => {
-      if (tab.style.display !== 'none') { fillPrompts(); fillDelTag(); restoreCfg(); _aitRenderLogHistory(); }
+      if (tab.style.display !== 'none') {
+        fillPrompts(); _aitRenderLogHistory();
+        _refreshTagsThenRender(function() { fillDelTag(); restoreCfg(); });
+      }
     });
     observer.observe(tab, { attributes: true, attributeFilter: ['style'] });
 
-    fillPrompts(); fillDelTag(); restoreCfg(); _aitRenderLogHistory();
+    fillPrompts(); _aitRenderLogHistory();
+    _refreshTagsThenRender(function() { fillDelTag(); restoreCfg(); });
   }
 
   // Główna pętla tagowania AI
@@ -18003,8 +18023,12 @@ Tej operacji nie można cofnąć.`)) {
   }
 
   // Pobiera świeże tagi projektu z Brand24 i zapisuje. Promise → {title:id} | null (gdy fetch padł).
+  // Guard: jedno pobranie na projekt naraz — szybkie przełączanie kart nie mnoży requestów.
+  var _tagsFetchInFlight = {};
   function _tagsFetchFreshAsync(pid) {
-    return new Promise(function(resolve) {
+    var key = String(pid);
+    if (_tagsFetchInFlight[key]) return _tagsFetchInFlight[key];
+    var p = new Promise(function(resolve) {
       _extFetchTags(pid, function(tags, err) {
         if (!tags) { resolve(null); return; }
         var map = {};
@@ -18014,6 +18038,9 @@ Tej operacji nie można cofnąć.`)) {
         resolve(map);
       });
     });
+    p.then(function() { delete _tagsFetchInFlight[key]; }, function() { delete _tagsFetchInFlight[key]; });
+    _tagsFetchInFlight[key] = p;
+    return p;
   }
 
   var TAGS_TTL_MS = 5 * 60 * 1000; // smart-odświeżanie dropdownów: świeże <5 min → cache, inaczej dociągnij
@@ -18031,6 +18058,25 @@ Tej operacji nie można cofnąć.`)) {
     _tagsFetchFreshAsync(pid).then(function(map) {
       cb && cb(map || pdata.tagIds || {}, false);
     });
+  }
+
+  // Smart-odświeża state.tags dla bieżącego projektu (TTL), potem renderuje.
+  // Najpierw render z cache (brak migotania), po dociągnięciu świeżych — ponowny render.
+  function _refreshTagsThenRender(renderFn) {
+    if (typeof renderFn !== 'function') return;
+    renderFn();
+    if (!state.projectId) return;
+    _tagsEnsureFresh(state.projectId, TAGS_TTL_MS, function(map, fromCache) {
+      if (map && Object.keys(map).length) state.tags = map;
+      if (!fromCache) renderFn();
+    });
+  }
+
+  // Przebudowuje <select> tagów w modalu ustawień, zachowując bieżący wybór (lub fallback ID).
+  function _refillTagSettingSelect(sel, emptyOpt, fallbackId) {
+    if (!sel) return;
+    var cur = parseInt(sel.value) || fallbackId || null;
+    sel.innerHTML = emptyOpt + _tagOptionsWithId(cur);
   }
 
   var _dupCheckSeq = 0; // sequence counter — anuluje stare requesty gdy nowe wywołanie przychodzi

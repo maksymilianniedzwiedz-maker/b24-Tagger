@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.9
+// @version      0.26.10
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.9';
+  const VERSION = '0.26.10';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -201,7 +201,7 @@
     switchViewOnDone: false,
     switchViewTagId: null,
     autoPartition: false,
-    partitionLimit: 1000,
+    partitionLimit: 2000,
     _sniffUiTag: false,
     _netMonitor: null,
   };
@@ -2142,13 +2142,14 @@
         batchNum += concSlices.length;
         updateProgress('tag', batchNum, tagIds.length);
         addLog(`→ bulkTag: ${concSlices.reduce((s, sl) => s + sl.length, 0)} → ${tagName} (${concSlices.length}× równolegle)`, 'info');
-        const results = await Promise.allSettled(concSlices.map(slice => bulkTagMentions(slice.map(String), parseInt(tagId))));
+        // retries=1 → brak powtórek na bulku; przy błędzie (np. Internal server error) od razu fallback per-wzmianka
+        const results = await Promise.allSettled(concSlices.map(slice => bulkTagMentions(slice.map(String), parseInt(tagId), 1)));
         let batchSuccessCount = 0;
         for (let j = 0; j < results.length; j++) {
           if (results[j].status === 'fulfilled') {
             batchSuccessCount += concSlices[j].length;
           } else {
-            // Fallback: concurrent single-ID — szybsze niż sekwencja, 2 retries zamiast 5
+            // Fallback: concurrent single-ID — szybsze niż sekwencja, 2 próby na wzmiankę (bulk leci bez retry)
             const errMsg = results[j].reason?.message || 'unknown';
             const errCtx = _errContext(errMsg);
             const failedIds = concSlices[j];
@@ -2365,8 +2366,8 @@
       // Between partitions
       if (idx < state.partitions.length - 1) {
         if (state.autoPartition) {
-          addLog(`⏱ Przerwa 30s przed następną partycją...`, 'info');
-          await sleep(30000);
+          addLog(`⏱ Przerwa 10s przed następną partycją...`, 'info');
+          await sleep(10000);
         } else {
           state.status = 'paused';
           updateStatusUI();
@@ -4567,7 +4568,7 @@
           </div>
           <div class="b24t-radio-group">
             <label class="b24t-radio"><input type="radio" name="b24t-partition-mode" value="pause" checked> <span>Pauza</span></label>
-            <label class="b24t-radio"><input type="radio" name="b24t-partition-mode" value="auto"> <span>Auto (30s)</span></label>
+            <label class="b24t-radio"><input type="radio" name="b24t-partition-mode" value="auto"> <span>Auto (10s)</span></label>
           </div>
           <button class="b24t-add-tag-btn" id="b24t-export-partitions" style="margin-top:6px;">↓ Eksportuj partie jako CSV</button>
         </div>
@@ -12322,6 +12323,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.10",
+      "date": "2026-06-26",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Tagowanie pliku: większe partycje (2000 zamiast 1000 wzmianek), krótsza przerwa w trybie Auto między partycjami (10s zamiast 30s) oraz szybsza obsługa błędu Brand24 — gdy partia wzmianek dostanie błąd serwera, wtyczka nie traci czasu na powtórki, tylko od razu taguje pojedynczo (fallback), co działa skuteczniej"}
+      ]
+    },
+    {
       "version": "0.26.9",
       "date": "2026-06-26",
       "label": "fix",
@@ -12405,17 +12415,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "Trafność AI: naprawione liczenie — filtr tag-AND (tan) wymaga ID tagów jako tekst; wcześniej Brand24 odrzucał zapytania błędem typu i nic się nie liczyło"}
-      ]
-    },
-    {
-      "version": "0.26.0",
-      "date": "2026-06-05",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "Trafność AI: nowa zakładka 🤖 obok Overall — mierzy precyzję, recall i F1 tagowania AI względem Twojej oceny (tag relevancji = prawda, brak = nierelevantne)"},
-        {"type": "feat", "text": "Trafność AI: tabela trafności (trafienia/fałszywe alarmy/przeoczenia), liczba AI_Verify i wzmianek nieocenionych przez AI, pasek pokrycia AI"},
-        {"type": "feat", "text": "Trafność AI: wybór grupy lub tylko bieżącego projektu, liczenie na przycisk, logika miesiąca i domykanie jak w Overall (osobny licznik); widoczna gdy tagowanie AI włączone"}
       ]
     },
   ];

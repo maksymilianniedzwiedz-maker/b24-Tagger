@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.26.11",
+    "date": "2026-07-30",
+    "label": "fix",
+    "changes": [
+      "fix: Dwa panele naraz (.pl i .com) bez konfliktu — token sesji trzymany jest OSOBNO dla panel.brand24.pl i app.brand24.com, a każdy projekt pamięta, na którym panelu żyje. Dodawanie niestandardowe ze stron zewnętrznych (dup-check, tagi, CSRF, wysyłka) trafia w panel projektu, a nie w ostatnio otwarty — koniec komunikatu \"otwórz Brand24 żeby odświeżyć token\" przy pracy na projekcie PL po projekcie z .com",
+      "fix: Token nie wygasa po 8h przy aktywnej pracy — znacznik ważności odświeża się (throttle 5 min) przy każdym użyciu panelu, nie tylko gdy Brand24 zrotuje nagłówek autoryzacji",
+      "fix: Komunikaty diagnostyczne mówią co jest naprawdę nie tak — przy błędzie GraphQL panel pokazuje treść błędu i domenę panelu zamiast zawsze sugerować odświeżenie tokenu; CSRF nie jest więcej współdzielony między panelami",
+      "fix: Panel Niestandardowe na stronach zewnętrznych sam się odświeża po pojawieniu się tokenu właściwego panelu (nasłuch bridge działał dotąd tylko na stronie panelu Brand24), a kropka Panel i status CMS przeliczają się po zmianie projektu"
+    ]
+  },
+  {
     "version": "0.26.10",
     "date": "2026-06-26",
     "label": "fix",

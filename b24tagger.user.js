@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.10
+// @version      0.26.11
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.10';
+  const VERSION = '0.26.11';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -177,6 +177,7 @@
     soundEnabled: false,     // play sound on done
     tokenHeaders: null,
     tknB24: null,             // CSRF token for legacy Django endpoints
+    tknB24Base: null,         // panel, z którego pochodzi tknB24 — token z .com nie przejdzie na .pl
     projectId: null,
     projectName: null,
     tags: {},                // tagName → tagId
@@ -512,8 +513,10 @@
   // Klucz GM: 'b24t_bridge' (JSON):
   //   _v           — licznik wersji (monotoniczny)
   //   _ts          — timestamp ostatniego zapisu (ms)
-  //   token        — { headers, base, savedAt } — auth do Brand24 GQL
-  //   projects     — { pid: { name, tags[], updatedAt } }
+  //   tokens       — { '<base>': { headers, base, savedAt } } — auth do GQL OSOBNO dla .com i .pl
+  //   token        — legacy mirror ostatnio przechwyconego panelu (starsze wersje wtyczki w innych kartach)
+  //   lastBase     — panel, z którego przechwycono token jako ostatni
+  //   projects     — { pid: { name, tags[], base, updatedAt } } — base = panel, na którym projekt widziano
   //   lastProject  — ostatnio wybrany projekt w panelu Niestandardowe
 
   var B24Bridge = (function() {
@@ -556,25 +559,91 @@
       });
     } catch(e) {}
 
+    var _BASE_COM = 'https://app.brand24.com';
+    var _BASE_PL  = 'https://panel.brand24.pl';
+    var _TTL_MS   = 8 * 3600 * 1000;   // token martwy po 8h BEZAKTYWNOŚCI panelu (nie od rotacji nagłówka)
+    var _TOUCH_MS = 5 * 60 * 1000;     // throttle zapisu savedAt — bez tego GM_setValue na każdy GQL
+
+    // Kanoniczna baza panelu. Wszystko poza .pl traktujemy jako .com (jeden slot per panel).
+    function _normBase(b) {
+      return String(b || '').indexOf('brand24.pl') !== -1 ? _BASE_PL : _BASE_COM;
+    }
+
+    // Slots tokenów per panel. Czyta też stary format (pojedynczy `token`), żeby karta ze starszą
+    // wersją wtyczki (zapisuje tylko `token`) nie wyglądała jak brak sesji.
+    function _slots(d) {
+      var out = {};
+      if (d.token && d.token.headers) out[_normBase(d.token.base)] = d.token;
+      if (d.tokens && typeof d.tokens === 'object') {
+        Object.keys(d.tokens).forEach(function(b) {
+          var s = d.tokens[b];
+          if (!s || !s.headers) return;
+          var nb   = _normBase(s.base || b);
+          var prev = out[nb];
+          if (!prev || (s.savedAt || 0) >= (prev.savedAt || 0)) out[nb] = s;
+        });
+      }
+      return out;
+    }
+
     var _token = {
+      // Zapis tokenu KONKRETNEGO panelu — slot drugiego panelu zostaje nietknięty.
       save: function(headers, base) {
-        _write({ token: { headers: headers, base: base, savedAt: Date.now() } });
+        var b   = _normBase(base);
+        var rec = { headers: headers, base: b, savedAt: Date.now() };
+        var slots = Object.assign({}, _slots(_read()));
+        slots[b] = rec;
+        _write({ tokens: slots, lastBase: b, token: rec });
       },
-      get: function() {
+      // Odświeża sam znacznik czasu — TTL ma mierzyć aktywność panelu, nie rotację auth.
+      // Zwraca false, gdy slotu nie ma (wołający powinien zrobić pełny save).
+      touch: function(base) {
+        var b = _normBase(base);
         var d = _read();
-        if (!d.token || !d.token.headers) return null;
-        if (Date.now() - (d.token.savedAt || 0) > 8 * 3600 * 1000) return null; // 8h TTL
-        return d.token;
+        var slots = _slots(d);
+        var cur = slots[b];
+        if (!cur) return false;
+        if (Date.now() - (cur.savedAt || 0) < _TOUCH_MS) return true; // za świeży — nie pisz
+        var rec  = Object.assign({}, cur, { savedAt: Date.now() });
+        var next = Object.assign({}, slots);
+        next[b] = rec;
+        _write({ tokens: next, lastBase: b, token: rec });
+        return true;
       },
-      headers: function() {
-        var t = this.get();
+      // Z argumentem — token danego panelu. Bez — ostatnio używany, potem którykolwiek ważny.
+      get: function(base) {
+        var d = _read();
+        var slots = _slots(d);
+        var _pick = function(b) {
+          var s = b ? slots[b] : null;
+          if (!s || !s.headers) return null;
+          if (Date.now() - (s.savedAt || 0) > _TTL_MS) return null;
+          return s;
+        };
+        if (base) return _pick(_normBase(base));
+        return _pick(d.lastBase ? _normBase(d.lastBase) : null) || _pick(_BASE_COM) || _pick(_BASE_PL);
+      },
+      headers: function(base) {
+        var t = this.get(base);
         return t ? Object.assign({ 'Content-Type': 'application/json' }, t.headers) : { 'Content-Type': 'application/json' };
       },
-      base: function() {
+      // Preferowana baza (np. panel projektu) wygrywa zawsze — CSRF i submit jadą na ciasteczkach,
+      // więc celujemy we właściwy panel nawet bez tokenu GQL dla niego.
+      base: function(preferred) {
+        if (preferred) return _normBase(preferred);
         var d = _read();
-        return (d.token && d.token.base) || 'https://app.brand24.com';
+        var t = this.get();
+        if (t && t.base) return _normBase(t.base);
+        return d.lastBase ? _normBase(d.lastBase) : _BASE_COM;
       },
-      isValid: function() { return !!this.get(); }
+      isValid: function(base) { return !!this.get(base); },
+      // Panele z ważnym tokenem — do komunikatów diagnostycznych w UI
+      validBases: function() {
+        var out = [];
+        if (this.get(_BASE_COM)) out.push(_BASE_COM);
+        if (this.get(_BASE_PL))  out.push(_BASE_PL);
+        return out;
+      }
     };
 
     var _projects = {
@@ -610,6 +679,7 @@
 
     return {
       token: _token,
+      normBase: _normBase,
       projects: _projects,
       lastProject: {
         set: function(pid) { _write({ lastProject: String(pid || '') }); },
@@ -747,16 +817,20 @@
     const bodyStr = typeof opts.body === 'string' ? opts.body : '';
     if (url.includes('graphql') && opts.headers) {
       // Zawsze odświeżamy token — Brand24 może go rotować w trakcie sesji.
-      // B24Bridge.save i updateTokenUI wywołujemy tylko gdy auth się faktycznie zmienił (oszczędność GM_setValue).
+      // Pełny zapis do bridge tylko gdy auth się zmienił (oszczędność GM_setValue), inaczej throttlowany
+      // `touch` — inaczej sesja z niezmiennym nagłówkiem "wygasa" po 8h, mimo że panel jest używany.
       var _newH = { ...opts.headers };
       var _authChanged = !state.tokenHeaders
         || state.tokenHeaders.authorization !== _newH.authorization
         || state.tokenHeaders.Authorization !== _newH.Authorization;
       state.tokenHeaders = _newH;
+      var _b24tBase = window.location.hostname === 'panel.brand24.pl' ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
       if (_authChanged) {
-        var _b24tBase = window.location.hostname === 'panel.brand24.pl' ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
         B24Bridge.token.save(state.tokenHeaders, _b24tBase);
         updateTokenUI(true);
+      } else if (!B24Bridge.token.touch(_b24tBase)) {
+        // Slot zniknął (wyczyszczone storage / inny profil) — zapisz od nowa
+        B24Bridge.token.save(state.tokenHeaders, _b24tBase);
       }
     }
     // Capture last organic getMentions variables for Quick Tag filter mirroring
@@ -5976,14 +6050,22 @@
 
     state.projectId = projectId;
 
+    // Znacznik panelu projektu (.com/.pl) — na stronach zewnętrznych to jedyny sposób, by dup-check,
+    // tagi, CSRF i submit trafiły w panel, na którym projekt faktycznie istnieje.
+    try {
+      var _hostBase = _b24HostBase();
+      if (_hostBase) B24Bridge.projects.update(projectId, { base: _hostBase });
+    } catch(e) {}
+
     // Capture tknB24 CSRF token — try immediately, then watch DOM for React injection
     (function captureTkn() {
+      var _tknBase = _b24HostBase(); // CSRF jest per panel — zapamiętaj skąd pochodzi
       var el = document.querySelector('[name="tknB24"]');
-      if (el && el.value) { state.tknB24 = el.value; return; }
+      if (el && el.value) { state.tknB24 = el.value; state.tknB24Base = _tknBase; return; }
       // Token not yet in DOM (SPA still rendering) — observe for up to 10s
       var obs = new MutationObserver(function() {
         var found = document.querySelector('[name="tknB24"]');
-        if (found && found.value) { state.tknB24 = found.value; obs.disconnect(); }
+        if (found && found.value) { state.tknB24 = found.value; state.tknB24Base = _tknBase; obs.disconnect(); }
       });
       obs.observe(document.body, { childList: true, subtree: true });
       setTimeout(function() { obs.disconnect(); }, 10000);
@@ -9102,15 +9184,22 @@ function showOnboarding(onComplete) {
 
   // ── CSRF TOKEN RESOLUTION ──
   function _newsGetTknB24(cb) {
-    // 1. state.tknB24 — captured earlier in this session
-    if (state.tknB24) { cb(state.tknB24, null); return; }
+    var _wantBase = _b24PanelBase(state.projectId || '');
+    // 1. state.tknB24 — captured earlier in this session, ale tylko dla TEGO panelu:
+    //    po przełączeniu projektu .com → .pl stary CSRF nie przejdzie
+    if (state.tknB24 && state.tknB24Base === _wantBase) { cb(state.tknB24, null); return; }
     // 2. Live DOM (only present on /searches/add-new-mention/ page itself)
     var el = document.querySelector('[name="tknB24"]');
-    if (el && el.value) { state.tknB24 = el.value; cb(el.value, null); return; }
+    if (el && el.value && _b24HostBase() === _wantBase) {
+      state.tknB24 = el.value;
+      state.tknB24Base = _wantBase;
+      cb(el.value, null);
+      return;
+    }
     // 3. GM fetch /searches/add-new-mention/?sid=ID — Django page that always has tknB24 hidden input
     var sid = state.projectId || '';
     if (!sid) { cb(null, '\u26a0 Brak ID projektu. Przejd\u017a na stron\u0119 projektu Brand24.'); return; }
-    var _b24base = _b24PanelBase();
+    var _b24base = _wantBase;
     var fetchUrl = _b24base + '/searches/add-new-mention/?sid=' + sid;
     GM_xmlhttpRequest({
       method: 'GET',
@@ -9119,22 +9208,13 @@ function showOnboarding(onComplete) {
         // Token is a 32-char hex in: <input type="hidden" name="tknB24" id="tknB24" value="XXXXXXXX...">
         var m = (resp.responseText || '').match(/name="tknB24"[^>]*value="([a-f0-9]{32})"/);
         if (!m) m = (resp.responseText || '').match(/value="([a-f0-9]{32})"[^>]*name="tknB24"/);
-        if (m && m[1]) { state.tknB24 = m[1]; cb(m[1], null); return; }
-        cb(null, '\u26a0 Nie mo\u017cna pobra\u0107 tokenu CSRF. Spr\u00f3buj od\u015bwie\u017cy\u0107 stron\u0119 Brand24.');
+        if (m && m[1]) { state.tknB24 = m[1]; state.tknB24Base = _b24base; cb(m[1], null); return; }
+        cb(null, '\u26a0 Nie mo\u017cna pobra\u0107 tokenu CSRF ('+ _baseLabel(_b24base) + '). Sprawd\u017a czy jeste\u015b tam zalogowany.');
       },
       onerror: function() {
         cb(null, '\u26a0 B\u0142\u0105d sieci przy pobieraniu tokenu CSRF. Upewnij si\u0119, \u017ce jeste\u015b zalogowany.');
       }
     });
-  }
-
-  // ── CMS DOMAIN CHECK ──
-
-  function _newsCmsStatus() {
-    // Returns domain only — CMS tag availability is checked via state.tags in _newsCheckTagDodane()
-    var host = window.location.hostname;
-    var domain = host.indexOf('brand24.com') !== -1 ? 'com' : host.indexOf('brand24.pl') !== -1 ? 'pl' : null;
-    return { domain: domain };
   }
 
   // Try to detect article publish date from fetched HTML
@@ -10253,7 +10333,8 @@ function showOnboarding(onComplete) {
     var cmsBanner  = document.getElementById('b24t-news-cms-warn');
     var cmsDot     = document.getElementById('b24t-news-cms-dot');
     var warnText   = document.getElementById('b24t-news-cms-warn-text');
-    var domain     = _newsCmsStatus().domain === 'pl' ? 'panel.brand24.pl' : 'app.brand24.com';
+    // Domena w komunikatach = panel PROJEKTU (na stronie zewnętrznej host nic nie mówi o panelu)
+    var domain     = _baseLabel(_b24PanelBase(state.projectId));
     var isCustom   = newsState.mode === 'custom';
 
     var hasDodane = state.tags && Object.keys(state.tags).some(function(k) {
@@ -10285,7 +10366,7 @@ function showOnboarding(onComplete) {
       return;
     }
 
-    var _b24base = B24Bridge.token.base();
+    var _b24base = _b24PanelBase(sid);
     GM_xmlhttpRequest({
       method: 'GET',
       url: _b24base + '/searches/add-new-mention/?sid=' + sid,
@@ -10295,6 +10376,7 @@ function showOnboarding(onComplete) {
         if (m && m[1]) {
           // Stan 2: zalogowany do CMS — w News pokazujemy ostrzeżenie o braku tagu, w Niestandardowe brak tagu OK
           state.tknB24 = m[1];
+          state.tknB24Base = _b24base;
           if (isCustom) {
             if (statusEl)  { statusEl.textContent = '✓ CMS aktywny'; statusEl.style.color = '#22c55e'; }
             if (cmsDot)    { cmsDot.style.color = '#22c55e'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny (tryb Niestandardowe — tag "dodane" niewymagany)'; }
@@ -10388,34 +10470,7 @@ function showOnboarding(onComplete) {
     }
 
     // ─── PANEL LOGIN CHECK ───
-    (function() {
-      var panelDot = document.getElementById('b24t-news-panel-dot');
-      if (!panelDot || panelDot.dataset.checked) return;
-      panelDot.dataset.checked = '1';
-      var base = _b24PanelBase();
-      GM_xmlhttpRequest({
-        method: 'GET',
-        url: base + '/panel/',
-        timeout: 8000,
-        onload: function(resp) {
-          var loggedIn = resp.finalUrl && resp.finalUrl.indexOf('/login') === -1 && resp.status === 200;
-          if (loggedIn) {
-            panelDot.textContent = '✓ Panel';
-            panelDot.style.color = 'rgba(74,222,128,0.9)';
-            panelDot.title = 'Zalogowany do Brand24 (' + base.replace(/^https?:\/\//, '') + ')';
-          } else {
-            panelDot.textContent = '✗ Panel';
-            panelDot.style.color = 'rgba(248,113,113,0.9)';
-            panelDot.title = 'Nie zalogowany — otwórz ' + base.replace(/^https?:\/\//, '');
-          }
-        },
-        onerror: function() {
-          panelDot.style.color = 'rgba(248,113,113,0.9)';
-          panelDot.textContent = '✗ Panel';
-          panelDot.title = 'Błąd sieci';
-        }
-      });
-    })();
+    _newsPanelDotCheck();
 
     // ─── PROJEKT SELECTOR (strony zewnętrzne) ───
     var _projSelEl = document.getElementById('b24t-news-f-project-sel');
@@ -10451,6 +10506,9 @@ function showOnboarding(onComplete) {
         }
         if (_tagsCached) _newsRefillTags();
         else _extEnsureTags(state.projectId); // brak w cache → dociągnij z API i odśwież
+        // Nowy projekt może siedzieć na innym panelu — przelicz kropkę Panel dla jego bazy
+        // (status CMS przelicza się już w _newsRefillTags → _newsCheckTagDodane)
+        _newsPanelDotCheck();
       });
     }
 
@@ -12130,7 +12188,7 @@ function showOnboarding(onComplete) {
 
         GM_xmlhttpRequest({
           method: 'POST',
-          url: _b24PanelBase() + '/searches/add-new-mention/?sid=' + sid,
+          url: _b24PanelBase(sid) + '/searches/add-new-mention/?sid=' + sid,
           headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
           data: body,
           onload: function(resp) {
@@ -12323,6 +12381,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.11",
+      "date": "2026-07-30",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Dwa panele naraz (.pl i .com) bez konfliktu: token sesji trzymany jest teraz OSOBNO dla panel.brand24.pl i app.brand24.com, a każdy projekt pamięta, na którym panelu żyje. Dodawanie niestandardowe ze stron zewnętrznych (sprawdzanie duplikatów, tagi, CSRF, wysyłka) trafia w panel projektu, a nie w ten ostatnio otwarty — koniec komunikatu \"otwórz Brand24 żeby odświeżyć token\" przy pracy na projekcie PL po projekcie z .com"},
+        {"type": "fix", "text": "Token nie \"wygasa\" już po 8h przy aktywnej pracy — licznik ważności odświeża się przy każdym użyciu panelu, nie tylko gdy Brand24 zrotuje nagłówek autoryzacji"},
+        {"type": "fix", "text": "Komunikaty mówią, co jest naprawdę nie tak: przy błędzie Brand24 panel pokazuje treść błędu i domenę panelu (np. \"projekt niedostępny na app.brand24.com — otwórz go raz na panel.brand24.pl\") zamiast zawsze sugerować odświeżenie tokenu"},
+        {"type": "fix", "text": "Panel Niestandardowe na stronach zewnętrznych sam się odświeża, gdy pojawi się token właściwego panelu (wcześniej nasłuch działał tylko na stronie panelu Brand24), a kropka Panel i status CMS przeliczają się po zmianie projektu"}
+      ]
+    },
+    {
       "version": "0.26.10",
       "date": "2026-06-26",
       "label": "fix",
@@ -12407,16 +12477,7 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "Trafność AI: zakres dat i miesiąc teraz identyczne jak w Overall (wspólny licznik domykania) — wcześniej zakładka pokazywała inny miesiąc (np. cały poprzedni zamiast bieżącego 1–5); w trybie bieżącego projektu widać też zakres dat"}
       ]
-    },
-    {
-      "version": "0.26.1",
-      "date": "2026-06-05",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Trafność AI: naprawione liczenie — filtr tag-AND (tan) wymaga ID tagów jako tekst; wcześniej Brand24 odrzucał zapytania błędem typu i nic się nie liczyło"}
-      ]
-    },
+    }
   ];
 
   function _fetchChangelog(onDone) {
@@ -17940,22 +18001,114 @@ Tej operacji nie można cofnąć.`)) {
     return result;
   }
 
-  // Baza panelu Brand24. Na stronie Brand24 — z bieżącego hosta. Na stronie zewnętrznej (TikTok itp.)
-  // — z B24Bridge, gdzie zapisano .pl/.com w momencie logowania. NIE zgaduj z hosta strony zewnętrznej.
-  function _b24PanelBase() {
+  // Baza panelu bieżącej strony — null na stronach zewnętrznych. Jedyne autorytatywne źródło
+  // przypisania projektu do panelu (jesteśmy na .pl → widziany projekt należy do .pl).
+  function _b24HostBase() {
     var h = window.location.hostname;
     if (h === 'app.brand24.com') return 'https://app.brand24.com';
     if (h === 'panel.brand24.pl') return 'https://panel.brand24.pl';
+    return null;
+  }
+
+  // Baza panelu Brand24. Na stronie Brand24 — z bieżącego hosta. Na stronie zewnętrznej (TikTok itp.)
+  // — ze znacznika panelu projektu (projects[pid].base), a gdy go brak — z ostatniego tokenu.
+  // NIE zgaduj z hosta strony zewnętrznej. Bez pid trafisz na panel ostatnio używany, nie na panel projektu.
+  function _b24PanelBase(pid) {
+    var host = _b24HostBase();
+    if (host) return host;
+    if (pid) {
+      try {
+        var rec = B24Bridge.projects.get(pid);
+        if (rec && rec.base) return B24Bridge.normBase(rec.base);
+      } catch(e) {}
+    }
     return B24Bridge.token.base();
+  }
+
+  // Czy projekt ma już znacznik panelu (jeśli nie — celujemy w ostatni panel i możemy trafić w zły)
+  function _projectHasBase(pid) {
+    try {
+      var rec = pid ? B24Bridge.projects.get(pid) : null;
+      return !!(rec && rec.base);
+    } catch(e) { return false; }
+  }
+
+  // Skrócona domena panelu do komunikatów w UI
+  function _baseLabel(base) {
+    return String(base || '').replace(/^https?:\/\//, '');
+  }
+
+  // Kropka "Panel" w panelach News/Niestandardowe — czy jesteśmy zalogowani na panelu PROJEKTU.
+  // Ponawiana przy zmianie projektu: inny projekt może siedzieć na innym panelu (.pl vs .com).
+  function _newsPanelDotCheck() {
+    var panelDot = document.getElementById('b24t-news-panel-dot');
+    if (!panelDot) return;
+    var base = _b24PanelBase(state.projectId);
+    if (panelDot.dataset.checkedBase === base) return; // ta baza już sprawdzona
+    panelDot.dataset.checkedBase = base;
+    panelDot.textContent = '⏳ Panel';
+    panelDot.style.color = 'rgba(156,163,175,0.9)';
+    panelDot.title = 'Sprawdzanie ' + _baseLabel(base) + '...';
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: base + '/panel/',
+      timeout: 8000,
+      onload: function(resp) {
+        if (panelDot.dataset.checkedBase !== base) return; // projekt zmieniony w trakcie — wynik nieaktualny
+        var loggedIn = resp.finalUrl && resp.finalUrl.indexOf('/login') === -1 && resp.status === 200;
+        if (loggedIn) {
+          panelDot.textContent = '✓ Panel';
+          panelDot.style.color = 'rgba(74,222,128,0.9)';
+          panelDot.title = 'Zalogowany do Brand24 (' + _baseLabel(base) + ')';
+        } else {
+          panelDot.textContent = '✗ Panel';
+          panelDot.style.color = 'rgba(248,113,113,0.9)';
+          panelDot.title = 'Nie zalogowany — otwórz ' + _baseLabel(base);
+        }
+      },
+      onerror: function() {
+        if (panelDot.dataset.checkedBase !== base) return;
+        panelDot.style.color = 'rgba(248,113,113,0.9)';
+        panelDot.textContent = '✗ Panel';
+        panelDot.title = 'Błąd sieci (' + _baseLabel(base) + ')';
+      },
+      ontimeout: function() {
+        if (panelDot.dataset.checkedBase !== base) return;
+        panelDot.style.color = 'rgba(248,113,113,0.9)';
+        panelDot.textContent = '✗ Panel';
+        panelDot.title = 'Timeout (' + _baseLabel(base) + ')';
+      }
+    });
+  }
+
+  // Zamienia błąd GQL na komunikat mówiący CO jest nie tak — nie każdy błąd to wygasły token.
+  // Najczęstszy przypadek przy pracy na dwóch panelach: projekt z .pl pytany na .com (brak dostępu).
+  function _gqlErrHint(errors, base, pid) {
+    var e0   = (errors && errors[0]) || {};
+    var msg  = String(e0.message || '');
+    var code = String((e0.extensions && (e0.extensions.code || e0.extensions.category)) || '');
+    var low  = (msg + ' ' + code).toLowerCase();
+    var lbl  = _baseLabel(base);
+    if (low.indexOf('unauth') !== -1 || low.indexOf('token') !== -1 || low.indexOf('expired') !== -1 ||
+        low.indexOf('signature') !== -1 || low.indexOf('401') !== -1 || low.indexOf('credential') !== -1) {
+      return 'sesja ' + lbl + ' wygasła — otwórz ' + lbl + ' i zaloguj się';
+    }
+    if (!_projectHasBase(pid)) {
+      var others = B24Bridge.token.validBases().filter(function(b) { return b !== base; });
+      return 'projekt ' + pid + ' niedostępny na ' + lbl + ' — otwórz go raz na ' +
+             (others.length ? _baseLabel(others[0]) : 'właściwym panelu') + ', by przypisać panel' +
+             (msg ? ' [' + msg.substring(0, 70) + ']' : '');
+    }
+    return 'Brand24 (' + lbl + ') odrzucił zapytanie' + (msg ? ': ' + msg.substring(0, 90) : (code ? ': ' + code : ''));
   }
 
   // Cross-domain pobranie listy tagów wybranego projektu (gdy brak w cache). getTags nie przyjmuje
   // projectId — bierze projekt z sesji — więc najpierw "rozgrzewamy" sesję na właściwy projekt przez
   // GET add-new-mention?sid=pid (endpoint przypisany do projektu), dopiero potem getTags.
   function _extFetchTags(pid, cb) {
-    if (!B24Bridge.token.isValid()) { cb(null, 'no-token'); return; }
-    var base = B24Bridge.token.base();
-    var headers = B24Bridge.token.headers();
+    var base = _b24PanelBase(pid);
+    if (!B24Bridge.token.isValid(base)) { cb(null, 'no-token'); return; }
+    var headers = B24Bridge.token.headers(base);
     var _gqlBody = JSON.stringify({ operationName: 'getTags', variables: {}, query: 'query getTags{getTags{id title isProtected}}' });
     function _doGetTags() {
       GM_xmlhttpRequest({
@@ -17993,8 +18146,9 @@ Tej operacji nie można cofnąć.`)) {
     if (!pid) return;
     if (state.tags && Object.keys(state.tags).length > 0) return; // mamy z cache
     var tagList = document.getElementById('b24t-news-tag-list');
-    if (!B24Bridge.token.isValid()) {
-      if (tagList) tagList.innerHTML = '<div style="padding:6px 9px;font-size:10px;color:#9ca3af;">⏳ Otwórz Brand24 w tej przeglądarce — token załaduje się automatycznie, wtedy tagi się pojawią.</div>';
+    var _tagBase = _b24PanelBase(pid);
+    if (!B24Bridge.token.isValid(_tagBase)) {
+      if (tagList) tagList.innerHTML = '<div style="padding:6px 9px;font-size:10px;color:#9ca3af;">⏳ Otwórz <strong>' + _escHtml(_baseLabel(_tagBase)) + '</strong> w tej przeglądarce — token załaduje się automatycznie, wtedy tagi się pojawią.</div>';
       return;
     }
     if (tagList) tagList.innerHTML = '<div style="padding:6px 9px;font-size:10px;color:#9ca3af;">⏳ Pobieram tagi projektu z Brand24…</div>';
@@ -18018,7 +18172,12 @@ Tej operacji nie można cofnąć.`)) {
     pdata.tagsFetchedAt = Date.now();
     projs[String(pid)] = pdata;
     lsSet(LS.PROJECTS, projs);
-    try { B24Bridge.projects.update(pid, { tagIds: map, tagsFetchedAt: pdata.tagsFetchedAt }); } catch(e) {}
+    var _upd = { tagIds: map, tagsFetchedAt: pdata.tagsFetchedAt };
+    // Znacznik panelu dopisujemy TYLKO gdy jesteśmy na panelu Brand24 — sukces cross-domain getTags
+    // nie dowodzi przynależności projektu (getTags bierze projekt z sesji, nie z argumentu).
+    var _hb = _b24HostBase();
+    if (_hb) _upd.base = _hb;
+    try { B24Bridge.projects.update(pid, _upd); } catch(e) {}
   }
 
   // Pobiera świeże tagi projektu z Brand24 i zapisuje. Promise → {title:id} | null (gdy fetch padł).
@@ -18106,20 +18265,22 @@ Tej operacji nie można cofnąć.`)) {
       dateTo   = _localDateStr(_now2);
     }
 
-    // Jeśli brak tokenu — pokaż komunikat i czekaj na reaktywne odświeżenie z brand24.com
-    if (!B24Bridge.token.isValid()) {
-      dupEl.textContent = '⏳ otwórz brand24.com — token załaduje się automatycznie';
+    // Baza panelu projektu (.pl/.com) — NIE ostatnio używany panel
+    var _base = _b24PanelBase(_pidInt);
+
+    // Jeśli brak tokenu dla TEGO panelu — pokaż komunikat i czekaj na reaktywne odświeżenie
+    if (!B24Bridge.token.isValid(_base)) {
+      dupEl.textContent = '⏳ otwórz ' + _baseLabel(_base) + ' — token załaduje się automatycznie';
       dupEl.style.color = '#6b7280';
       dupEl.style.display = '';
       return;
     }
 
-    dupEl.textContent = '⏳ sprawdzanie duplikatów...';
+    dupEl.textContent = '⏳ sprawdzanie duplikatów (' + _baseLabel(_base) + ')...';
     dupEl.style.color = '#6b7280';
     dupEl.style.display = '';
 
-    var _base = B24Bridge.token.base();
-    var _authHeaders = B24Bridge.token.headers();
+    var _authHeaders = B24Bridge.token.headers(_base);
 
     var _rxQH  = /[?#].*$/;
     var _normBase = normUrl.replace(_rxQH, '');
@@ -18168,7 +18329,7 @@ Tej operacji nie można cofnąć.`)) {
           try {
             var d = JSON.parse(resp.responseText);
             if (d && d.errors && (!d.data || !d.data.getMentions)) {
-              dupEl.textContent = '⚠ dup-check: otwórz Brand24 żeby odświeżyć token';
+              dupEl.textContent = '⚠ dup-check: ' + _gqlErrHint(d.errors, _base, _pidInt);
               dupEl.style.color = '#f59e0b';
               dupEl.style.display = '';
               cb(-1, []);
@@ -18478,6 +18639,31 @@ Tej operacji nie można cofnąć.`)) {
     return null;
   }
 
+  // Reaktywne odświeżenie panelu Niestandardowe, gdy w bridge pojawi się świeży token (np. user
+  // właśnie otworzył panel.brand24.pl). Rejestrowane TEŻ na stronach zewnętrznych — tam żyje ten
+  // panel, a wcześniej listener wisiał tylko na /panel/results/, więc czekanie na token nic nie dawało.
+  function _wireBridgeReactiveRefresh() {
+    B24Bridge.onChange('custom-dupcheck', function() {
+      if (newsState.mode !== 'custom') return;
+      var _pid = state.projectId || '';
+      if (!_pid) return;
+      // Kropka Panel: wymuś ponowne sprawdzenie tylko gdy poprzednie wypadło negatywnie
+      var panelDot = document.getElementById('b24t-news-panel-dot');
+      if (panelDot && panelDot.textContent.indexOf('✗') !== -1) delete panelDot.dataset.checkedBase;
+      _newsPanelDotCheck();
+      _extEnsureTags(_pid); // ma własny guard — nie robi nic, gdy tagi już w cache
+      // Dup-check ponawiamy tylko gdy poprzedni nie dał wyniku (czekał na token / błąd) — inaczej
+      // throttlowany `touch` tokenu co 5 min kazałby odpytywać Brand24 bez powodu.
+      var dupEl = document.getElementById('b24t-news-dup-status');
+      var _dupTxt = (dupEl && dupEl.textContent) || '';
+      var _dupPending = _dupTxt.indexOf('⏳') !== -1 || _dupTxt.indexOf('dup-check:') !== -1;
+      if (!_dupPending) return;
+      var urlEl = document.getElementById('b24t-news-f-url');
+      var _url = (urlEl && urlEl.value) || '';
+      if (_url) setTimeout(function() { _customDupCheck(_url, String(_pid)); }, 100);
+    });
+  }
+
   function _initMiniMentionButton() {
     // Nie pokazuj w iframe ani jeśli użytkownik nigdy nie używał wtyczki (brak zapisanych projektów)
     try { if (window.top !== window.self) return; } catch(e) { return; }
@@ -18510,13 +18696,15 @@ Tej operacji nie można cofnąć.`)) {
     // Na stronach poza /panel/results/ — tylko floating mini-button do dodawania wzmianek
     if (!window.location.pathname.includes('/panel/results/')) {
       _initMiniMentionButton();
+      _wireBridgeReactiveRefresh();
       return;
     }
 
     // Hydratacja tokenu z B24Bridge — gdy inna karta Brand24 już go zapisała,
     // unikamy TOKEN_NOT_READY do czasu pierwszego organicznego GQL z tej karty.
+    // Bierzemy token TEGO panelu — nagłówki z .com nie działają na .pl i odwrotnie.
     try {
-      var _bridged = B24Bridge.token.get();
+      var _bridged = B24Bridge.token.get(_b24HostBase());
       if (_bridged && _bridged.headers && !state.tokenHeaders) {
         state.tokenHeaders = Object.assign({ 'Content-Type': 'application/json' }, _bridged.headers);
       }
@@ -18690,15 +18878,7 @@ Tej operacji nie można cofnąć.`)) {
     buildNetworkMonitorPanel();
 
     // Reaktywne: gdy brand24.com zapisze świeży token → auto-ponów dupcheck w panelu Niestandardowe
-    B24Bridge.onChange('custom-dupcheck', function() {
-      if (newsState.mode !== 'custom') return;
-      var urlEl = document.getElementById('b24t-news-f-url');
-      var _url = (urlEl && urlEl.value) || '';
-      var _pid = state.projectId || '';
-      if (_url && _pid) {
-        setTimeout(function() { _customDupCheck(_url, String(_pid)); }, 100);
-      }
-    });
+    _wireBridgeReactiveRefresh();
 
     // Zastosuj opcjonalne funkcje
     applyFeatures();

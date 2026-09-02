@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.26.13",
+    "date": "2026-09-02",
+    "label": "fix",
+    "changes": [
+      "fix: Deduplikacja przy imporcie porównywała dosłowne adresy, więc te same artykuły w wersji AMP, z www i bez, albo z ukośnikiem na końcu wchodziły na listę po dwa razy. Na realnej paczce z 24 linków 11 było duplikatami i przechodziły wszystkie. Teraz porównywany jest adres kanoniczny — dedup działa jako pierwszy krok, przed skanowaniem i przed oceną AI, więc duplikaty nie zużywają już czasu ani limitów API",
+      "feat: Nowy status \"✓ Sprawdzony\" — po przejściu do kolejnego URL-a poprzedni przestaje wisieć jako \"Otwarty\" i widać, gdzie skończyła się weryfikacja. Wiersze oznaczone \"Dodano\" lub \"Błąd\" zostają bez zmian",
+      "fix: Pasek postępu liczy sprawdzone URL-e jako obrobione — wcześniej stał w miejscu, jeśli annotator przeglądał linki i świadomie ich nie dodawał"
+    ]
+  },
+  {
     "version": "0.26.12",
     "date": "2026-09-02",
     "label": "fix",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.12
+// @version      0.26.13
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.12';
+  const VERSION = '0.26.13';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -746,6 +746,42 @@
   const _RX_IG_REEL      = /instagram\.com\/(reel|tv|guide)\/([^/?#]+)/;
   // Brand24 usuwa też query string z Instagram URL-i (igsh=, img_index= itp.)
   const _RX_IG_QUERY = /(instagram\.com\/[^?#]+)\?.*/;
+
+  // Wersje AMP tego samego artykułu to najczęstszy duplikat w listach z Brand24.
+  // Zmierzone na realnej liście H&M_GR/HR: z 24 linków 11 to duplikaty, a porównanie
+  // dosłownych stringów wyłapywało z nich ZERO.
+  //
+  // Zdejmujemy WYŁĄCZNIE dwie konwencje AMP, nie „amp gdziekolwiek":
+  //   sufiks  serwis.pl/artykul/amp
+  //   prefiks serwis.pl/amp/artykul
+  // Środek ścieżki zostaje nietknięty, bo „sklep.pl/kategoria/amp/produkt" to realna treść.
+  // „app-" zdejmujemy dopiero gdy URL faktycznie był lustrem AMP — inaczej skleilibyśmy
+  // app-store.com ze store.com. „amp." tylko gdy zostaje sensowna domena (app-diva → diva).
+  //
+  // ⚠ Świadomie NIE wpięte w normalizeUrl — ta jest współdzielona z dopasowywaniem URL-i
+  // do projektu i do sesji, a to osobna zmiana zachowania (otwarty punkt w TASKS.md).
+  function _newsCanonicalUrl(url) {
+    var u = normalizeUrl(url);
+    if (!u) return '';
+    var wasAmp = false, next;
+
+    next = u.replace(/([?&])amp=(?:true|1)(?=&|$)/i, '$1');
+    if (next !== u) { wasAmp = true; u = next; }
+
+    next = u.replace(/\/amp$/i, '');                        // sufiks: /artykul/amp
+    if (next !== u) { wasAmp = true; u = next; }
+
+    next = u.replace(/^([^\/?#]+)\/amp(?=\/)/i, '$1');      // prefiks: host/amp/artykul
+    if (next !== u) { wasAmp = true; u = next; }
+
+    next = u.replace(/^amp\./i, '');                         // amp.serwis.pl → serwis.pl
+    if (next !== u && /^[^\/?#]+\.[^\/?#]+/.test(next)) { wasAmp = true; u = next; }
+
+    if (wasAmp) u = u.replace(/^app-/i, '');                 // app-diva.vecernji.hr → diva...
+
+    return u.replace(/[?&]+$/, '').replace(/\/+$/, '');
+  }
+
 
   function normalizeUrl(url) {
     if (!url) return '';
@@ -11226,6 +11262,7 @@ function showOnboarding(onComplete) {
       if (s === 'teasermatch')  return { dot: '◇', color: '#9ca3af', label: 'Keyword tylko w polecanych artykułach — nie w treści głównej' };
       if (s === 'wrongcountry') return { dot: '●', color: '#f97316', label: 'Keyword w URL, ale wskazuje inny kraj' };
       if (s === 'opened')       return { dot: '●', color: '#a78bfa', label: 'Otwarty — w trakcie weryfikacji' };
+      if (s === 'checked')      return { dot: '✓', color: '#64748b', label: 'Sprawdzony — obejrzany, bez dodania wzmianki' };
       if (s === 'added')        return { dot: '✓', color: '#15803d', label: 'Dodany do Brand24' };
       if (s === 'error')        return { dot: '✗', color: '#ef4444', label: 'Błąd / duplikat w projekcie' };
       if (s === 'inproject')    return { dot: '●', color: '#64748b', label: 'Już w projekcie (ten miesiąc)' };
@@ -11244,7 +11281,7 @@ function showOnboarding(onComplete) {
     }
 
     function _newsUrlCounts() {
-      var c = { match: 0, keytopic: 0, contentmatch: 0, mention: 0, teasermatch: 0, wrongcountry: 0, nomatch: 0, inproject: 0, opened: 0, added: 0, error: 0, scanning: 0, blocked: 0, total: 0 };
+      var c = { match: 0, keytopic: 0, contentmatch: 0, mention: 0, teasermatch: 0, wrongcountry: 0, nomatch: 0, inproject: 0, opened: 0, checked: 0, added: 0, error: 0, scanning: 0, blocked: 0, total: 0 };
       newsState.urls.forEach(function(u) { c[u.status] = (c[u.status] || 0) + 1; c.total++; });
       return c;
     }
@@ -11545,7 +11582,9 @@ function showOnboarding(onComplete) {
         if (progressLbl) progressLbl.textContent = 'Skanowanie: ' + done + ' / ' + total + _etaStr;
         if (done === 0) _getBarNews().reset(); else _getBarNews().set(Math.round(done / total * 100));
       } else {
-        var handled = (counts.added || 0) + (counts.error || 0);
+        // 'checked' liczy się jako załatwiony: annotator obejrzał URL i świadomie go nie dodał.
+        // Bez tego pasek postępu stałby w miejscu przy każdym odrzuceniu.
+        var handled = (counts.added || 0) + (counts.error || 0) + (counts.checked || 0);
         var workable = (counts.match || 0) + (counts.keytopic || 0) + (counts.contentmatch || 0) + (counts.mention || 0) + (counts.opened || 0) + handled;
         if (progressLbl) progressLbl.textContent = handled + ' / ' + workable + ' relevantnych';
         _getBarNews().set(workable > 0 ? Math.round(handled / workable * 100) : 0);
@@ -11604,7 +11643,7 @@ function showOnboarding(onComplete) {
           entry.blockReason === 'exception' ? 'B\u0142\u0105d' :
           'Zablokowana'
         ) : 'Zablokowana';
-        var _sLabels = { match:'Keyword w URL', keytopic:'G\u0142\u00f3wny temat', contentmatch:'W tre\u015bci', mention:'Wzmianka', teasermatch:'Polecany art.', wrongcountry:'Z\u0142y kraj', opened:'Otwarty', added:'Dodano', error:'B\u0142\u0105d', inproject:'W projekcie', scanning:'Skanowanie\u2026', blocked:_blockedLabel, nomatch:'Brak keyword' };
+        var _sLabels = { match:'Keyword w URL', keytopic:'G\u0142\u00f3wny temat', contentmatch:'W tre\u015bci', mention:'Wzmianka', teasermatch:'Polecany art.', wrongcountry:'Z\u0142y kraj', opened:'Otwarty', checked:'Sprawdzony', added:'Dodano', error:'B\u0142\u0105d', inproject:'W projekcie', scanning:'Skanowanie\u2026', blocked:_blockedLabel, nomatch:'Brak keyword' };
         var _sbStyle;
         if (isScanning) {
           _sbStyle = 'background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.2);color:#818cf8;';
@@ -11620,6 +11659,8 @@ function showOnboarding(onComplete) {
           _sbStyle = 'background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);color:#ef4444;';
         } else if (entry.status === 'opened') {
           _sbStyle = 'background:rgba(167,139,250,0.10);border:1px solid rgba(167,139,250,0.25);color:#a78bfa;';
+        } else if (entry.status === 'checked') {
+          _sbStyle = 'background:rgba(100,116,139,0.10);border:1px solid rgba(100,116,139,0.28);color:#64748b;';
         } else {
           _sbStyle = 'background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:#9ca3af;';
         }
@@ -11815,6 +11856,11 @@ function showOnboarding(onComplete) {
     function activateUrl(idx) {
       var entry = newsState.urls[idx];
       if (!entry) return;
+      // Poprzedni otwarty wiersz domykamy na 'sprawdzony' — inaczej 'Otwarty' zostawał na stałe
+      // na każdym obejrzanym URL-u i po kilkunastu nie było widać, gdzie się skończyło.
+      // Zmieniamy TYLKO 'opened': 'added' i 'error' niosą mocniejszą informację i mają pierwszeństwo.
+      var _prev = newsState.activeIdx >= 0 ? newsState.urls[newsState.activeIdx] : null;
+      if (_prev && _prev !== entry && _prev.status === 'opened') _prev.status = 'checked';
       newsState.activeIdx = idx;
       entry.status = 'opened';
       var fUrl = document.getElementById('b24t-news-f-url');
@@ -11947,9 +11993,9 @@ function showOnboarding(onComplete) {
       if (!richEl) return;
       function _esc(s) { return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-      var _statusColors = { keytopic: '#22c55e', contentmatch: '#818cf8', mention: '#fb923c', teasermatch: '#9ca3af', blocked: '#9ca3af', opened: '#818cf8' };
-      var _statusBgs    = { keytopic: 'rgba(34,197,94,0.12)', contentmatch: 'rgba(129,140,248,0.12)', mention: 'rgba(251,146,60,0.12)', teasermatch: 'rgba(107,114,128,0.10)', blocked: 'rgba(107,114,128,0.10)', opened: 'rgba(99,102,241,0.10)' };
-      var _statusLabels = { keytopic: 'Główny temat', contentmatch: 'W treści', mention: 'Wzmianka', teasermatch: 'w polecanych', blocked: 'zablokowany', opened: 'otwarty' };
+      var _statusColors = { keytopic: '#22c55e', contentmatch: '#818cf8', mention: '#fb923c', teasermatch: '#9ca3af', blocked: '#9ca3af', opened: '#818cf8', checked: '#64748b' };
+      var _statusBgs    = { keytopic: 'rgba(34,197,94,0.12)', contentmatch: 'rgba(129,140,248,0.12)', mention: 'rgba(251,146,60,0.12)', teasermatch: 'rgba(107,114,128,0.10)', blocked: 'rgba(107,114,128,0.10)', opened: 'rgba(99,102,241,0.10)', checked: 'rgba(100,116,139,0.10)' };
+      var _statusLabels = { keytopic: 'Główny temat', contentmatch: 'W treści', mention: 'Wzmianka', teasermatch: 'w polecanych', blocked: 'zablokowany', opened: 'otwarty', checked: 'sprawdzony' };
       var _sc = _statusColors[entry.status] || '#9ca3af';
       var _sb = _statusBgs[entry.status]    || 'rgba(107,114,128,0.10)';
       var _sl = _statusLabels[entry.status] || entry.status || '';
@@ -12156,8 +12202,16 @@ function showOnboarding(onComplete) {
 
       var raw = pasteArea ? pasteArea.value : '';
       var lines = raw.split('\n').map(function(l) { return l.trim(); }).filter(function(l) { return /^https?:\/\//.test(l); });
+      // Dedup po URL-u KANONICZNYM, nie po dosłownym stringu. Zmierzone na realnej liście
+      // H&M_GR/HR: z 24 linków 11 to duplikaty (wersje AMP, www, ukośnik na końcu),
+      // a porównanie stringów wyłapywało z nich ZERO — annotator otwierał je po dwa razy.
       var seen = {};
-      var deduped = lines.filter(function(u) { if (seen[u]) return false; seen[u] = true; return true; });
+      var deduped = lines.filter(function(u) {
+        var k = _newsCanonicalUrl(u);
+        if (seen[k]) return false;
+        seen[k] = true;
+        return true;
+      });
       var dupeCount = lines.length - deduped.length;
       if (deduped.length === 0) return;
 
@@ -12814,6 +12868,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.13",
+      "date": "2026-09-02",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Deduplikacja przy imporcie porównywała dosłowne adresy, więc te same artykuły w wersji AMP, z www i bez, albo z ukośnikiem na końcu wchodziły na listę po dwa razy. Na realnej paczce z 24 linków 11 było duplikatami i przechodziły wszystkie. Teraz porównywany jest adres kanoniczny — dedup działa jako pierwszy krok, przed skanowaniem i przed oceną AI, więc duplikaty nie zużywają już czasu ani limitów API"},
+        {"type": "feat", "text": "Nowy status \"✓ Sprawdzony\" — po przejściu do kolejnego URL-a poprzedni przestaje wisieć jako \"Otwarty\" i widać, gdzie skończyła się weryfikacja. Wiersze oznaczone \"Dodano\" lub \"Błąd\" zostają bez zmian"},
+        {"type": "fix", "text": "Pasek postępu liczy sprawdzone URL-e jako obrobione — wcześniej stał w miejscu, jeśli annotator przeglądał linki i świadomie ich nie dodawał"}
+      ]
+    },
+    {
       "version": "0.26.12",
       "date": "2026-09-02",
       "label": "fix",
@@ -12904,18 +12969,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#6366f1",
       "changes": [
         {"type": "feat", "text": "Dodawanie wzmianek (News i Niestandardowe): pole filtrowania nad listą tagów — wpisz dowolny fragment nazwy, a lista pokaże tylko pasujące tagi (np. 'Bad' znajdzie 'Zara x Bad Bunny'). Przydatne przy projektach z dużą, nieuporządkowaną listą tagów"}
-      ]
-    },
-    {
-      "version": "0.26.3",
-      "date": "2026-06-09",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Zakładka Tagi: poprawne liczniki REQ VER / TO DELETE per projekt (wcześniej pokazywały łączną liczbę wzmianek albo zawsze 0 z cache w tle)"},
-        {"type": "fix", "text": "Timer sesji nie dubluje się po wznowieniu z pauzy / ponowieniu akcji"},
-        {"type": "perf", "text": "News: płynniejsze skanowanie dużych list URL (lista odświeża się max ~3×/s zamiast po każdym adresie); szybsze dopasowywanie URL przy dużych plikach"},
-        {"type": "fix", "text": "Eksport CSV raportu i partycji nie psuje kolumn gdy treść zawiera cudzysłów; licznik postępu w panelu Wszystkie projekty faktycznie się aktualizuje; porządki w kodzie (martwy kod, deduplikacje, escapowanie logów)"}
       ]
     }
   ];

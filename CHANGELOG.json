@@ -1,5 +1,20 @@
 [
   {
+    "version": "0.26.12",
+    "date": "2026-09-02",
+    "label": "fix",
+    "changes": [
+      "fix: Skaner widzi teraz całą treść artykułu, a nie jej ułamek — na części serwisów wybierał kafelek \"polecane\" albo blok, z którego reguły czyszczenia usuwały tekst. Pięć stron na sześćdziesiąt pięć wracało wcześniej jako \"brak keyworda\" mimo że marka była w tekście",
+      "fix: Pole Treść nie dostaje już chmur tagów ani zajawek innych artykułów — rozpoznawane są bloki \"czytaj też\" po polsku, chorwacku, turecku, grecku i angielsku, także wtedy gdy nie mają rozpoznawalnej klasy CSS. Gdy keyword był tylko w tytule, pole wypełnia lead artykułu z adnotacją, że to nie fragment z keywordem",
+      "fix: Data publikacji wykrywana znacznie częściej (51 zamiast 43 na 65 stronach): dochodzą daty z zagnieżdżonego JSON-LD, dziesięciu dodatkowych metatagów, znacznika time spoza treści, z adresu URL oraz pisane słownie po chorwacku, polsku, turecku i grecku",
+      "fix: Ocena AI dostaje teraz informację, z której części strony pochodzi każde trafienie (tytuł, lead, akapit, podpis zdjęcia, lista produktów z ceną, blok polecanych) oraz domenę wydawcy. Wcześniej przy trafieniach spoza akapitów model dostawał pustą listę kontekstów",
+      "feat: Strony sklepów w centrach handlowych, ogłoszenia o pracę i wpisy w App Store są oznaczane jako nierelevantne, a portale recenzenckie i zestawienia produktów z cenami jako relevantne",
+      "fix: Nazwa serwisu obcinana z tytułu (\"H&M - Max City\" → \"H&M\"), żeby projekt monitorujący markę zbieżną z nazwą wydawcy nie dostawał punktów na każdej podstronie",
+      "fix: Werdykt AI nie przepada już przez uciętą odpowiedź — wcześniej pokazywał się \"błąd parsowania\" mimo poprawnej oceny",
+      "feat: Modele Claude zaktualizowane: Haiku 4.5 i Sonnet 5 (zamiast Sonnet 4.6). Zapisane wcześniej ustawienia przepisują się same. Sonnet 5 jest przy skanach tańszy od Haiku, bo jako jedyny korzysta z pamięci podręcznej promptu"
+    ]
+  },
+  {
     "version": "0.26.11",
     "date": "2026-07-30",
     "label": "fix",
@@ -651,13 +666,17 @@
     "version": "0.23.91",
     "date": "2026-05-08",
     "label": "fix",
-    "changes": ["fix: fallback bulkTag — concurrent 8× zamiast sekwencji (8 IDs naraz), 2 retries zamiast 5 per ID; log kontekstu błędu batcha przed fallbackiem ([BRAND24]/[SIEĆ] + hint)"]
+    "changes": [
+      "fix: fallback bulkTag — concurrent 8× zamiast sekwencji (8 IDs naraz), 2 retries zamiast 5 per ID; log kontekstu błędu batcha przed fallbackiem ([BRAND24]/[SIEĆ] + hint)"
+    ]
   },
   {
     "version": "0.23.90",
     "date": "2026-05-08",
     "label": "fix",
-    "changes": ["fix: wykrywanie kolumny dat ignoruje pola gdzie data jest wewnątrz nazwy pliku (source_file)"]
+    "changes": [
+      "fix: wykrywanie kolumny dat ignoruje pola gdzie data jest wewnątrz nazwy pliku (source_file)"
+    ]
   },
   {
     "version": "0.23.89",
@@ -1425,8 +1444,14 @@
     "label": "fix",
     "labelColor": "#22c55e",
     "changes": [
-      {"type": "fix", "text": "News: CMS check — dwa osobne stany: niezalogowany do CMS (czerwony dot) vs zalogowany ale brak tagu dodane (żółty dot + inny komunikat); sprawdzanie przez GET /searches/add-new-mention/"},
-      {"type": "fix", "text": "News: auto-fill Treść — h1 nie trafia do pola Treść (tylko do scoringu); Treść bierze tylko akapity lub og:description"}
+      {
+        "type": "fix",
+        "text": "News: CMS check — dwa osobne stany: niezalogowany do CMS (czerwony dot) vs zalogowany ale brak tagu dodane (żółty dot + inny komunikat); sprawdzanie przez GET /searches/add-new-mention/"
+      },
+      {
+        "type": "fix",
+        "text": "News: auto-fill Treść — h1 nie trafia do pola Treść (tylko do scoringu); Treść bierze tylko akapity lub og:description"
+      }
     ]
   },
   {
@@ -1435,11 +1460,26 @@
     "label": "fix",
     "labelColor": "#22c55e",
     "changes": [
-      {"type": "fix", "text": "News: CMS dot (●) — odświeżany po załadowaniu tagów projektu; naprawia brak aktualizacji na panel.brand24.pl i przy szybkim otwarciu paneli"},
-      {"type": "fix", "text": "News: _newsRefillTags retry po 1.5s gdy tagi jeszcze puste — race condition przy wolnym ładowaniu (np. panel.brand24.pl)"},
-      {"type": "fix", "text": "News: 'Sprawdź ponownie' CMS — re-fetchuje tagi z serwera zamiast tylko sprawdzać cache; przydatne po zalogowaniu do CMS w osobnej zakładce"},
-      {"type": "fix", "text": "News: auto-fill tytuł — nowa kolejność: h1 z article/main (widoczny nagłówek) > content_title (meta custom) > og:title > <title>; eliminuje wklejanie nazwy serwisu"},
-      {"type": "fix", "text": "News: auto-fill treść — cały akapit jeśli ≤600 znaków; dla dłuższych: 3 zdania wokół słowa kluczowego (przed + z kw + po); eliminuje 140-znakowe obcięcie bez kontekstu"}
+      {
+        "type": "fix",
+        "text": "News: CMS dot (●) — odświeżany po załadowaniu tagów projektu; naprawia brak aktualizacji na panel.brand24.pl i przy szybkim otwarciu paneli"
+      },
+      {
+        "type": "fix",
+        "text": "News: _newsRefillTags retry po 1.5s gdy tagi jeszcze puste — race condition przy wolnym ładowaniu (np. panel.brand24.pl)"
+      },
+      {
+        "type": "fix",
+        "text": "News: 'Sprawdź ponownie' CMS — re-fetchuje tagi z serwera zamiast tylko sprawdzać cache; przydatne po zalogowaniu do CMS w osobnej zakładce"
+      },
+      {
+        "type": "fix",
+        "text": "News: auto-fill tytuł — nowa kolejność: h1 z article/main (widoczny nagłówek) > content_title (meta custom) > og:title > <title>; eliminuje wklejanie nazwy serwisu"
+      },
+      {
+        "type": "fix",
+        "text": "News: auto-fill treść — cały akapit jeśli ≤600 znaków; dla dłuższych: 3 zdania wokół słowa kluczowego (przed + z kw + po); eliminuje 140-znakowe obcięcie bez kontekstu"
+      }
     ]
   },
   {
@@ -1448,10 +1488,22 @@
     "label": "fix",
     "labelColor": "#22c55e",
     "changes": [
-      {"type": "fix", "text": "News: dropdown tagów — dodano max-height: 200px + overflow-y: auto; lista nie wychodzi poza ekran gdy projekt ma dużo tagów"},
-      {"type": "fix", "text": "News: auto-fill formularza — pole Treść dostawało tytuł zamiast treści artykułu; snippet preferuje teraz akapity body/h1 nad tytułem"},
-      {"type": "feat", "text": "News: dopasowane słowa kluczowe (chipy) wyświetlane przy każdym URL-u w liście — zarówno dla dopasowań w URL jak i z content scan"},
-      {"type": "fix", "text": "News: kod kraju w URL (np. /nl, /de) ma teraz priorytet nad wynikiem content scan — wzmianka z obcym kodem kraju dostaje wrongcountry zamiast mention/contentmatch"}
+      {
+        "type": "fix",
+        "text": "News: dropdown tagów — dodano max-height: 200px + overflow-y: auto; lista nie wychodzi poza ekran gdy projekt ma dużo tagów"
+      },
+      {
+        "type": "fix",
+        "text": "News: auto-fill formularza — pole Treść dostawało tytuł zamiast treści artykułu; snippet preferuje teraz akapity body/h1 nad tytułem"
+      },
+      {
+        "type": "feat",
+        "text": "News: dopasowane słowa kluczowe (chipy) wyświetlane przy każdym URL-u w liście — zarówno dla dopasowań w URL jak i z content scan"
+      },
+      {
+        "type": "fix",
+        "text": "News: kod kraju w URL (np. /nl, /de) ma teraz priorytet nad wynikiem content scan — wzmianka z obcym kodem kraju dostaje wrongcountry zamiast mention/contentmatch"
+      }
     ]
   },
   {
@@ -1460,12 +1512,30 @@
     "label": "feat",
     "labelColor": "#06b6d4",
     "changes": [
-      {"type": "feat", "text": "News: tiered content scoring — mention (◆ żółty, score 1–4), contentmatch (◆ cyan, score 5–11), keytopic (◆ zielony, score 12+); każda wzmianka w treści jest relevantna"},
-      {"type": "feat", "text": "News: auto-fill tytułu artykułu (og:title) i fragmentu ze słowem kluczowym do formularza wzmianki po kliknięciu URLa"},
-      {"type": "fix", "text": "News: przycisk boczny News stawał się biały przy aktywacji — CSS active state zmieniony na solid indigo (#6366f1)"},
-      {"type": "fix", "text": "News: przycisk boczny News znikał po zamknięciu paneli — usunięta błędna logika display toggle w click handlerze"},
-      {"type": "fix", "text": "News: dropdown tagów w formularzu wzmianki był pusty — _newsRefillTags() wywoływana przy każdym otwarciu panelu, nie tylko przy pierwszym build"},
-      {"type": "fix", "text": "News: komunikat 'Sprawdzono X wzmianek' nadpisywał wynik skanowania — project check ma teraz osobny element b24t-news-project-info"}
+      {
+        "type": "feat",
+        "text": "News: tiered content scoring — mention (◆ żółty, score 1–4), contentmatch (◆ cyan, score 5–11), keytopic (◆ zielony, score 12+); każda wzmianka w treści jest relevantna"
+      },
+      {
+        "type": "feat",
+        "text": "News: auto-fill tytułu artykułu (og:title) i fragmentu ze słowem kluczowym do formularza wzmianki po kliknięciu URLa"
+      },
+      {
+        "type": "fix",
+        "text": "News: przycisk boczny News stawał się biały przy aktywacji — CSS active state zmieniony na solid indigo (#6366f1)"
+      },
+      {
+        "type": "fix",
+        "text": "News: przycisk boczny News znikał po zamknięciu paneli — usunięta błędna logika display toggle w click handlerze"
+      },
+      {
+        "type": "fix",
+        "text": "News: dropdown tagów w formularzu wzmianki był pusty — _newsRefillTags() wywoływana przy każdym otwarciu panelu, nie tylko przy pierwszym build"
+      },
+      {
+        "type": "fix",
+        "text": "News: komunikat 'Sprawdzono X wzmianek' nadpisywał wynik skanowania — project check ma teraz osobny element b24t-news-project-info"
+      }
     ]
   },
   {
@@ -1474,9 +1544,18 @@
     "label": "fix",
     "labelColor": "#22c55e",
     "changes": [
-      {"type": "fix", "text": "News: krytyczny błąd — _newsTheme() nie istnieje; zamieniono na _newsThemeVars() → przywrócono działanie przycisku Wczytaj URLe i event wiringу paneli"},
-      {"type": "fix", "text": "News: chipy słów kluczowych nie renderowały się przy pierwszym otwarciu panelu — renderChips() wywoływana teraz bezpośrednio po przypisaniu _newsChipsRenderer"},
-      {"type": "feat", "text": "News: kropeczka CMS (●) w nagłówku Formularza wzmianki — zielona gdy tag 'dodane' dostępny, czerwona gdy niedostępny"}
+      {
+        "type": "fix",
+        "text": "News: krytyczny błąd — _newsTheme() nie istnieje; zamieniono na _newsThemeVars() → przywrócono działanie przycisku Wczytaj URLe i event wiringу paneli"
+      },
+      {
+        "type": "fix",
+        "text": "News: chipy słów kluczowych nie renderowały się przy pierwszym otwarciu panelu — renderChips() wywoływana teraz bezpośrednio po przypisaniu _newsChipsRenderer"
+      },
+      {
+        "type": "feat",
+        "text": "News: kropeczka CMS (●) w nagłówku Formularza wzmianki — zielona gdy tag 'dodane' dostępny, czerwona gdy niedostępny"
+      }
     ]
   },
   {
@@ -1485,13 +1564,34 @@
     "label": "feat",
     "labelColor": "#06b6d4",
     "changes": [
-      {"type": "feat", "text": "News: integracja content scan z importem URL — sliding window 5 workerów, URL-e wpadają do listy na żywo po rozpoznaniu"},
-      {"type": "feat", "text": "News: status contentmatch (◆ cyan) — keyword znaleziony w treści strony; snippet artykułu widoczny pod URL-em w liście"},
-      {"type": "feat", "text": "News: pasek postępu w trybie skanowania (Skanowanie: N/M) vs trybie sesji (handled/workable)"},
-      {"type": "feat", "text": "News: nowa legenda pogrupowana (RELEVANTNE / SESJA / POMINIĘTE) z nowymi statusami scanning i blocked"},
-      {"type": "feat", "text": "News: selektor tagów — collapsible dropdown z summary zaznaczonych tagów; Dodane domyślnie zaznaczone"},
-      {"type": "fix", "text": "News: contentmatch nie jest usuwany przyciskiem 'Usuń irrelevantnych' — tylko nomatch/wrongcountry/blocked"},
-      {"type": "fix", "text": "News: przycisk Następny relevantny obsługuje contentmatch"}
+      {
+        "type": "feat",
+        "text": "News: integracja content scan z importem URL — sliding window 5 workerów, URL-e wpadają do listy na żywo po rozpoznaniu"
+      },
+      {
+        "type": "feat",
+        "text": "News: status contentmatch (◆ cyan) — keyword znaleziony w treści strony; snippet artykułu widoczny pod URL-em w liście"
+      },
+      {
+        "type": "feat",
+        "text": "News: pasek postępu w trybie skanowania (Skanowanie: N/M) vs trybie sesji (handled/workable)"
+      },
+      {
+        "type": "feat",
+        "text": "News: nowa legenda pogrupowana (RELEVANTNE / SESJA / POMINIĘTE) z nowymi statusami scanning i blocked"
+      },
+      {
+        "type": "feat",
+        "text": "News: selektor tagów — collapsible dropdown z summary zaznaczonych tagów; Dodane domyślnie zaznaczone"
+      },
+      {
+        "type": "fix",
+        "text": "News: contentmatch nie jest usuwany przyciskiem 'Usuń irrelevantnych' — tylko nomatch/wrongcountry/blocked"
+      },
+      {
+        "type": "fix",
+        "text": "News: przycisk Następny relevantny obsługuje contentmatch"
+      }
     ]
   },
   {
@@ -1500,11 +1600,26 @@
     "label": "feat",
     "labelColor": "#22c55e",
     "changes": [
-      {"type": "feat", "text": "News: _newsContentScan() — skanowanie treści stron przez GM_xmlhttpRequest z podwójnym timeoutem i guard przed podwójnym resolve"},
-      {"type": "feat", "text": "News: _newsParseContent() — parsowanie HTML przez DOMParser, usuwanie szumu (reklamy/nav/footer/sidebar), punktowanie 5 stref: tytuł, meta desc, h1, pierwszy akapit, kolejne akapity"},
-      {"type": "feat", "text": "News: @connect * w headerze — GM_xmlhttpRequest może sięgać do dowolnych domen newsowych"},
-      {"type": "fix", "text": "News: chipy słów kluczowych nie pokazywały się — _newsGetKeywords zwracał pustą tablicę zamiast defaultów gdy user wcześniej usunął wszystkie chipy"},
-      {"type": "fix", "text": "News: _newsChipsRenderer — chipy odświeżają się przy każdym otwarciu panelu (nie tylko przy pierwszym)"}
+      {
+        "type": "feat",
+        "text": "News: _newsContentScan() — skanowanie treści stron przez GM_xmlhttpRequest z podwójnym timeoutem i guard przed podwójnym resolve"
+      },
+      {
+        "type": "feat",
+        "text": "News: _newsParseContent() — parsowanie HTML przez DOMParser, usuwanie szumu (reklamy/nav/footer/sidebar), punktowanie 5 stref: tytuł, meta desc, h1, pierwszy akapit, kolejne akapity"
+      },
+      {
+        "type": "feat",
+        "text": "News: @connect * w headerze — GM_xmlhttpRequest może sięgać do dowolnych domen newsowych"
+      },
+      {
+        "type": "fix",
+        "text": "News: chipy słów kluczowych nie pokazywały się — _newsGetKeywords zwracał pustą tablicę zamiast defaultów gdy user wcześniej usunął wszystkie chipy"
+      },
+      {
+        "type": "fix",
+        "text": "News: _newsChipsRenderer — chipy odświeżają się przy każdym otwarciu panelu (nie tylko przy pierwszym)"
+      }
     ]
   },
   {
@@ -1513,17 +1628,50 @@
     "label": "UI",
     "labelColor": "#a78bfa",
     "changes": [
-      {"type": "feat", "text": "Toast notifications — auto-dismiss messages przy wgraniu pliku i zakończeniu sesji"},
-      {"type": "ui", "text": "Animacje: tab enter (slide-in), stat pop (scale), progress bar pulse, token dot pulse, section reveal"},
-      {"type": "ui", "text": "Progress label: kolorowanie stanu — szary idle, zielony done (✓ Zakończono), żółty paused, czerwony error"},
-      {"type": "ui", "text": "Log entries: border-left + tło per typ (success/error/warn) — lepsza czytelność"},
-      {"type": "ui", "text": "BETA chip w topbarze: pill badge z primary bg/border/color"},
-      {"type": "ui", "text": "File zone drag-over: CSS class + glow zamiast inline borderColor"},
-      {"type": "ui", "text": "Stat card: tinted backgrounds (CSS :has) — ok=zielony, warn=żółty"},
-      {"type": "ui", "text": "Action bar: Start full-width na górze, Match/Audit/Pause/Stop/Export w jednym wierszu"},
-      {"type": "fix", "text": "Quick Delete: hardcoded #f87171/#8888aa/#666688/#444455/#1a1a22 → CSS vars"},
-      {"type": "fix", "text": "Clear file button, Quick Tag progress bar: CSS vars (były hardcoded)"},
-      {"type": "fix", "text": "Annotator panel: przycisk ↻ Odśwież inline z datą (Projekt i Tagi tab)"}
+      {
+        "type": "feat",
+        "text": "Toast notifications — auto-dismiss messages przy wgraniu pliku i zakończeniu sesji"
+      },
+      {
+        "type": "ui",
+        "text": "Animacje: tab enter (slide-in), stat pop (scale), progress bar pulse, token dot pulse, section reveal"
+      },
+      {
+        "type": "ui",
+        "text": "Progress label: kolorowanie stanu — szary idle, zielony done (✓ Zakończono), żółty paused, czerwony error"
+      },
+      {
+        "type": "ui",
+        "text": "Log entries: border-left + tło per typ (success/error/warn) — lepsza czytelność"
+      },
+      {
+        "type": "ui",
+        "text": "BETA chip w topbarze: pill badge z primary bg/border/color"
+      },
+      {
+        "type": "ui",
+        "text": "File zone drag-over: CSS class + glow zamiast inline borderColor"
+      },
+      {
+        "type": "ui",
+        "text": "Stat card: tinted backgrounds (CSS :has) — ok=zielony, warn=żółty"
+      },
+      {
+        "type": "ui",
+        "text": "Action bar: Start full-width na górze, Match/Audit/Pause/Stop/Export w jednym wierszu"
+      },
+      {
+        "type": "fix",
+        "text": "Quick Delete: hardcoded #f87171/#8888aa/#666688/#444455/#1a1a22 → CSS vars"
+      },
+      {
+        "type": "fix",
+        "text": "Clear file button, Quick Tag progress bar: CSS vars (były hardcoded)"
+      },
+      {
+        "type": "fix",
+        "text": "Annotator panel: przycisk ↻ Odśwież inline z datą (Projekt i Tagi tab)"
+      }
     ]
   },
   {
@@ -1532,12 +1680,30 @@
     "label": "UI",
     "labelColor": "#a78bfa",
     "changes": [
-      {"type": "ui", "text": "Ujednolicenie stylu — glass highlight (inset box-shadow) na wszystkich kartach stat: stat-card, annTile, statsCard, dashTile"},
-      {"type": "ui", "text": "CSS vars w calym systemie news panels — bg, border, tekst, cien reaktywnie zmieniaja sie z trybem"},
-      {"type": "ui", "text": "Panel headers news: gradient var(--b24t-accent-grad) zamiast hardcoded indigo — spojny z glownym panelem"},
-      {"type": "ui", "text": "News side tab, help tip — hardcoded dark colors zastapione CSS vars (dzialaja w light i dark mode)"},
-      {"type": "ui", "text": "Overall Stats: kolory kart, tabeli i banerów domykania miesiaca przez CSS vars"},
-      {"type": "ui", "text": "PLANNED_FEATURES: usunieto 3 zrealizowane pozycje (szybsze dzialanie, stabilnosc sesji, dynamiczne panele)"}
+      {
+        "type": "ui",
+        "text": "Ujednolicenie stylu — glass highlight (inset box-shadow) na wszystkich kartach stat: stat-card, annTile, statsCard, dashTile"
+      },
+      {
+        "type": "ui",
+        "text": "CSS vars w calym systemie news panels — bg, border, tekst, cien reaktywnie zmieniaja sie z trybem"
+      },
+      {
+        "type": "ui",
+        "text": "Panel headers news: gradient var(--b24t-accent-grad) zamiast hardcoded indigo — spojny z glownym panelem"
+      },
+      {
+        "type": "ui",
+        "text": "News side tab, help tip — hardcoded dark colors zastapione CSS vars (dzialaja w light i dark mode)"
+      },
+      {
+        "type": "ui",
+        "text": "Overall Stats: kolory kart, tabeli i banerów domykania miesiaca przez CSS vars"
+      },
+      {
+        "type": "ui",
+        "text": "PLANNED_FEATURES: usunieto 3 zrealizowane pozycje (szybsze dzialanie, stabilnosc sesji, dynamiczne panele)"
+      }
     ]
   },
   {

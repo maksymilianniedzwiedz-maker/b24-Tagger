@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.11
+// @version      0.26.12
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.11';
+  const VERSION = '0.26.12';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -281,19 +281,31 @@
   function _aiDefaultSettings() {
     return {
       apiKey: '', prompts: [],
-      tagging: { model: 'claude-haiku-4-5-20251001', activePromptId: null },
-      news: { model: 'claude-haiku-4-5-20251001', enabled: false },
-      custom: { model: 'claude-haiku-4-5-20251001', enabled: false }
+      tagging: { model: 'claude-haiku-4-5', activePromptId: null },
+      news: { model: 'claude-haiku-4-5', enabled: false },
+      custom: { model: 'claude-haiku-4-5', enabled: false }
     };
+  }
+  // Stare ID modeli zapisane w LS — bez przepisania select w ustawieniach nie trafiłby w żadną
+  // opcję i pokazałby pustkę, a request poleciałby na ID w starym formacie (haiku z sufiksem daty).
+  var AI_MODEL_ALIASES = {
+    'claude-haiku-4-5-20251001': 'claude-haiku-4-5',
+    'claude-sonnet-4-6': 'claude-sonnet-5',
+  };
+  function _aiMigrateModel(id) {
+    return AI_MODEL_ALIASES[id] || id;
   }
   function _aiGetSettings() {
     var s = lsGet(LS.AI_SETTINGS, _aiDefaultSettings());
     if (!s.news) s.news = {};
     if (!s.tagging) s.tagging = {};
     if (!s.custom) s.custom = {};
-    if (!s.news.model) s.news.model = s.model || 'claude-haiku-4-5-20251001';
-    if (!s.tagging.model) s.tagging.model = s.model || 'claude-haiku-4-5-20251001';
-    if (!s.custom.model) s.custom.model = s.model || 'claude-haiku-4-5-20251001';
+    if (!s.news.model) s.news.model = s.model || 'claude-haiku-4-5';
+    if (!s.tagging.model) s.tagging.model = s.model || 'claude-haiku-4-5';
+    if (!s.custom.model) s.custom.model = s.model || 'claude-haiku-4-5';
+    s.news.model = _aiMigrateModel(s.news.model);
+    s.tagging.model = _aiMigrateModel(s.tagging.model);
+    s.custom.model = _aiMigrateModel(s.custom.model);
     if (!s.prompts) s.prompts = [];
     return s;
   }
@@ -7911,29 +7923,196 @@ function showOnboarding(onComplete) {
     if (_scanTimings.length > 20) _scanTimings.shift();
   }
 
-  var NEWS_NOISE_SELECTORS = [
-    'script','style','noscript','svg','iframe',
-    'aside','footer','nav','body > header','form',
+  // Szum dzieli się na dwie klasy, bo ryzyko pomyłki jest zupełnie inne.
+  // TWARDY to elementy, które nigdy nie niosą treści artykułu — kasujemy je wszędzie.
+  var NEWS_NOISE_HARD = ['script','style','noscript','svg','iframe','form'];
+  // MIĘKKI to zgadywanie po nazwie klasy. Poza strefą treści kasujemy bez pytania, ale WEWNĄTRZ
+  // niej dopiero po sprawdzeniu, że element nie niesie prozy — inaczej zdarza się katastrofa:
+  // journal.hr trzyma cały tekst artykułu w <div class="block__block-sidebar">, więc
+  // [class*="sidebar"] kasował 1503 z 1503 znaków treści i zostawał sam tytuł.
+  var NEWS_NOISE_SOFT = [
+    'aside','footer','nav','body > header',
     '[class*="ad-"]','[class*="-ad"]','[class*="__ad"]',
     '[class*="banner"]','[class*="sponsor"]','[class*="widget"]',
     '[class*="sidebar"]','[class*="promo"]','[class*="popup"]',
     '[class*="newsletter"]','[class*="cookie"]','[class*="consent"]',
     '[id*="banner"]','[id*="sidebar"]','[id*="cookie"]','[id*="popup"]',
   ];
+  // Akapit dłuższy niż tyle znaków traktujemy jako prozę artykułu. Boksy reklamowe,
+  // newsletterowe i widgety takich akapitów praktycznie nie mają.
+  var NEWS_PROSE_PARAGRAPH_MIN = 150;
+
+  // ── DATA PUBLIKACJI ──
+  // Nazwy miesięcy w dopełniaczu — tak zapisują je serwisy: „12. kolovoza 2026.",
+  // „12 sierpnia 2026", „12 Ağustos 2026", „12 Αυγούστου 2026".
+  //
+  // Tablice są PER JĘZYK, nie wspólne, bo chorwacki i polski mają kolizje o przeciwnym znaczeniu:
+  //   „lipnja"    = czerwiec (HR)   vs  „lipca"     = lipiec   (PL)
+  //   „listopada" = październik (HR) vs  „listopada" = listopad (PL)
+  // Wspólna lista prefiksów dawała złe miesiące — zmierzone, patrz NEWS_SCANNER.md §7.7.
+  // Prefiksy są zapisane w formie ZŁOŻONEJ DO ASCII/bez akcentów (patrz _newsFold).
+  var NEWS_MONTHS = {
+    hr: ['sije','velja','ozuj','travn','svibn','lipnj','srpnj','kolov','rujn','listop','studen','prosin'],
+    pl: ['stycz','lut','marc','kwie','maj','czerw','lipc','sierp','wrze','pazdzi','listopad','grud'],
+    en: ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'],
+    tr: ['ocak','subat','mart','nisan','mayis','hazi','temm','agus','eylul','ekim','kasim','aralik'],
+    el: ['ianoua','fevroua','mart','april','mai','ioun','ioul','avg','sept','oktw','noem','dekem',
+         'ιανουα','φεβρουα','μαρτ','απριλ','μαι','ιουν','ιουλ','αυγ','σεπτ','οκτω','νοεμ','δεκεμ'],
+  };
+  var NEWS_DATE_TEXT_RE = /(\d{1,2})[.\s]+([\p{L}]{3,14})[.\s]+(20\d{2})/u;
+  var NEWS_DATE_NUM_RE  = /(\d{1,2})[.\/-]\s?(\d{1,2})[.\/-]\s?(20\d{2})/;
+
+  // Zdejmuje akcenty (NFD + usunięcie znaków łączących) i te litery, które się nie rozkładają.
+  // Dzięki temu „siječnja", „Αυγούστου" i „Ağustos" pasują do prefiksów zapisanych bez ozdobników.
+  function _newsFold(s) {
+    return String(s || '').toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/ł/g, 'l').replace(/đ/g, 'd').replace(/ı/g, 'i').replace(/ø/g, 'o');
+  }
+
+  // Kolejność tablic miesięcy: język strony i TLD najpierw, bo tylko one rozstrzygają kolizje HR/PL.
+  function _newsMonthLangs(pageLang, pageUrl) {
+    var order = [];
+    var add = function(k) { if (k && NEWS_MONTHS[k] && order.indexOf(k) === -1) order.push(k); };
+    var l = String(pageLang || '').slice(0, 2).toLowerCase();
+    add(l === 'gr' ? 'el' : l);
+    var host = '';
+    try { host = new URL(pageUrl).hostname.toLowerCase(); } catch(e) {}
+    if (/\.hr$/.test(host)) add('hr');
+    else if (/\.pl$/.test(host)) add('pl');
+    else if (/\.tr$/.test(host)) add('tr');
+    else if (/\.gr$/.test(host)) add('el');
+    add('en'); // angielskie nazwy miesięcy pojawiają się na stronach w każdym języku
+    return order;
+  }
+
+  // Zwraca 'YYYY-MM-DD' albo '' — jedno wejście dla wszystkich formatów, jakie spotykamy
+  // w meta, JSON-LD, atrybucie datetime i w widocznym tekście.
+  // `langs` to wynik _newsMonthLangs. Gdy język jest nieznany, przeszukujemy wszystkie tablice
+  // i wybieramy NAJDŁUŻSZE dopasowanie prefiksu — [ZAŁ] przy „listopada" bez znanego języka
+  // wypadnie polski listopad, co jest zgadywaniem, nie pewnikiem.
+  function _newsParseDate(raw, langs) {
+    if (!raw) return '';
+    var s = String(raw).trim();
+    var iso = s.slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+    var mk = function(y, mo, d) { return y + '-' + ('0' + mo).slice(-2) + '-' + ('0' + d).slice(-2); };
+    var m = s.match(NEWS_DATE_TEXT_RE);
+    if (m) {
+      var name = _newsFold(m[2]);
+      var order = (langs && langs.length) ? langs : null;
+      if (order) {
+        for (var oi = 0; oi < order.length; oi++) {
+          var tab = NEWS_MONTHS[order[oi]];
+          for (var i = 0; i < tab.length; i++) {
+            if (tab[i] && name.indexOf(tab[i]) === 0) return mk(m[3], (i % 12) + 1, m[1]);
+          }
+        }
+      } else {
+        var bestLen = 0, bestMo = 0;
+        Object.keys(NEWS_MONTHS).forEach(function(k) {
+          NEWS_MONTHS[k].forEach(function(pfx, i) {
+            if (pfx && name.indexOf(pfx) === 0 && pfx.length > bestLen) { bestLen = pfx.length; bestMo = (i % 12) + 1; }
+          });
+        });
+        if (bestMo) return mk(m[3], bestMo, m[1]);
+      }
+    }
+    m = s.match(NEWS_DATE_NUM_RE);
+    if (m && +m[2] >= 1 && +m[2] <= 12 && +m[1] >= 1 && +m[1] <= 31) return mk(m[3], +m[2], +m[1]);
+    return '';
+  }
+
+  // Cena obok keyworda oznacza, że to zestawienie produktowe („H&M; 34,99 €") — czyli treść
+  // redakcyjna w układzie tabelarycznym, a nie menu czy chmura tagów. Rozróżnienie jest istotne,
+  // bo dla monitoringu marki produkt z ceną to prawidłowa wzmianka, a element nawigacji nie.
+  var NEWS_PRICE_RE = /\d+[.,]\d{2}\s*(€|₺|z[łl]|\b(eur|kn|hrk|pln|tl)\b)|\d+\s*(€|₺|z[łl]|\b(eura?|kuna?|kn|tl|lira(s[ıi])?)\b)/i;
+
+  function _newsHasProse(el) {
+    var ps = el.querySelectorAll('p');
+    for (var i = 0; i < ps.length; i++) {
+      if ((ps[i].textContent || '').trim().length > NEWS_PROSE_PARAGRAPH_MIN) return true;
+    }
+    return false;
+  }
 
   // Selektory sekcji z polecanymi/powiązanymi artykułami — wycinane PRZED skanowaniem głównej treści.
   // Tekst z tych sekcji trafia do osobnego bucketu (_teaserTexts) — jeśli keyword trafił TYLKO tu,
   // status = 'teasermatch' (nie liczy jako relevantny artykuł).
   var NEWS_TEASER_SELECTORS = [
+    // Świadomie BEZ gołego [class*="teaser"] — Drupal/TYPO3 nazywają tak lead artykułu,
+    // a wycięcie ledu kosztuje mocny sygnał. Zajawki bez klasy łapie _newsStripTeaserBlocks.
     '[class*="related"]','[class*="recommended"]',
     '[class*="more-articles"]','[class*="more-stories"]','[class*="more-news"]',
     '[class*="also-read"]','[class*="you-may"]','[class*="you-might"]',
-    '[class*="read-next"]','[class*="next-article"]',
-    '[class*="suggestions"]','[class*="suggested"]',
+    '[class*="read-next"]','[class*="next-article"]','[class*="crosslink"]',
+    '[class*="suggestions"]','[class*="suggested"]','[class*="most-read"]',
     '[data-module*="related"]','[data-type*="related"]','[data-widget*="related"]',
+    // polskie CMS-y — najczęstsze nazwy bloków „czytaj też" / „polecane".
+    // „czytaj" celowo tylko w wariantach złożonych: samo [class*="czytaj"] trafia w „czytaj-dalej"
+    // rozwijające dalszą część artykułu i wycinałoby treść.
+    '[class*="czytaj-tez"]','[class*="czytaj-takze"]','[class*="czytajtez"]',
+    '[class*="zobacz-tez"]','[class*="zobacz-takze"]',
+    '[class*="polecam"]','[class*="powiazan"]','[class*="pozostale"]','[class*="inne-artykuly"]',
+    // tureckie CMS-y (greckie serwisy używają zwykle angielskich nazw klas)
+    '[class*="ilgili"]','[class*="onerilen"]','[class*="benzer-haber"]',
+    // widgety rekomendacji treści — pełne clickbaitu z nazwami marek
+    '[class*="outbrain"]','[id*="outbrain"]','[class*="taboola"]','[id*="taboola"]','[class*="plista"]',
+    // WordPress
+    '[class*="yarpp"]','[class*="jp-relatedposts"]','[class*="td_block_related"]','[class*="wp-block-latest-posts"]',
   ];
 
-  function _newsParseContent(html, chips) {
+  // Blok zaczynający się od takiego zwrotu to zajawka innego artykułu, nie treść tego.
+  // Zakotwiczone na ^ celowo: „(czytaj też: …)" w środku zdania to część akapitu i zostaje.
+  // Domknięcie lookaheadem, nie \b — \b jest ASCII-only, więc po „TEŻ" (kończy się na Ż)
+  // granica słowa nie zachodzi i wzorzec nigdy by nie trafił.
+  // PL + HR/SR + EN — projekty są wielokrajowe, a zwrot-zajawka jest zawsze w języku serwisu.
+  // Chorwackie warianty dopisane po tym, jak na miss7.24sata.hr blok „PROČITAJ TAKOĐER: balerinke
+  // iz H&M-a…" przeszedł tylko dzięki gęstości linków — bez niej podbijałby score artykułu.
+  var NEWS_TEASER_TEXT_RE = /^\s*(czytaj\s+(te[żz]|wi[ęe]cej|dalej)|przeczytaj|zobacz\s+(te[żz]|tak[żz]e|r[óo]wnie[żz])|polecamy|polecane|wi[ęe]cej\s+na\s+ten\s+temat|pro[čc]itaj(te)?\s*(i|jo[šs]|tako[đd]er|vi[šs]e)?|pogledaj(te)?\s+(i|jo[šs]|tako[đd]er)|vi[šs]e\s+o\s+(temama?|ovoj\s+temi)|povezane?\s+(vijesti|teme|[čc]lanci)|mo[žz]da\s+vas\s+zanima|izdvojeno\s+za\s+vas|[iİ]lgili\s+([hH]aber(ler)?|i[çc]erik|yaz[ıi](lar)?)|bunlar[ıi]\s+da\s+oku(yun)?|ayr[ıi]ca\s+oku(yun)?|[öo]nerilen\s+(haber|i[çc]erik|yaz[ıi])|bunlar\s+da\s+ilginizi\s+[çc]ekebilir|δια[βb][άα]στε\s+(επ[ίι]σης|κι\s+αυτ[όο])|σχετικ[άα]\s+(άρθρα|αρθρα|θ[έε]ματα)|δε[ίι]τε\s+επ[ίι]σης|προτειν[όο]μενα|[ίi]σως\s+σας\s+ενδιαφ[έε]ρει|read\s+(more|also|next)|see\s+also|also\s+read|you\s+m(ay|ight)\s+(also\s+)?like|related\s+(articles?|stories)|more\s+(on|from))(?![\wąćęłńóśźżĄĆĘŁŃÓŚŹŻčćđšžČĆĐŠŽ])/i;
+
+  // Zajawki, których nie łapią selektory klasowe — rozpoznawane po kształcie tekstu.
+  // Chodzi po kotwicach (ich liczba jest ograniczona), nie po wszystkich divach, bo skanujemy
+  // 5 stron równolegle i pełny obchód DOM-u × querySelectorAll('a') na każdym węźle jest za drogi.
+  // Blok kwalifikuje się gdy jest krótki ORAZ (zaczyna się od zwrotu-zajawki LUB jest w >70% linkiem).
+  // FIGURE celowo poza listą — podpis zdjęcia z linkiem do fotografa spełniłby próg gęstości linków,
+  // a podpisy są potrzebne dalej jako strefa poboczna (_secZones).
+  var NEWS_TEASER_BLOCK_TAGS = { P: 1, LI: 1, DIV: 1, SECTION: 1, ASIDE: 1 };
+  var NEWS_TEASER_LINK_RATIO = 0.7; // proza z linkiem trzyma się poniżej ~0.5, zajawka jest linkiem w całości
+
+  function _newsStripTeaserBlocks(bodyEl, teaserTexts) {
+    if (!bodyEl) return;
+    var anchors;
+    try { anchors = Array.prototype.slice.call(bodyEl.querySelectorAll('a'), 0, 500); } catch(e) { return; }
+    var seen = new Set();
+    anchors.forEach(function(a) {
+      var block = null;
+      var node = a.parentNode;
+      for (var up = 0; up < 3 && node && node !== bodyEl && node.nodeType === 1; up++) {
+        if (NEWS_TEASER_BLOCK_TAGS[node.tagName]) { block = node; break; }
+        node = node.parentNode;
+      }
+      if (!block || seen.has(block) || !bodyEl.contains(block)) return;
+      seen.add(block);
+      var text = (block.textContent || '').trim();
+      if (text.length < 8 || text.length > 400) return; // dłuższy blok to proza z linkiem, nie zajawka
+      // Tureckie „İ" (I z kropką) nie sprowadza się flagą /i do ASCII „i" — „İLGİLİ HABERLER"
+      // przechodziło obok wzorca. Druga próba na tekście z podmienioną tą jedną literą.
+      var isMarked = NEWS_TEASER_TEXT_RE.test(text) ||
+        (text.indexOf('İ') !== -1 && NEWS_TEASER_TEXT_RE.test(text.replace(/İ/g, 'i')));
+      if (!isMarked) {
+        var linkLen = 0;
+        block.querySelectorAll('a').forEach(function(el) { linkLen += (el.textContent || '').trim().length; });
+        if (linkLen / text.length <= NEWS_TEASER_LINK_RATIO) return;
+      }
+      teaserTexts.push(text.toLowerCase());
+      block.remove();
+    });
+  }
+
+  // pageUrl służy tylko jako ostatni fallback daty (/2026/08/12/ w ścieżce) — parser
+  // nie robi z nim nic poza tym i działa poprawnie także gdy go nie ma.
+  function _newsParseContent(html, chips, pageUrl) {
     var doc;
     try {
       doc = (new DOMParser()).parseFromString(html, 'text/html');
@@ -7947,6 +8126,8 @@ function showOnboarding(onComplete) {
     // Język strony — <html lang="pl-PL"> → "pl"
     var _pageLang = (doc.documentElement.getAttribute('lang') || '').toLowerCase();
     if (_pageLang.indexOf('-') !== -1) _pageLang = _pageLang.split('-')[0];
+    // Kolejność tablic miesięcy dla tej strony — liczona raz, przekazywana do _newsParseDate.
+    var _dateLangs = _newsMonthLangs(_pageLang, pageUrl);
 
     // og:type = "article" / "news_article" itp.
     var _ogTypeEl = doc.querySelector('meta[property="og:type"]');
@@ -7962,35 +8143,47 @@ function showOnboarding(onComplete) {
                        doc.querySelector('meta[property="og:article:published_time"]');
     if (_pubTimeMeta) {
       _articleSignals.push('published_time');
-      var _rawDate = (_pubTimeMeta.getAttribute('content') || '').slice(0, 10);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(_rawDate)) _articleDate = _rawDate;
+      _articleDate = _newsParseDate(_pubTimeMeta.getAttribute('content'), _dateLangs) || null;
+    }
+    // Pozostałe metatagi z datą publikacji — każdy wydawca ma swój ulubiony.
+    if (!_articleDate) {
+      var _DATE_METAS = ['date','pubdate','publish-date','publication_date','DC.date','dc.date.issued',
+                         'sailthru.date','parsely-pub-date','datePublished','cXenseParse:recs:publishtime'];
+      for (var _dm = 0; _dm < _DATE_METAS.length && !_articleDate; _dm++) {
+        var _k = _DATE_METAS[_dm];
+        var _el = doc.querySelector('meta[property="' + _k + '"]') ||
+                  doc.querySelector('meta[name="' + _k + '"]') ||
+                  doc.querySelector('meta[itemprop="' + _k + '"]');
+        if (_el) _articleDate = _newsParseDate(_el.getAttribute('content'), _dateLangs) || null;
+      }
     }
 
     // JSON-LD — jeden przebieg: typ artykułu + data publikacji + paywall
     var _ARTICLE_LD_TYPES = ['NewsArticle','Article','BlogPosting','ReportageNewsArticle','AnalysisNewsArticle','Review'];
     var _isPaywall = false;
+    // Schodzimy REKURENCYJNIE, bo wydawcy pakują artykuł w @graph albo w mainEntityOfPage —
+    // płaski przebieg po tablicy top-level gubił datę na maxcity.hr, citycenterone.hr i indizajn.hr.
     doc.querySelectorAll('script[type="application/ld+json"]').forEach(function(el) {
       try {
-        var _ld = JSON.parse(el.textContent);
-        var _ldArr = Array.isArray(_ld) ? _ld : [_ld];
-        _ldArr.forEach(function(item) {
-          // @type → artykuł?
+        (function walk(node, depth) {
+          if (!node || typeof node !== 'object' || depth > 6) return;
+          if (Array.isArray(node)) { node.forEach(function(x) { walk(x, depth + 1); }); return; }
           if (_articleSignals.indexOf('ld+json') === -1) {
-            var _t = item['@type'] || '';
+            var _t = node['@type'] || '';
             if (typeof _t === 'string') _t = [_t];
             if (Array.isArray(_t) && _t.some(function(x) { return _ARTICLE_LD_TYPES.indexOf(x) !== -1; })) {
               _articleSignals.push('ld+json');
             }
           }
-          // datePublished / dateCreated → data artykułu
           if (!_articleDate) {
-            var _d = item.datePublished || item.dateCreated || '';
-            if (_d) { var _ds = String(_d).slice(0, 10); if (/^\d{4}-\d{2}-\d{2}$/.test(_ds)) _articleDate = _ds; }
+            var _ds = _newsParseDate(node.datePublished || node.dateCreated, _dateLangs);
+            if (_ds) _articleDate = _ds;
           }
-          // isAccessibleForFree: false → paywall
-          var _iaf = item.isAccessibleForFree;
+          var _iaf = node.isAccessibleForFree;
           if (_iaf === false || _iaf === 'False' || _iaf === 'false') _isPaywall = true;
-        });
+          // Bez pomijania kluczy na „@" — artykuł siedzi właśnie w @graph.
+          Object.keys(node).forEach(function(k) { walk(node[k], depth + 1); });
+        })(JSON.parse(el.textContent), 0);
       } catch(e) {}
     });
 
@@ -8002,24 +8195,6 @@ function showOnboarding(onComplete) {
       if (_ac === 'subscription' || _ac === 'locked' || _ac === 'metered') _isPaywall = true;
     }
 
-    // ── TEASER EXTRACTION — przed usunięciem szumu, żeby nie stracić tekstu ──
-    // Wytnij sekcje polecanych/powiązanych artykułów do osobnego bucketu.
-    // Jeśli keyword trafia TYLKO tu (nie w głównej treści) → status 'teasermatch'.
-    var _teaserTexts = [];
-    NEWS_TEASER_SELECTORS.forEach(function(sel) {
-      try {
-        doc.querySelectorAll(sel).forEach(function(el) {
-          var t = (el.textContent || '').toLowerCase();
-          if (t.length > 10) _teaserTexts.push(t);
-          el.remove();
-        });
-      } catch(e) {}
-    });
-
-    // ── WCZESNA IDENTYFIKACJA STREFY TREŚCI — przed usunięciem szumu ──
-    // Agresywne selektory noise (np. [class*="widget"]) mogą usunąć kontener artykułu
-    // gdy ma klasę zawierającą "widget" (np. "article-widget__body", "content-widget").
-    // Dlatego bodyEl musi być znaleziony ZANIM usuniemy szum — potem jest chroniony.
     var _CONTENT_ZONE_SEL =
       '[role="article"],[class*="article-body"],[class*="article-content"],' +
       '[class*="article__body"],[class*="article__text"],[class*="article__content"],' +
@@ -8028,30 +8203,131 @@ function showOnboarding(onComplete) {
       '[class*="content-body"],[class*="text-content"],[class*="body-copy"],' +
       '[class*="content__body"],[class*="text-body"],[class*="article__lead"],' +
       '[id*="article-body"],[id*="articleBody"],[id*="story-body"]';
-    var bodyEl = doc.querySelector('article') ||
-      doc.querySelector('main') ||
-      (function() { try { return doc.querySelector(_CONTENT_ZONE_SEL); } catch(e) { return null; } })() ||
-      doc.body;
+    // ── WYBÓR STREFY TREŚCI — przed jakimkolwiek usuwaniem ──
+    // Strefa musi być wyznaczona ZANIM cokolwiek skasujemy, bo i szerokie selektory szumu
+    // ([class*="widget"] trafia w "article-widget__body"), i teaserowe ([class*="polecam"]
+    // w "polecamy-article__body") potrafią wyciąć kontener artykułu. Potem jest chroniony.
+    //
+    // Kandydatów oceniamy ILOŚCIĄ PROZY (suma akapitów >40 znaków), nie długością textContent,
+    // i nie po priorytecie tagu. Trzy powody, każdy zmierzony na realnych stronach:
+    //  1. textContent liczy też źródło <script>/<style> — na buro247.hr kafelek „related post"
+    //     miał 2156 znaków, z czego 1895 to wklejony CSS, i wygrywał z prawdziwym artykułem.
+    //  2. Priorytet tagów gubi treść — na hellomagazin.hr <article class="news-item"> (855 znaków)
+    //     wygrywał z <main>, w którym leży 5724 znaki artykułu.
+    //  3. Kafelki polecanych bywają jedynymi <article> na stronie (jutarnji.hr: dwa po 103 znaki).
+    // Spośród kandydatów mieszczących ~cały tekst bierzemy NAJCIAŚNIEJSZEGO, żeby nie wciągnąć
+    // nawigacji i stopki razem z artykułem.
+    var _CONTENT_ZONE_MIN_LEN = 400;
+    var _ZONE_PROSE_TOLERANCE = 0.9;  // kandydat „mieści ~cały tekst" = ma ≥90% prozy lidera
+    var _ZONE_BODY_FALLBACK   = 0.5;  // gdy najlepszy kandydat ma <50% prozy <body> → bierzemy body
+    var _teaserSelAll = NEWS_TEASER_SELECTORS.join(',');
+
+    function _zoneProse(el) {
+      var sum = 0;
+      el.querySelectorAll('p').forEach(function(p) {
+        var len = (p.textContent || '').trim().length;
+        if (len > 40) sum += len;
+      });
+      return sum;
+    }
+    // Tekst bez kodu — miara zapasowa dla stron bez <p> (katalogi sklepów, listingi produktów).
+    function _zoneBulk(el) {
+      var sum = (el.textContent || '').trim().length;
+      el.querySelectorAll('script,style,noscript').forEach(function(n) { sum -= (n.textContent || '').length; });
+      return sum > 0 ? sum : 0;
+    }
+
+    var _zoneCands = [];
+    try {
+      doc.querySelectorAll('article,main,[role="main"],' + _CONTENT_ZONE_SEL).forEach(function(el) {
+        try { if (el.closest(_teaserSelAll)) return; } catch(e) {}
+        var prose = _zoneProse(el);
+        var bulk  = _zoneBulk(el);
+        if (prose === 0 && bulk < _CONTENT_ZONE_MIN_LEN) return;
+        _zoneCands.push({ el: el, prose: prose, bulk: bulk });
+      });
+    } catch(e) {}
+
+    var bodyEl = doc.body;
+    if (_zoneCands.length) {
+      var _maxProse = 0;
+      _zoneCands.forEach(function(c) { if (c.prose > _maxProse) _maxProse = c.prose; });
+      var _bodyProse = _zoneProse(doc.body);
+      if (_maxProse > 0 && _maxProse >= _bodyProse * _ZONE_BODY_FALLBACK) {
+        var _pool = _zoneCands.filter(function(c) { return c.prose >= _maxProse * _ZONE_PROSE_TOLERANCE; });
+        _pool.sort(function(a, b) { return a.bulk - b.bulk; });
+        bodyEl = _pool[0].el;
+      } else if (_maxProse === 0) {
+        // Strona bez akapitów — wybieramy kandydata z największą ilością tekstu.
+        var _byBulk = _zoneCands.slice().sort(function(a, b) { return b.bulk - a.bulk; });
+        bodyEl = _byBulk[0].el;
+      }
+    }
+
+    // ── TEASER EXTRACTION — przed usunięciem szumu, żeby nie stracić tekstu ──
+    // Wytnij sekcje polecanych/powiązanych artykułów do osobnego bucketu.
+    // Jeśli keyword trafia TYLKO tu (nie w głównej treści) → status 'teasermatch'.
+    // bodyEl i jego przodkowie chronieni tak samo jak przy usuwaniu szumu — inaczej
+    // szeroki wzorzec typu [class*="czytaj"] mógłby wyciąć cały artykuł.
+    var _teaserTexts = [];
+    NEWS_TEASER_SELECTORS.forEach(function(sel) {
+      try {
+        doc.querySelectorAll(sel).forEach(function(el) {
+          if (el === bodyEl || el.contains(bodyEl)) return;
+          var t = (el.textContent || '').toLowerCase();
+          if (t.length > 10) _teaserTexts.push(t);
+          el.remove();
+        });
+      } catch(e) {}
+    });
+    // Zajawki bez rozpoznawalnej klasy — po kształcie tekstu (patrz _newsStripTeaserBlocks).
+    _newsStripTeaserBlocks(bodyEl, _teaserTexts);
 
     // Usuń szum — reklamy, nawigację, stopki, popupy.
     // bodyEl i jego przodkowie są chronieni: el !== bodyEl && !el.contains(bodyEl)
     // zapobiega usunięciu kontenera artykułu lub jego rodzica przez szerokie selektory.
-    NEWS_NOISE_SELECTORS.forEach(function(sel) {
-      try {
-        doc.querySelectorAll(sel).forEach(function(el) {
-          if (el !== bodyEl && !el.contains(bodyEl)) el.remove();
-        });
-      } catch(e) {}
-    });
+    // Selektory miękkie dodatkowo omijają elementy z prozą wewnątrz strefy treści.
+    function _newsRemoveNoise(selectors, soft) {
+      selectors.forEach(function(sel) {
+        try {
+          doc.querySelectorAll(sel).forEach(function(el) {
+            if (el === bodyEl || el.contains(bodyEl)) return;
+            if (soft && bodyEl.contains(el) && _newsHasProse(el)) return;
+            el.remove();
+          });
+        } catch(e) {}
+      });
+    }
+    _newsRemoveNoise(NEWS_NOISE_HARD, false);
+    _newsRemoveNoise(NEWS_NOISE_SOFT, true);
 
-    // Wyciągnij tekst z kluczowych stref strony
+    // Wyciągnij tekst z kluczowych stref strony.
+    // Z <title> i og:title zdejmujemy doklejoną nazwę serwisu („H&M - Max City" → „H&M"),
+    // bo strefa nagłówka waży +8: projekt, którego keyword pokrywa się z nazwą wydawcy,
+    // dostawałby ten bonus na KAŻDEJ podstronie serwisu.
+    var _siteNameEl = doc.querySelector('meta[property="og:site_name"]') || doc.querySelector('meta[name="og:site_name"]');
+    var _siteName = _siteNameEl ? (_siteNameEl.getAttribute('content') || '').trim() : '';
+    function _stripSiteName(t) {
+      if (!t || !_siteName || _siteName.length < 2) return t;
+      var sep = t.lastIndexOf(' - ') !== -1 ? t.lastIndexOf(' - ') : -1;
+      ['|', '–', '—', '·', '•', '»'].forEach(function(ch) {
+        var i = t.lastIndexOf(' ' + ch + ' ');
+        if (i > sep) sep = i;
+      });
+      if (sep <= 0) return t;
+      var tail = t.slice(sep).replace(/^[\s\-|–—·•»]+/, '').trim();
+      if (tail.toLowerCase() !== _siteName.toLowerCase()) return t;
+      var head = t.slice(0, sep).trim();
+      return head.length >= 3 ? head : t; // nie zostawiaj ogryzka
+    }
+
     var titleText = '';
     var titleEl = doc.querySelector('title');
-    if (titleEl) titleText = (titleEl.textContent || '').trim();
+    if (titleEl) titleText = _stripSiteName((titleEl.textContent || '').trim());
 
     var ogTitle = '';
     var ogTitleEl = doc.querySelector('meta[property="og:title"]') || doc.querySelector('meta[name="og:title"]');
-    if (ogTitleEl) ogTitle = (ogTitleEl.getAttribute('content') || '').trim();
+    if (ogTitleEl) ogTitle = _stripSiteName((ogTitleEl.getAttribute('content') || '').trim());
 
     var ogDesc = '';
     var ogDescEl = doc.querySelector('meta[property="og:description"]') || doc.querySelector('meta[name="og:description"]');
@@ -8118,10 +8394,37 @@ function showOnboarding(onComplete) {
     var _pageType = _articleSignals.length >= 2 ? 'article' :
                     _articleSignals.length === 1 ? 'uncertain' : 'nonArticle';
 
-    // Data — fallback z <time datetime> jeśli nie znaleziono w meta/JSON-LD
-    if (!_articleDate && _timeEl) {
-      var _td = (_timeEl.getAttribute('datetime') || '').slice(0, 10);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(_td)) _articleDate = _td;
+    // Kaskada fallbacków — od najbardziej wiarygodnego źródła do najsłabszego.
+    // Kolejność ma znaczenie: data modyfikacji trafia na sam koniec, bo zawyżałaby świeżość
+    // (`_isStale` liczy 60 dni) — lepiej mieć prawdziwą starą datę niż fałszywie nową.
+    if (!_articleDate && _timeEl) _articleDate = _newsParseDate(_timeEl.getAttribute('datetime'), _dateLangs) || null;
+    if (!_articleDate) {
+      // <time> gdziekolwiek na stronie, nie tylko w strefie treści
+      var _anyTime = doc.querySelector('time[datetime]');
+      if (_anyTime) _articleDate = _newsParseDate(_anyTime.getAttribute('datetime'), _dateLangs) || null;
+    }
+    if (!_articleDate) {
+      var _ipd = doc.querySelector('[itemprop="datePublished"]');
+      if (_ipd) {
+        _articleDate = _newsParseDate(_ipd.getAttribute('content') || _ipd.getAttribute('datetime') || _ipd.textContent, _dateLangs) || null;
+      }
+    }
+    if (!_articleDate) {
+      // Data w widocznym tekście — cromoda.hr i studentski-poslovi nie dają jej nigdzie w metadanych.
+      // Szukamy tylko w nagłówkowej części strefy treści, żeby nie złapać daty z zajawki obok.
+      var _dateHost = bodyEl || doc.body;
+      _articleDate = _newsParseDate((_dateHost.textContent || '').slice(0, 1200), _dateLangs) || null;
+    }
+    if (!_articleDate) {
+      // /2026/08/12/ w URL-u — typowe dla blogów i WordPressa
+      var _mu = String(pageUrl || '').match(/\/(20\d{2})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:\/|$|[-_])/);
+      if (_mu) _articleDate = _mu[1] + '-' + ('0' + _mu[2]).slice(-2) + '-' + ('0' + _mu[3]).slice(-2);
+    }
+    if (!_articleDate) {
+      var _modMeta = doc.querySelector('meta[property="article:modified_time"]') ||
+                     doc.querySelector('meta[property="og:updated_time"]') ||
+                     doc.querySelector('meta[name="lastmod"]');
+      if (_modMeta) _articleDate = _newsParseDate(_modMeta.getAttribute('content'), _dateLangs) || null;
     }
 
     // Paywall — oblicz raz długość tekstu body (używane w kilku sprawdzeniach)
@@ -8178,23 +8481,42 @@ function showOnboarding(onComplete) {
     var _genericTextLower = _genericText.toLowerCase();
 
     var score = 0;
-    var _bodySnippet = '';      // snippet z body (h1, akapity) — preferowany dla pola Treść
+    var _bodySnippet = '';      // snippet z akapitów artykułu — preferowany dla pola Treść
     var _metaSnippet = '';      // snippet z meta/og:description — fallback
+    var _weakSnippet = '';      // snippet ze stref pobocznych / surowego textContent — ostatnia deska ratunku
+    var _weakSnippetZone = '';  // etykieta strefy dla _weakSnippet
     var matchedChips = [];      // chipy które znaleziono na stronie
     var _matchedZoneHints = []; // zone hints dla stref pobocznych (podpis, adres itp.)
     var _secondaryChips = [];   // chipy dopasowane wyłącznie w strefach pobocznych
+    var _scoreParts = [];       // rozbicie punktacji do promptu AI, np. "tytuł +8"
+
+    // Konteksty per chip z etykietą strefy — bez tego AI nie odróżni akapitu od podpisu zdjęcia.
+    // Shape: { chip: [{ zone, text }] }. Maks. 4 na chip, żeby nie rozdmuchać promptu.
+    var keywordContexts = {};
+    function _pushCtx(chip, zone, source, kw) {
+      var arr = keywordContexts[chip] || (keywordContexts[chip] = []);
+      if (arr.length >= 4) return;
+      var lower = source.toLowerCase();
+      var idx = kw ? lower.indexOf(kw) : -1;
+      var text = idx === -1
+        ? source.slice(0, 220).trim()
+        : source.slice(Math.max(0, idx - 100), Math.min(source.length, idx + kw.length + 100)).trim();
+      if (text) arr.push({ zone: zone, text: text });
+    }
 
     chips.forEach(function(chip) {
       var kw = chip.toLowerCase();
       var chipMatched = false;
 
       // Strefa nagłówka — tytuł, og:title i h1 traktowane jako jeden sygnał (ta sama treść)
-      var inHeadline = titleText.toLowerCase().indexOf(kw) !== -1 ||
-                       ogTitle.toLowerCase().indexOf(kw) !== -1 ||
-                       h1Text.toLowerCase().indexOf(kw) !== -1;
-      if (inHeadline) {
+      var _headlineSrc = [titleText, ogTitle, h1Text].filter(function(t) {
+        return t && t.toLowerCase().indexOf(kw) !== -1;
+      })[0] || '';
+      if (_headlineSrc) {
         score += 8;
         chipMatched = true;
+        _scoreParts.push('tytuł +8');
+        _pushCtx(chip, 'tytuł', _headlineSrc, kw);
       }
 
       // Strefa opisu meta
@@ -8202,15 +8524,23 @@ function showOnboarding(onComplete) {
       if (inMeta) {
         score += 5;
         chipMatched = true;
-        if (!_metaSnippet) _metaSnippet = (ogDesc || metaDesc).slice(0, 500);
+        _scoreParts.push('opis meta +5');
+        var _metaSrc = ogDesc.toLowerCase().indexOf(kw) !== -1 ? ogDesc : metaDesc;
+        if (!_metaSnippet) _metaSnippet = _metaSrc.slice(0, 500);
+        _pushCtx(chip, 'opis meta', _metaSrc, kw);
       }
 
       // Strefa nagłówków h2/h3 — podrozdziały artykułu (po usunięciu szumu i teaserów, tylko bodyEl)
-      var h2h3Match = false;
+      var h2h3Match = '';
       for (var _hi = 0; _hi < subHeadings.length; _hi++) {
-        if (subHeadings[_hi].toLowerCase().indexOf(kw) !== -1) { h2h3Match = true; break; }
+        if (subHeadings[_hi].toLowerCase().indexOf(kw) !== -1) { h2h3Match = subHeadings[_hi]; break; }
       }
-      if (h2h3Match) { score += 3; chipMatched = true; }
+      if (h2h3Match) {
+        score += 3;
+        chipMatched = true;
+        _scoreParts.push('śródtytuł +3');
+        _pushCtx(chip, 'śródtytuł', h2h3Match, kw);
+      }
 
       // Strefa akapitów — rozróżniamy pierwszy akapit (lede) od reszty
       var firstPMatch = false;
@@ -8220,6 +8550,7 @@ function showOnboarding(onComplete) {
           if (idx === 0) { firstPMatch = true; }
           else { extraPMatches++; }
           chipMatched = true;
+          _pushCtx(chip, idx === 0 ? 'lead' : 'akapit', p, kw);
           if (!_bodySnippet) {
             if (p.length <= 600) {
               _bodySnippet = p;
@@ -8237,16 +8568,30 @@ function showOnboarding(onComplete) {
           }
         }
       });
-      if (firstPMatch) score += 4;
-      if (extraPMatches > 0) score += Math.min(extraPMatches, 4); // maks. +4 za wielokrotne wzmianki w treści
+      if (firstPMatch) { score += 4; _scoreParts.push('lead +4'); }
+      if (extraPMatches > 0) {
+        var _extraPts = Math.min(extraPMatches, 4); // maks. +4 za wielokrotne wzmianki w treści
+        score += _extraPts;
+        _scoreParts.push('akapity ×' + extraPMatches + ' +' + _extraPts);
+      }
 
       // Strefa blockquote — cytaty w treści artykułu
-      var inBlockquote = blockquotes.some(function(q) { return q.toLowerCase().indexOf(kw) !== -1; });
-      if (inBlockquote) { score += 2; chipMatched = true; }
+      var _quoteSrc = blockquotes.filter(function(q) { return q.toLowerCase().indexOf(kw) !== -1; })[0] || '';
+      if (_quoteSrc) {
+        score += 2;
+        chipMatched = true;
+        _scoreParts.push('cytat +2');
+        _pushCtx(chip, 'cytat', _quoteSrc, kw);
+      }
 
       // Tagi redakcyjne artykułu — bardzo silny sygnał (autor/redakcja oznaczyła temat tagem)
-      var inArticleTags = articleTagTexts.some(function(t) { return t.indexOf(kw) !== -1; });
-      if (inArticleTags) { score += 6; chipMatched = true; }
+      var _tagSrc = articleTagTexts.filter(function(t) { return t.indexOf(kw) !== -1; })[0] || '';
+      if (_tagSrc) {
+        score += 6;
+        chipMatched = true;
+        _scoreParts.push('tag redakcyjny +6');
+        _pushCtx(chip, 'tag redakcyjny', _tagSrc, kw);
+      }
 
       // Strefy poboczne — tylko jeśli chip nie trafił w żadną strefę główną
       if (!chipMatched && _secZones.length > 0) {
@@ -8254,29 +8599,53 @@ function showOnboarding(onComplete) {
           if (_secZones[_szi].text.toLowerCase().indexOf(kw) !== -1) {
             score += 2;
             chipMatched = true;
-            if (!_bodySnippet) _bodySnippet = _secZones[_szi].text.slice(0, 200);
-            if (_matchedZoneHints.indexOf(_secZones[_szi].hint) === -1) _matchedZoneHints.push(_secZones[_szi].hint);
+            // Kafelek produktu bywa oznaczony klasą „caption" — cena obok marki mówi więcej
+            // o naturze tekstu niż nazwa klasy, więc nadpisuje etykietę strefy.
+            var _szHint = NEWS_PRICE_RE.test(_secZones[_szi].text) ? 'lista produktów' : _secZones[_szi].hint;
+            _scoreParts.push(_szHint + ' +2');
+            _pushCtx(chip, _szHint, _secZones[_szi].text, kw);
+            if (!_weakSnippet) { _weakSnippet = _secZones[_szi].text.slice(0, 200); _weakSnippetZone = _szHint; }
+            if (_matchedZoneHints.indexOf(_szHint) === -1) _matchedZoneHints.push(_szHint);
             _secondaryChips.push(chip);
             break;
           }
         }
       }
 
-      // Fallback: pełny tekst body — łapie keyword w <div>, <li>, <dd> itp. (strony katalogowe)
+      // Fallback: pełny tekst body — łapie keyword w <div>, <li>, <dd> itp. (strony katalogowe).
+      // Najsłabszy sygnał: to surowy textContent, więc trafienie może pochodzić z niewyciętej
+      // zajawki albo z nawigacji. Nie może wygrać z akapitem ani z opisem meta w polu Treść.
       if (!chipMatched && _genericTextLower.indexOf(kw) !== -1) {
         score += 1;
         chipMatched = true;
-        if (!_bodySnippet) {
-          var _gIdx = _genericTextLower.indexOf(kw);
-          _bodySnippet = _genericText.slice(Math.max(0, _gIdx - 80), _gIdx + 150).trim();
-        }
+        var _gIdx = _genericTextLower.indexOf(kw);
+        var _gSrc = _genericText.slice(Math.max(0, _gIdx - 100), _gIdx + 150).trim();
+        var _gZone = NEWS_PRICE_RE.test(_gSrc) ? 'lista produktów' : 'tekst poboczny';
+        _scoreParts.push(_gZone + ' +1');
+        _pushCtx(chip, _gZone, _gSrc, kw);
+        if (!_weakSnippet) { _weakSnippet = _gSrc.slice(0, 200); _weakSnippetZone = _gZone; }
       }
 
       if (chipMatched) matchedChips.push(chip);
     });
 
-    // snippet dla pola Treść: preferuj body (akapity/h1) nad meta — nigdy tytuł
-    var snippet = _bodySnippet || _metaSnippet;
+    // snippet dla pola Treść: akapit artykułu > opis meta > strefa poboczna/surowy tekst.
+    // Kolejność jest istotna — wcześniej surowy textContent trafiał do formularza przed opisem meta
+    // i annotator dostawał w polu Treść zajawkę innego artykułu.
+    var snippet = _bodySnippet || _metaSnippet || _weakSnippet;
+    var _snippetZone = _bodySnippet ? 'akapit' : _metaSnippet ? 'opis meta' : _weakSnippet ? _weakSnippetZone : '';
+    // Ostatnia deska: keyword trafił tylko w tytuł, więc żadna strefa nie dała snippetu.
+    // Zamiast zostawić annotatorowi puste pole Treść, podstawiamy lead artykułu —
+    // z etykietą mówiącą wprost, że to NIE jest fragment z keywordem.
+    if (!snippet && score > 0) {
+      if (paragraphs.length) {
+        snippet = paragraphs[0].slice(0, 500);
+        _snippetZone = 'lead (bez keyworda)';
+      } else if (ogDesc || metaDesc) {
+        snippet = (ogDesc || metaDesc).slice(0, 500);
+        _snippetZone = 'opis meta (bez keyworda)';
+      }
+    }
 
     score = Math.min(score, 30); // cap — żeby jeden artykuł pełen keywordów nie zaburzał skali
 
@@ -8286,17 +8655,19 @@ function showOnboarding(onComplete) {
     else if (score <= 11) status = 'contentmatch';
     else                  status = 'keytopic';
 
-    // Teasermatch — keyword tylko w sekcji polecanych artykułów, nie w głównej treści.
-    // Sprawdzamy wyłącznie gdy score=0 (główna treść czysta) i są zebrane teasery.
+    // Teasermatch — keyword w sekcji polecanych artykułów. Liczymy ZAWSZE, nie tylko przy score=0:
+    // przy score>0 lista trafień w zajawkach idzie do promptu AI jako sygnał ostrzegawczy
+    // („ta sama marka jest też w bloku rekomendacji"), którego model inaczej nie ma skąd wziąć.
     var _teaserChips = [];
-    if (score === 0 && _teaserTexts.length > 0) {
+    if (_teaserTexts.length > 0) {
       chips.forEach(function(chip) {
         var kw = chip.toLowerCase();
         for (var _ti = 0; _ti < _teaserTexts.length; _ti++) {
           if (_teaserTexts[_ti].indexOf(kw) !== -1) { _teaserChips.push(chip); break; }
         }
       });
-      if (_teaserChips.length > 0) status = 'teasermatch';
+      // Status zmieniamy tylko gdy w głównej treści nie ma NIC — wtedy zajawka jest jedynym trafieniem.
+      if (_teaserChips.length > 0 && matchedChips.length === 0) status = 'teasermatch';
     }
     var _teaserMatchOnly = status === 'teasermatch';
 
@@ -8307,22 +8678,16 @@ function showOnboarding(onComplete) {
 
     var secondaryZoneOnly = _secondaryChips.length > 0 && matchedChips.length === _secondaryChips.length;
 
-    // Konteksty tekstowe per chip — do analizy AI (150 znaków wokół każdego trafienia)
-    var keywordContexts = {};
-    matchedChips.forEach(function(chip) {
+    // Konteksty per chip z zajawek — osobna strefa 'polecane', żeby AI widziało trafienie,
+    // które nie pochodzi z treści tego artykułu. Dokładane po głównych, maks. 2 na chip.
+    _teaserChips.forEach(function(chip) {
       var kw = chip.toLowerCase();
-      var ctxs = [];
-      paragraphs.forEach(function(p) {
-        if (ctxs.length >= 3) return;
-        var pidx = p.toLowerCase().indexOf(kw);
-        if (pidx !== -1) ctxs.push(p.slice(Math.max(0, pidx - 100), Math.min(p.length, pidx + kw.length + 100)).trim());
-      });
-      if (ctxs.length === 0) {
-        var metaTxt = ogDesc || metaDesc || '';
-        var midx = metaTxt.toLowerCase().indexOf(kw);
-        if (midx !== -1) ctxs.push(metaTxt.slice(Math.max(0, midx - 100), Math.min(metaTxt.length, midx + kw.length + 100)).trim());
+      var added = 0;
+      for (var _ti = 0; _ti < _teaserTexts.length && added < 2; _ti++) {
+        if (_teaserTexts[_ti].indexOf(kw) === -1) continue;
+        _pushCtx(chip, 'polecane', _teaserTexts[_ti], kw);
+        added++;
       }
-      keywordContexts[chip] = ctxs;
     });
 
     // Autor — meta[name="author"] > JSON-LD author.name > itemprop=author > byline class
@@ -8364,7 +8729,9 @@ function showOnboarding(onComplete) {
     return {
       status:            status,
       score:             score,
+      scoreParts:        _scoreParts,
       snippet:           snippet,
+      snippetZone:       _snippetZone,
       title:             articleTitle,
       matchedChips:      matchedChips,
       keywordContexts:   keywordContexts,
@@ -8966,6 +9333,18 @@ function showOnboarding(onComplete) {
     if (!s.apiKey) return false;
     return true;
   }
+  // Nazwa projektu w Brand24 to slug z sufiksem kraju („H&M_HR", „Cupra-PL"), a nie nazwa marki.
+  // Bez obcięcia model bierze sufiks za część marki — zmierzone: przy PROJECT_NAME="H&M_HR"
+  // odrzucił stronę sklepu H&M uzasadnieniem „dotyczy H&M jako marki ogólnej, a nie H&M_HR".
+  function _newsBrandFromProject(name) {
+    var n = String(name || '').trim();
+    // Tylko separator _ lub - i WIELKIE litery kodu kraju — spacja jest wykluczona celowo,
+    // bo „DD TVN" to pełna nazwa marki, a nie marka z sufiksem.
+    var m = n.match(/^(.+?)[_\-]([A-Z]{2,3})$/);
+    if (m && m[1].length >= 2) n = m[1];
+    return n.replace(/[_]+/g, ' ').trim();
+  }
+
   function _newsAiBuildSystemPrompt() {
     var s = _aiGetSettings();
     if (!s.news || !s.news.activePromptId || !s.prompts) return null;
@@ -8975,11 +9354,38 @@ function showOnboarding(onComplete) {
     }
     if (!found || !found.system) return null;
     var projectName = state.projectId ? (_pnResolve(state.projectId) || '') : '';
-    var brandCtx = _newsAiGetBrandCtx(state.projectId);
+    projectName = _newsBrandFromProject(projectName);
+    // Puste pole kontekstu podstawiamy jawnym komunikatem, nie pustym stringiem — inaczej prompt
+    // kończy się linijką „Brand context:" i model nie wie, że informacji po prostu brakuje.
+    // Zmierzone: bez kontekstu branży model uznał aukcję maszyny stolarskiej „H&M 2090"
+    // za trafną wzmiankę marki odzieżowej.
+    var brandCtx = (_newsAiGetBrandCtx(state.projectId) || '').trim() ||
+      '(not provided — infer the industry from the contexts, and be strict about same-name ' +
+      'companies or products from a different industry)';
     return found.system
       .replace(/\{PROJECT_NAME\}/g, projectName)
       .replace(/\{BRAND_CONTEXT\}/g, brandCtx);
   }
+  // Wyciąga werdykt z odpowiedzi modelu. Najpierw normalne parsowanie JSON-a, a gdy ono padnie —
+  // wyłuskanie pól regexem. Powód: przy limicie max_tokens odpowiedź bywa ucięta w środku zdania
+  // („{"verdict": "miss", "reason": "To jest ogłoszenie o pracę na portalu dla"), czyli werdykt
+  // jest poprawny i użyteczny, a annotator widział „błąd parsowania" i musiał oceniać sam.
+  // Zwraca { verdict, reason } albo null.
+  function _newsAiParseVerdict(text) {
+    var raw = String(text || '').replace(/```json|```/g, '').trim();
+    if (!raw) return null;
+    try {
+      var j = JSON.parse(raw);
+      if (j && (j.verdict || typeof j.relevant === 'boolean')) return j;
+    } catch(e) {}
+    var mv = raw.match(/"verdict"\s*:\s*"(match|borderline|miss|spam)"/i);
+    if (!mv) return null;
+    var mr = raw.match(/"reason"\s*:\s*"((?:[^"\\]|\\.)*)/);
+    var reason = mr ? mr[1].replace(/\\"/g, '"').replace(/\\n/g, ' ').trim() : '';
+    if (mr && !/"\s*[},]?\s*$/.test(raw)) reason += '…'; // ucięte — pokaż to annotatorowi
+    return { verdict: mv[1].toLowerCase(), reason: reason };
+  }
+
   function _newsAiAnalyze(entry) {
     if (!_newsAiShouldRun()) return;
     var systemPrompt = _newsAiBuildSystemPrompt();
@@ -8989,19 +9395,37 @@ function showOnboarding(onComplete) {
     if (_newsListRenderer) _newsListRenderer();
     try {
       var s = _aiGetSettings();
-      var model = (s.news && s.news.model) || 'claude-haiku-4-5-20251001';
+      var model = (s.news && s.news.model) || 'claude-haiku-4-5';
+      // Każdy kontekst idzie z etykietą strefy — bez niej model nie odróżni akapitu artykułu
+      // od podpisu zdjęcia czy zajawki innego tekstu, a to jest sedno decyzji match/miss.
       var ctxLines = Object.keys(entry.keywordContexts || {}).map(function(chip) {
-        return chip + ':\n' + (entry.keywordContexts[chip] || []).join('\n---\n');
+        var items = entry.keywordContexts[chip] || [];
+        return chip + ':\n' + items.map(function(c) {
+          return '  [' + c.zone + '] ' + c.text;
+        }).join('\n');
       }).join('\n\n');
+      var _teaserOnlyChips = (entry.teaserChips || []).filter(function(c) {
+        return (entry.matchedChips || []).indexOf(c) === -1;
+      });
+      // Domena wydawcy rozstrzyga przypadki, których sama treść nie rozstrzyga: artykuł
+      // „H&M u Arena centru postaje najveći" na 24sata.hr to relacja medialna, a ten sam opis
+      // sklepu na arenacentar.hr to wizytówka najemcy. Bez tego model nie ma jak ich rozróżnić.
+      var _host = '';
+      try { _host = new URL(entry.url).hostname.replace(/^www\./, ''); } catch(e) {}
       var userPrompt = [
         'Title: ' + (entry.title || ''),
+        _host ? 'Source: ' + _host : '',
         'Snippet: ' + (entry.snippet || ''),
+        entry.snippetZone ? 'Snippet zone: ' + entry.snippetZone : '',
         'Keywords matched: ' + (entry.matchedChips || []).join(', '),
-        'Scanner status: ' + entry.status,
+        'Scanner status: ' + entry.status + ' (score ' + (entry.score || 0) + '/30)',
+        (entry.scoreParts || []).length ? 'Score breakdown: ' + entry.scoreParts.join(', ') : '',
+        'Page type: ' + (entry.pageType || 'unknown'),
         'Secondary zone only: ' + !!entry.secondaryZoneOnly,
         'Teaser match only: ' + !!entry.teaserMatchOnly,
+        _teaserOnlyChips.length ? 'Also found in recommendation blocks only: ' + _teaserOnlyChips.join(', ') : '',
         'Paywall: ' + !!entry.isPaywall,
-        ctxLines ? 'Keyword contexts:\n' + ctxLines : '',
+        ctxLines ? 'Keyword contexts (zone in brackets):\n' + ctxLines : '',
       ].filter(Boolean).join('\n');
       GM_xmlhttpRequest({
         method: 'POST',
@@ -9014,7 +9438,13 @@ function showOnboarding(onComplete) {
         },
         data: JSON.stringify({
           model: model,
-          max_tokens: 120,
+          // Sonnet 5 ma adaptive thinking WŁĄCZONE domyślnie, a tokeny myślenia liczą się do
+          // max_tokens — zmierzone: 125 tokenów wyjścia zamiast 48, i co jakiś czas ucięty JSON.
+          // Przy klasyfikacji na cztery wartości nie ma nad czym myśleć. Haiku 4.5 też to przyjmuje.
+          // UWAGA: gdyby ktoś dodał do selecta Opus 5 — tam wyłączanie myślenia ma własne pułapki
+          // (wycieki tagów, wywołania narzędzi w tekście), więc trzeba to wtedy uwarunkować modelem.
+          thinking: { type: 'disabled' },
+          max_tokens: 320, // verdict + zdanie po polsku; przy 200 ~2% odpowiedzi urywało się w środku
           system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
           messages: [{ role: 'user', content: userPrompt }],
         }),
@@ -9051,7 +9481,8 @@ function showOnboarding(onComplete) {
             }
             var data = JSON.parse(resp.responseText);
             var text = (data.content && data.content[0] && data.content[0].text) || '';
-            var parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
+            var parsed = _newsAiParseVerdict(text);
+            if (!parsed) throw new Error('brak werdyktu w odpowiedzi');
             entry.aiStatus = 'done';
             var _v = parsed.verdict;
             if (!_v) _v = parsed.relevant ? 'match' : 'miss';
@@ -9137,7 +9568,7 @@ function showOnboarding(onComplete) {
                     }
                   }
                 }
-                var _sr = _newsParseContent(resp.responseText, chips);
+                var _sr = _newsParseContent(resp.responseText, chips, url);
                 _sr.iframeable = _iframeable;
                 _done(_sr, true);
               } catch(e) {
@@ -11910,7 +12341,9 @@ function showOnboarding(onComplete) {
             entry.status             = result.status;
             entry.scanStatus         = result.status;
             entry.score              = result.score;
+            entry.scoreParts         = result.scoreParts || [];
             entry.snippet            = result.snippet;
+            entry.snippetZone        = result.snippetZone || '';
             entry.title              = result.title || '';
             entry.matchedChips       = result.matchedChips || [];
             entry.secondaryZoneOnly  = result.secondaryZoneOnly || false;
@@ -12381,6 +12814,22 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.12",
+      "date": "2026-09-02",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Skaner widzi teraz całą treść artykułu, a nie jej ułamek — na części serwisów wybierał kafelek \"polecane\" albo blok, z którego reguły czyszczenia usuwały tekst. Pięć stron na sześćdziesiąt pięć wracało wcześniej jako \"brak keyworda\" mimo że marka była w tekście"},
+        {"type": "fix", "text": "Pole Treść nie dostaje już chmur tagów ani zajawek innych artykułów — rozpoznawane są bloki \"czytaj też\" po polsku, chorwacku, turecku, grecku i angielsku, także wtedy gdy nie mają rozpoznawalnej klasy CSS. Gdy keyword był tylko w tytule, pole wypełnia lead artykułu z adnotacją, że to nie fragment z keywordem"},
+        {"type": "fix", "text": "Data publikacji wykrywana znacznie częściej (51 zamiast 43 na 65 stronach): dochodzą daty z zagnieżdżonego JSON-LD, dziesięciu dodatkowych metatagów, znacznika time spoza treści, z adresu URL oraz pisane słownie po chorwacku, polsku, turecku i grecku"},
+        {"type": "fix", "text": "Ocena AI dostaje teraz informację, z której części strony pochodzi każde trafienie (tytuł, lead, akapit, podpis zdjęcia, lista produktów z ceną, blok polecanych) oraz domenę wydawcy. Wcześniej przy trafieniach spoza akapitów model dostawał pustą listę kontekstów"},
+        {"type": "feat", "text": "Strony sklepów w centrach handlowych, ogłoszenia o pracę i wpisy w App Store są oznaczane jako nierelevantne, a portale recenzenckie i zestawienia produktów z cenami jako relevantne"},
+        {"type": "fix", "text": "Nazwa serwisu obcinana z tytułu (\"H&M - Max City\" → \"H&M\"), żeby projekt monitorujący markę zbieżną z nazwą wydawcy nie dostawał punktów na każdej podstronie"},
+        {"type": "fix", "text": "Werdykt AI nie przepada już przez uciętą odpowiedź — wcześniej pokazywał się \"błąd parsowania\" mimo poprawnej oceny"},
+        {"type": "feat", "text": "Modele Claude zaktualizowane: Haiku 4.5 i Sonnet 5 (zamiast Sonnet 4.6). Zapisane wcześniej ustawienia przepisują się same. Sonnet 5 jest przy skanach tańszy od Haiku, bo jako jedyny korzysta z pamięci podręcznej promptu"}
+      ]
+    },
+    {
       "version": "0.26.11",
       "date": "2026-07-30",
       "label": "fix",
@@ -12467,15 +12916,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "Timer sesji nie dubluje się po wznowieniu z pauzy / ponowieniu akcji"},
         {"type": "perf", "text": "News: płynniejsze skanowanie dużych list URL (lista odświeża się max ~3×/s zamiast po każdym adresie); szybsze dopasowywanie URL przy dużych plikach"},
         {"type": "fix", "text": "Eksport CSV raportu i partycji nie psuje kolumn gdy treść zawiera cudzysłów; licznik postępu w panelu Wszystkie projekty faktycznie się aktualizuje; porządki w kodzie (martwy kod, deduplikacje, escapowanie logów)"}
-      ]
-    },
-    {
-      "version": "0.26.2",
-      "date": "2026-06-05",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Trafność AI: zakres dat i miesiąc teraz identyczne jak w Overall (wspólny licznik domykania) — wcześniej zakładka pokazywała inny miesiąc (np. cały poprzedni zamiast bieżącego 1–5); w trybie bieżącego projektu widać też zakres dat"}
       ]
     }
   ];
@@ -13378,8 +13818,8 @@ function showOnboarding(onComplete) {
           '<div style="display:flex;align-items:center;gap:6px;margin-bottom:7px;">' +
             '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">Model:</span>' +
             '<select id="b24t-ai-model-news" style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:#fff;color:#333;font-size:11px;font-family:inherit;color-scheme:light;">' +
-              '<option value="claude-haiku-4-5-20251001">Haiku 4.5 — szybki, tani</option>' +
-              '<option value="claude-sonnet-4-6">Sonnet 4.6 — mocniejszy</option>' +
+              '<option value="claude-haiku-4-5">Haiku 4.5 — szybki, prompt bez cache</option>' +
+              '<option value="claude-sonnet-5">Sonnet 5 — mocniejszy, z cache taniej</option>' +
             '</select>' +
           '</div>' +
           '<label style="display:flex;gap:10px;align-items:center;cursor:pointer;padding:4px 0;margin-bottom:4px;">' +
@@ -13394,8 +13834,8 @@ function showOnboarding(onComplete) {
           '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">' +
             '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">Model:</span>' +
             '<select id="b24t-ai-model-tagging" style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:#fff;color:#333;font-size:11px;font-family:inherit;color-scheme:light;">' +
-              '<option value="claude-haiku-4-5-20251001">Haiku 4.5 — szybki, tani</option>' +
-              '<option value="claude-sonnet-4-6">Sonnet 4.6 — mocniejszy</option>' +
+              '<option value="claude-haiku-4-5">Haiku 4.5 — szybki, prompt bez cache</option>' +
+              '<option value="claude-sonnet-5">Sonnet 5 — mocniejszy, z cache taniej</option>' +
             '</select>' +
           '</div>' +
           '<label style="display:flex;gap:10px;align-items:center;cursor:pointer;padding:4px 0;margin-bottom:8px;">' +
@@ -13449,8 +13889,8 @@ function showOnboarding(onComplete) {
       var taggingEnabledCb = document.getElementById('b24t-ai-tagging-enabled');
 
       if (apiKeyInput) apiKeyInput.value = s.apiKey || '';
-      if (newsModelSelect) newsModelSelect.value = (s.news && s.news.model) || 'claude-haiku-4-5-20251001';
-      if (taggingModelSelect) taggingModelSelect.value = (s.tagging && s.tagging.model) || 'claude-haiku-4-5-20251001';
+      if (newsModelSelect) newsModelSelect.value = (s.news && s.news.model) || 'claude-haiku-4-5';
+      if (taggingModelSelect) taggingModelSelect.value = (s.tagging && s.tagging.model) || 'claude-haiku-4-5';
       if (newsEnabledCb) newsEnabledCb.checked = !!(s.news && s.news.enabled);
       if (taggingEnabledCb) taggingEnabledCb.checked = !!(s.tagging && s.tagging.enabled);
 
@@ -13477,7 +13917,7 @@ function showOnboarding(onComplete) {
             method: 'POST',
             url: 'https://api.anthropic.com/v1/messages',
             headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-            data: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 1, messages: [{ role: 'user', content: 'test' }] }),
+            data: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: 1, messages: [{ role: 'user', content: 'test' }] }),
             timeout: 12000,
             onload: function(r) {
               aiKeyTestBtn.disabled = false; aiKeyTestBtn.textContent = 'Testuj klucz API';
@@ -17557,7 +17997,7 @@ Tej operacji nie można cofnąć.`)) {
       if (source !== 'view' && cfg.onlyUntagged) mentions = mentions.filter(m => !(m.tags && m.tags.length));
       if (!mentions.length) { setStatus('Brak wzmianek do otagowania', '#f59e0b'); return; }
 
-      const batchSize = 10, total = mentions.length, model = (s.tagging && s.tagging.model) || 'claude-haiku-4-5-20251001';
+      const batchSize = 10, total = mentions.length, model = (s.tagging && s.tagging.model) || 'claude-haiku-4-5';
       const AIT_CONCURRENCY = 6; // ile batchy do Claude leci równolegle (notebook: 20; tu ostrożniej przez limity API)
       let done = 0, applied = 0, deleted = 0, skipped = 0, unmapped = 0, errors = 0, replaced = 0;
       let usageIn = 0, usageOut = 0, cacheRead = 0;

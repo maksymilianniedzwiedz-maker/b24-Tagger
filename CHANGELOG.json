@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.26.20",
+    "date": "2026-09-10",
+    "label": "feat",
+    "changes": [
+      "feat: Wyświetlenia filmu z TikToka pojawiają się natychmiast, bez czekania na pobranie danych. Otwarty film leży na siatce profilu, więc wtyczka odnajduje jego kafelek po identyfikatorze i bierze liczbę stamtąd — a dokładną wartość i tak dociąga chwilę później",
+      "fix: Rozpoznawanie, który post jest na ekranie, nie opiera się już na elemencie wideo. Posty zdjęciowe TikToka wideo nie mają, więc jako jedyne zostawały bez zabezpieczenia przed odczytaniem liczb sąsiedniego posta — czyli dokładnie tam, gdzie było ono potrzebne"
+    ]
+  },
+  {
     "version": "0.26.19",
     "date": "2026-09-10",
     "label": "fix",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.19
+// @version      0.26.20
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.19';
+  const VERSION = '0.26.20';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -12941,6 +12941,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.20",
+      "date": "2026-09-10",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "Wyświetlenia filmu z TikToka pojawiają się natychmiast, bez czekania na pobranie danych. Otwarty film leży na siatce profilu, więc wtyczka odnajduje jego kafelek po identyfikatorze i bierze liczbę stamtąd — a dokładną wartość i tak dociąga chwilę później"},
+        {"type": "fix",  "text": "Rozpoznawanie, który post jest na ekranie, nie opiera się już na elemencie wideo. Posty zdjęciowe TikToka wideo nie mają, więc jako jedyne zostawały bez zabezpieczenia przed odczytaniem liczb sąsiedniego posta — czyli dokładnie tam, gdzie było ono potrzebne"}
+      ]
+    },
+    {
       "version": "0.26.19",
       "date": "2026-09-10",
       "label": "fix",
@@ -13045,15 +13055,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "Token nie \"wygasa\" już po 8h przy aktywnej pracy — licznik ważności odświeża się przy każdym użyciu panelu, nie tylko gdy Brand24 zrotuje nagłówek autoryzacji"},
         {"type": "fix", "text": "Komunikaty mówią, co jest naprawdę nie tak: przy błędzie Brand24 panel pokazuje treść błędu i domenę panelu (np. \"projekt niedostępny na app.brand24.com — otwórz go raz na panel.brand24.pl\") zamiast zawsze sugerować odświeżenie tokenu"},
         {"type": "fix", "text": "Panel Niestandardowe na stronach zewnętrznych sam się odświeża, gdy pojawi się token właściwego panelu (wcześniej nasłuch działał tylko na stronie panelu Brand24), a kropka Panel i status CMS przeliczają się po zmianie projektu"}
-      ]
-    },
-    {
-      "version": "0.26.10",
-      "date": "2026-06-26",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Tagowanie pliku: większe partycje (2000 zamiast 1000 wzmianek), krótsza przerwa w trybie Auto między partycjami (10s zamiast 30s) oraz szybsza obsługa błędu Brand24 — gdy partia wzmianek dostanie błąd serwera, wtyczka nie traci czasu na powtórki, tylko od razu taguje pojedynczo (fallback), co działa skuteczniej"}
       ]
     }
   ];
@@ -19334,22 +19335,33 @@ Tej operacji nie można cofnąć.`)) {
     return m ? m[1] : null;
   }
 
-  // Blok widocznego filmu w pionowym feedzie (§3). Zawężamy po geometrii, bo nic w tym
-  // layoucie nie wiąże kontenera z ID filmu, a klasy CSS są hashowane przy każdym buildzie.
-  // Gdy karta nie jest rysowana, prostokąty są zerowe — wtedy świadomie nie zgadujemy.
+  // Czy w drzewie stoi więcej niż jeden post naraz. Liczymy komplety liczników, a NIE elementy
+  // <video>: posty zdjęciowe (/photo/) wideo nie mają, więc oparcie się na nim zostawiało je
+  // bez zawężenia — czyli dokładnie tam, gdzie zawężenie jest potrzebne (§3).
+  function _ttAmbiguous() {
+    return document.querySelectorAll('[data-e2e="like-count"]').length > 1;
+  }
+
+  // Blok widocznego posta w pionowym feedzie (§3). Zawężamy po geometrii, bo nic w tym layoucie
+  // nie wiąże kontenera z ID posta, a klasy CSS są hashowane przy każdym buildzie. Bierzemy
+  // komplet liczników najbliższy środkowi okna i cofamy się do przodka, który trzyma też opis —
+  // to jest granica jednego posta. Prostokąty zerowe (karta nierysowana) pomijamy, a gdy nie
+  // zostanie żaden kandydat, zwracamy null zamiast zgadywać.
   function _ttVisibleBlock() {
-    var vids = document.querySelectorAll('video');
-    if (vids.length < 2) return null;   // pełna strona filmu — całe drzewo jest jednego filmu
-    var mid = window.innerHeight / 2, hit = null;
-    for (var i = 0; i < vids.length; i++) {
-      var rect = vids[i].getBoundingClientRect();
-      if (!rect.height) continue;
-      if (rect.top <= mid && rect.bottom >= mid) { hit = vids[i]; break; }
+    var marks = document.querySelectorAll('[data-e2e="like-count"]');
+    if (marks.length < 2) return null;
+    var mid = window.innerHeight / 2, best = null, bestDist = Infinity;
+    for (var i = 0; i < marks.length; i++) {
+      var r = marks[i].getBoundingClientRect();
+      if (!r.width && !r.height) continue;
+      if (r.bottom < 0 || r.top > window.innerHeight) continue;
+      var dist = Math.abs((r.top + r.bottom) / 2 - mid);
+      if (dist < bestDist) { bestDist = dist; best = marks[i]; }
     }
-    if (!hit) return null;
-    var node = hit;
+    if (!best) return null;
+    var node = best;
     while (node && node !== document.body) {
-      if (node.querySelector && node.querySelector('[data-e2e="like-count"]')) return node;
+      if (node.querySelector('[data-e2e="video-desc"]')) return node;
       node = node.parentElement;
     }
     return null;
@@ -19366,11 +19378,10 @@ Tej operacji nie można cofnąć.`)) {
               ttId: id, strict: true, ready: false };
     r.url = 'https://www.tiktok.com' + window.location.pathname.replace(/\/+$/, '');
 
-    // W layoucie z kilkoma filmami naraz czytamy WYŁĄCZNIE z bloku widocznego filmu. Gdy nie da
-    // się go wskazać (karta nierysowana, nietypowy scroll), nie czytamy z DOM-u NIC — liczby
-    // sąsiedniego filmu byłyby gorsze niż ich brak, bo komplet i tak dociągnie _ttFetchDetail.
-    var multi = document.querySelectorAll('video').length >= 2;
-    var root  = _ttVisibleBlock() || (multi ? null : document);
+    // Gdy w drzewie stoi kilka postów, czytamy WYŁĄCZNIE z bloku widocznego. Gdy nie da się go
+    // wskazać (karta nierysowana, nietypowy scroll), nie czytamy z DOM-u NIC — liczby
+    // sąsiedniego posta byłyby gorsze niż ich brak, bo komplet i tak dociągnie _ttFetchDetail.
+    var root = _ttVisibleBlock() || (_ttAmbiguous() ? null : document);
     function _pick(names) {
       if (!root) return '';
       for (var i = 0; i < names.length; i++) {
@@ -19392,6 +19403,17 @@ Tej operacji nie można cofnąć.`)) {
     // tam etykietę przycisku („Udostępnij"), którą parser odrzuca — brak cyfr, brak wyniku.
     r.shares   = _socialParseCount(_pick(['share-count']));
     r.ready    = !!(r.content || r.likes != null);
+
+    // Wyświetleń w widoku posta nie ma wcale, ale kafelek TEGO SAMEGO posta wciąż stoi w siatce
+    // profilu pod modalem — trafiamy w niego po ID z adresu, więc to dopasowanie, nie zgadywanie.
+    // Dzięki temu liczba jest od razu, zamiast po odpowiedzi z sieci. Jest skrócona („819.2K"),
+    // więc dokładną i tak nadpisze _ttFetchDetail; przy wejściu z linku siatki nie ma i zostaje puste.
+    try {
+      var tileLink = document.querySelector('a[href*="/video/' + id + '"], a[href*="/photo/' + id + '"]');
+      var tile = tileLink && (tileLink.closest('[data-e2e="user-post-item"]') || tileLink.parentElement);
+      var tileViews = tile && tile.querySelector('[data-e2e="video-views"]');
+      if (tileViews) r.pageviews = _socialParseCount(tileViews.textContent);
+    } catch(e) {}
 
     // Data z ID filmu (górne 32 bity = unix) — dostępna NATYCHMIAST i bez sieci, ale tylko
     // przybliżona: to moment nadania identyfikatora, nie publikacji. Zmierzone rozjazdy wobec

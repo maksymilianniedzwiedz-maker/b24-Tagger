@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.26.22",
+    "date": "2026-09-11",
+    "label": "fix",
+    "changes": [
+      "fix: Nazwy projektów w liście wyboru brały się z tytułu karty przeglądarki, a nie z Brand24. Jeśli wtyczka trafiła w moment, gdy tytuł pokazywał jeszcze listę projektów albo nazwę konta, zapisywała to jako nazwę projektu na zawsze — stąd ten sam wpis powtórzony kilkadziesiąt razy i nazwy niezgodne z projektem. Teraz nazwa pochodzi z API, a raz potwierdzonej nie da się nadpisać tytułem strony",
+      "fix: Przycisk uzupełniania nazw (Ustawienia → Ogólne, teraz „Sprawdź nazwy w Brand24\") nigdy nie działał: prosił o zapytanie, którego w API nie ma, a potem o właściwe, ale ze złą nazwą argumentu — i oba błędy były wyciszone, więc wyglądało to na „nie znaleziono\". Poprawione, a błędy trafiają teraz do logu",
+      "fix: Do sprawdzenia kwalifikują się nazwy niepotwierdzone, nie tylko puste. Wcześniej nazwa zła, ale wyglądająca porządnie, nie miała żadnej drogi do poprawy",
+      "fix: Nazwy zastępcze w postaci „Project <numer>\" nie trafiają już do pamięci wtyczki i nie pojawiają się na liście wyboru na stronach zewnętrznych",
+      "feat: Sprawdzenie nazwy ustala przy okazji, na którym panelu (.pl czy .com) projekt się znajduje. Wcześniej, gdy wtyczka tego nie wiedziała, celowała w ostatnio używany panel — przy dwóch panelach otwartych naraz mogła trafić w zły",
+      "feat: Projekty usunięte albo z innych kont są ukrywane na liście wyboru, ale zostają w pamięci razem z zapisanymi tagami — jedno nieudane sprawdzenie nie kosztuje danych"
+    ]
+  },
+  {
     "version": "0.26.21",
     "date": "2026-09-10",
     "label": "feat",

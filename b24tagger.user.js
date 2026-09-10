@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.21
+// @version      0.26.22
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.21';
+  const VERSION = '0.26.22';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -484,6 +484,10 @@
                      /^Project\s+\d+$/.test(name) || /^Projekt\s+\d+$/.test(name) ||
                      name.length < 3;
     if (isFallback) return;
+    // Nazwa potwierdzona przez API bije nazwę z tytułu karty — bez tej bramki każde wejście
+    // na panel z niegotowym tytułem SPA zatruwałoby z powrotem to, co API właśnie naprawiło.
+    // Wołana z `detectProject`, czyli przy KAŻDYM otwarciu projektu. Patrz PANEL_STATE.md §5.9.
+    if (_pnIsVerified(projectId)) return;
     var names = lsGet(LS.PROJECT_NAMES, {});
     if (names[String(projectId)] === name) return; // bez zmian
     names[String(projectId)] = name;
@@ -514,6 +518,148 @@
     }
     // 4. Fallback — ID projektu (przynajmniej wiadomo co to)
     return 'Projekt ' + projectId;
+  }
+
+  // ── WERYFIKACJA NAZW PROJEKTÓW PRZEZ API (patrz PANEL_STATE.md §5.9) ───────────────
+  // Nazwa z `document.title` jest ZGADYWANIEM: `detectProject` czyta tytuł karty w jednym
+  // momencie i jeśli SPA nie ustawiło jeszcze tytułu projektu, łapie tytuł listy projektów
+  // („Projekty") albo konta („Marka24,nl"). Taki string przechodzi blokadę fallbacków, więc
+  // zostaje zapisany jako „dobra nazwa" i nic go nigdy nie poprawia — `_pnSet` nie nadpisuje
+  // dobrej nazwy, a `_getMissingIds` nie uznaje jej za brakującą. Zmierzone 2026-09-10:
+  // 40 projektów pokazywanych jako „Marka24,nl", w rzeczywistości Zalando_GR, Pepco_GR, Shein_TR…
+  //
+  // Autorytetem jest API, nie tytuł karty. Dwie drogi, w tej kolejności:
+  //   1. GQL `getProject(projectId:)` — tanie (~200 B), ale widzi tylko projekty konta
+  //      zalogowanego na BIEŻĄCYM hoście (`gql()` strzela w relatywny /api/graphql).
+  //      Kod sprzed tej zmiany wołał `getProject(id:)` — zła nazwa argumentu, więc padało
+  //      zawsze; a przed tym jeszcze `getProjects`, którego w schemacie nie ma. Oba błędy były
+  //      wyciszone (`silent: true` + puste `.catch`), dlatego nikt tego nie zauważył.
+  //   2. Django `GET /searches/add-new-mention/?sid=` — widzi też projekty innych kont, gdy
+  //      jest sesja CMS (zmierzone: 1185139740 → GQL „Internal server error", Django →
+  //      „Zalando_RO"), i przy okazji mówi, czy wolno tam dodawać (token CSRF w HTML-u).
+  //      Ale odpowiedź waży 100–230 kB, więc używamy jej TYLKO jako fallbacku, nigdy hurtem.
+  //
+  // Efekt uboczny brany za darmo z tej samej odpowiedzi: ustalenie, na którym panelu projekt
+  // żyje (`base`) — bez tego `_b24PanelBase` strzela w „ostatni używany panel" (§4.2).
+
+  var PN_SRC_GQL   = 'gql';
+  var PN_SRC_CMS   = 'cms';
+
+  // Tytuł strony Django to "<nazwa> - Brand24 - <cokolwiek>". Sufiks RÓŻNI SIĘ między panelami
+  // — zmierzone: „… - Brand24 - Panel" na .pl (sesja panelu), „… - Brand24 - Dashboard" na .com
+  // (sesja CMS) — dlatego ucinamy na „- Brand24", a nie na konkretnym sufiksie.
+  // Zwraca null dla zaślepki (`<title>Brand24</title>`, 1832 B), którą serwer oddaje dla
+  // projektu niedostępnego na tym panelu — IDENTYCZNIE dla usuniętego, cudzego i nieistniejącego
+  // (zmierzone na świeżo usuniętym projekcie 322350147 kontra 999999999). Nie ma sygnału
+  // „usunięty", więc nie wolno na tej podstawie niczego kasować z pamięci.
+  function _pnTitleFromCmsHtml(html) {
+    var m = String(html || '').match(/<title>([\s\S]*?)<\/title>/i);
+    if (!m) return null;
+    var t  = m[1].replace(/\s+/g, ' ').trim();
+    var nm = t.match(/^(.*?)\s*-\s*Brand24\b/i);
+    var name = nm ? nm[1].trim() : '';
+    return name && name !== 'Brand24' ? name : null;
+  }
+
+  // Zapis potwierdzonej nazwy do wszystkich trzech magazynów naraz (§2). `nameSrc` odróżnia
+  // nazwę potwierdzoną od zgadniętej — bez tego zgadnięta udaje ostateczną i nikt jej nie sprawdza.
+  function _pnSetVerified(pid, name, src, base) {
+    if (!pid || !name) return;
+    var key = String(pid);
+    var names = lsGet(LS.PROJECT_NAMES, {});
+    names[key] = name;
+    lsSet(LS.PROJECT_NAMES, names);
+    var projs = lsGet(LS.PROJECTS, {});
+    if (projs[key]) { projs[key].name = name; lsSet(LS.PROJECTS, projs); }
+    var upd = { name: name, nameSrc: src, nameCheckedAt: Date.now(), unavailable: false };
+    if (base) upd.base = B24Bridge.normBase(base);
+    try { B24Bridge.projects.update(pid, upd); } catch(e) {}
+    _gmPNSynced = true;
+  }
+
+  // Czy nazwa tego projektu jest potwierdzona przez API. Projekty zapisane przed tą zmianą
+  // nie mają `nameSrc` i słusznie liczą się jako niepotwierdzone — właśnie między nimi siedzą
+  // nazwy złe („Marka24,nl"), których stary test „pusta albo fallbackowa" nie łapał.
+  function _pnIsVerified(pid) {
+    try {
+      var rec = B24Bridge.projects.get(pid);
+      var src = rec && rec.nameSrc;
+      return src === PN_SRC_GQL || src === PN_SRC_CMS;
+    } catch(e) { return false; }
+  }
+
+  // Projekt niedostępny na SWOIM panelu. Nie kasujemy — ukrywamy (decyzja użytkownika
+  // 2026-09-10). Jedno błędne sprawdzenie (wygasła sesja) nie może kosztować zapisanych tagów,
+  // a „niedostępny z drugiego panelu" nic nie znaczy: z `.com` każdy projekt `.pl` wygląda
+  // jak usunięty, bo dostaje tę samą zaślepkę co nieistniejące ID.
+  function _pnMarkUnavailable(pid) {
+    try { B24Bridge.projects.update(pid, { unavailable: true, nameCheckedAt: Date.now() }); } catch(e) {}
+  }
+  function _pnIsUnavailable(pid) {
+    try { var r = B24Bridge.projects.get(pid); return !!(r && r.unavailable); } catch(e) { return false; }
+  }
+
+  function _pnFetchNameGql(pid) {
+    return new Promise(function(resolve) {
+      if (!state.tokenHeaders) { resolve(null); return; }
+      gql('getProject', { projectId: parseInt(pid, 10) },
+          'query getProject($projectId: Int!) { getProject(projectId: $projectId) { id name } }',
+          { silent: true })
+        .then(function(d) { resolve((d && d.getProject && d.getProject.name) || null); })
+        .catch(function() { resolve(null); });
+    });
+  }
+
+  // Cross-domain przez GM_xmlhttpRequest (ciasteczka lecą z requestem), więc z panelu `.com`
+  // można zapytać `.pl` i odwrotnie. `canAdd` — obecność tokenu CSRF — jest jedynym rzetelnym
+  // dowodem „mam sesję i wolno mi dodawać do tego projektu na tym panelu".
+  function _pnFetchNameCms(pid, base) {
+    return new Promise(function(resolve) {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: base + '/searches/add-new-mention/?sid=' + pid,
+        timeout: 15000,
+        onload: function(resp) {
+          var html = resp.responseText || '';
+          resolve({
+            name:   _pnTitleFromCmsHtml(html),
+            canAdd: /name="tknB24"[^>]*value="[a-f0-9]{32}"|value="[a-f0-9]{32}"[^>]*name="tknB24"/.test(html),
+            base:   base
+          });
+        },
+        onerror:   function() { resolve(null); },
+        ontimeout: function() { resolve(null); }
+      });
+    });
+  }
+
+  // Ustala prawdziwą nazwę jednego projektu i zapisuje ją.
+  // → {name, src}  |  {unavailable:true}  |  null (błąd sieci — żadnych wniosków nie wyciągamy).
+  // Gdy panel projektu nie jest znany, pytamy oba i zapisujemy ten, który odpowiedział.
+  async function _pnVerifyOne(pid) {
+    var viaGql = await _pnFetchNameGql(pid);
+    if (viaGql) {
+      _pnSetVerified(pid, viaGql, PN_SRC_GQL, _b24HostBase());
+      return { name: viaGql, src: PN_SRC_GQL };
+    }
+    var known = null;
+    try {
+      var rec = B24Bridge.projects.get(pid);
+      known = rec && rec.base ? B24Bridge.normBase(rec.base) : null;
+    } catch(e) {}
+    var bases = known ? [known] : ['https://app.brand24.com', 'https://panel.brand24.pl'];
+    var netError = false;
+    for (var i = 0; i < bases.length; i++) {
+      var r = await _pnFetchNameCms(pid, bases[i]);
+      if (!r) { netError = true; continue; }
+      if (r.name) {
+        _pnSetVerified(pid, r.name, PN_SRC_CMS, r.base);
+        return { name: r.name, src: PN_SRC_CMS, canAdd: r.canAdd };
+      }
+    }
+    if (netError) return null;   // niepewne — nie oznaczamy jako niedostępny
+    _pnMarkUnavailable(pid);
+    return { unavailable: true };
   }
 
   // ───────────────────────────────────────────
@@ -683,9 +829,15 @@
       get: function(pid) { return (_read().projects || {})[String(pid)] || null; },
       all: function() { return _read().projects || {}; },
       names: function() {
+        // Filtr fallbacków jak w gałęzi LS-owej `_gmGetProjectNames` — wcześniej ta metoda
+        // oddawała wszystko jak leci, więc „Project 322348389" wychodziło do dropdownu na
+        // stronach zewnętrznych, gdzie LS jest z definicji pusty. Patrz PANEL_STATE.md §5.9.
         var out = {};
         var all = this.all();
-        Object.keys(all).forEach(function(pid) { if (all[pid] && all[pid].name) out[pid] = all[pid].name; });
+        Object.keys(all).forEach(function(pid) {
+          var n = all[pid] && all[pid].name;
+          if (n && !_isFallback(n)) out[pid] = n;
+        });
         return out;
       }
     };
@@ -6166,12 +6318,20 @@
 
       // Save project config
       const projects = lsGet(LS.PROJECTS, {});
+      const _prevCfg = projects[projectId] || {};
       projects[projectId] = {
-        name: state.projectName,
         tagIds: state.tags,
         untaggedId: state.untaggedId,
         updatedAt: new Date().toISOString(),
       };
+      // Nazwa TYLKO gdy nie jest fallbackiem. Wcześniej leciało tu `name: state.projectName`
+      // bez żadnego filtra, więc „Project <pid>" wchodziło do LS — a przez `_gmSaveProjects`
+      // także do bridge'a, skąd wychodziło do dropdownu. Patrz PANEL_STATE.md §5.9 pomiar 4.
+      const _nameIsFb = !state.projectName || state.projectName.length < 3 ||
+                        state.projectName === 'Brand24' || state.projectName === 'Panel Brand24' ||
+                        /^(Project|Projekt)\s+\d+$/.test(state.projectName);
+      if (!_nameIsFb) projects[projectId].name = state.projectName;
+      else if (_prevCfg.name) projects[projectId].name = _prevCfg.name;
       lsSet(LS.PROJECTS, projects);
       _gmSaveProjects(projects); // mirror do GM — dostępne na każdej stronie
       // Zapisz nazwę do trwałego resolvera — _pnSet ignoruje fallbacki
@@ -9855,7 +10015,12 @@ function showOnboarding(onComplete) {
     var sel = document.getElementById('b24t-news-f-project-sel');
     if (!sel) return;
     var projects = _gmGetProjects();
-    var pids = Object.keys(projects);
+    // Projekty niedostępne na swoim panelu (usunięte albo z cudzego konta) zostają w pamięci,
+    // ale nie zaśmiecają listy — decyzja użytkownika 2026-09-10. Bieżący projekt pokazujemy
+    // zawsze, nawet oznaczony: inaczej wybrany projekt mógłby zniknąć z własnego selecta.
+    var pids = Object.keys(projects).filter(function(pid) {
+      return !_pnIsUnavailable(pid) || String(state.projectId) === String(pid);
+    });
     sel.innerHTML = '<option value="">— wybierz projekt —</option>' +
       pids.map(function(pid) {
         var pName = _pnResolve(pid);
@@ -12941,6 +13106,20 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.22",
+      "date": "2026-09-11",
+      "label": "fix",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "fix", "text": "Nazwy projektów w liście wyboru brały się z tytułu karty przeglądarki, a nie z Brand24. Jeśli wtyczka trafiła w moment, gdy tytuł pokazywał jeszcze listę projektów albo nazwę konta, zapisywała to jako nazwę projektu na zawsze — stąd ten sam wpis powtórzony kilkadziesiąt razy i nazwy niezgodne z projektem. Teraz nazwa pochodzi z API, a raz potwierdzonej nie da się nadpisać tytułem strony"},
+        {"type": "fix", "text": "Przycisk uzupełniania nazw (Ustawienia → Ogólne, teraz „Sprawdź nazwy w Brand24\") nigdy nie działał: prosił o zapytanie, którego w API nie ma, a potem o właściwe, ale ze złą nazwą argumentu — i oba błędy były wyciszone, więc wyglądało to na „nie znaleziono\". Poprawione, a błędy trafiają teraz do logu"},
+        {"type": "fix", "text": "Do sprawdzenia kwalifikują się nazwy niepotwierdzone, nie tylko puste. Wcześniej nazwa zła, ale wyglądająca porządnie, nie miała żadnej drogi do poprawy"},
+        {"type": "fix", "text": "Nazwy zastępcze w postaci „Project <numer>\" nie trafiają już do pamięci wtyczki i nie pojawiają się na liście wyboru na stronach zewnętrznych"},
+        {"type": "feat", "text": "Sprawdzenie nazwy ustala przy okazji, na którym panelu (.pl czy .com) projekt się znajduje. Wcześniej, gdy wtyczka tego nie wiedziała, celowała w ostatnio używany panel — przy dwóch panelach otwartych naraz mogła trafić w zły"},
+        {"type": "feat", "text": "Projekty usunięte albo z innych kont są ukrywane na liście wyboru, ale zostają w pamięci razem z zapisanymi tagami — jedno nieudane sprawdzenie nie kosztuje danych"}
+      ]
+    },
+    {
       "version": "0.26.21",
       "date": "2026-09-10",
       "label": "feat",
@@ -13036,22 +13215,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "Deduplikacja przy imporcie porównywała dosłowne adresy, więc te same artykuły w wersji AMP, z www i bez, albo z ukośnikiem na końcu wchodziły na listę po dwa razy. Na realnej paczce z 24 linków 11 było duplikatami i przechodziły wszystkie. Teraz porównywany jest adres kanoniczny — dedup działa jako pierwszy krok, przed skanowaniem i przed oceną AI, więc duplikaty nie zużywają już czasu ani limitów API"},
         {"type": "feat", "text": "Nowy status \"✓ Sprawdzony\" — po przejściu do kolejnego URL-a poprzedni przestaje wisieć jako \"Otwarty\" i widać, gdzie skończyła się weryfikacja. Wiersze oznaczone \"Dodano\" lub \"Błąd\" zostają bez zmian"},
         {"type": "fix", "text": "Pasek postępu liczy sprawdzone URL-e jako obrobione — wcześniej stał w miejscu, jeśli annotator przeglądał linki i świadomie ich nie dodawał"}
-      ]
-    },
-    {
-      "version": "0.26.12",
-      "date": "2026-09-02",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Skaner widzi teraz całą treść artykułu, a nie jej ułamek — na części serwisów wybierał kafelek \"polecane\" albo blok, z którego reguły czyszczenia usuwały tekst. Pięć stron na sześćdziesiąt pięć wracało wcześniej jako \"brak keyworda\" mimo że marka była w tekście"},
-        {"type": "fix", "text": "Pole Treść nie dostaje już chmur tagów ani zajawek innych artykułów — rozpoznawane są bloki \"czytaj też\" po polsku, chorwacku, turecku, grecku i angielsku, także wtedy gdy nie mają rozpoznawalnej klasy CSS. Gdy keyword był tylko w tytule, pole wypełnia lead artykułu z adnotacją, że to nie fragment z keywordem"},
-        {"type": "fix", "text": "Data publikacji wykrywana znacznie częściej (51 zamiast 43 na 65 stronach): dochodzą daty z zagnieżdżonego JSON-LD, dziesięciu dodatkowych metatagów, znacznika time spoza treści, z adresu URL oraz pisane słownie po chorwacku, polsku, turecku i grecku"},
-        {"type": "fix", "text": "Ocena AI dostaje teraz informację, z której części strony pochodzi każde trafienie (tytuł, lead, akapit, podpis zdjęcia, lista produktów z ceną, blok polecanych) oraz domenę wydawcy. Wcześniej przy trafieniach spoza akapitów model dostawał pustą listę kontekstów"},
-        {"type": "feat", "text": "Strony sklepów w centrach handlowych, ogłoszenia o pracę i wpisy w App Store są oznaczane jako nierelevantne, a portale recenzenckie i zestawienia produktów z cenami jako relevantne"},
-        {"type": "fix", "text": "Nazwa serwisu obcinana z tytułu (\"H&M - Max City\" → \"H&M\"), żeby projekt monitorujący markę zbieżną z nazwą wydawcy nie dostawał punktów na każdej podstronie"},
-        {"type": "fix", "text": "Werdykt AI nie przepada już przez uciętą odpowiedź — wcześniej pokazywał się \"błąd parsowania\" mimo poprawnej oceny"},
-        {"type": "feat", "text": "Modele Claude zaktualizowane: Haiku 4.5 i Sonnet 5 (zamiast Sonnet 4.6). Zapisane wcześniej ustawienia przepisują się same. Sonnet 5 jest przy skanach tańszy od Haiku, bo jako jedyny korzysta z pamięci podręcznej promptu"}
       ]
     }
   ];
@@ -13928,10 +14091,10 @@ function showOnboarding(onComplete) {
         '<div style="padding:12px 20px 14px;border-top:1px solid var(--b24t-border-sub);">' +
           '<div style="font-size:11px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Projekty</div>' +
           '<div style="font-size:11px;color:var(--b24t-text-muted);margin-bottom:9px;">' +
-            'Projekty bez nazwy w pamięci: <strong id="b24t-pn-missing-count" style="color:var(--b24t-text);">...</strong>' +
+            'Projekty z niepotwierdzoną nazwą: <strong id="b24t-pn-missing-count" style="color:var(--b24t-text);">...</strong>' +
           '</div>' +
           '<div style="display:flex;align-items:center;gap:8px;">' +
-            '<button id="b24t-pn-fill" style="font-size:11px;padding:4px 12px;border-radius:7px;border:1px solid var(--b24t-border);background:transparent;color:var(--b24t-text-muted);cursor:pointer;">Uzupełnij nazwy</button>' +
+            '<button id="b24t-pn-fill" style="font-size:11px;padding:4px 12px;border-radius:7px;border:1px solid var(--b24t-border);background:transparent;color:var(--b24t-text-muted);cursor:pointer;">Sprawdź nazwy w Brand24</button>' +
             '<span id="b24t-pn-status" style="font-size:10px;color:var(--b24t-text-faint);"></span>' +
           '</div>' +
         '</div>' +
@@ -14217,17 +14380,19 @@ function showOnboarding(onComplete) {
       var pnFillBtn  = document.getElementById('b24t-pn-fill');
       var pnStatusEl = document.getElementById('b24t-pn-status');
 
+      // Do sprawdzenia kwalifikuje się projekt, którego nazwa nie została POTWIERDZONA przez API
+      // — nie tylko taki, który nazwy nie ma. Stary test („pusta albo fallbackowa") przepuszczał
+      // nazwy złe, ale wyglądające porządnie („Marka24,nl" = nazwa konta, „Projekty" = tytuł
+      // listy projektów), więc przycisk ich nigdy nie tknął. Patrz PANEL_STATE.md §5.9.
+      // Projekty oznaczone jako niedostępne pomijamy — inaczej każde kliknięcie odpytywałoby
+      // od nowa trupy, których i tak nie da się rozstrzygnąć.
       function _getMissingIds() {
         var lsProjects = lsGet(LS.PROJECTS, {});
         var gmProjects = B24Bridge.projects.all();
-        var names = lsGet(LS.PROJECT_NAMES, {});
         var allPids = Object.keys(lsProjects);
         Object.keys(gmProjects).forEach(function(pid) { if (allPids.indexOf(pid) < 0) allPids.push(pid); });
         return allPids.filter(function(pid) {
-          if (names[pid]) return false;
-          var name = ((lsProjects[pid] || gmProjects[pid] || {}).name) || '';
-          return !name || name.length < 3 || name === 'Brand24' || name === 'Panel Brand24' ||
-                 /^(Project|Projekt)\s+\d+$/.test(name);
+          return !_pnIsVerified(pid) && !_pnIsUnavailable(pid);
         });
       }
 
@@ -14249,54 +14414,44 @@ function showOnboarding(onComplete) {
           pnFillBtn.disabled = true;
           if (pnStatusEl) { pnStatusEl.style.color = 'var(--b24t-text-faint)'; pnStatusEl.textContent = '⏳ Szukam...'; }
 
-          var found = 0;
-
-          function _applyName(pid, name) {
-            _pnSet(parseInt(pid), name);
-            var ps = lsGet(LS.PROJECTS, {});
-            if (ps[String(pid)]) { ps[String(pid)].name = name; lsSet(LS.PROJECTS, ps); }
-            B24Bridge.projects.update(pid, { name: name });
-            found++;
-          }
+          var found = 0, renamed = 0, dead = 0, unknown = 0;
 
           function _finish() {
             var stillMissing = _getMissingIds().length;
-            pnFillBtn.disabled = stillMissing === 0;
+            pnFillBtn.disabled = false;
             if (pnCountEl) pnCountEl.textContent = stillMissing;
-            if (pnStatusEl) {
-              if (found > 0) {
-                pnStatusEl.style.color = '#22c55e';
-                pnStatusEl.textContent = '✓ Uzupełniono ' + found + ' nazw';
-              } else {
-                pnStatusEl.style.color = '#f59e0b';
-                pnStatusEl.textContent = 'Nie znaleziono — otwórz projekty ręcznie w Brand24';
+            _newsRefillProjectSelect();   // dropdown modalu może być otwarty — pokaż nowe nazwy
+            if (!pnStatusEl) return;
+            var parts = [];
+            if (found)   parts.push('potwierdzono ' + found);
+            if (renamed) parts.push('poprawiono ' + renamed);
+            if (dead)    parts.push('ukryto niedostępnych ' + dead);
+            if (unknown) parts.push('bez odpowiedzi ' + unknown);
+            pnStatusEl.style.color = found || renamed ? '#22c55e' : (unknown ? '#f59e0b' : 'var(--b24t-text-faint)');
+            pnStatusEl.textContent = parts.length ? '✓ ' + parts.join(', ') : 'Nic do zrobienia';
+            addLog('✓ Nazwy projektów: ' + (parts.join(', ') || 'brak zmian'), 'success');
+          }
+
+          // Sekwencyjnie, nie równolegle: fallback na Django waży 100–230 kB na projekt,
+          // a przy 90 projektach równoległość zrobiłaby z tego kilkanaście MB naraz.
+          // Nazwa GQL jest tania, ale nie wiemy z góry, która droga zadziała dla danego pid.
+          (async function _run() {
+            for (var i = 0; i < missingIds.length; i++) {
+              var pid  = missingIds[i];
+              var prev = _pnResolve(pid);
+              if (pnStatusEl) pnStatusEl.textContent = '⏳ ' + (i + 1) + '/' + missingIds.length + '…';
+              var res;
+              try { res = await _pnVerifyOne(pid); } catch(e) { res = null; }
+              if (!res)                   unknown++;
+              else if (res.unavailable)   dead++;
+              else if (res.name === prev) found++;
+              else {
+                renamed++;
+                addLog('↻ Projekt ' + pid + ': "' + prev + '" → "' + res.name + '" (' + res.src + ')', 'info');
               }
             }
-          }
-
-          function _runPerProject(pending) {
-            if (!pending.length) { _finish(); return; }
-            var pid = pending.shift();
-            if (pnStatusEl) pnStatusEl.textContent = '⏳ ' + (missingIds.length - pending.length) + '/' + missingIds.length + '...';
-            gql('getProject', { id: parseInt(pid) },
-              'query getProject($id: Int!) { getProject(id: $id) { id name } }', { silent: true })
-              .then(function(d) {
-                if (d && d.getProject && d.getProject.name) _applyName(pid, d.getProject.name);
-              })
-              .catch(function() {})
-              .then(function() { _runPerProject(pending); });
-          }
-
-          // Attempt 1: getProjects — pobierz wszystkie projekty naraz
-          gql('getProjects', {}, 'query getProjects { getProjects { id name } }', { silent: true })
-            .then(function(data) {
-              if (data && Array.isArray(data.getProjects)) {
-                data.getProjects.forEach(function(p) { if (p && p.name) _applyName(p.id, p.name); });
-                if (found > 0) { _finish(); return; }
-              }
-              _runPerProject(missingIds.slice());
-            })
-            .catch(function() { _runPerProject(missingIds.slice()); });
+            _finish();
+          })();
         });
       }
     })();

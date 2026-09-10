@@ -1,5 +1,19 @@
 [
   {
+    "version": "0.26.23",
+    "date": "2026-09-11",
+    "label": "fix",
+    "changes": [
+      "fix: Kropka obok przycisku dodawania odpowiada teraz na pytanie „**czy mogę dodać wzmiankę do tego projektu**\", a nie „czy CMS działa\". Poprzednio wystarczało, że projekt ma w pamięci tag „dodane\", żeby kropka zrobiła się zielona i odblokowała wysyłkę — bez ani jednego zapytania do Brand24. Obecność tagu nie mówi nic o tym, czy sesja żyje",
+      "fix: Wynik dotyczy konkretnej pary projekt + panel. Pytanie idzie pod adres panelu, na którym projekt żyje, więc projekt z panel.brand24.pl nie ma jak zostać sprawdzony sesją z app.brand24.com — zła kombinacja nie jest wykrywana, ona po prostu nie może powstać",
+      "feat: Komunikat przy braku dostępu podaje **konkretną domenę** do zalogowania, zamiast ogólnego „zaloguj się do CMS\". Doszedł też stan „nie wiem\" na błąd sieci — wcześniej błąd sprawdzania był pokazywany tak samo jak brak logowania",
+      "feat: Kropka mówi, ile ma lat („sprawdzone przed chwilą\" / „sprawdzone 8 minut temu\") i można ją kliknąć, żeby sprawdzić od nowa — po zalogowaniu w innej karcie to jedno kliknięcie zamiast zamykania i otwierania okna",
+      "feat: Sprawdzanie odnawia się samo po powrocie do karty i wtedy, gdy inna karta Brand24 przechwyci świeży token — to drugie nie kosztuje żadnego zapytania",
+      "fix: Gdy wysyłka nie dostanie tokenu, kropka natychmiast robi się czerwona, a komunikat mówi wprost, że **formularz zostaje wypełniony** — wystarczy się zalogować i kliknąć drugi raz",
+      "fix: Blokada wysyłki z trybu Niestandardowego nie zostaje już na przycisku po przełączeniu na News — przycisk jest wspólny dla obu trybów, a zdejmować blokadę nie miał kto"
+    ]
+  },
+  {
     "version": "0.26.22",
     "date": "2026-09-11",
     "label": "fix",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.22
+// @version      0.26.23
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.22';
+  const VERSION = '0.26.23';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -621,9 +621,14 @@
         timeout: 15000,
         onload: function(resp) {
           var html = resp.responseText || '';
+          // Token wyciągamy od razu: ta sama odpowiedź, która mówi „wolno ci tu dodawać", zawiera
+          // CSRF potrzebny do wysłania. Bez tego wysyłka pobierałaby tę samą stronę drugi raz.
+          var mT = html.match(/name="tknB24"[^>]*value="([a-f0-9]{32})"/) ||
+                   html.match(/value="([a-f0-9]{32})"[^>]*name="tknB24"/);
           resolve({
             name:   _pnTitleFromCmsHtml(html),
-            canAdd: /name="tknB24"[^>]*value="[a-f0-9]{32}"|value="[a-f0-9]{32}"[^>]*name="tknB24"/.test(html),
+            csrf:   mT ? mT[1] : null,
+            canAdd: !!mT,
             base:   base
           });
         },
@@ -10065,6 +10070,11 @@ function showOnboarding(onComplete) {
     var dodaneCb = document.getElementById('b24t-news-tag-dodane');
     if (dodaneCb && isCustom) dodaneCb.checked = false;
 
+    // Przycisk submitu jest WSPÓLNY dla obu trybów, a bramka dostępu dotyczy tylko
+    // Niestandardowego. Bez tego blokada z Niestandardowego zostawałaby na przycisku
+    // po przełączeniu na News — i nie miałoby jej co zdjąć.
+    if (!isCustom) _customSubmitGate('cms', false);
+
     // Toggle "Tylko formularz" — widoczny tylko w Niestandardowe (ale mamy floating mode, więc ukrywamy przycisk)
     var formOnlyBtn = document.getElementById('b24t-news-formonly-toggle');
     if (formOnlyBtn) formOnlyBtn.style.display = 'none';
@@ -11026,14 +11036,15 @@ function showOnboarding(onComplete) {
     '</div>';
   }
 
+  // Odpowiada WYŁĄCZNIE za tag „dodane" w trybie News. Kropka dostępu i bramka submitu
+  // należą teraz do `_accessRefresh` — wcześniej ta funkcja robiła oba naraz i stąd brał się
+  // błąd z PANEL_STATE.md §5.4: obecność tagu w cache zwalniała bramkę „CMS" bez ani jednego
+  // zapytania. Obecność tagu nie mówi NIC o tym, czy sesja żyje — to dwa różne pytania.
   function _newsCheckTagDodane() {
     var statusEl   = document.getElementById('b24t-news-tag-dodane-status');
     var checkboxEl = document.getElementById('b24t-news-tag-dodane');
     var cmsBanner  = document.getElementById('b24t-news-cms-warn');
-    var cmsDot     = document.getElementById('b24t-news-cms-dot');
     var warnText   = document.getElementById('b24t-news-cms-warn-text');
-    // Domena w komunikatach = panel PROJEKTU (na stronie zewnętrznej host nic nie mówi o panelu)
-    var domain     = _baseLabel(_b24PanelBase(state.projectId));
     var isCustom   = newsState.mode === 'custom';
 
     var hasDodane = state.tags && Object.keys(state.tags).some(function(k) {
@@ -11041,82 +11052,24 @@ function showOnboarding(onComplete) {
     });
 
     if (hasDodane) {
-      // Stan 1: tag dodane istnieje w projekcie — CMS aktywny ✓
       if (statusEl)  { statusEl.textContent = '✓ dostępny'; statusEl.style.color = '#22c55e'; }
       if (checkboxEl){ checkboxEl.disabled = false; checkboxEl.checked = !isCustom; }
       if (cmsBanner) cmsBanner.style.display = 'none';
-      if (cmsDot)    { cmsDot.style.color = '#22c55e'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny'; }
-      if (isCustom)  _customSubmitGate('cms', false);
       return;
     }
 
-    // Brak tagu dodane — sprawdź czy użytkownik jest zalogowany do CMS (async)
-    if (statusEl)  { statusEl.textContent = '⏳ sprawdzanie...'; statusEl.style.color = '#6b7280'; }
+    // Brak tagu „dodane". W trybie Niestandardowe to nie przeszkadza; w News — ostrzegamy.
     if (checkboxEl){ checkboxEl.checked = false; checkboxEl.disabled = true; }
-    if (cmsBanner) cmsBanner.style.display = 'none';
-    if (cmsDot)    { cmsDot.style.color = '#6b7280'; cmsDot.classList.add('b24t-cms-checking'); cmsDot.title = 'Sprawdzanie CMS...'; }
-    if (isCustom)  _customSubmitGate('cms', true);
-
-    var sid = state.projectId || '';
-    if (!sid) {
-      // Brak ID projektu — pokaż ogólny błąd logowania
-      if (statusEl)  { statusEl.textContent = '⚠ brak projektu'; statusEl.style.color = '#f59e0b'; }
-      if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS niedostępny — brak projektu'; }
+    if (isCustom) {
+      if (statusEl)  { statusEl.textContent = ''; }
+      if (cmsBanner) cmsBanner.style.display = 'none';
       return;
     }
-
-    var _b24base = _b24PanelBase(sid);
-    GM_xmlhttpRequest({
-      method: 'GET',
-      url: _b24base + '/searches/add-new-mention/?sid=' + sid,
-      onload: function(resp) {
-        var m = (resp.responseText || '').match(/name="tknB24"[^>]*value="([a-f0-9]{32})"/);
-        if (!m) m = (resp.responseText || '').match(/value="([a-f0-9]{32})"[^>]*name="tknB24"/);
-        if (m && m[1]) {
-          // Stan 2: zalogowany do CMS — w News pokazujemy ostrzeżenie o braku tagu, w Niestandardowe brak tagu OK
-          state.tknB24 = m[1];
-          state.tknB24Base = _b24base;
-          if (isCustom) {
-            if (statusEl)  { statusEl.textContent = '✓ CMS aktywny'; statusEl.style.color = '#22c55e'; }
-            if (cmsDot)    { cmsDot.style.color = '#22c55e'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny (tryb Niestandardowe — tag "dodane" niewymagany)'; }
-            if (cmsBanner) cmsBanner.style.display = 'none';
-            _customSubmitGate('cms', false);
-          } else {
-            if (statusEl)  { statusEl.textContent = '⚠ brak tagu'; statusEl.style.color = '#f59e0b'; }
-            if (cmsDot)    { cmsDot.style.color = '#f59e0b'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny — brak tagu "dodane" w projekcie'; }
-            if (cmsBanner) {
-              if (warnText) warnText.innerHTML = '⚠ CMS aktywny, ale brak tagu <strong>dodane</strong> w tym projekcie — dodaj go w Brand24 w Ustawieniach tagów.';
-              cmsBanner.style.display = '';
-            }
-          }
-        } else {
-          // Stan 3: niezalogowany do CMS
-          if (statusEl)  { statusEl.textContent = '⚠ niezalogowany'; statusEl.style.color = '#f59e0b'; }
-          if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS niedostępny — zaloguj się do Brand24'; }
-          if (cmsBanner) {
-            var _msg = isCustom
-              ? '⚠ Zaloguj się do CMS Brand24 (' + domain + ') — bez logowania nie można dodawać wzmianek.'
-              : '⚠ Tag <strong>dodane</strong> niedostępny — zaloguj się do CMS Brand24 (' + domain + ').';
-            if (warnText) warnText.innerHTML = _msg;
-            cmsBanner.style.display = '';
-          }
-          if (isCustom) _customSubmitGate('cms', true);
-        }
-      },
-      onerror: function() {
-        // Błąd sieci — zakładamy brak logowania (bezpieczniejszy fallback)
-        if (statusEl)  { statusEl.textContent = '⚠ błąd sprawdzania'; statusEl.style.color = '#f59e0b'; }
-        if (cmsDot)    { cmsDot.style.color = '#ef4444'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS: błąd sieci przy sprawdzaniu'; }
-        if (cmsBanner) {
-          var _msg2 = isCustom
-            ? '⚠ Zaloguj się do CMS Brand24 (' + domain + ') — bez logowania nie można dodawać wzmianek.'
-            : '⚠ Tag <strong>dodane</strong> niedostępny — zaloguj się do CMS Brand24 (' + domain + ').';
-          if (warnText) warnText.innerHTML = _msg2;
-          cmsBanner.style.display = '';
-        }
-        if (isCustom) _customSubmitGate('cms', true);
-      }
-    });
+    if (statusEl)  { statusEl.textContent = '⚠ brak tagu'; statusEl.style.color = '#f59e0b'; }
+    if (cmsBanner) {
+      if (warnText) warnText.innerHTML = '⚠ Brak tagu <strong>dodane</strong> w tym projekcie — dodaj go w Brand24 w Ustawieniach tagów.';
+      cmsBanner.style.display = '';
+    }
   }
 
   // ── WIRE LOGIC ──
@@ -11161,6 +11114,17 @@ function showOnboarding(onComplete) {
       });
     }
 
+    // ─── KROPKA DOSTĘPU — kliknięcie wymusza ponowne sprawdzenie ───
+    // Po zalogowaniu się w innej karcie to jest jedno kliknięcie zamiast zamykania okna.
+    var _cmsDotEl = document.getElementById('b24t-news-cms-dot');
+    if (_cmsDotEl && !_cmsDotEl.dataset.wired) {
+      _cmsDotEl.dataset.wired = '1';
+      _cmsDotEl.addEventListener('click', function() {
+        _aliveCache = {};                       // wymuś także ponowne pytanie o sesję
+        _accessRefresh(state.projectId, true);
+      });
+    }
+
     // ─── CUSTOM SETTINGS GEAR ───
     var _customSettingsBtn = document.getElementById('b24t-news-custom-settings-btn');
     if (_customSettingsBtn && !_customSettingsBtn.dataset.wired) {
@@ -11170,6 +11134,7 @@ function showOnboarding(onComplete) {
 
     // ─── PANEL LOGIN CHECK ───
     _newsPanelDotCheck();
+    if (newsState.mode === 'custom') _accessRefresh(state.projectId, false);
 
     // ─── PROJEKT SELECTOR (strony zewnętrzne) ───
     var _projSelEl = document.getElementById('b24t-news-f-project-sel');
@@ -11206,8 +11171,10 @@ function showOnboarding(onComplete) {
         if (_tagsCached) _newsRefillTags();
         else _extEnsureTags(state.projectId); // brak w cache → dociągnij z API i odśwież
         // Nowy projekt może siedzieć na innym panelu — przelicz kropkę Panel dla jego bazy
-        // (status CMS przelicza się już w _newsRefillTags → _newsCheckTagDodane)
         _newsPanelDotCheck();
+        // … i zapytaj wprost o dostęp do NOWEGO projektu. Odpowiedź dla poprzedniego nie mówi
+        // o tym nic: inny projekt bywa na innym panelu i pod inną sesją.
+        _accessRefresh(state.projectId, true);
       });
     }
 
@@ -12857,7 +12824,15 @@ function showOnboarding(onComplete) {
             submitBtn.disabled = false;
             submitBtn.style.opacity = '';
             submitBtn.textContent = '✚ Dodaj wzmiankę do Brand24';
-            showErr(tknErr || '⚠ Brak tokenu CSRF.');
+            // Klik jest ostatecznym sprawdzeniem — skoro token nie przyszedł, poprzednia
+            // odpowiedź kropki jest nieaktualna. Unieważniamy ją i pytamy od nowa, żeby stan
+            // na ekranie zgadzał się z tym, co się przed chwilą stało. Formularz zostaje
+            // nietknięty: po zalogowaniu wystarczy kliknąć drugi raz.
+            _aliveCache = {};
+            delete _accessCache[String(sid) + '|' + _b24PanelBase(sid)];
+            _accessRefresh(sid, true);
+            showErr((tknErr || '⚠ Brak tokenu CSRF.') +
+                    ' <br><span style="opacity:.85">Formularz zostaje wypełniony — zaloguj się i kliknij ponownie.</span>');
             return;
           }
 
@@ -13106,6 +13081,21 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.23",
+      "date": "2026-09-11",
+      "label": "fix",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "fix", "text": "Kropka obok przycisku dodawania odpowiada teraz na pytanie „**czy mogę dodać wzmiankę do tego projektu**\", a nie „czy CMS działa\". Poprzednio wystarczało, że projekt ma w pamięci tag „dodane\", żeby kropka zrobiła się zielona i odblokowała wysyłkę — bez ani jednego zapytania do Brand24. Obecność tagu nie mówi nic o tym, czy sesja żyje"},
+        {"type": "fix", "text": "Wynik dotyczy konkretnej pary projekt + panel. Pytanie idzie pod adres panelu, na którym projekt żyje, więc projekt z panel.brand24.pl nie ma jak zostać sprawdzony sesją z app.brand24.com — zła kombinacja nie jest wykrywana, ona po prostu nie może powstać"},
+        {"type": "feat", "text": "Komunikat przy braku dostępu podaje **konkretną domenę** do zalogowania, zamiast ogólnego „zaloguj się do CMS\". Doszedł też stan „nie wiem\" na błąd sieci — wcześniej błąd sprawdzania był pokazywany tak samo jak brak logowania"},
+        {"type": "feat", "text": "Kropka mówi, ile ma lat („sprawdzone przed chwilą\" / „sprawdzone 8 minut temu\") i można ją kliknąć, żeby sprawdzić od nowa — po zalogowaniu w innej karcie to jedno kliknięcie zamiast zamykania i otwierania okna"},
+        {"type": "feat", "text": "Sprawdzanie odnawia się samo po powrocie do karty i wtedy, gdy inna karta Brand24 przechwyci świeży token — to drugie nie kosztuje żadnego zapytania"},
+        {"type": "fix", "text": "Gdy wysyłka nie dostanie tokenu, kropka natychmiast robi się czerwona, a komunikat mówi wprost, że **formularz zostaje wypełniony** — wystarczy się zalogować i kliknąć drugi raz"},
+        {"type": "fix", "text": "Blokada wysyłki z trybu Niestandardowego nie zostaje już na przycisku po przełączeniu na News — przycisk jest wspólny dla obu trybów, a zdejmować blokadę nie miał kto"}
+      ]
+    },
+    {
       "version": "0.26.22",
       "date": "2026-09-11",
       "label": "fix",
@@ -13204,17 +13194,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "Metryki wzmianki z Instagrama uzupełniają się same i są dokładne: polubienia, komentarze, udostępnienia (reposty) oraz wyświetlenia przy rolkach. Modal Instagrama pokazuje polubienia zaokrąglone, a komentarzy i repostów nie pokazuje wcale, więc liczby pobierane są tą samą drogą, którą sam Instagram wczytuje otwierany post"},
         {"type": "fix", "text": "Formularz odświeża się po przejściu do kolejnego posta bez przeładowania strony — dotąd trzymał dane tego, na którym panel został otwarty. Pola poprawione ręcznie nie są nadpisywane"},
         {"type": "fix", "text": "Adresy rolek w postaci /reels/KOD sprowadzają się do kanonicznego /p/KOD, więc sprawdzanie duplikatów wreszcie je rozpoznaje"}
-      ]
-    },
-    {
-      "version": "0.26.13",
-      "date": "2026-09-02",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Deduplikacja przy imporcie porównywała dosłowne adresy, więc te same artykuły w wersji AMP, z www i bez, albo z ukośnikiem na końcu wchodziły na listę po dwa razy. Na realnej paczce z 24 linków 11 było duplikatami i przechodziły wszystkie. Teraz porównywany jest adres kanoniczny — dedup działa jako pierwszy krok, przed skanowaniem i przed oceną AI, więc duplikaty nie zużywają już czasu ani limitów API"},
-        {"type": "feat", "text": "Nowy status \"✓ Sprawdzony\" — po przejściu do kolejnego URL-a poprzedni przestaje wisieć jako \"Otwarty\" i widać, gdzie skończyła się weryfikacja. Wiersze oznaczone \"Dodano\" lub \"Błąd\" zostają bez zmian"},
-        {"type": "fix", "text": "Pasek postępu liczy sprawdzone URL-e jako obrobione — wcześniej stał w miejscu, jeśli annotator przeglądał linki i świadomie ich nie dodawał"}
       ]
     }
   ];
@@ -19187,6 +19166,133 @@ Tej operacji nie można cofnąć.`)) {
     if (lbl) lbl.textContent = on ? ' ⏳ pobieram dokładne liczby…' : '';
   }
 
+  // ── DOSTĘP DO PROJEKTU I ŻYWOTNOŚĆ SESJI (patrz PANEL_STATE.md §4.5) ──────────────
+  // Kropka odpowiada na JEDNO pytanie: „czy mogę teraz dodać wzmiankę do TEGO projektu".
+  // Nie na „czy jestem zalogowany do CMS" — to pojęcie jest błędne. Sesje są niezależne
+  // per panel i per warstwa; zmierzone 2026-09-10: na .pl panel zalogowany, CMS .pl NIE,
+  // a formularz Django `/searches/` i tak oddał token. CMS jest potrzebny dopiero do projektów
+  // z cudzych kont, i wtedy jego brak jest pożądanym zabezpieczeniem, nie usterką.
+  //
+  // O kombinację panel×domena nie trzeba pytać osobno: **adres zapytania wybiera ciasteczka**.
+  // Pytamy panel projektu, więc projekt z .pl nie ma jak zostać sprawdzony sesją z .com —
+  // zła kombinacja nie jest wykrywana, ona po prostu nie może powstać.
+  //
+  // Dwa pytania o różnej zmienności i cenie, dlatego rozdzielone (zmierzone):
+  //   dostęp do projektu — zmienia się prawie nigdy (uprawnienia), ~1050 ms i ciężka strona
+  //   żywotność sesji    — zmienia się ciągle (wygaśnięcie), `getMe` = **51 bajtów**, ~390 ms
+  // Stąd: dostęp raz na projekt, żywotność często i za grosze.
+
+  var ACCESS_TTL_MS = 30 * 60 * 1000;  // uprawnienia same się nie zmieniają
+  var ALIVE_TTL_MS  = 60 * 1000;       // sesja potrafi paść w każdej chwili
+  var _accessCache = {};   // 'pid|base' -> {canAdd, name, csrf, at}
+  var _aliveCache  = {};   // base       -> {alive, at}
+
+  // `getMe` na panelu projektu. Trzy stany: true / false / null = nie wiadomo (brak tokenu
+  // albo błąd sieci). „Nie wiadomo" NIGDY nie udaje odpowiedzi — patrz §5.4, tam właśnie
+  // wnioskowanie z niepewnej przesłanki dawało zieloną kropkę bez żadnego sprawdzenia.
+  function _sessionAlive(base, cb) {
+    var c = _aliveCache[base];
+    if (c && Date.now() - c.at < ALIVE_TTL_MS) { cb(c.alive); return; }
+    if (!B24Bridge.token.isValid(base)) { cb(null); return; }
+    GM_xmlhttpRequest({
+      method: 'POST',
+      url: base + '/api/graphql',
+      headers: B24Bridge.token.headers(base),
+      data: JSON.stringify({ operationName: 'getMe', variables: {}, query: 'query getMe{getMe{loggedUser{id}}}' }),
+      timeout: 8000,
+      onload: function(resp) {
+        var ok = resp.status === 200 && (resp.responseText || '').indexOf('loggedUser') !== -1;
+        _aliveCache[base] = { alive: ok, at: Date.now() };
+        cb(ok);
+      },
+      onerror:   function() { cb(null); },
+      ontimeout: function() { cb(null); }
+    });
+  }
+
+  // Dowiedzione życie sesji za darmo: skoro inna karta Brand24 właśnie zapisała token dla tego
+  // panelu, to sesja tam żyje. Zero zapytań. Wołane z nasłuchu bridge'a.
+  function _markAliveFromBridge(base) {
+    if (base) _aliveCache[B24Bridge.normBase(base)] = { alive: true, at: Date.now() };
+  }
+
+  // Ciężkie sprawdzenie dostępu. Przy okazji zapisuje potwierdzoną nazwę projektu i CSRF,
+  // dzięki czemu wysyłka nie pobiera tej samej strony drugi raz.
+  function _accessCheck(pid, base, cb) {
+    _pnFetchNameCms(pid, base).then(function(r) {
+      if (!r) { cb(null); return; }
+      var rec = { canAdd: !!r.canAdd, name: r.name || null, csrf: r.csrf || null, at: Date.now() };
+      _accessCache[String(pid) + '|' + base] = rec;
+      if (rec.csrf) { state.tknB24 = rec.csrf; state.tknB24Base = base; }
+      if (rec.name) _pnSetVerified(pid, rec.name, PN_SRC_CMS, base);
+      cb(rec);
+    });
+  }
+
+  function _accessAgeLabel(ms) {
+    if (ms == null) return '';
+    var m = Math.floor(ms / 60000);
+    if (m < 1)  return 'sprawdzone przed chwilą';
+    if (m === 1) return 'sprawdzone minutę temu';
+    if (m < 5)  return 'sprawdzone ' + m + ' minuty temu';
+    return 'sprawdzone ' + m + ' minut temu';
+  }
+
+  // Kropka ma mówić także, ILE MA LAT — zamiast udawać pewność, której nie ma po kilku minutach.
+  var _dotState = { kind: null, base: null, at: null };
+  function _cmsDotSet(kind, base, at) {
+    _dotState = { kind: kind, base: base || null, at: at || null };
+    var dot = document.getElementById('b24t-news-cms-dot');
+    if (!dot) return;
+    var lbl = base ? _baseLabel(base) : '';
+    var age = at ? ' · ' + _accessAgeLabel(Date.now() - at) : '';
+    var map = {
+      checking:  ['● Sprawdzam',    'rgba(156,163,175,0.9)', 'Sprawdzanie dostępu' + (lbl ? ' (' + lbl + ')' : '') + '…'],
+      ok:        ['✓ Mogę dodać',   '#22c55e',               'Możesz dodać wzmiankę do tego projektu (' + lbl + ')' + age],
+      denied:    ['✗ Brak dostępu', '#ef4444',               'Nie masz dostępu do tego projektu na ' + lbl + ' — zaloguj się tam albo wybierz inny projekt' + age],
+      nosession: ['✗ Zaloguj się',  '#ef4444',               'Sesja ' + lbl + ' wygasła — otwórz ' + lbl + ' i zaloguj się'],
+      unknown:   ['● Nie wiem',     '#f59e0b',               'Nie udało się sprawdzić dostępu (' + lbl + ') — błąd sieci. Kliknij, by spróbować ponownie']
+    };
+    var m = map[kind] || map.unknown;
+    dot.textContent = m[0];
+    dot.style.color = m[1];
+    dot.title       = m[2];
+    dot.style.cursor = 'pointer';
+    dot.classList.toggle('b24t-cms-checking', kind === 'checking');
+  }
+
+  // Odmalowuje sam wiek w tooltipie, bez żadnego zapytania.
+  setInterval(function() {
+    if (_dotState.at && (_dotState.kind === 'ok' || _dotState.kind === 'denied')) {
+      _cmsDotSet(_dotState.kind, _dotState.base, _dotState.at);
+    }
+  }, 60000);
+
+  // Orkiestracja: najpierw tanio o sesję, potem (tylko jeśli żyje) drogo o dostęp.
+  // cb(rec|null) — rec.canAdd rozstrzyga; null = nie wiadomo.
+  function _accessRefresh(pid, force, cb) {
+    var done = function(kind, rec, base, at) {
+      _cmsDotSet(kind, base, at);
+      _customSubmitGate('cms', kind !== 'ok');
+      if (cb) cb(kind === 'ok' ? rec : null, kind);
+    };
+    if (!pid) { done('unknown', null, null, null); return; }
+    var base = _b24PanelBase(pid);
+    var cached = _accessCache[String(pid) + '|' + base];
+    var fresh  = cached && (Date.now() - cached.at < ACCESS_TTL_MS);
+
+    _cmsDotSet('checking', base, null);
+    _sessionAlive(base, function(alive) {
+      if (alive === false) { done('nosession', null, base, null); return; }
+      // alive === null (nie wiadomo) — nie zgadujemy, idziemy zapytać wprost o dostęp
+      if (!force && fresh) { done(cached.canAdd ? 'ok' : 'denied', cached, base, cached.at); return; }
+      _accessCheck(pid, base, function(rec) {
+        if (!rec) { done('unknown', null, base, null); return; }
+        done(rec.canAdd ? 'ok' : 'denied', rec, base, rec.at);
+      });
+    });
+  }
+
   // Jedyne miejsce, które steruje przyciskiem submitu w trybie Niestandardowe.
   function _customSubmitGate(which, blocked) {
     if (which) newsState.submitBlock[which] = !!blocked;
@@ -20053,11 +20159,28 @@ Tej operacji nie można cofnąć.`)) {
   // Reaktywne odświeżenie panelu Niestandardowe, gdy w bridge pojawi się świeży token (np. user
   // właśnie otworzył panel.brand24.pl). Rejestrowane TEŻ na stronach zewnętrznych — tam żyje ten
   // panel, a wcześniej listener wisiał tylko na /panel/results/, więc czekanie na token nic nie dawało.
+  // Powrót do karty to najczęstszy moment, w którym sesja zdążyła się zmienić — użytkownik
+  // właśnie był gdzie indziej, często żeby się zalogować. Sprawdzenie jest tanie (żywotność
+  // sesji = 51 bajtów), a dostęp i tak idzie z cache.
+  function _wireAccessOnFocus() {
+    if (window.__b24tAccessFocusWired) return;
+    window.__b24tAccessFocusWired = true;
+    document.addEventListener('visibilitychange', function() {
+      if (document.hidden) return;
+      if (!newsState.panelsOpen || newsState.mode !== 'custom' || !state.projectId) return;
+      _accessRefresh(state.projectId, false);
+    });
+  }
+
   function _wireBridgeReactiveRefresh() {
     B24Bridge.onChange('custom-dupcheck', function() {
       if (newsState.mode !== 'custom') return;
       var _pid = state.projectId || '';
       if (!_pid) return;
+      // Skoro inna karta Brand24 właśnie zapisała token, to sesja na jej panelu żyje —
+      // dowód za darmo, bez żadnego zapytania.
+      try { _markAliveFromBridge(B24Bridge.debug().lastBase); } catch(e) {}
+      if (newsState.mode === 'custom' && state.projectId) _accessRefresh(state.projectId, false);
       // Kropka Panel: wymuś ponowne sprawdzenie tylko gdy poprzednie wypadło negatywnie
       var panelDot = document.getElementById('b24t-news-panel-dot');
       if (panelDot && panelDot.textContent.indexOf('✗') !== -1) delete panelDot.dataset.checkedBase;
@@ -20108,6 +20231,7 @@ Tej operacji nie można cofnąć.`)) {
     if (!window.location.pathname.includes('/panel/results/')) {
       _initMiniMentionButton();
       _wireBridgeReactiveRefresh();
+      _wireAccessOnFocus();
       return;
     }
 
@@ -20290,6 +20414,7 @@ Tej operacji nie można cofnąć.`)) {
 
     // Reaktywne: gdy brand24.com zapisze świeży token → auto-ponów dupcheck w panelu Niestandardowe
     _wireBridgeReactiveRefresh();
+    _wireAccessOnFocus();
 
     // Zastosuj opcjonalne funkcje
     applyFeatures();

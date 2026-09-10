@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.27.1
+// @version      0.27.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -120,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.27.1';
+  const VERSION = '0.27.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -11204,7 +11204,7 @@ function showOnboarding(onComplete) {
         _i24wField('Data',
           '<div style="display:flex;gap:5px;align-items:center;">' +
             '<input id="b24t-news-f-date" class="b24t-i24w-input" type="text" placeholder="YYYY-MM-DD" style="flex:1;">' +
-            '<span id="b24t-news-date-detect-icon" style="display:none;font-size:13px;" title="Data wykryta automatycznie">\U0001f50d</span>' +
+            '<span id="b24t-news-date-detect-icon" style="display:none;font-size:13px;" title="Data wykryta automatycznie">🔍</span>' +
           '</div>', true, 'flex:1.9;') +
         _i24wField('Godz.', '<input id="b24t-news-f-hour" class="b24t-i24w-input" type="text" value="12" data-b24t-auto="12" style="text-align:center;padding:7px 4px;">', false, 'flex:.62;') +
         _i24wField('Min.',  '<input id="b24t-news-f-minute" class="b24t-i24w-input" type="text" value="00" data-b24t-auto="00" style="text-align:center;padding:7px 4px;">', false, 'flex:.62;') +
@@ -11254,7 +11254,7 @@ function showOnboarding(onComplete) {
           '</div>' +
         '</div>' +
         '<div id="b24t-news-tag-search-wrap" style="display:none;padding:0 9px 7px;">' +
-          '<input id="b24t-news-tag-search" class="b24t-i24w-input" type="text" placeholder="\U0001f50d Filtruj tagi\u2026" ' +
+          '<input id="b24t-news-tag-search" class="b24t-i24w-input" type="text" placeholder="🔍 Filtruj tagi\u2026" ' +
             'autocomplete="off" spellcheck="false" style="font-size:11px;padding:5px 8px;">' +
         '</div>' +
         '<div id="b24t-news-tag-list" style="display:none;flex-wrap:wrap;gap:4px;padding:0 9px 8px;' +
@@ -14143,7 +14143,7 @@ function showOnboarding(onComplete) {
     },
     {
       id: 'custom_form_i24w',
-      label: '\U0001f9ea Formularz wzmianki w stylu i24 Tools',
+      label: '🧪 Formularz wzmianki w stylu i24 Tools',
       desc: 'Eksperyment: formularz dodawania wzmianki dostaje wygl\u0105d okien z rozszerzenia i24 Tools (ciemny panel, akcent fioletowy, pola monospace). Zmienia si\u0119 WY\u0141\u0104CZNIE wygl\u0105d \u2014 wszystkie pola, autouzupe\u0142nianie, sprawdzanie duplikatu i wysy\u0142ka dzia\u0142aj\u0105 tak samo. Po prze\u0142\u0105czeniu zamknij i otw\u00f3rz okno wzmianek.',
     },
     {

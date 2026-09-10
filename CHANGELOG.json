@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.27.2",
+    "date": "2026-09-11",
+    "label": "fix",
+    "changes": [
+      "fix: W eksperymentalnym formularzu zamiast lupy w polu filtrowania tagów wyświetlał się dosłowny ciąg znaków — emoji było zapisane w formie, której JavaScript nie rozpoznaje. To samo dotyczyło ikony wykrytej daty i ikony przy nazwie funkcji w ustawieniach"
+    ]
+  },
+  {
     "version": "0.27.1",
     "date": "2026-09-11",
     "label": "fix",

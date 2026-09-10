@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.27.0
+// @version      0.27.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -120,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.27.0';
+  const VERSION = '0.27.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -10229,7 +10229,12 @@ function showOnboarding(onComplete) {
       // W trybie tylko-formularz zwężamy panel
       if (isOn) {
         panelMain.dataset.origWidth = panelMain.style.width || '';
-        panelMain.style.width = 'min(560px, calc(100vw - 40px))';
+        // Eksperyment i24 Tools celuje w rozmiar TAMTYCH okien (320–390 px), nie w nasze 560.
+        // Szerokość jest częścią tego, co ma zostać ocenione — formularz w szerokiej kolumnie
+        // wygląda inaczej niż ten sam formularz w wąskim oknie.
+        panelMain.style.width = loadFeatures().custom_form_i24w
+          ? 'min(384px, calc(100vw - 40px))'
+          : 'min(560px, calc(100vw - 40px))';
       } else if (panelMain.dataset.origWidth !== undefined) {
         panelMain.style.width = panelMain.dataset.origWidth;
       }
@@ -11090,9 +11095,11 @@ function showOnboarding(onComplete) {
       '.b24t-i24w-icon{width:22px;height:22px;border-radius:7px;display:inline-flex;align-items:center;',
       '  justify-content:center;font-size:13px;flex-shrink:0;background:linear-gradient(135deg,var(--w-acc),var(--w-acc2));',
       '  box-shadow:0 4px 12px -2px rgba(124,92,255,.55);}',
-      '.b24t-i24w-body{padding:12px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;}',
+      '.b24t-i24w-body{padding:12px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;}',
+      // Rozmiar czcionek zostaje jak w i24 Tools — zagęszczenie idzie z odstępów i liczby
+      // wierszy, nie ze zmniejszania tekstu. Zmniejszony napis nie jest gęstszy, tylko gorszy.
       '.b24t-i24w-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--w-dim);',
-      '  font-weight:600;margin-bottom:2px;display:block;}',
+      '  font-weight:600;margin-bottom:0;display:block;}',
       '.b24t-i24w-input,.b24t-i24w-textarea,.b24t-i24w-select{width:100%;background:var(--w-bg2)!important;',
       '  border:1px solid var(--w-bd);border-radius:8px;color:var(--w-tx)!important;padding:7px 10px;',
       '  font-size:12.5px;font-family:ui-monospace,"SF Mono",Menlo,monospace;outline:none;box-sizing:border-box;',
@@ -11102,7 +11109,7 @@ function showOnboarding(onComplete) {
       '.b24t-i24w-textarea{resize:vertical;min-height:60px;}',
       '.b24t-i24w-row{display:flex;gap:8px;}',
       '.b24t-i24w-row>*{flex:1;min-width:0;}',
-      '.b24t-i24w-field{display:flex;flex-direction:column;gap:4px;}',
+      '.b24t-i24w-field{display:flex;flex-direction:column;gap:3px;}',
       '.b24t-i24w-hint{font-size:11px;color:var(--w-dim);}',
       '.b24t-i24w-button{appearance:none;border:none;padding:9px 14px;border-radius:8px;font-size:13px;',
       '  font-weight:600;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;',
@@ -11150,16 +11157,21 @@ function showOnboarding(onComplete) {
   // przełącza widoczność na `flex`.
   function _newsFormHtmlI24w() {
     return '<div class="b24t-i24w"><div class="b24t-i24w-panel">' +
+
+      // Nagłówek niesie też „Wyczyść” — w i24 Tools przyciski okna siedzą właśnie tam.
+      // Dzięki temu znika cały wiersz „DANE ARTYKUŁU + Wyczyść” z wersji zwykłej.
       '<div class="b24t-i24w-header">' +
         '<div class="b24t-i24w-title"><span class="b24t-i24w-icon">\u271a</span>' +
         '<span>Dodaj wzmiank\u0119</span></div>' +
+        '<button id="b24t-news-clear-btn" class="b24t-i24w-button b24t-i24w-button-ghost" ' +
+          'style="padding:3px 9px;font-size:11px;" title="Wyczy\u015b\u0107 pola">\u2715</button>' +
       '</div>' +
       '<div class="b24t-i24w-body">' +
 
       '<div id="b24t-news-cms-warn" class="b24t-i24w-status warn" style="display:none;">' +
         '<span id="b24t-news-cms-warn-text"></span>' +
         '<button id="b24t-news-cms-recheck" class="b24t-i24w-button b24t-i24w-button-ghost" ' +
-          'style="margin-left:8px;padding:2px 8px;font-size:11px;">\u21ba Sprawd\u017a ponownie</button>' +
+          'style="margin-left:6px;padding:2px 7px;font-size:11px;">\u21ba</button>' +
       '</div>' +
       '<div id="b24t-news-form-err" class="b24t-i24w-status err" style="display:none;"></div>' +
       '<div id="b24t-news-lang-warn" class="b24t-i24w-status warn" style="display:none;"></div>' +
@@ -11172,35 +11184,30 @@ function showOnboarding(onComplete) {
       '</div>' +
 
       _i24wField('URL wzmianki',
-        '<div style="display:flex;gap:6px;align-items:center;">' +
+        '<div style="display:flex;gap:5px;align-items:center;">' +
           '<input id="b24t-news-f-url" class="b24t-i24w-input" type="text" readonly ' +
-            'placeholder="(kliknij URL z listy)" style="flex:1;font-size:11px;">' +
+            'placeholder="(kliknij URL z listy)" style="flex:1;font-size:11px;padding:6px 9px;">' +
           '<button id="b24t-news-lang-force-open" class="b24t-i24w-button b24t-i24w-button-ghost" ' +
-            'style="display:none;padding:4px 8px;font-size:11px;" title="Otw\u00f3rz mimo ostrze\u017cenia">Otw\u00f3rz</button>' +
+            'style="display:none;padding:4px 7px;font-size:11px;" title="Otw\u00f3rz mimo ostrze\u017cenia">\u2197</button>' +
         '</div>', true) +
       '<div id="b24t-news-dup-status" style="display:none;font-size:11px;"></div>' +
 
-      '<div style="display:flex;align-items:center;justify-content:space-between;">' +
-        '<span class="b24t-i24w-label" style="margin:0;">Dane artyku\u0142u</span>' +
-        '<button id="b24t-news-clear-btn" class="b24t-i24w-button b24t-i24w-button-ghost" ' +
-          'style="padding:3px 9px;font-size:11px;">\u2715 Wyczy\u015b\u0107</button>' +
-      '</div>' +
-
-      _i24wField('Tytu\u0142 artyku\u0142u',
-        '<input id="b24t-news-f-title" class="b24t-i24w-input" type="text" placeholder="Wklej tytu\u0142 artyku\u0142u\u2026">', true) +
+      _i24wField('Tytu\u0142',
+        '<input id="b24t-news-f-title" class="b24t-i24w-input" type="text" placeholder="Tytu\u0142 artyku\u0142u\u2026">', true) +
       _i24wField('Tre\u015b\u0107',
-        '<textarea id="b24t-news-f-content" class="b24t-i24w-textarea" rows="8" ' +
-          'placeholder="Wklej fragment tre\u015bci artyku\u0142u\u2026" style="min-height:150px;"></textarea>', true) +
+        '<textarea id="b24t-news-f-content" class="b24t-i24w-textarea" rows="3" ' +
+          'placeholder="Fragment tre\u015bci z wzmiank\u0105\u2026" style="min-height:62px;"></textarea>', true) +
 
-      _i24wField('Data',
-        '<div style="display:flex;gap:6px;align-items:center;">' +
-          '<input id="b24t-news-f-date" class="b24t-i24w-input" type="text" placeholder="YYYY-MM-DD" style="flex:1;">' +
-          '<span id="b24t-news-date-detect-icon" style="display:none;font-size:14px;" title="Data wykryta automatycznie">\U0001f50d</span>' +
-        '</div>', true) +
-
+      // Data, godzina i minuty w JEDNYM wierszu — tak jak w Link Adderze rozszerzenia.
+      // W wersji zwykłej zajmowały dwa wiersze plus osobne etykiety.
       '<div class="b24t-i24w-row">' +
-        _i24wField('Godzina', '<input id="b24t-news-f-hour" class="b24t-i24w-input" type="text" value="12" data-b24t-auto="12" style="text-align:center;">') +
-        _i24wField('Minuty',  '<input id="b24t-news-f-minute" class="b24t-i24w-input" type="text" value="00" data-b24t-auto="00" style="text-align:center;">') +
+        _i24wField('Data',
+          '<div style="display:flex;gap:5px;align-items:center;">' +
+            '<input id="b24t-news-f-date" class="b24t-i24w-input" type="text" placeholder="YYYY-MM-DD" style="flex:1;">' +
+            '<span id="b24t-news-date-detect-icon" style="display:none;font-size:13px;" title="Data wykryta automatycznie">\U0001f50d</span>' +
+          '</div>', true, 'flex:1.9;') +
+        _i24wField('Godz.', '<input id="b24t-news-f-hour" class="b24t-i24w-input" type="text" value="12" data-b24t-auto="12" style="text-align:center;padding:7px 4px;">', false, 'flex:.62;') +
+        _i24wField('Min.',  '<input id="b24t-news-f-minute" class="b24t-i24w-input" type="text" value="00" data-b24t-auto="00" style="text-align:center;padding:7px 4px;">', false, 'flex:.62;') +
       '</div>' +
 
       _i24wField('Kategoria',
@@ -11214,19 +11221,6 @@ function showOnboarding(onComplete) {
           '<option value="11">11 \u2014 TikTok</option><option value="12">12 \u2014 LinkedIn</option>' +
         '</select>') +
 
-      '<div id="b24t-news-f-custom-fields" class="b24t-i24w-box" style="display:none;">' +
-        '<span class="b24t-i24w-label" style="margin:0;">Metryki (opcjonalne)' +
-          '<span id="b24t-news-metrics-status" style="font-weight:500;text-transform:none;letter-spacing:0;"></span></span>' +
-        '<div class="b24t-i24w-row">' +
-          _i24wField('Likes',     '<input id="b24t-news-f-likes" class="b24t-i24w-input" type="number" min="0" placeholder="0">') +
-          _i24wField('Pageviews', '<input id="b24t-news-f-pageviews" class="b24t-i24w-input" type="number" min="0" placeholder="0">') +
-        '</div>' +
-        '<div class="b24t-i24w-row">' +
-          _i24wField('Shares',   '<input id="b24t-news-f-shares" class="b24t-i24w-input" type="number" min="0" placeholder="0">') +
-          _i24wField('Comments', '<input id="b24t-news-f-comments" class="b24t-i24w-input" type="number" min="0" placeholder="0">') +
-        '</div>' +
-      '</div>' +
-
       '<div class="b24t-i24w-row">' +
         _i24wField('Kraj',
           '<select id="b24t-news-f-country" class="b24t-i24w-select">' + _countryOptionsHtml('') + '</select>' +
@@ -11237,21 +11231,34 @@ function showOnboarding(onComplete) {
           '</select>') +
       '</div>' +
 
+      // Cztery metryki w jednym wierszu zamiast siatki 2×2 — to są krótkie liczby,
+      // więc wąskie pole ich nie przycina, a oszczędza cały wiersz.
+      '<div id="b24t-news-f-custom-fields" class="b24t-i24w-box" style="display:none;padding:7px 9px;gap:6px;">' +
+        '<span class="b24t-i24w-label">Metryki (opcjonalne)' +
+          '<span id="b24t-news-metrics-status" style="font-weight:500;text-transform:none;letter-spacing:0;"></span></span>' +
+        '<div class="b24t-i24w-row" style="gap:5px;">' +
+          _i24wField('Lajki',  '<input id="b24t-news-f-likes" class="b24t-i24w-input" type="number" min="0" placeholder="0" style="padding:6px 4px;text-align:center;">') +
+          _i24wField('Wy\u015bwietl.', '<input id="b24t-news-f-pageviews" class="b24t-i24w-input" type="number" min="0" placeholder="0" style="padding:6px 4px;text-align:center;">') +
+          _i24wField('Udost.', '<input id="b24t-news-f-shares" class="b24t-i24w-input" type="number" min="0" placeholder="0" style="padding:6px 4px;text-align:center;">') +
+          _i24wField('Komen.', '<input id="b24t-news-f-comments" class="b24t-i24w-input" type="number" min="0" placeholder="0" style="padding:6px 4px;text-align:center;">') +
+        '</div>' +
+      '</div>' +
+
       '<div id="b24t-news-tag-row" class="b24t-i24w-box" style="padding:0;gap:0;">' +
         '<div id="b24t-news-tag-toggle" style="display:flex;align-items:center;justify-content:space-between;' +
-          'padding:8px 10px;cursor:pointer;user-select:none;" title="Rozwi\u0144/zwi\u0144 list\u0119 tag\u00f3w">' +
-          '<span class="b24t-i24w-label" style="margin:0;">Tagi</span>' +
+          'padding:7px 9px;cursor:pointer;user-select:none;" title="Rozwi\u0144/zwi\u0144 list\u0119 tag\u00f3w">' +
+          '<span class="b24t-i24w-label">Tagi</span>' +
           '<div style="display:flex;align-items:center;gap:6px;">' +
             '<span id="b24t-news-tag-summary" style="font-size:11px;color:var(--w-dim);">Dodane</span>' +
             '<span id="b24t-news-tag-chevron" style="font-size:10px;color:var(--w-dim);transition:transform .2s;">\u25bc</span>' +
           '</div>' +
         '</div>' +
-        '<div id="b24t-news-tag-search-wrap" style="display:none;padding:0 10px 8px;">' +
+        '<div id="b24t-news-tag-search-wrap" style="display:none;padding:0 9px 7px;">' +
           '<input id="b24t-news-tag-search" class="b24t-i24w-input" type="text" placeholder="\U0001f50d Filtruj tagi\u2026" ' +
             'autocomplete="off" spellcheck="false" style="font-size:11px;padding:5px 8px;">' +
         '</div>' +
-        '<div id="b24t-news-tag-list" style="display:none;flex-wrap:wrap;gap:5px;padding:0 10px 10px;' +
-          'max-height:160px;overflow-y:auto;"></div>' +
+        '<div id="b24t-news-tag-list" style="display:none;flex-wrap:wrap;gap:4px;padding:0 9px 8px;' +
+          'max-height:116px;overflow-y:auto;"></div>' +
       '</div>' +
 
       '<div id="b24t-news-custom-prompt-row" class="b24t-i24w-field" style="display:none;">' +
@@ -11259,9 +11266,9 @@ function showOnboarding(onComplete) {
         '<select id="b24t-news-custom-prompt-sel" class="b24t-i24w-select"><option value="">\u2014 wybierz \u2014</option></select>' +
       '</div>' +
 
-      '<button id="b24t-news-submit-btn" class="b24t-i24w-button b24t-i24w-button-primary" style="width:100%;">' +
-        '\u271a Dodaj wzmiank\u0119 do Brand24</button>' +
-      '<div id="b24t-news-submit-status" style="font-size:11px;text-align:center;min-height:15px;"></div>' +
+      '<button id="b24t-news-submit-btn" class="b24t-i24w-button b24t-i24w-button-primary" ' +
+        'style="width:100%;padding:8px 14px;">\u271a Dodaj wzmiank\u0119</button>' +
+      '<div id="b24t-news-submit-status" style="font-size:11px;text-align:center;min-height:14px;"></div>' +
 
       '</div></div></div>';
   }
@@ -13303,6 +13310,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.27.1",
+      "date": "2026-09-11",
+      "label": "fix",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "fix", "text": "Eksperymentalny formularz został **znacznie zagęszczony** — wcześniej miał wygląd okien i24 Tools, ale nie ich rozmiar. Panel zwężony z 560 do 384 px (tyle mają tamte okna), data z godziną i minutami w jednym wierszu, cztery metryki w jednym wierszu zamiast siatki, pole treści niższe, a przycisk czyszczenia przeniósł się do nagłówka — co usunęło cały wiersz. Rozmiary czcionek bez zmian: zagęszczenie idzie z odstępów i liczby wierszy, bo zmniejszony napis nie jest gęstszy, tylko gorzej czytelny"}
+      ]
+    },
+    {
       "version": "0.27.0",
       "date": "2026-09-11",
       "label": "feat",
@@ -13410,15 +13426,6 @@ function showOnboarding(onComplete) {
         {"type": "fix",  "text": "Tytuł wzmianki z TikToka to pierwsze zdanie opisu filmu, a nie nazwa konta. TikTok przy przejściu do filmu nie aktualizuje metadanych strony — zostają z profilu, więc do tytułu trafiała nazwa konta"},
         {"type": "fix",  "text": "Poprawiona data publikacji filmu z TikToka. Wcześniej liczona wyłącznie z identyfikatora filmu, co jest tylko przybliżeniem — na zmierzonym przykładzie rozjazd sięgnął 2 godzin 34 minut, czyli film opublikowany tuż po północy trafiał do wzmianki z poprzednim dniem. Teraz wpisywana jest tymczasowo, a zaraz potem nadpisywana prawdziwym czasem publikacji"},
         {"type": "fix",  "text": "Liczniki filmu czytane są z widocznego filmu, a nie pierwszego w drzewie strony. Widok TikToka trzyma w pamięci trzy filmy naraz (poprzedni, bieżący, następny), każdy z własnym kompletem liczb"}
-      ]
-    },
-    {
-      "version": "0.26.17",
-      "date": "2026-09-10",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Data i godzina publikacji posta z Instagrama trafiają wreszcie do formularza. Pola GODZINA i MINUTY miały wpisane na sztywno \"12\" i \"00\", a data po pierwszym otwarciu panelu dostawała \"dzisiaj\" — wtyczka brała te wartości za ręczną poprawkę użytkownika i nie pozwalała ich nadpisać. Efekt: wzmianka zapisywała się z dzisiejszą datą i godziną 12:00 zamiast prawdziwego czasu publikacji"}
       ]
     }
   ];

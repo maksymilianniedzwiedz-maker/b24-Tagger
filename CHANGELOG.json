@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.27.1",
+    "date": "2026-09-11",
+    "label": "fix",
+    "changes": [
+      "fix: Eksperymentalny formularz został **znacznie zagęszczony** — wcześniej miał wygląd okien i24 Tools, ale nie ich rozmiar. Panel zwężony z 560 do 384 px (tyle mają tamte okna), data z godziną i minutami w jednym wierszu, cztery metryki w jednym wierszu zamiast siatki, pole treści niższe, a przycisk czyszczenia przeniósł się do nagłówka — co usunęło cały wiersz. Rozmiary czcionek bez zmian: zagęszczenie idzie z odstępów i liczby wierszy, bo zmniejszony napis nie jest gęstszy, tylko gorzej czytelny"
+    ]
+  },
+  {
     "version": "0.27.0",
     "date": "2026-09-11",
     "label": "feat",

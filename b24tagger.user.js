@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.24
+// @version      0.26.25
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -82,6 +82,10 @@
         for (var i = 0; i < patterns.length; i++) {
           try {
             var result = patterns[i]();
+            // NIE zamieniaj na wspólną stałą RX_ISO_DATE. Ten blok wykonuje się i robi `return`
+            // zanim skrypt dojdzie do sekcji CONSTANTS, więc `const` jest tu jeszcze w martwej
+            // strefie czasowej — odwołanie rzuciłoby ReferenceError, który `catch` niżej połyka,
+            // i przekazywanie daty artykułu przestałoby działać bez śladu.
             if (result && /^\d{4}-\d{2}-\d{2}$/.test(result) && result > '2000-01-01') return result;
           } catch(e) {}
         }
@@ -116,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.24';
+  const VERSION = '0.26.25';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -166,6 +170,24 @@
   const HEALTH_CHECK_INTERVAL = 30000;
   const ACTION_TIMEOUT_WARN = 10000;
   const RETRY_DELAYS = [2000, 4000, 8000, 12000, 20000]; // 5 prób — Brand24 API czasem losowo failuje
+
+  // Wzorce powtarzane w kilkunastu miejscach. Nazwa mówi, co sprawdzamy — przy literale
+  // trzeba to za każdym razem odczytać ze składni. Ważniejsze: dopóki kopii było dziesięć,
+  // poprawka w jednej z nich nie dotykała reszty. Żadnej nie wolno dać flagi `g` — współdzielony
+  // regex z `g` trzyma `lastIndex` między wywołaniami i zaczyna gubić co drugie trafienie.
+  const RX_ISO_DATE  = /^\d{4}-\d{2}-\d{2}$/;   // 2026-09-11
+  const RX_ISO_MONTH = /^\d{4}-\d{2}$/;         // 2026-09
+  // Konwencja nazewnicza projektów H&M: sufiks kraju, np. „H&M_PL”. Żródło kraju wzmianki
+  // i ostrzeżenia o języku — patrz CMS_CAPABILITIES.md §2.1 (świadome uproszczenie, nie tykać).
+  const RX_PROJECT_COUNTRY = /_([A-Z]{2})$/;
+
+  // Kraj z nazwy projektu → oczekiwany język treści. Stała mapa: stała w dwóch kopiach,
+  // które musiały być aktualizowane równolegle.
+  const LANG_BY_COUNTRY = {
+    PL:'pl', TR:'tr', DE:'de', FR:'fr', IT:'it', ES:'es', PT:'pt', NL:'nl', SE:'sv',
+    NO:'no', DK:'da', FI:'fi', CZ:'cs', SK:'sk', HU:'hu', RO:'ro', GR:'el', BG:'bg',
+    HR:'hr', UA:'uk', RU:'ru', JP:'ja', KR:'ko', CN:'zh', AR:'ar', IN:'hi', BR:'pt'
+  };
 
   // ───────────────────────────────────────────
   // STATE
@@ -237,6 +259,15 @@
       .replace(/'/g, '&#39;');
   }
 
+  // Nazwa projektu, która niczego nie mówi: pusta, za krótka, generyczny tytuł Brand24 albo
+  // nasz własny zastępnik „Project 123” / „Projekt 123”. Jedno miejsce, bo ten warunek stał
+  // wcześniej w OŚMIU kopiach — i zdążyły się rozjechać: kopia w `_pnResolve` nie znała
+  // polskiego wariantu, więc „Projekt 123” przechodził tam jako dobra nazwa.
+  function _isFallbackProjectName(name) {
+    return !name || name.length < 3 || name === 'Brand24' || name === 'Panel Brand24' ||
+           /^(Project|Projekt)\s+\d+$/.test(name);
+  }
+
   // GM storage — cross-domain mirror dla kluczowych danych (GM_getValue działa na każdej stronie)
   function _gmGetProjects() {
     var fromLS = lsGet(LS.PROJECTS, null);
@@ -252,18 +283,15 @@
   function _gmGetProjectNames() {
     var fromLS = lsGet(LS.PROJECT_NAMES, null);
     var lsProj = lsGet(LS.PROJECTS, null);
-    var _pnFallback = function(n) {
-      return !n || n.length < 3 || n === 'Brand24' || n === 'Panel Brand24' || /^(Project|Projekt)\s+\d+$/.test(n);
-    };
     var lsHasData = (lsProj && Object.keys(lsProj).length > 0) || (fromLS && Object.keys(fromLS).length > 0);
     if (lsHasData) {
       var merged = {};
       if (lsProj) Object.keys(lsProj).forEach(function(pid) {
         var n = (lsProj[pid] || {}).name;
-        if (!_pnFallback(n)) merged[String(pid)] = n;
+        if (!_isFallbackProjectName(n)) merged[String(pid)] = n;
       });
       if (fromLS) Object.keys(fromLS).forEach(function(pid) {
-        if (!_pnFallback(fromLS[pid])) merged[String(pid)] = fromLS[pid];
+        if (!_isFallbackProjectName(fromLS[pid])) merged[String(pid)] = fromLS[pid];
       });
       if (!_gmPNSynced && Object.keys(merged).length > 0) {
         var _syncProjs = {};
@@ -479,11 +507,7 @@
 
   function _pnSet(projectId, name) {
     if (!projectId || !name) return;
-    // Nie zapisuj fallbackowych nazw
-    var isFallback = !name || name === 'Brand24' || name === 'Panel Brand24' ||
-                     /^Project\s+\d+$/.test(name) || /^Projekt\s+\d+$/.test(name) ||
-                     name.length < 3;
-    if (isFallback) return;
+    if (_isFallbackProjectName(name)) return;   // nie zapisujemy nazw, które niczego nie mówią
     // Nazwa potwierdzona przez API bije nazwę z tytułu karty — bez tej bramki każde wejście
     // na panel z niegotowym tytułem SPA zatruwałoby z powrotem to, co API właśnie naprawiło.
     // Wołana z `detectProject`, czyli przy KAŻDYM otwarciu projektu. Patrz PANEL_STATE.md §5.9.
@@ -502,16 +526,14 @@
     var cached = _pnGet(projectId);
     if (cached) return cached;
     // 2. Aktualny state (jeśli to bieżący projekt)
-    if (state.projectId === parseInt(projectId) && state.projectName &&
-        !/^Project\s+\d+$/.test(state.projectName) && !/^Projekt\s+\d+$/.test(state.projectName)) {
+    if (state.projectId === parseInt(projectId) && !_isFallbackProjectName(state.projectName)) {
       return state.projectName;
     }
     // 3. LS.PROJECTS.name (lub GM mirror cross-domain)
     var projects = _gmGetProjects();
     var pData = projects[String(projectId)];
     var lsName = pData && typeof pData === 'object' ? pData.name : null;
-    if (lsName && lsName !== 'Brand24' && lsName !== 'Panel Brand24' &&
-        !/^Project\s+\d+$/.test(lsName) && lsName.length >= 3) {
+    if (!_isFallbackProjectName(lsName)) {
       // Okazja żeby zapisać do PROJECT_NAMES
       _pnSet(projectId, lsName);
       return lsName;
@@ -688,10 +710,6 @@
     var _cache = null;
     var _listeners = {};
 
-    var _isFallback = function(n) {
-      return !n || n.length < 3 || n === 'Brand24' || n === 'Panel Brand24' || /^(Project|Projekt)\s+\d+$/.test(n);
-    };
-
     function _read() {
       if (_cache) return _cache;
       try {
@@ -820,7 +838,7 @@
           var prev = merged[String(pid)] || {};
           var rec = Object.assign({}, prev, p, { updatedAt: Date.now() });
           // Nie nadpisuj dobrej nazwy fallbackiem, ale resztę danych (np. tagIds) zapisz zawsze
-          if (_isFallback(p.name) && !_isFallback(prev.name)) rec.name = prev.name;
+          if (_isFallbackProjectName(p.name) && !_isFallbackProjectName(prev.name)) rec.name = prev.name;
           merged[String(pid)] = rec;
         });
         _write({ projects: merged });
@@ -841,7 +859,7 @@
         var all = this.all();
         Object.keys(all).forEach(function(pid) {
           var n = all[pid] && all[pid].name;
-          if (n && !_isFallback(n)) out[pid] = n;
+          if (!_isFallbackProjectName(n)) out[pid] = n;
         });
         return out;
       }
@@ -1759,7 +1777,7 @@
 
     // ── KROK 1: walidacja dat ───────────────────────────────────────────
     diag.step = 'date_validation';
-    const isInvalidDate = function(d) { return !d || d === '9999' || d === '0000' || !/^\d{4}-\d{2}-\d{2}$/.test(d); };
+    const isInvalidDate = function(d) { return !d || d === '9999' || d === '0000' || !RX_ISO_DATE.test(d); };
     if (isInvalidDate(dateFrom) || isInvalidDate(dateTo)) {
       const fallback = getAnnotatorDates();
       addLog(`⚠ [DIAG/DATY] Brak dat w pliku — używam fallback: ${fallback.dateFrom} → ${fallback.dateTo}`, 'warn');
@@ -2021,7 +2039,7 @@
       var colDate = colMap.date;
       var projectDates = projectRows
         .map(function(r) { return (r[colDate] || '').substring(0, 10); })
-        .filter(function(d) { return d && /^\d{4}-\d{2}-\d{2}$/.test(d); });
+        .filter(function(d) { return d && RX_ISO_DATE.test(d); });
       var projectDateFrom = projectDates.length
         ? projectDates.reduce(function(m, d) { return d < m ? d : m; })
         : partition.dateFrom;
@@ -5746,20 +5764,30 @@
         var doc = parser.parseFromString(html, 'text/html');
         var tagSel = doc.getElementById('tag');
         if (!tagSel) continue;
-        var rawTitle = (doc.title || '').split(' - ')[0].trim();
-        var projName = (rawTitle && rawTitle !== 'Brand24') ? rawTitle : ('Project ' + pid);
+        // Tytuł strony Django ma łamanie wiersza przed „Brand24” (zmierzone:
+        // „Zalando_GR -\n\t\tBrand24 - Dashboard”), więc `split(' - ')[0]` NIE odcinało sufiksu
+        // i jako nazwę projektu zapisywało „Zalando_GR -\n\t\tBrand24”. `_pnTitleFromCmsHtml`
+        // normalizuje białe znaki i tnie na „- Brand24”, więc działa na obu panelach.
+        var projName = _pnTitleFromCmsHtml(html);
         var tagIds = {};
         Array.from(tagSel.querySelectorAll('option')).forEach(function(o) {
           if (!o.value) return;
           tagIds[o.textContent.trim()] = parseInt(o.value, 10);
         });
         var saved = lsGet(LS.PROJECTS, {});
-        saved[pid] = { name: projName, tagIds: tagIds, untaggedId: 1, updatedAt: new Date().toISOString() };
+        var prevName = (saved[pid] || {}).name;
+        saved[pid] = { tagIds: tagIds, untaggedId: 1, updatedAt: new Date().toISOString() };
+        // Nazwa tylko gdy prawdziwa — wcześniej leciało tu „Project <pid>”, czyli kolejne
+        // źródło zastępczych nazw w dropdownie (PANEL_STATE.md §5.9).
+        if (!_isFallbackProjectName(projName)) saved[pid].name = projName;
+        else if (prevName) saved[pid].name = prevName;
         lsSet(LS.PROJECTS, saved);
         _gmSaveProjects(saved);
-        _pnSet(pid, projName);
-        resolved.push(projName);
-        addLog('✓ Auto-załadowano: ' + projName + ' (' + Object.keys(tagIds).length + ' tagów)', 'success');
+        var label = saved[pid].name || ('Projekt ' + pid);
+        // Nazwa ze strony projektu jest potwierdzona przez Brand24, nie zgadnięta z tytułu karty.
+        if (!_isFallbackProjectName(projName)) _pnSetVerified(pid, projName, PN_SRC_CMS, _b24HostBase());
+        resolved.push(label);
+        addLog('✓ Auto-załadowano: ' + label + ' (' + Object.keys(tagIds).length + ' tagów)', 'success');
       } catch(e) {
         addLog('⚠ Auto-resolve ' + pid + ': ' + (e && e.message || e), 'warn');
       }
@@ -6285,7 +6313,7 @@
 
     // Próbuj wyciągnąć nazwę z tytułu strony — ale sprawdź czy nie jest to generyczny tytuł Brand24
     const rawTitle = document.title.split(' - ')[0].trim();
-    const isFallbackTitle = !rawTitle || rawTitle === 'Brand24' || rawTitle === 'Panel Brand24' || rawTitle.length < 3;
+    const isFallbackTitle = _isFallbackProjectName(rawTitle);
     state.projectName = isFallbackTitle ? `Project ${projectId}` : rawTitle;
 
     // Jeśli tytuł był fallbackiem — obserwuj zmiany tytułu przez MutationObserver
@@ -6293,7 +6321,7 @@
       let retryCount = 0;
       const updateName = function() {
         const t = document.title.split(' - ')[0].trim();
-        if (t && t !== 'Brand24' && t !== 'Panel Brand24' && t.length >= 3) {
+        if (!_isFallbackProjectName(t)) {
           state.projectName = t;
           _pnSet(projectId, t); // zapisz trwale do PROJECT_NAMES
           const el = document.getElementById('b24t-project-name');
@@ -6332,10 +6360,7 @@
       // Nazwa TYLKO gdy nie jest fallbackiem. Wcześniej leciało tu `name: state.projectName`
       // bez żadnego filtra, więc „Project <pid>" wchodziło do LS — a przez `_gmSaveProjects`
       // także do bridge'a, skąd wychodziło do dropdownu. Patrz PANEL_STATE.md §5.9 pomiar 4.
-      const _nameIsFb = !state.projectName || state.projectName.length < 3 ||
-                        state.projectName === 'Brand24' || state.projectName === 'Panel Brand24' ||
-                        /^(Project|Projekt)\s+\d+$/.test(state.projectName);
-      if (!_nameIsFb) projects[projectId].name = state.projectName;
+      if (!_isFallbackProjectName(state.projectName)) projects[projectId].name = state.projectName;
       else if (_prevCfg.name) projects[projectId].name = _prevCfg.name;
       lsSet(LS.PROJECTS, projects);
       _gmSaveProjects(projects); // mirror do GM — dostępne na każdej stronie
@@ -7608,7 +7633,7 @@ function showOnboarding(onComplete) {
     if (noAssessment > 0)   warnings.push({ type: 'info', msg: noAssessment + ' wierszy bez oceny — zostaną pominięte' });
     if (rows.length > 5000) warnings.push({ type: 'warn', msg: 'Duży plik: ' + rows.length + ' wierszy. Operacja może potrwać kilkadziesiąt sekund.' });
     if (colMap.date) {
-      const dates = rows.map(function(r){ return (r[colMap.date] || '').substring(0,10); }).filter(function(d){ return /^\d{4}-\d{2}-\d{2}$/.test(d); });
+      const dates = rows.map(function(r){ return (r[colMap.date] || '').substring(0,10); }).filter(function(d){ return RX_ISO_DATE.test(d); });
       if (dates.length) {
         const min = dates.reduce(function(a,b){ return a<b?a:b; });
         const max = dates.reduce(function(a,b){ return a>b?a:b; });
@@ -7970,7 +7995,7 @@ function showOnboarding(onComplete) {
 
   function _newsProjectCountry() {
     var name = (state.projectName || '').toUpperCase();
-    var m = name.match(/_([A-Z]{2})$/);
+    var m = name.match(RX_PROJECT_COUNTRY);
     return m ? m[1] : null;
   }
 
@@ -8207,7 +8232,7 @@ function showOnboarding(onComplete) {
     if (!raw) return '';
     var s = String(raw).trim();
     var iso = s.slice(0, 10);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+    if (RX_ISO_DATE.test(iso)) return iso;
     var mk = function(y, mo, d) { return y + '-' + ('0' + mo).slice(-2) + '-' + ('0' + d).slice(-2); };
     var m = s.match(NEWS_DATE_TEXT_RE);
     if (m) {
@@ -9283,6 +9308,17 @@ function showOnboarding(onComplete) {
     });
   }
 
+  // Czy sesja annotatorska mieści się w filtrach panelu statystyk. Predykat stał w dwóch
+  // kopiach — w liczeniu statystyk i w eksporcie CSV — więc eksport mógł obejmować inny
+  // zbiór sesji niż liczby pokazane na ekranie, gdyby któraś kopia została zmieniona sama.
+  function _naSessionPassesFilter(sess, f) {
+    if (f.dateFrom  && sess.date      < f.dateFrom)            return false;
+    if (f.dateTo    && sess.date      > f.dateTo)              return false;
+    if (f.country   && sess.country   !== f.country)           return false;
+    if (f.projectId && sess.projectId !== String(f.projectId)) return false;
+    return true;
+  }
+
   function _naCompute(filters) {
     var f = filters || {};
     var allSessions = lsGet(LS.NA_SESSION_STATS, []);
@@ -9292,14 +9328,7 @@ function showOnboarding(onComplete) {
     });
     if (newsState.sessionId) allSessions.push(_naAggSession());
 
-    function passFilter(s) {
-      if (f.dateFrom  && s.date      < f.dateFrom)            return false;
-      if (f.dateTo    && s.date      > f.dateTo)              return false;
-      if (f.country   && s.country   !== f.country)           return false;
-      if (f.projectId && s.projectId !== String(f.projectId)) return false;
-      return true;
-    }
-    var sessions = allSessions.filter(passFilter);
+    var sessions = allSessions.filter(function(sess) { return _naSessionPassesFilter(sess, f); });
 
     var scanTotals = { keytopic:{tp:0,fp:0}, contentmatch:{tp:0,fp:0}, mention:{tp:0,fp:0}, match:{tp:0,fp:0} };
     var aiT = { tp:0, fp:0, fn:0, tn:0, errors:0, ran:0 };
@@ -9490,13 +9519,7 @@ function showOnboarding(onComplete) {
     if (newsState.sessionId) sessions.push(_naAggSession());
     var f = filters || {};
     if (f.dateFrom || f.dateTo || f.country || f.projectId) {
-      sessions = sessions.filter(function(s) {
-        if (f.dateFrom  && s.date      < f.dateFrom)            return false;
-        if (f.dateTo    && s.date      > f.dateTo)              return false;
-        if (f.country   && s.country   !== f.country)           return false;
-        if (f.projectId && s.projectId !== String(f.projectId)) return false;
-        return true;
-      });
+      sessions = sessions.filter(function(sess) { return _naSessionPassesFilter(sess, f); });
     }
     var headers = ['date','country','projectId','sessionId','duration_s','aiEnabled','partial',
       'sc_keytopic_added','sc_keytopic_skipped','sc_contentmatch_added','sc_contentmatch_skipped',
@@ -9897,7 +9920,7 @@ function showOnboarding(onComplete) {
       var m = html.match(patterns[i]);
       if (m) {
         var d = m[1];
-        if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d > '2000-01-01' && d <= _localDateStr(new Date())) return d;
+        if (RX_ISO_DATE.test(d) && d > '2000-01-01' && d <= _localDateStr(new Date())) return d;
       }
     }
     // Fallback: widoczny tekst z nazwą miesiąca blisko słowa-klucza publikacji
@@ -9914,7 +9937,7 @@ function showOnboarding(onComplete) {
         else                   { mo = _mn[tm[1].toLowerCase()]; dy = parseInt(tm[2], 10); y = parseInt(tm[3], 10); }
         if (y && mo && dy) {
           var ds = y + '-' + String(mo).padStart(2, '0') + '-' + String(dy).padStart(2, '0');
-          if (/^\d{4}-\d{2}-\d{2}$/.test(ds) && ds > '2000-01-01' && ds <= _localDateStr(new Date())) return ds;
+          if (RX_ISO_DATE.test(ds) && ds > '2000-01-01' && ds <= _localDateStr(new Date())) return ds;
         }
       }
     }
@@ -10177,7 +10200,7 @@ function showOnboarding(onComplete) {
             state.tags = _pData.tagIds || {};
             var _ctry = document.getElementById('b24t-news-f-country');
             if (_ctry && !_ctry.value) {
-              var _cm = (_pData.name || '').toUpperCase().match(/_([A-Z]{2})$/);
+              var _cm = (_pData.name || '').toUpperCase().match(RX_PROJECT_COUNTRY);
               if (_cm) _ctry.value = _cm[1];
             }
           }
@@ -10463,9 +10486,6 @@ function showOnboarding(onComplete) {
       syncBtn.addEventListener('click', function() {
         syncMsg.style.color = 'var(--b24t-text-muted)';
         syncMsg.textContent = 'Sprawdzam...';
-        var isFb = function(n) {
-          return !n || n.length < 3 || n === 'Brand24' || n === 'Panel Brand24' || /^(Project|Projekt)\s+\d+$/.test(n);
-        };
         // Najpierw sprawdź czy LS ma dane — dostępne tylko na brand24.com
         var lsProj  = lsGet(LS.PROJECTS, {});
         var lsNames = lsGet(LS.PROJECT_NAMES, {});
@@ -10479,13 +10499,13 @@ function showOnboarding(onComplete) {
         var newProj = {}, newNames = {};
         Object.keys(lsProj).forEach(function(pid) {
           var p = lsProj[pid] || {};
-          if (!isFb(p.name)) {
+          if (!_isFallbackProjectName(p.name)) {
             newProj[String(pid)] = p;
             newNames[String(pid)] = p.name;
           }
         });
         Object.keys(lsNames).forEach(function(pid) {
-          if (!isFb(lsNames[pid])) newNames[String(pid)] = lsNames[pid];
+          if (!_isFallbackProjectName(lsNames[pid])) newNames[String(pid)] = lsNames[pid];
         });
         // Zapisz do B24Bridge (czyści stare, wpisuje tylko dobre)
         var _cleanProj = {};
@@ -11151,16 +11171,15 @@ function showOnboarding(onComplete) {
         var _tagsCached = Object.keys(state.tags).length > 0;
         var countryInput = document.getElementById('b24t-news-f-country');
         if (countryInput) {
-          var m = (pData.name || '').toUpperCase().match(/_([A-Z]{2})$/);
+          var m = (pData.name || '').toUpperCase().match(RX_PROJECT_COUNTRY);
           countryInput.value = m ? m[1] : '';
         }
         // Sprawdź zgodność języka strony z projektem
         var _pageLangNow = (document.documentElement.getAttribute('lang') || '').toLowerCase().slice(0,2);
         if (_pageLangNow) {
           var _langWarnEl = document.getElementById('b24t-news-lang-warn');
-          var _cmap = { PL:'pl', TR:'tr', DE:'de', FR:'fr', IT:'it', ES:'es', PT:'pt', NL:'nl', SE:'sv', NO:'no', DK:'da', FI:'fi', CZ:'cs', SK:'sk', HU:'hu', RO:'ro', GR:'el', BG:'bg', HR:'hr', UA:'uk', RU:'ru', JP:'ja', KR:'ko', CN:'zh', AR:'ar', IN:'hi', BR:'pt' };
-          var _projSuffix = (pData.name || '').toUpperCase().match(/_([A-Z]{2})$/);
-          var _projLang = _projSuffix ? (_cmap[_projSuffix[1]] || '') : '';
+          var _projSuffix = (pData.name || '').toUpperCase().match(RX_PROJECT_COUNTRY);
+          var _projLang = _projSuffix ? (LANG_BY_COUNTRY[_projSuffix[1]] || '') : '';
           if (_langWarnEl && _projLang && _pageLangNow !== _projLang) {
             _langWarnEl.innerHTML = '⚠ Język strony (<strong>' + _pageLangNow.toUpperCase() + '</strong>) niezgodny z projektem (<strong>' + _projLang.toUpperCase() + '</strong>)';
             _langWarnEl.style.display = '';
@@ -11261,20 +11280,26 @@ function showOnboarding(onComplete) {
       }
       _naRefreshStats();
     }
-    function _naRefreshStats() {
-      var contentEl  = document.getElementById('b24t-news-stats-content');
-      if (!contentEl) return;
+    // Filtry statystyk z trzech kontrolek nagłówka. Ten sam blok stał w trzech kopiach
+    // (odświeżanie widoku, eksport CSV, eksport JSON), więc każda zmiana filtra wymagała
+    // trzech identycznych poprawek — a pominięcie jednej dawało eksport innych danych,
+    // niż pokazuje ekran.
+    function _naStatsFiltersFromUi() {
       var periodSel  = document.getElementById('b24t-news-stats-period');
       var countrySel = document.getElementById('b24t-news-stats-country');
       var projectSel = document.getElementById('b24t-news-stats-project');
-      var days = periodSel ? parseInt(periodSel.value, 10) : 0;
-      var country = countrySel ? countrySel.value : '';
-      var projectId = projectSel ? projectSel.value : '';
+      var days    = periodSel ? parseInt(periodSel.value, 10) : 0;
       var filters = {};
       if (days > 0) { var d = new Date(); d.setDate(d.getDate() - days); filters.dateFrom = _localDateStr(d); }
-      if (country) filters.country = country;
-      if (projectId) filters.projectId = projectId;
-      _naRenderStats(contentEl, filters);
+      if (countrySel && countrySel.value) filters.country   = countrySel.value;
+      if (projectSel && projectSel.value) filters.projectId = projectSel.value;
+      return filters;
+    }
+
+    function _naRefreshStats() {
+      var contentEl  = document.getElementById('b24t-news-stats-content');
+      if (!contentEl) return;
+      _naRenderStats(contentEl, _naStatsFiltersFromUi());
     }
     if (statsBtn && statsOvrl) {
       statsBtn.addEventListener('click', function() {
@@ -11297,30 +11322,10 @@ function showOnboarding(onComplete) {
     var statsCsvBtn  = document.getElementById('b24t-news-stats-csv');
     var statsJsonBtn = document.getElementById('b24t-news-stats-json');
     if (statsCsvBtn) statsCsvBtn.addEventListener('click', function() {
-      var periodSel  = document.getElementById('b24t-news-stats-period');
-      var countrySel = document.getElementById('b24t-news-stats-country');
-      var projectSel = document.getElementById('b24t-news-stats-project');
-      var days = periodSel ? parseInt(periodSel.value, 10) : 0;
-      var country = countrySel ? countrySel.value : '';
-      var projectId = projectSel ? projectSel.value : '';
-      var filters = {};
-      if (days > 0) { var d = new Date(); d.setDate(d.getDate() - days); filters.dateFrom = _localDateStr(d); }
-      if (country) filters.country = country;
-      if (projectId) filters.projectId = projectId;
-      _naExportCsv(filters);
+      _naExportCsv(_naStatsFiltersFromUi());
     });
     if (statsJsonBtn) statsJsonBtn.addEventListener('click', function() {
-      var periodSel  = document.getElementById('b24t-news-stats-period');
-      var countrySel = document.getElementById('b24t-news-stats-country');
-      var projectSel = document.getElementById('b24t-news-stats-project');
-      var days = periodSel ? parseInt(periodSel.value, 10) : 0;
-      var country = countrySel ? countrySel.value : '';
-      var projectId = projectSel ? projectSel.value : '';
-      var filters = {};
-      if (days > 0) { var d = new Date(); d.setDate(d.getDate() - days); filters.dateFrom = _localDateStr(d); }
-      if (country) filters.country = country;
-      if (projectId) filters.projectId = projectId;
-      _naExportJson(filters);
+      _naExportJson(_naStatsFiltersFromUi());
     });
     // Wire Statystyki tab (narrow mode) — tab click shows overlay and populates it
     var statsTabEl = document.querySelector('#b24t-news-tabs [data-tab="stats"]');
@@ -12286,8 +12291,12 @@ function showOnboarding(onComplete) {
         var forceBtn = document.getElementById('b24t-news-lang-force-open');
         if (pc && expectedLangs.length > 0 && detectedLang && !expectedLangs.includes(detectedLang)) {
           if (langWarn) {
-            langWarn.innerHTML = '<strong>' + detectedLang + '</strong> — oczekiwano: <strong>' + expectedLangs.join(', ') + '</strong> (projekt ' + pc + ')';
-            langWarn.innerHTML = '⚠ Wykryty jezyk: ' + langWarn.innerHTML;
+            // Jedno przypisanie. Wcześniej drugie odczytywało własny `innerHTML` z powrotem, żeby
+            // doklecić przedrostek — czyli przeglądarka parsowała ten sam HTML dwa razy, a ponowne
+            // wywołanie doklejałoby przedrostek drugi raz.
+            langWarn.innerHTML = '⚠ Wykryty język: <strong>' + _escHtml(detectedLang) +
+              '</strong> — oczekiwano: <strong>' + _escHtml(expectedLangs.join(', ')) +
+              '</strong> (projekt ' + _escHtml(pc) + ')';
             langWarn.style.display = '';
             var addBtn = document.createElement('button');
             addBtn.textContent = '+ Dodaj ' + detectedLang + ' do mapy dla ' + pc;
@@ -12347,7 +12356,7 @@ function showOnboarding(onComplete) {
       if (!ev.data || ev.data.type !== 'b24t_news_date') return;
       var date = ev.data.date;
       var url  = ev.data.url;
-      if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+      if (!date || !RX_ISO_DATE.test(date)) return;
       // Sprawdź czy aktywny URL pasuje do nadawcy
       var activeEntry = newsState.activeIdx >= 0 ? newsState.urls[newsState.activeIdx] : null;
       if (!activeEntry) return;
@@ -12792,7 +12801,7 @@ function showOnboarding(onComplete) {
         if (!fUrl)            { showErr('⚠ Brak URL. Wybierz adres z listy.'); return; }
         if (!fTitle.trim())   { showErr('⚠ Tytuł jest wymagany.'); return; }
         if (!fContent.trim()) { showErr('⚠ Treść jest wymagana.'); return; }
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(fDate)) { showErr('⚠ Nieprawidłowy format daty — wymagany: YYYY-MM-DD'); return; }
+        if (!RX_ISO_DATE.test(fDate)) { showErr('⚠ Nieprawidłowy format daty — wymagany: YYYY-MM-DD'); return; }
         if (_newsGetSessionUrls()[fUrl]) {
           var _ipEntry = newsState.urls.find(function(e) { return e.url === fUrl || normalizeUrl(e.url) === normalizeUrl(fUrl); });
           if (_ipEntry && _ipEntry.status === 'inproject') {
@@ -13077,6 +13086,20 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.25",
+      "date": "2026-09-11",
+      "label": "fix",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "fix", "text": "**Naprawiony błąd znaleziony przy porządkach:** automatyczne wczytywanie nieznanych projektów zapisywało połamane nazwy. Tytuł strony Brand24 ma łamanie wiersza przed słowem „Brand24”, a kod odcinał sufiks szukając spacji — więc jako nazwa projektu zapisywało się coś w rodzaju „Zalando_GR — Brand24”. Do tego wpisywało zastępcze „Project <numer>”, czyli kolejne źródło śmieci na liście projektów"},
+        {"type": "fix", "text": "Warunek „czy ta nazwa projektu cokolwiek znaczy” stał w ośmiu kopiach i zdążyły się rozjechać — jedna nie znała polskiego wariantu „Projekt 123” i przepuszczała go jako dobrą nazwę. Teraz jest jeden"},
+        {"type": "fix", "text": "Ostrzeżenie o niezgodności języka budowało swój HTML dwukrotnie — drugie przypisanie odczytywało własny wynik, żeby dokleić przedrostek. Ponowne wywołanie dokleiłoby go drugi raz. Przy okazji poprawiona literówka w tym komunikacie"},
+        {"type": "fix", "text": "Treść błędu i ślad stosu trafiają na ekran jako tekst, nie jako HTML — potrafią zawierać fragment odpowiedzi serwera"},
+        {"type": "feat", "text": "Porządki bez zmiany zachowania: filtry panelu statystyk czytane w jednym miejscu zamiast w trzech (eksport CSV i JSON mogły się rozjeść z tym, co pokazuje ekran), predykat filtra sesji w jednym zamiast dwóch, nakładka modali ustawień w jednym zamiast trzech, mapa kraj→język w jednym zamiast dwóch"},
+        {"type": "feat", "text": "Powtarzane wzorce dat i sufiksu kraju dostały nazwy (dziesięć, cztery i pięć kopii) — z komentarzem, który blokuje jedną kuszącą, ale błędną podmianę: kod przekazujący datę artykułu działa, zanim te stałe w ogóle powstaną"}
+      ]
+    },
+    {
       "version": "0.26.24",
       "date": "2026-09-11",
       "label": "fix",
@@ -13179,18 +13202,6 @@ function showOnboarding(onComplete) {
         {"type": "fix",  "text": "Koniec fałszywego \"✓ URL nowy w projekcie\" tuż po przeładowaniu strony. Sprawdzanie duplikatów zawęża zapytanie do miesiąca z pola daty, a przy poście Instagrama data przychodzi z opóźnieniem — do tego czasu w polu stało \"dzisiaj\", więc starszy post był szukany w złym miesiącu i wychodził jako nowy. Teraz dup-check czeka na prawdziwą datę i powtarza się, gdy ta się pojawi"},
         {"type": "fix",  "text": "Panel nie otwiera się już połową poza ekranem. Przeciągnięte współrzędne zostawały na nim po zamknięciu i przestawały pasować, gdy w międzyczasie zmienił się jego rozmiar (przełączenie \"Tylko formularz\") albo rozmiar okna. Teraz przy każdym otwarciu, przy zmianie widoku i przy zmianie rozmiaru okna panel jest wciągany z powrotem w widoczny obszar"},
         {"type": "feat", "text": "Panel Niestandardowe pamięta, gdzie go przeciągnąłeś — otwiera się tam, gdzie go zostawiłeś, zamiast wracać na środek. Pozycja jest zapamiętana także po przeładowaniu strony"}
-      ]
-    },
-    {
-      "version": "0.26.15",
-      "date": "2026-09-10",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix",  "text": "Pola bez odpowiednika w nowym poście nie trzymają już wartości poprzedniego. Objawiało się to najwyraźniej na PAGEVIEWS: po rolce z wyświetleniami następne zdjęcie dziedziczyło jej liczbę, bo zdjęcia tego pola nie mają. Przy każdym poście formularz zaczyna od czysta, a wartości poprawione ręcznie zostają nietknięte"},
-        {"type": "fix",  "text": "Komunikat \"✓ Dodano do Brand24!\" znika przy zamknięciu panelu i przy przejściu do kolejnego posta — wcześniej wisiał nad formularzem następnej wzmianki i wyglądał, jakby ona też była już dodana"},
-        {"type": "feat", "text": "Widać, kiedy liczby jeszcze lecą z Instagrama: sekcja METRYKI pulsuje, a w jej nagłówku stoi \"⏳ pobieram dokładne liczby…\". Dzięki temu wiadomo, że wartość zaraz się zmieni, i nie ma wrażenia, że panel się zaciął"},
-        {"type": "feat", "text": "Wykryty duplikat blokuje przycisk dodawania — jest wyszarzony i nieklikalny, zamiast pozwalać wysłać wzmiankę, która już jest w projekcie. Gdy duplikat jest zamierzony, obok ostrzeżenia stoi \"dodaj mimo to\", które odblokowuje wysyłkę jednym kliknięciem"}
       ]
     }
   ];
@@ -15029,7 +15040,7 @@ function showOnboarding(onComplete) {
       renderAnnotatorProject(el, annotatorData.project);
     } catch(e) {
       addLog('✕ [zakładka Projekt] błąd: ' + e.message, 'error');
-      el.innerHTML = '<div style="color:#f87171;font-size:11px;">⚠ ' + e.message + '</div>';
+      el.innerHTML = '<div style="color:#f87171;font-size:11px;">⚠ ' + _escHtml(e.message) + '</div>';
     }
   }
 
@@ -16050,11 +16061,22 @@ To jest NIEODWRACALNE.`)) return;
     });
   }
 
+  // Nakładka modali ustawień (grupy, Overall, Trafność AI). Trzy kopie tego samego
+  // `cssText` — z z-indexem, który musi być wyższy niż panele wtyczki — rozjechałyby się
+  // przy pierwszej korekcie warstw. Wygląd modali w środku zostaje osobny, bo różni się realnie.
+  const SETTINGS_SELECT_CSS = 'width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text);border-radius:7px;padding:7px 10px;font-size:12px;font-family:inherit;cursor:pointer;';
+  const SETTINGS_LABEL_CSS  = 'font-size:12px;color:var(--b24t-text-muted);margin-bottom:6px;margin-top:10px;';
+
+  function _makeSettingsOverlay() {
+    var overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483648;display:flex;align-items:center;justify-content:center;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;';
+    return overlay;
+  }
+
   function showGroupEditor(existingGroup, knownProjects) {
     var isNew = !existingGroup;
     var currentGroup = existingGroup ? JSON.parse(JSON.stringify(existingGroup)) : { id: generateGroupId(), name: '', projectIds: [], relevantTagId: null };
-    var overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483648;display:flex;align-items:center;justify-content:center;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;';
+    var overlay = _makeSettingsOverlay();
     var projCheckboxes = knownProjects.length ? knownProjects.map(function(p) {
       var checked = currentGroup.projectIds.includes(p.id);
       return '<label style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:7px;cursor:pointer;background:' + (checked ? 'var(--b24t-primary-bg)' : 'var(--b24t-bg-input)') + ';border:1px solid ' + (checked ? 'color-mix(in srgb,var(--b24t-primary) 40%,transparent)' : 'var(--b24t-border)') + ';transition:background 0.15s,border-color 0.15s;">' +
@@ -16559,12 +16581,12 @@ To jest NIEODWRACALNE.`)) return;
     }
     var _prevBtn = el.querySelector('#b24t-mc-prev');
     if (_prevBtn) _prevBtn.addEventListener('click', function() {
-      if (!dataMonth || !/^\d{4}-\d{2}$/.test(dataMonth)) return;
+      if (!dataMonth || !RX_ISO_MONTH.test(dataMonth)) return;
       _navGoTo(_monthKeyShift(dataMonth, -1));
     });
     var _nextBtn = el.querySelector('#b24t-mc-next');
     if (_nextBtn) _nextBtn.addEventListener('click', function() {
-      if (!dataMonth || !/^\d{4}-\d{2}$/.test(dataMonth)) return;
+      if (!dataMonth || !RX_ISO_MONTH.test(dataMonth)) return;
       _navGoTo(_monthKeyShift(dataMonth, +1));
     });
     var _autoBtn = el.querySelector('#b24t-mc-auto');
@@ -16577,11 +16599,8 @@ To jest NIEODWRACALNE.`)) return;
 
   function showOverallStatsSettings(group) {
     if (!group) return;
-    var overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483648;display:flex;align-items:center;justify-content:center;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;';
-    var _makeOpts = _tagOptionsWithId;
-    var _selStyle = 'width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text);border-radius:7px;padding:7px 10px;font-size:12px;font-family:inherit;cursor:pointer;';
-    var _labelStyle = 'font-size:12px;color:var(--b24t-text-muted);margin-bottom:6px;margin-top:10px;';
+    var overlay = _makeSettingsOverlay();
+    var _makeOpts = _tagOptionsWithId, _selStyle = SETTINGS_SELECT_CSS, _labelStyle = SETTINGS_LABEL_CSS;
     overlay.innerHTML =
       '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:320px;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.25s cubic-bezier(0.34,1.56,0.64,1);">' +
         '<div style="padding:12px 16px;background:var(--b24t-accent-grad);border-radius:14px 14px 0 0;display:flex;align-items:center;gap:10px;">' +
@@ -17039,9 +17058,9 @@ To jest NIEODWRACALNE.`)) return;
     // Nawigacja miesięczna
     function _navGoTo(monthKey) { setOverallActiveMonth(nsId, monthKey); loadAiAccStats(); }
     var _pv = el.querySelector('#b24t-aiacc-prev');
-    if (_pv) _pv.addEventListener('click', function() { if (dataMonth && /^\d{4}-\d{2}$/.test(dataMonth)) _navGoTo(_monthKeyShift(dataMonth, -1)); });
+    if (_pv) _pv.addEventListener('click', function() { if (dataMonth && RX_ISO_MONTH.test(dataMonth)) _navGoTo(_monthKeyShift(dataMonth, -1)); });
     var _nx = el.querySelector('#b24t-aiacc-next');
-    if (_nx) _nx.addEventListener('click', function() { if (dataMonth && /^\d{4}-\d{2}$/.test(dataMonth)) _navGoTo(_monthKeyShift(dataMonth, +1)); });
+    if (_nx) _nx.addEventListener('click', function() { if (dataMonth && RX_ISO_MONTH.test(dataMonth)) _navGoTo(_monthKeyShift(dataMonth, +1)); });
     var _au = el.querySelector('#b24t-aiacc-auto');
     if (_au) _au.addEventListener('click', function() { setOverallActiveMonth(nsId, null); loadAiAccStats(); });
     var _mc = el.querySelector('#b24t-aiacc-mc-close');
@@ -17062,11 +17081,8 @@ To jest NIEODWRACALNE.`)) return;
 
   function showAiAccSettings(group) {
     if (!group) return;
-    var overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483648;display:flex;align-items:center;justify-content:center;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;';
-    var _makeOpts = _tagOptionsWithId;
-    var _selStyle = 'width:100%;background:var(--b24t-bg-input);border:1px solid var(--b24t-border);color:var(--b24t-text);border-radius:7px;padding:7px 10px;font-size:12px;font-family:inherit;cursor:pointer;';
-    var _labelStyle = 'font-size:12px;color:var(--b24t-text-muted);margin-bottom:6px;margin-top:10px;';
+    var overlay = _makeSettingsOverlay();
+    var _makeOpts = _tagOptionsWithId, _selStyle = SETTINGS_SELECT_CSS, _labelStyle = SETTINGS_LABEL_CSS;
     overlay.innerHTML =
       '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:340px;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.25s cubic-bezier(0.34,1.56,0.64,1);">' +
         '<div style="padding:12px 16px;background:var(--b24t-accent-grad);border-radius:14px 14px 0 0;display:flex;align-items:center;gap:10px;">' +
@@ -19005,7 +19021,7 @@ Tej operacji nie można cofnąć.`)) {
     // o „bieżący miesiąc" dałoby wtedy fałszywe „URL nowy" — lepiej poczekać na ponowienie.
     if (!dateVal) { _dupVerdict('info', '⏳ czekam na datę posta — dup-check ruszy zaraz potem'); return; }
     var dateFrom, dateTo;
-    if (/^\d{4}-\d{2}-\d{2}$/.test(dateVal)) {
+    if (RX_ISO_DATE.test(dateVal)) {
       var _y = parseInt(dateVal.substring(0, 4), 10);
       var _m = parseInt(dateVal.substring(5, 7), 10) - 1; // 0-based
       dateFrom = _localDateStr(new Date(_y, _m, 1));
@@ -19472,9 +19488,8 @@ Tej operacji nie można cofnąć.`)) {
     if (!el) return;
     if (!lang || !state.projectId) { el.style.display = 'none'; return; }
     var _pData = _gmGetProjects()[String(state.projectId)] || {};
-    var _cmap = { PL:'pl',TR:'tr',DE:'de',FR:'fr',IT:'it',ES:'es',PT:'pt',NL:'nl',SE:'sv',NO:'no',DK:'da',FI:'fi',CZ:'cs',SK:'sk',HU:'hu',RO:'ro',GR:'el',BG:'bg',HR:'hr',UA:'uk',RU:'ru',JP:'ja',KR:'ko',CN:'zh',AR:'ar',IN:'hi',BR:'pt' };
-    var _ps = (_pData.name || '').toUpperCase().match(/_([A-Z]{2})$/);
-    var _projLang = _ps ? (_cmap[_ps[1]] || '') : '';
+    var _ps = (_pData.name || '').toUpperCase().match(RX_PROJECT_COUNTRY);
+    var _projLang = _ps ? (LANG_BY_COUNTRY[_ps[1]] || '') : '';
     if (!_projLang || lang === _projLang) { el.style.display = 'none'; return; }
     el.innerHTML = '⚠ Język treści (<strong>' + _escHtml(lang).toUpperCase() + '</strong>) niezgodny z projektem (<strong>' + _projLang.toUpperCase() + '</strong>)';
     el.style.display = '';
@@ -20448,7 +20463,10 @@ Tej operacji nie można cofnąć.`)) {
       // Show minimal error panel
       const errDiv = document.createElement('div');
       errDiv.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#2d1010;color:#f87171;border:1px solid #3d1515;border-radius:8px;padding:12px 16px;font-family:monospace;font-size:11px;z-index:2147483647;max-width:320px;';
-      errDiv.innerHTML = '<strong>B24 Tagger BETA — Błąd inicjalizacji</strong><br><br>' + e.message + '<br><br><small>' + (e.stack || '').substring(0, 200) + '</small>';
+      // Komunikat i ślad stosu potrafią zawierać fragment odpowiedzi serwera — wstawiamy je
+      // jako tekst, nie jako HTML.
+      errDiv.innerHTML = '<strong>B24 Tagger BETA — Błąd inicjalizacji</strong><br><br>' +
+        _escHtml(e.message) + '<br><br><small>' + _escHtml((e.stack || '').substring(0, 200)) + '</small>';
       document.body.appendChild(errDiv);
     }
   }

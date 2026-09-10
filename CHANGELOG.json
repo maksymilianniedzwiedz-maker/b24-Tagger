@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.26.25",
+    "date": "2026-09-11",
+    "label": "fix",
+    "changes": [
+      "fix: **Naprawiony błąd znaleziony przy porządkach:** automatyczne wczytywanie nieznanych projektów zapisywało połamane nazwy. Tytuł strony Brand24 ma łamanie wiersza przed słowem „Brand24”, a kod odcinał sufiks szukając spacji — więc jako nazwa projektu zapisywało się coś w rodzaju „Zalando_GR — Brand24”. Do tego wpisywało zastępcze „Project <numer>”, czyli kolejne źródło śmieci na liście projektów",
+      "fix: Warunek „czy ta nazwa projektu cokolwiek znaczy” stał w ośmiu kopiach i zdążyły się rozjechać — jedna nie znała polskiego wariantu „Projekt 123” i przepuszczała go jako dobrą nazwę. Teraz jest jeden",
+      "fix: Ostrzeżenie o niezgodności języka budowało swój HTML dwukrotnie — drugie przypisanie odczytywało własny wynik, żeby dokleić przedrostek. Ponowne wywołanie dokleiłoby go drugi raz. Przy okazji poprawiona literówka w tym komunikacie",
+      "fix: Treść błędu i ślad stosu trafiają na ekran jako tekst, nie jako HTML — potrafią zawierać fragment odpowiedzi serwera",
+      "feat: Porządki bez zmiany zachowania: filtry panelu statystyk czytane w jednym miejscu zamiast w trzech (eksport CSV i JSON mogły się rozjeść z tym, co pokazuje ekran), predykat filtra sesji w jednym zamiast dwóch, nakładka modali ustawień w jednym zamiast trzech, mapa kraj→język w jednym zamiast dwóch",
+      "feat: Powtarzane wzorce dat i sufiksu kraju dostały nazwy (dziesięć, cztery i pięć kopii) — z komentarzem, który blokuje jedną kuszącą, ale błędną podmianę: kod przekazujący datę artykułu działa, zanim te stałe w ogóle powstaną"
+    ]
+  },
+  {
     "version": "0.26.24",
     "date": "2026-09-11",
     "label": "fix",

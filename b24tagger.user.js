@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.13
+// @version      0.26.14
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.13';
+  const VERSION = '0.26.14';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -742,8 +742,9 @@
   // Brand24 zapisuje wszystkie Instagram URL-e jako /p/<shortcode> — reels, guides itp.
   // np. instagram.com/reel/ABC → instagram.com/p/ABC
   //     instagram.com/username/reel/ABC → instagram.com/p/ABC  (z nazwą użytkownika)
-  const _RX_IG_REEL_USER = /instagram\.com\/[^/]+\/(reel|tv|guide)\/([^/?#]+)/;
-  const _RX_IG_REEL      = /instagram\.com\/(reel|tv|guide)\/([^/?#]+)/;
+  //     instagram.com/reels/ABC  → instagram.com/p/ABC  (wariant /reel/ przekierowuje na /reels/)
+  const _RX_IG_REEL_USER = /instagram\.com\/[^/]+\/(reels?|tv|guide)\/([^/?#]+)/;
+  const _RX_IG_REEL      = /instagram\.com\/(reels?|tv|guide)\/([^/?#]+)/;
   // Brand24 usuwa też query string z Instagram URL-i (igsh=, img_index= itp.)
   const _RX_IG_QUERY = /(instagram\.com\/[^?#]+)\?.*/;
 
@@ -10045,6 +10046,7 @@ function showOnboarding(onComplete) {
         _newsRefillTags();
         if (newsState.mode === 'custom' && _isExternal) {
           if (state.projectId && (!state.tags || Object.keys(state.tags).length === 0)) _extEnsureTags(state.projectId);
+          _wireCustomSpaRefresh();
           _customAutoFillFromPage();
         }
       });
@@ -10059,6 +10061,7 @@ function showOnboarding(onComplete) {
       requestAnimationFrame(function() {
         _newsRefillTags();
         if (state.projectId && (!state.tags || Object.keys(state.tags).length === 0)) _extEnsureTags(state.projectId);
+        _wireCustomSpaRefresh();
         _customAutoFillFromPage();
       });
     }
@@ -12868,6 +12871,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.14",
+      "date": "2026-09-10",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "Dodawanie niestandardowe z Instagrama czyta teraz otwarty POST, a nie profil pod nim. Wcześniej po kliknięciu kafelka Instagram podmieniał tylko adres — znaczniki og: i <main> zostawały z profilu, więc w tytule lądował opis konta, a w treści pasek zakładek (\"PostyReelsRepostyZ oznaczeniem…\"). Teraz adres, pełny podpis, tytuł z pierwszego zdania oraz data z godziną pochodzą z drzewa samego posta"},
+        {"type": "feat", "text": "Metryki wzmianki z Instagrama uzupełniają się same i są dokładne: polubienia, komentarze, udostępnienia (reposty) oraz wyświetlenia przy rolkach. Modal Instagrama pokazuje polubienia zaokrąglone, a komentarzy i repostów nie pokazuje wcale, więc liczby pobierane są tą samą drogą, którą sam Instagram wczytuje otwierany post"},
+        {"type": "fix", "text": "Formularz odświeża się po przejściu do kolejnego posta bez przeładowania strony — dotąd trzymał dane tego, na którym panel został otwarty. Pola poprawione ręcznie nie są nadpisywane"},
+        {"type": "fix", "text": "Adresy rolek w postaci /reels/KOD sprowadzają się do kanonicznego /p/KOD, więc sprawdzanie duplikatów wreszcie je rozpoznaje"}
+      ]
+    },
+    {
       "version": "0.26.13",
       "date": "2026-09-02",
       "label": "fix",
@@ -12960,15 +12975,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#6366f1",
       "changes": [
         {"type": "feat", "text": "Dodawanie wzmianek na TikToku: panel sam wypełnia opis filmu, dokładną datę i godzinę publikacji oraz liczbę polubień i komentarzy — nie trzeba już ręcznie przeklejać tekstu ani wybierać daty. Data liczona jest niezawodnie z adresu filmu (działa niezależnie od layoutu i logowania)"}
-      ]
-    },
-    {
-      "version": "0.26.4",
-      "date": "2026-06-17",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "Dodawanie wzmianek (News i Niestandardowe): pole filtrowania nad listą tagów — wpisz dowolny fragment nazwy, a lista pokaże tylko pasujące tagi (np. 'Bad' znajdzie 'Zara x Bad Bunny'). Przydatne przy projektach z dużą, nieuporządkowaną listą tagów"}
       ]
     }
   ];
@@ -18868,55 +18874,78 @@ Tej operacji nie można cofnąć.`)) {
     });
   }
 
+  // Numer pokolenia autouzupełnienia. Rośnie przy każdym wywołaniu, żeby spóźniona odpowiedź
+  // z sieci (dobieranie metryk IG) nie wpisała się do formularza już przestawionego na inny post.
+  var _customFillSeq = 0;
+
+  // Wpisuje wartość do pola i zapamiętuje ją w datasecie. Przy odświeżeniu po nawigacji SPA
+  // nadpisujemy TYLKO pola puste albo trzymające dokładnie to, co sami tam wpisaliśmy —
+  // dzięki temu poprawka wklepana ręcznie przez użytkownika przeżywa przejście do kolejnego posta.
+  function _customSetAuto(el, value, borderColor, title) {
+    if (!el || value === '' || value == null) return false;
+    var val = String(value);
+    var untouched = !el.value || el.value === el.dataset.b24tAuto;
+    if (!untouched) return false;
+    el.value = val;
+    el.dataset.b24tAuto = val;
+    if (borderColor) el.style.borderColor = borderColor;
+    if (title) el.title = title;
+    return true;
+  }
+
   // ── AUTO-FILL Z BIEŻĄCEJ STRONY — wypełnia pola formularza Niestandardowe ──
-  // Wywoływana przy otwieraniu panelu custom. Używa żywego DOM bez fetcha.
+  // Wywoływana przy otwieraniu panelu custom oraz po nawigacji SPA (_wireCustomSpaRefresh).
+  // Używa żywego DOM bez fetcha; wyjątkiem jest dobranie metryk Instagrama, których w modalu
+  // posta fizycznie nie ma albo są zaokrąglone (patrz _igFetchMediaInfo).
   function _customAutoFillFromPage() {
+    var mySeq = ++_customFillSeq;
     // Poczekaj aż DOM formularza jest w pełni wyrenderowany
     requestAnimationFrame(function() {
       var scraped = _miniScrapeCurrentPage();
 
-      // Adapter social media (na razie TikTok) — nadpisuje generyczny scrape, gdy zna dokładniejsze dane
+      // Adapter social media (TikTok, YouTube, Instagram) — nadpisuje generyczny scrape,
+      // gdy zna dokładniejsze dane
       var _social = _scrapeSocialPost();
       if (_social) {
-        if (_social.content) scraped.content = _social.content;
+        // strict = adapter rozpoznał konkretny post i jego pusty wynik też jest wiążący.
+        // Na Instagramie generyczny scrape zwraca dane PROFILU leżącego pod modalem, więc
+        // „nic" jest lepsze niż jego podpowiedź — inaczej w treści znów wylądowałby pasek
+        // zakładek profilu, zanim modal zdąży się przerysować.
+        if (_social.content || _social.strict) scraped.content = _social.content;
         if (_social.date)    scraped.date = _social.date;
         // Gdy adapter zadziałał, ufamy jego językowi — także gdy null (np. YouTube: język UI ≠ język
         // filmu, więc lepiej nie ustawiać niż wywołać fałszywe ostrzeżenie o niezgodności z projektem)
         scraped.lang = _social.lang;
       }
 
-      // URL — zawsze ustaw z bieżącego okna
+      // URL — z adaptera, gdy zna adres kanoniczny posta (Instagram: /p/<shortcode>),
+      // inaczej z bieżącego okna
       var urlFld = document.getElementById('b24t-news-f-url');
-      if (urlFld && !urlFld.value) {
-        urlFld.value = window.location.href;
-        urlFld.style.borderColor = 'rgba(99,102,241,0.4)';
-      }
+      var pageUrl = (_social && _social.url) || window.location.href;
+      _customSetAuto(urlFld, pageUrl, 'rgba(99,102,241,0.4)');
 
-      // Tytuł — og:title > h1 > document.title
+      // Tytuł — z adaptera social (Instagram: pierwsze zdanie podpisu), inaczej og:title > h1 > title.
+      // UWAGA: na Instagramie og:title NIE jest aktualizowane przy nawigacji SPA i zostaje z profilu —
+      // dlatego adapter ma tu pierwszeństwo, a nie odwrotnie.
       var titleFld = document.getElementById('b24t-news-f-title');
-      if (titleFld && !titleFld.value) {
+      var _title = (_social && _social.title) || '';
+      // Ten sam powód co przy treści: gdy adapter jest strict, og:title to metadane PROFILU,
+      // a nie otwartego posta — lepiej zostawić pole puste niż wpisać tam nazwę konta.
+      if (!_title && !(_social && _social.strict)) {
         var _ogT = document.querySelector('meta[property="og:title"]');
         var _h1  = document.querySelector('article h1, main h1, h1');
-        var _title = (_ogT && _ogT.getAttribute('content')) || (_h1 && _h1.textContent.trim()) || document.title || '';
-        titleFld.value = _title.slice(0, 400);
-        if (_title) titleFld.style.borderColor = 'rgba(99,102,241,0.4)';
+        _title = (_ogT && _ogT.getAttribute('content')) || (_h1 && _h1.textContent.trim()) || document.title || '';
       }
+      _customSetAuto(titleFld, _title.slice(0, 400), 'rgba(99,102,241,0.4)');
 
-      // Treść — z _miniScrapeCurrentPage
-      var contentFld = document.getElementById('b24t-news-f-content');
-      if (contentFld && !contentFld.value && scraped.content) {
-        contentFld.value = scraped.content;
-        contentFld.style.borderColor = 'rgba(99,102,241,0.4)';
-        contentFld.title = 'Automatycznie wypełniono z treści strony';
-      }
+      // Treść — z adaptera social albo z _miniScrapeCurrentPage
+      _customSetAuto(document.getElementById('b24t-news-f-content'), scraped.content,
+                     'rgba(99,102,241,0.4)', 'Automatycznie wypełniono z treści strony');
 
       // Data
       var dateFld = document.getElementById('b24t-news-f-date');
-      if (dateFld && scraped.date) {
-        dateFld.value = scraped.date;
-        dateFld.style.borderColor = 'rgba(34,197,94,0.5)';
-        dateFld.title = 'Data wykryta automatycznie';
-      } else if (dateFld && !dateFld.value) {
+      if (!_customSetAuto(dateFld, scraped.date, 'rgba(34,197,94,0.5)', 'Data wykryta automatycznie') &&
+          dateFld && !dateFld.value) {
         var _now = new Date();
         dateFld.value = _now.getFullYear() + '-' + String(_now.getMonth()+1).padStart(2,'0') + '-' + String(_now.getDate()).padStart(2,'0');
       }
@@ -18924,13 +18953,17 @@ Tej operacji nie można cofnąć.`)) {
       // Godzina i minuty — z posta social media jeśli znane, inaczej z bieżącego czasu
       var hourFld = document.getElementById('b24t-news-f-hour');
       var minFld  = document.getElementById('b24t-news-f-minute');
-      if (hourFld && !hourFld.value) { hourFld.value = (_social && _social.hour) ? _social.hour : String(new Date().getHours()).padStart(2,'0'); }
-      if (minFld  && !minFld.value)  { minFld.value  = (_social && _social.minute) ? _social.minute : String(new Date().getMinutes()).padStart(2,'0'); }
+      if (!_customSetAuto(hourFld, _social && _social.hour) && hourFld && !hourFld.value) {
+        hourFld.value = String(new Date().getHours()).padStart(2,'0');
+      }
+      if (!_customSetAuto(minFld, _social && _social.minute) && minFld && !minFld.value) {
+        minFld.value = String(new Date().getMinutes()).padStart(2,'0');
+      }
 
       // Kategoria — auto-detect z URL; zapisujemy też w datasecie, żeby Clear mógł przywrócić auto-wartość
       var catSel = document.getElementById('b24t-news-f-category-select');
       if (catSel) {
-        var _autoCat = String(_detectCategoryFromUrl(window.location.href));
+        var _autoCat = String(_detectCategoryFromUrl(pageUrl));
         catSel.value = _autoCat;
         catSel.dataset.autoDetected = _autoCat;
       }
@@ -18938,10 +18971,31 @@ Tej operacji nie można cofnąć.`)) {
       // Metryki social media — z adaptera platformy jeśli są, inaczej generyczny scrape z DOM
       var _hasSocialMetric = _social && (_social.likes != null || _social.comments != null || _social.shares != null || _social.pageviews != null);
       var _metrics = _hasSocialMetric ? _social : _scrapeSocialMetrics();
-      if (_metrics.likes    != null) { var lF = document.getElementById('b24t-news-f-likes');     if (lF && !lF.value) lF.value = _metrics.likes; }
-      if (_metrics.shares   != null) { var sF = document.getElementById('b24t-news-f-shares');    if (sF && !sF.value) sF.value = _metrics.shares; }
-      if (_metrics.comments != null) { var cF = document.getElementById('b24t-news-f-comments');  if (cF && !cF.value) cF.value = _metrics.comments; }
-      if (_metrics.pageviews!= null) { var pF = document.getElementById('b24t-news-f-pageviews'); if (pF && !pF.value) pF.value = _metrics.pageviews; }
+      _customFillMetrics(_metrics);
+
+      // Instagram: modal nie pokazuje sumy komentarzy ani repostów, a polubienia podaje
+      // zaokrąglone. Komplet dokładnych liczb daje endpoint, którym Instagram sam obsługuje
+      // otwarcie posta — dociągamy go zawsze, bo nawet gdy DOM coś dał, to gorsze dane.
+      // Odpowiedź nadpisuje pola tylko wtedy, gdy użytkownik ich nie poprawił (_customSetAuto).
+      if (_social && _social.igCode) {
+        _igFetchMediaInfo(_social.igCode, function(info) {
+          if (!info || mySeq !== _customFillSeq) return;
+          _customFillMetrics(info);
+          _customSetAuto(document.getElementById('b24t-news-f-date'), info.date,
+                         'rgba(34,197,94,0.5)', 'Data wykryta automatycznie');
+          _customSetAuto(document.getElementById('b24t-news-f-hour'),   info.hour);
+          _customSetAuto(document.getElementById('b24t-news-f-minute'), info.minute);
+          // Podpis dobieramy tylko wtedy, gdy DOM nic nie dał (odtwarzacz rolek, post bez
+          // przerysowanego modala) — w treści z DOM-u użytkownik może już coś poprawiać.
+          if (!_social.content && info.caption) {
+            _customSetAuto(document.getElementById('b24t-news-f-content'),
+                           info.caption.replace(/\s+/g, ' ').trim().slice(0, 600),
+                           'rgba(99,102,241,0.4)', 'Automatycznie wypełniono z treści strony');
+            _customSetAuto(document.getElementById('b24t-news-f-title'),
+                           _igTitleFromCaption(info.caption).slice(0, 400), 'rgba(99,102,241,0.4)');
+          }
+        });
+      }
 
       // Sprawdź zgodność języka z projektem
       if (scraped.lang && state.projectId) {
@@ -18958,8 +19012,54 @@ Tej operacji nie można cofnąć.`)) {
       }
 
       // Sprawdź duplikat URL w wybranym projekcie
-      if (state.projectId) _customDupCheck(window.location.href, state.projectId);
+      if (state.projectId) _customDupCheck(pageUrl, state.projectId);
     });
+  }
+
+  function _customFillMetrics(m) {
+    if (!m) return;
+    _customSetAuto(document.getElementById('b24t-news-f-likes'),     m.likes);
+    _customSetAuto(document.getElementById('b24t-news-f-shares'),    m.shares);
+    _customSetAuto(document.getElementById('b24t-news-f-comments'),  m.comments);
+    _customSetAuto(document.getElementById('b24t-news-f-pageviews'), m.pageviews);
+  }
+
+  // ── ODŚWIEŻENIE PO NAWIGACJI SPA ────────────────────────────────────────────
+  // Instagram, TikTok i YouTube podmieniają post bez przeładowania strony. Panel wypełniał się
+  // tylko w momencie otwarcia, więc po przejściu do kolejnego posta pokazywał dane poprzedniego
+  // (a wchodząc z profilu — dane profilu). To był drugi, obok metadanych og:*, powód, dla którego
+  // formularz „się nie zmieniał".
+  //
+  // Pytamy o adres w pętli zamiast podmieniać history.pushState, bo skrypt żyje w sandboxie
+  // Tampermonkeya: podmiana potrafi nie objąć wywołań ze strony i awaria byłaby CICHA —
+  // formularz po prostu nie odświeżałby się i znowu wyglądałby na zepsuty. Zegar rusza dopiero
+  // przy pierwszym otwarciu panelu Niestandardowe (nie na każdej odwiedzonej stronie) i przy
+  // zamkniętym panelu tylko przesuwa znacznik adresu.
+  //
+  // Po zmianie adresu czekamy, aż modal posta faktycznie się przerysuje: Instagram najpierw
+  // zmienia URL, a treść podmienia dopiero po dociągnięciu danych.
+  var _spaRefreshWired = false;
+  function _wireCustomSpaRefresh() {
+    if (_spaRefreshWired) return;
+    _spaRefreshWired = true;
+    var lastHref = window.location.href;
+    setInterval(function() {
+      if (window.location.href === lastHref) return;
+      if (!newsState.panelsOpen || newsState.mode !== 'custom') { lastHref = window.location.href; return; }
+      lastHref = window.location.href;
+
+      var want = /(^|\.)instagram\.com$/.test(window.location.hostname) ? _igShortcode() : null;
+      var tries = 0;
+      (function waitForPost() {
+        // Bez shortcodu (wyjście z posta na profil) nie ma na co czekać — odświeżamy od razu
+        var ready = !want || (function() {
+          var s = _scrapeSocialPost();
+          return !!(s && s.igCode === want && s.ready);
+        })();
+        if (ready || ++tries > 12) { _customAutoFillFromPage(); return; }
+        setTimeout(waitForPost, 250);
+      })();
+    }, 600);
   }
 
   // Próba scrapowania metryk social media z żywego DOM
@@ -19021,7 +19121,7 @@ Tej operacji nie można cofnąć.`)) {
       result.likes    = _tryGet(['[id*="vote-arrows"] faceplate-number', '.score', '[aria-label*="upvote"]']);
       result.comments = _tryGet(['a[href*="comments"] faceplate-number', '[id*="comment-count"]']);
     }
-    // Instagram — metryki ukryte za auth, pomijamy
+    // Instagram ma własny adapter (_scrapeInstagram + _igFetchMediaInfo) i tu nie trafia
     return result;
   }
 
@@ -19123,12 +19223,353 @@ Tej operacji nie można cofnąć.`)) {
     return r;
   }
 
+  // ── INSTAGRAM ──────────────────────────────────────────────────────────────
+  // Pełna wiedza o tym DOM-ie, z pomiarami: INSTAGRAM_DOM.md (cytowane niżej jako §N).
+  //
+  // Sedno problemu, dla którego ten adapter w ogóle istnieje (§2): przy nawigacji SPA
+  // (klik w kafelek na profilu → modal posta) Instagram NIE podmienia <meta og:*> ani
+  // zawartości <main> — og:url, og:title i og:description zostają Z PROFILU, a <main> to
+  // wciąż siatka profilu. Generyczny scrape czytał dokładnie te źródła, więc w tytule
+  // lądował opis profilu, a w treści pasek zakładek („PostyReelsRepostyZ oznaczeniem…").
+  // Dlatego tu NIE dotykamy metadanych dokumentu — wszystko pochodzi z drzewa samego posta.
+
+  var _IG_RX_LIKE    = /^(lubię to!?|nie lubię|like|unlike)$/i;
+  var _IG_RX_COMMENT = /^(skomentuj|comment)$/i;
+  var _IG_RX_REPOST  = /^(repostuj|repost)$/i;
+
+  // Shortcode z bieżącego adresu. Ten sam post żyje pod /p/, /reel/, /reels/ i /username/p/,
+  // więc shortcode jest jedynym stabilnym identyfikatorem (§1).
+  function _igShortcode(href) {
+    var path;
+    try { path = href ? new URL(href, location.href).pathname : window.location.pathname; }
+    catch(e) { path = window.location.pathname; }
+    var m = path.match(/\/(?:p|reel|reels|tv)\/([^/?#]+)/i);
+    return m ? m[1] : null;
+  }
+
+  // Parser liczników IG. Reguła rozstrzygająca separator (§7): ostatni separator z 1-2 cyframi
+  // po nim jest DZIESIĘTNY, z trzema — tysięcznym; spacja i nbsp zawsze znaczą tysiące.
+  // Nie da się tu użyć _parseSocialNum — ono kasuje przecinki bezwarunkowo i czyta „146 000,0"
+  // jako 1 460 000 (10× za dużo), czyli dokładnie ten błąd, który §7 opisuje.
+  function _igParseCount(txt) {
+    if (txt == null) return null;
+    var s = String(txt).replace(/[  ]/g, ' ').trim();
+    if (!s) return null;
+    var m = s.match(/^([\d\s.,]+?)\s*(mln|mld|tys\.?|[KkMmBb])?$/);
+    if (!m || !/\d/.test(m[1])) return null;
+    var raw = m[1].trim();
+    var sfx = (m[2] || '').toLowerCase().replace(/\.$/, '');
+    var mult = (sfx === 'k' || sfx === 'tys') ? 1e3
+             : (sfx === 'm' || sfx === 'mln') ? 1e6
+             : (sfx === 'b' || sfx === 'mld') ? 1e9 : 1;
+    var num;
+    if (mult !== 1) {
+      num = parseFloat(raw.replace(/\s/g, '').replace(',', '.'));
+    } else {
+      var ls = Math.max(raw.lastIndexOf(','), raw.lastIndexOf('.'));
+      var tail = ls > -1 ? raw.length - ls - 1 : -1;
+      if (tail >= 1 && tail <= 2 && !/\s/.test(raw.slice(ls))) {
+        num = parseFloat(raw.replace(/[\s.,]/g, function(ch, idx) { return idx === ls ? '.' : ''; }));
+      } else {
+        num = parseFloat(raw.replace(/[^\d]/g, ''));
+      }
+    }
+    return isNaN(num) ? null : Math.round(num * mult);
+  }
+
+  // Korzeń drzewa POSTA. Kolejność ma znaczenie: modal ma własne poddrzewo, a <main> pod nim
+  // to nadal profil — wzięcie <main> daje dane profilu zamiast posta (§2).
+  function _igPostRoot() {
+    var dlgs = document.querySelectorAll('[role="dialog"]');
+    for (var i = dlgs.length - 1; i >= 0; i--) {
+      if (dlgs[i].querySelector('h1, time[datetime]')) return dlgs[i];
+    }
+    return document.querySelector('main') || document.body;
+  }
+
+  // Pionowy odtwarzacz /reels/ trzyma w drzewie kilkanaście kolejnych rolek naraz (zmierzone:
+  // 14 pasków akcji przy jednej oglądanej), a NIC w tym layoucie nie wiąże kontenera ze
+  // shortcodem — jedynym rozróżnieniem jest geometria (§6). Bez tego zawężenia bralibyśmy
+  // liczby cudzej rolki. Gdy karta nie jest rysowana, prostokąty są zerowe i wtedy świadomie
+  // zwracamy null zamiast zgadywać.
+  function _igVisibleReelBlock(root) {
+    var vids = root.querySelectorAll('video');
+    if (vids.length < 2) return null;
+    var mid = window.innerHeight / 2, hit = null;
+    for (var i = 0; i < vids.length; i++) {
+      var rect = vids[i].getBoundingClientRect();
+      if (!rect.height) continue;
+      if (rect.top <= mid && rect.bottom >= mid) { hit = vids[i]; break; }
+    }
+    if (!hit) return null;
+    var node = hit;
+    while (node && node !== root) {
+      if (_igHasActionIcon(node)) return node;
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  function _igHasActionIcon(el) {
+    var svgs = el.querySelectorAll('svg[aria-label]');
+    for (var i = 0; i < svgs.length; i++) {
+      var a = svgs[i].getAttribute('aria-label') || '';
+      if (_IG_RX_COMMENT.test(a) || _IG_RX_REPOST.test(a)) return true;
+    }
+    return false;
+  }
+
+  // Czas publikacji: <time datetime> spoza linku komentarza. Komentarze mają własne <time>
+  // opakowane w <a href="/p/CODE/c/ID/"> i to jedyny pewny sposób ich odsiania (§3).
+  function _igPostTimeEl(root) {
+    var ts = root.querySelectorAll('time[datetime]');
+    for (var i = 0; i < ts.length; i++) {
+      if (!ts[i].closest('a[href*="/c/"]')) return ts[i];
+    }
+    return null;
+  }
+
+  // Podpis posta. W modalu Instagram trzyma go w <h1> — najpewniejsza kotwica, jaka tu jest.
+  // Na pełnej stronie posta <h1> nie ma; podpis leży jako rodzeństwo bloku nagłówka z czasem,
+  // więc idziemy od <time> w górę i bierzemy pierwsze niepuste rodzeństwo po prawej (§3).
+  function _igCaption(root, timeEl) {
+    var h1 = root.querySelector('h1');
+    if (h1) { var ht = (h1.textContent || '').trim(); if (ht) return ht; }
+    if (!timeEl) return '';
+    var node = timeEl;
+    while (node && node !== root) {
+      var sib = node.nextElementSibling;
+      while (sib) {
+        var t = (sib.textContent || '').trim();
+        // „Zobacz tłumaczenie" to przycisk doklejony za podpisem, nie treść posta
+        if (t.length > 1 && !/^(zobacz tłumaczenie|see translation)$/i.test(t)) return t;
+        sib = sib.nextElementSibling;
+      }
+      node = node.parentElement;
+    }
+    return '';
+  }
+
+  // Liczniki z paska akcji. Spłaszczamy poddrzewo do sekwencji {ikona}/{liczba} w kolejności
+  // dokumentu i bierzemy liczbę stojącą TUŻ ZA ikoną — ten sam układ obsługuje poziomy pasek
+  // na stronie posta i pionowy w odtwarzaczu rolek (§4). Rozpoznajemy po aria-label (PL+EN),
+  // bo teksty są lokalizowane, a kolejność ikon nie jest niczym zagwarantowana.
+  //
+  // Zawężamy do <section> z co najmniej trzema ikonami akcji, bo w <main> pełnej strony posta
+  // każdy KOMENTARZ ma własne serduszko i własne „N polubień" — bez tego czytalibyśmy lajki
+  // przypadkowego komentarza zamiast posta (§5).
+  function _igReadActionCounts(root) {
+    var out = { likes: null, comments: null, shares: null };
+    var scope = null;
+    var secs = root.querySelectorAll('section');
+    for (var i = 0; i < secs.length; i++) {
+      if (secs[i].querySelectorAll('svg[aria-label]').length >= 3 && (secs[i].textContent || '').length < 200) {
+        scope = secs[i]; break;
+      }
+    }
+    if (!scope) scope = _igHasActionIcon(root) ? root : null;
+    if (!scope) return out;
+
+    var seq = [];
+    (function walk(node) {
+      for (var i = 0; i < node.children.length; i++) {
+        var c = node.children[i];
+        if (String(c.tagName || '').toLowerCase() === 'svg') {
+          var a = c.getAttribute('aria-label');
+          if (a) seq.push({ svg: a });
+          continue;
+        }
+        if (!c.children.length) {
+          var n = _igParseCount(c.textContent);
+          if (n !== null) seq.push({ num: n });
+          continue;
+        }
+        walk(c);
+      }
+    })(scope);
+
+    for (var j = 0; j < seq.length; j++) {
+      if (!seq[j].svg) continue;
+      var next = (seq[j + 1] && seq[j + 1].num != null) ? seq[j + 1].num : null;
+      if (next === null) continue;
+      var aria = seq[j].svg;
+      if (out.likes    === null && _IG_RX_LIKE.test(aria))    out.likes = next;
+      if (out.comments === null && _IG_RX_COMMENT.test(aria)) out.comments = next;
+      if (out.shares   === null && _IG_RX_REPOST.test(aria))  out.shares = next;
+    }
+    return out;
+  }
+
+  // Lajki w modalu — tam pasek akcji jest BEZ liczb, a suma stoi osobno jako „Liczba polubień: N".
+  // PUŁAPKA (§5): „N polubień" bez słowa „Liczba" to lajki KOMENTARZA, nie posta, dlatego wariant
+  // PL wymaga pełnego prefiksu. Powyżej ~10 tys. Instagram podaje tu wartość zaokrągloną
+  // („64 400,0" przy 64 431 realnych); dla monitorowanych kont marek liczby są małe i dokładne.
+  function _igModalLikes(root) {
+    var els = root.querySelectorAll('[role="button"], span, div');
+    for (var i = 0; i < els.length; i++) {
+      if (els[i].children.length > 4) continue;
+      var t = (els[i].textContent || '').replace(/\s+/g, ' ').trim();
+      if (!t || t.length > 60) continue;
+      var m = t.match(/^Liczba polubień:\s*(.+)$/i) || t.match(/^([\d\s.,]+[KkMmBb]?)\s+likes?$/i);
+      if (m) { var n = _igParseCount(m[1]); if (n !== null) return n; }
+    }
+    return null;
+  }
+
+  // Tytuł wzmianki z podpisu. textContent skleja linie podpisu bez separatora, więc nie da się
+  // ciąć po znaku nowej linii — bierzemy pierwsze zdanie, a gdy go nie widać, granicę słowa.
+  function _igTitleFromCaption(cap) {
+    var s = cap.replace(/\s+/g, ' ').trim();
+    var m = s.match(/^(.{20,180}?[.!?])\s/);
+    if (m) return m[1];
+    if (s.length <= 150) return s;
+    var cut = s.slice(0, 150);
+    var sp = cut.lastIndexOf(' ');
+    return (sp > 60 ? cut.slice(0, sp) : cut) + '…';
+  }
+
+  function _scrapeInstagram() {
+    var code = _igShortcode();
+    // Profil, /explore, feed — nie ma tu jednego posta do przeczytania, niech zadziała
+    // generyczny scrape artykułowy
+    if (!code) return null;
+
+    var r = { content: '', title: '', url: '', date: '', hour: '', minute: '',
+              likes: null, shares: null, comments: null, pageviews: null, lang: null,
+              igCode: code, strict: true, ready: false };
+    // Adres kanoniczny: Brand24 i tak zapisuje każdy post IG jako /p/<shortcode> (normalizeUrl),
+    // a bieżący href bywa wariantem /reels/ albo niesie ?img_index= z karuzeli.
+    r.url = 'https://www.instagram.com/p/' + code + '/';
+
+    var root = _igPostRoot();
+    var reel = _igVisibleReelBlock(root);
+    if (reel) root = reel;
+
+    var timeEl = _igPostTimeEl(root);
+
+    // Adres zmienia się PRZED przerysowaniem modala, więc przez chwilę pod /p/CODE/ w drzewie
+    // jest jeszcze sam profil. Czytanie go dałoby dokładnie te śmieci, które ten adapter miał
+    // wyeliminować, dlatego bez dowodu na drzewo posta zwracamy pusty wynik i ready = false —
+    // odświeżanie po nawigacji SPA czeka właśnie na tę flagę.
+    var isDialog = !!(root.getAttribute && root.getAttribute('role') === 'dialog');
+    if (!reel && !isDialog && !timeEl) return r;
+    r.ready = true;
+
+    if (timeEl) {
+      var d = new Date(timeEl.getAttribute('datetime'));
+      if (!isNaN(d.getTime())) {
+        r.date   = _localDateStr(d);
+        r.hour   = String(d.getHours()).padStart(2, '0');
+        r.minute = String(d.getMinutes()).padStart(2, '0');
+      }
+    }
+
+    var cap = _igCaption(root, timeEl);
+    if (cap) {
+      r.content = cap.replace(/\s+/g, ' ').trim().slice(0, 600);
+      r.title   = _igTitleFromCaption(cap);
+    }
+
+    var counts = _igReadActionCounts(root);
+    r.likes = counts.likes; r.comments = counts.comments; r.shares = counts.shares;
+    if (r.likes == null) r.likes = _igModalLikes(root);
+
+    // Język UI Instagrama ≠ język podpisu (polskie konto ogląda posty po angielsku), więc
+    // celowo zostawiamy lang = null — inaczej panel krzyczałby o niezgodności z językiem
+    // projektu przy każdym poście. Tak samo robi adapter YouTube.
+    return r;
+  }
+
+  // Dobranie metryk, których w DOM-ie nie ma albo są zaokrąglone: sumy komentarzy, repostów,
+  // odtworzeń oraz dokładnej liczby polubień. Źródłem jest ten sam endpoint, którym Instagram
+  // sam obsługuje otwarcie posta — podejrzany w ruchu sieciowym karty (§11):
+  //
+  //     GET /api/v1/media/<media_id>/info/     nagłówek x-ig-app-id, 31 KB
+  //
+  // Dlaczego nie embed, z którego korzysta kolektor w rozszerzeniu i24: embed przestał
+  // serwować JSON z licznikami (§8), więc `edge_media_to_comment` nie istnieje.
+  // Dlaczego nie og:description strony posta: 724 KB, lajki zaokrąglone, a liczby bywają
+  // starsze od żywej strony (zmierzone 768 vs 888 komentarzy tej samej rolki).
+  function _igFetchMediaInfo(code, cb) {
+    var done = false;
+    function finish(v) { if (done) return; done = true; try { cb(v); } catch(e) {} }
+    var id = _igMediaId(code);
+    if (!id) return finish(null);
+    setTimeout(function() { finish(null); }, 8000);
+    fetch('https://www.instagram.com/api/v1/media/' + id + '/info/', {
+      credentials: 'include',
+      headers: { 'x-ig-app-id': _igAppId() }
+    })
+      .then(function(res) { return res.ok ? res.json() : null; })
+      .then(function(j) {
+        var it = j && j.items && j.items[0];
+        // Samokontrola: odpowiedź niesie własny shortcode, więc pomyłka w przeliczeniu
+        // media_id albo trafienie w inny post wychodzi tutaj, a nie w formularzu.
+        if (!it || it.code !== code) return finish(null);
+        var out = {
+          likes:     it.like_count    != null ? it.like_count    : null,
+          comments:  it.comment_count != null ? it.comment_count : null,
+          // Klucz znika, gdy repostów jest zero (zmierzone: rolka z 1 repostem go ma,
+          // rolka z zerem nie). Brak przy włączonym udostępnianiu czytamy więc jako 0,
+          // a przy wyłączonym — jako „nie wiadomo".
+          shares:    it.media_repost_count != null ? it.media_repost_count
+                                                   : (it.share_count_disabled ? null : 0),
+          // play_count == nadruk wyświetleń na kafelku siatki, sprawdzone krzyżowo na
+          // dwóch rolkach (4240 = 4240, 730 = 730). Przy zdjęciach klucza nie ma.
+          pageviews: it.play_count != null ? it.play_count : null,
+          caption:   (it.caption && it.caption.text) ? it.caption.text : '',
+          date: '', hour: '', minute: ''
+        };
+        if (it.taken_at) {
+          var d = new Date(it.taken_at * 1000);
+          if (!isNaN(d.getTime())) {
+            out.date   = _localDateStr(d);
+            out.hour   = String(d.getHours()).padStart(2, '0');
+            out.minute = String(d.getMinutes()).padStart(2, '0');
+          }
+        }
+        finish(out);
+      })
+      .catch(function() { finish(null); });
+  }
+
+  // Shortcode to zapis liczbowego identyfikatora posta w base64url. Przeliczenie jest
+  // deterministyczne, więc media_id znamy bez pytania Instagrama o cokolwiek — sprawdzone
+  // przez porównanie z żądaniem, które sam wysłał: DdEAaUeIia8 → 3982309779189147324 (§11).
+  var _IG_B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  function _igMediaId(code) {
+    if (!code) return null;
+    var n = 0n;
+    for (var i = 0; i < code.length; i++) {
+      var pos = _IG_B64.indexOf(code[i]);
+      if (pos < 0) return null;   // znak spoza alfabetu — to nie jest shortcode
+      n = n * 64n + BigInt(pos);
+    }
+    return n.toString();
+  }
+
+  // Nagłówek x-ig-app-id jest WYMAGANY — bez niego endpoint odpowiada 400 „useragent mismatch".
+  // Czytamy identyfikator ze skryptów strony, żeby przeżyć jego ewentualną zmianę; stała niżej
+  // to wartość zaobserwowana i służy tylko za ostatnią deskę ratunku.
+  var _igAppIdCache = null;
+  function _igAppId() {
+    if (_igAppIdCache) return _igAppIdCache;
+    var scripts = document.querySelectorAll('script');
+    for (var i = 0; i < scripts.length; i++) {
+      var m = (scripts[i].textContent || '').match(/"X-IG-App-ID"\s*:\s*"(\d+)"/);
+      if (m) { _igAppIdCache = m[1]; return _igAppIdCache; }
+    }
+    _igAppIdCache = '936619743392459';
+    return _igAppIdCache;
+  }
+
   // Dyspozytor adapterów social media — zwraca komplet danych posta albo null (wtedy działa
-  // generyczny scrape artykułowy). Punkt rozszerzeń na kolejne platformy (X, Instagram, FB…).
+  // generyczny scrape artykułowy). Punkt rozszerzeń na kolejne platformy (X, FB…).
   function _scrapeSocialPost() {
     var h = window.location.hostname;
     if (/(^|\.)tiktok\.com$/.test(h)) return _scrapeTikTok();
     if (/(^|\.)youtube\.com$/.test(h) || /(^|\.)youtu\.be$/.test(h)) return _scrapeYouTube();
+    if (/(^|\.)instagram\.com$/.test(h)) return _scrapeInstagram();
     return null;
   }
 

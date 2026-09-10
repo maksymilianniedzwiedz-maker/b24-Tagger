@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.26.14",
+    "date": "2026-09-10",
+    "label": "feat",
+    "changes": [
+      "feat: Dodawanie niestandardowe z Instagrama czyta teraz otwarty POST, a nie profil pod nim. Wcześniej po kliknięciu kafelka Instagram podmieniał tylko adres — znaczniki og: i <main> zostawały z profilu, więc w tytule lądował opis konta, a w treści pasek zakładek (\"PostyReelsRepostyZ oznaczeniem…\"). Teraz adres, pełny podpis, tytuł z pierwszego zdania oraz data z godziną pochodzą z drzewa samego posta",
+      "feat: Metryki wzmianki z Instagrama uzupełniają się same i są dokładne: polubienia, komentarze, udostępnienia (reposty) oraz wyświetlenia przy rolkach. Modal Instagrama pokazuje polubienia zaokrąglone, a komentarzy i repostów nie pokazuje wcale, więc liczby pobierane są tą samą drogą, którą sam Instagram wczytuje otwierany post",
+      "fix: Formularz odświeża się po przejściu do kolejnego posta bez przeładowania strony — dotąd trzymał dane tego, na którym panel został otwarty. Pola poprawione ręcznie nie są nadpisywane",
+      "fix: Adresy rolek w postaci /reels/KOD sprowadzają się do kanonicznego /p/KOD, więc sprawdzanie duplikatów wreszcie je rozpoznaje"
+    ]
+  },
+  {
     "version": "0.26.13",
     "date": "2026-09-02",
     "label": "fix",

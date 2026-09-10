@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.18
+// @version      0.26.19
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.18';
+  const VERSION = '0.26.19';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -12941,6 +12941,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.19",
+      "date": "2026-09-10",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "feat", "text": "Udostępnienia filmu z TikToka wypełniają się od razu, bez czekania na pobranie danych — o ile jesteś zalogowany na TikToku. Wylogowanym TikTok pokazuje w tym miejscu napis \"Udostępnij\" zamiast liczby, więc pole uzupełni się chwilę później"},
+        {"type": "fix",  "text": "Liczniki z TikToka i Instagrama przechodzą przez jeden, odporny parser. Poprzedni czytał \"1,2 mln\" jako 12 000 000 (10x za dużo), a \"33,4 tys.\" jako 334 (100x za mało) — TikTok nie używa dziś tego formatu, ale zmiana po ich stronie wpisałaby do wzmianki liczbę rozjechaną o dwa rzędy wielkości"},
+        {"type": "fix",  "text": "Gdy nie da się jednoznacznie ustalić, który film jest na ekranie (widok TikToka trzyma kilka naraz), wtyczka nie czyta liczników z DOM i czeka na dane z sieci, zamiast wpisać liczby sąsiedniego filmu"},
+        {"type": "fix",  "text": "Film usunięty lub niedostępny nie wypełni już formularza zerami — odpowiedź bez poprawnego statusu jest odrzucana"}
+      ]
+    },
+    {
       "version": "0.26.18",
       "date": "2026-09-10",
       "label": "feat",
@@ -13042,15 +13054,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "Tagowanie pliku: większe partycje (2000 zamiast 1000 wzmianek), krótsza przerwa w trybie Auto między partycjami (10s zamiast 30s) oraz szybsza obsługa błędu Brand24 — gdy partia wzmianek dostanie błąd serwera, wtyczka nie traci czasu na powtórki, tylko od razu taguje pojedynczo (fallback), co działa skuteczniej"}
-      ]
-    },
-    {
-      "version": "0.26.9",
-      "date": "2026-06-26",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Listy tagów w całej wtyczce zawsze aktualne: karty Usuwanie, Quick Tag i AI Tag oraz okna ustawień (Overall i Trafność AI) same dociągają z Brand24 świeże tagi projektu przy otwarciu (jeśli zapisane są starsze niż ~5 min). Koniec sytuacji, gdy nowo dodany tag nie był widoczny do wyboru, dopóki nie odwiedziłeś projektu na panelu"}
       ]
     }
   ];
@@ -19309,19 +19312,6 @@ Tej operacji nie można cofnąć.`)) {
     return result;
   }
 
-  // Parser liczb social media: "85.6K" → 85600, "1,2M" → 1200000, "83" → 83
-  function _parseSocialNum(txt) {
-    if (!txt) return null;
-    var s = String(txt).replace(/[^0-9KkMmBb.,]/g, '').trim();
-    var m = s.match(/^([\d.,]+)\s*([KkMmBb]?)$/);
-    if (!m) return null;
-    var n = parseFloat(m[1].replace(/,/g, ''));
-    var sfx = m[2].toLowerCase();
-    if (sfx === 'k') n = Math.round(n * 1000);
-    else if (sfx === 'm') n = Math.round(n * 1000000);
-    else if (sfx === 'b') n = Math.round(n * 1000000000);
-    return isNaN(n) ? null : n;
-  }
 
   // ── TIKTOK ────────────────────────────────────────────────────────────────
   // Pełna wiedza o tym DOM-ie, z pomiarami: TIKTOK_DOM.md (cytowane niżej jako §N).
@@ -19376,8 +19366,13 @@ Tej operacji nie można cofnąć.`)) {
               ttId: id, strict: true, ready: false };
     r.url = 'https://www.tiktok.com' + window.location.pathname.replace(/\/+$/, '');
 
-    var root = _ttVisibleBlock() || document;
+    // W layoucie z kilkoma filmami naraz czytamy WYŁĄCZNIE z bloku widocznego filmu. Gdy nie da
+    // się go wskazać (karta nierysowana, nietypowy scroll), nie czytamy z DOM-u NIC — liczby
+    // sąsiedniego filmu byłyby gorsze niż ich brak, bo komplet i tak dociągnie _ttFetchDetail.
+    var multi = document.querySelectorAll('video').length >= 2;
+    var root  = _ttVisibleBlock() || (multi ? null : document);
     function _pick(names) {
+      if (!root) return '';
       for (var i = 0; i < names.length; i++) {
         try {
           var el = root.querySelector('[data-e2e="' + names[i] + '"]');
@@ -19391,8 +19386,11 @@ Tej operacji nie można cofnąć.`)) {
     // pierwsze w kolejności, bo nic nie kosztują, a starszy wariant może wrócić (§4).
     r.content = _pick(['browse-video-desc', 'video-desc', 'new-desc-span']).replace(/\s+/g, ' ').trim().slice(0, 600);
     if (r.content) r.title = _socialTitleFromText(r.content);
-    r.likes    = _parseSocialNum(_pick(['browse-like-count', 'like-count']));
-    r.comments = _parseSocialNum(_pick(['browse-comment-count', 'comment-count']));
+    r.likes    = _socialParseCount(_pick(['browse-like-count', 'like-count']));
+    r.comments = _socialParseCount(_pick(['browse-comment-count', 'comment-count']));
+    // Udostępnienia są w DOM-ie TYLKO na zalogowanej sesji (§4). Wylogowanym TikTok wstawia
+    // tam etykietę przycisku („Udostępnij"), którą parser odrzuca — brak cyfr, brak wyniku.
+    r.shares   = _socialParseCount(_pick(['share-count']));
     r.ready    = !!(r.content || r.likes != null);
 
     // Data z ID filmu (górne 32 bity = unix) — dostępna NATYCHMIAST i bez sieci, ale tylko
@@ -19437,6 +19435,10 @@ Tej operacji nie można cofnąć.`)) {
         try {
           var scope = (JSON.parse(m[1]) || {}).__DEFAULT_SCOPE__ || {};
           var detail = scope['webapp.video-detail'];
+          // statusCode 0 = film dostępny. Film usunięty daje 10204 „item doesn't exist" i wtedy
+          // itemStruct nie ma wcale, ale przy filmach prywatnych/zablokowanych regionalnie
+          // payload potrafi przyjść okrojony — wolimy nie wpisać zer niż wpisać nieprawdę.
+          if (detail && detail.statusCode) return finish(null);
           it = detail && detail.itemInfo && detail.itemInfo.itemStruct;
         } catch(e) { return finish(null); }
         // Samokontrola: payload niesie własne ID, więc trafienie w inny film wychodzi tutaj
@@ -19534,11 +19536,16 @@ Tej operacji nie można cofnąć.`)) {
     return m ? m[1] : null;
   }
 
-  // Parser liczników IG. Reguła rozstrzygająca separator (§7): ostatni separator z 1-2 cyframi
-  // po nim jest DZIESIĘTNY, z trzema — tysięcznym; spacja i nbsp zawsze znaczą tysiące.
-  // Nie da się tu użyć _parseSocialNum — ono kasuje przecinki bezwarunkowo i czyta „146 000,0"
-  // jako 1 460 000 (10× za dużo), czyli dokładnie ten błąd, który §7 opisuje.
-  function _igParseCount(txt) {
+  // Wspólny parser liczników social media (Instagram + TikTok). Reguła rozstrzygająca separator
+  // (INSTAGRAM_DOM.md §7): ostatni separator z 1-2 cyframi po nim jest DZIESIĘTNY, z trzema —
+  // tysięcznym; spacja i nbsp zawsze znaczą tysiące.
+  //
+  // Zastąpił dawne `_parseSocialNum`, które kasowało przecinki bezwarunkowo: czytało „1,2 mln"
+  // jako 12 000 000 (10x za dużo), a „33,4 tys." jako 334 (100x za mało). TikTok podaje dziś
+  // liczby po angielsku („33.4K") nawet przy polskim UI, więc ten błąd się nie odpalał — ale
+  // wystarczyłaby zmiana formatowania liczb, żeby cicho wpisać do wzmianki wartość rozjechaną
+  // o dwa rzędy wielkości. Parser odrzuca też tekst bez cyfr, np. etykietę „Udostępnij".
+  function _socialParseCount(txt) {
     if (txt == null) return null;
     var s = String(txt).replace(/[  ]/g, ' ').trim();
     if (!s) return null;
@@ -19667,7 +19674,7 @@ Tej operacji nie można cofnąć.`)) {
           continue;
         }
         if (!c.children.length) {
-          var n = _igParseCount(c.textContent);
+          var n = _socialParseCount(c.textContent);
           if (n !== null) seq.push({ num: n });
           continue;
         }
@@ -19698,7 +19705,7 @@ Tej operacji nie można cofnąć.`)) {
       var t = (els[i].textContent || '').replace(/\s+/g, ' ').trim();
       if (!t || t.length > 60) continue;
       var m = t.match(/^Liczba polubień:\s*(.+)$/i) || t.match(/^([\d\s.,]+[KkMmBb]?)\s+likes?$/i);
-      if (m) { var n = _igParseCount(m[1]); if (n !== null) return n; }
+      if (m) { var n = _socialParseCount(m[1]); if (n !== null) return n; }
     }
     return null;
   }

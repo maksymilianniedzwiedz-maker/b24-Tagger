@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.26.19",
+    "date": "2026-09-10",
+    "label": "fix",
+    "changes": [
+      "feat: Udostępnienia filmu z TikToka wypełniają się od razu, bez czekania na pobranie danych — o ile jesteś zalogowany na TikToku. Wylogowanym TikTok pokazuje w tym miejscu napis \"Udostępnij\" zamiast liczby, więc pole uzupełni się chwilę później",
+      "fix: Liczniki z TikToka i Instagrama przechodzą przez jeden, odporny parser. Poprzedni czytał \"1,2 mln\" jako 12 000 000 (10x za dużo), a \"33,4 tys.\" jako 334 (100x za mało) — TikTok nie używa dziś tego formatu, ale zmiana po ich stronie wpisałaby do wzmianki liczbę rozjechaną o dwa rzędy wielkości",
+      "fix: Gdy nie da się jednoznacznie ustalić, który film jest na ekranie (widok TikToka trzyma kilka naraz), wtyczka nie czyta liczników z DOM i czeka na dane z sieci, zamiast wpisać liczby sąsiedniego filmu",
+      "fix: Film usunięty lub niedostępny nie wypełni już formularza zerami — odpowiedź bez poprawnego statusu jest odrzucana"
+    ]
+  },
+  {
     "version": "0.26.18",
     "date": "2026-09-10",
     "label": "feat",

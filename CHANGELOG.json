@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.26.16",
+    "date": "2026-09-10",
+    "label": "fix",
+    "changes": [
+      "fix: Koniec fałszywego \"✓ URL nowy w projekcie\" tuż po przeładowaniu strony. Sprawdzanie duplikatów zawęża zapytanie do miesiąca z pola daty, a przy poście Instagrama data przychodzi z opóźnieniem — do tego czasu w polu stało \"dzisiaj\", więc starszy post był szukany w złym miesiącu i wychodził jako nowy. Teraz dup-check czeka na prawdziwą datę i powtarza się, gdy ta się pojawi",
+      "fix: Panel nie otwiera się już połową poza ekranem. Przeciągnięte współrzędne zostawały na nim po zamknięciu i przestawały pasować, gdy w międzyczasie zmienił się jego rozmiar (przełączenie \"Tylko formularz\") albo rozmiar okna. Teraz przy każdym otwarciu, przy zmianie widoku i przy zmianie rozmiaru okna panel jest wciągany z powrotem w widoczny obszar",
+      "feat: Panel Niestandardowe pamięta, gdzie go przeciągnąłeś — otwiera się tam, gdzie go zostawiłeś, zamiast wracać na środek. Pozycja jest zapamiętana także po przeładowaniu strony"
+    ]
+  },
+  {
     "version": "0.26.15",
     "date": "2026-09-10",
     "label": "fix",

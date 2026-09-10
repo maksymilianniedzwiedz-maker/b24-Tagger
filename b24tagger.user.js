@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.15
+// @version      0.26.16
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.15';
+  const VERSION = '0.26.16';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -152,6 +152,7 @@
     NA_PENDING:         'b24t_na_pending',
     NA_CONSENT:         'b24t_na_consent',
     NA_SETTINGS:        'b24t_na_settings',
+    NEWS_POS:           'b24tagger_news_pos',
   };
   const MAX_BATCH_SIZE = 50;
   const DEL_BATCH_DEFAULT = 25; // domyślny batch równoległych deletów (edytowalny w UI)
@@ -10039,6 +10040,53 @@ function showOnboarding(onComplete) {
       btn.innerHTML = isOn ? '⛶ Pełny widok' : '⛶ Tylko formularz';
       btn.title = isOn ? 'Wróć do widoku 3-kolumnowego' : 'Tryb tylko formularz — ukryj listę i podgląd';
     }
+    // Szerokość właśnie się zmieniła — przeciągnięty panel mógł przez to wyjść poza ekran
+    requestAnimationFrame(_newsPanelClamp);
+  }
+
+  // ── POZYCJA PANELU NIESTANDARDOWE ─────────────────────────────────────────
+  // Panel domyślnie jest wyśrodkowany przez flexa (position:relative). Przeciągnięcie
+  // przestawia go na position:fixed z konkretnym left/top — i te współrzędne zostawały na
+  // elemencie po zamknięciu. Gdy w międzyczasie zmienił się rozmiar panelu (przełączenie
+  // „Tylko formularz": 1400 px → 560 px) albo okna, przy kolejnym otwarciu panel wychodził
+  // połową poza ekran. Stąd przycinanie do widocznego obszaru przy każdym otwarciu.
+  function _newsPanelClamp() {
+    var p = document.getElementById('b24t-news-panel-main');
+    if (!p || p.style.position !== 'fixed') return;
+    var w = p.offsetWidth, h = p.offsetHeight;
+    if (!w || !h) return;   // panel nierysowany — geometria kłamie, lepiej nie ruszać
+    var l = Math.min(Math.max(0, parseFloat(p.style.left) || 0), Math.max(0, window.innerWidth  - w));
+    var t = Math.min(Math.max(0, parseFloat(p.style.top)  || 0), Math.max(0, window.innerHeight - h));
+    p.style.left = l + 'px';
+    p.style.top  = t + 'px';
+  }
+
+  function _newsPanelSavePos() {
+    var p = document.getElementById('b24t-news-panel-main');
+    if (!p || p.style.position !== 'fixed') return;
+    lsSet(LS.NEWS_POS, { left: parseFloat(p.style.left) || 0, top: parseFloat(p.style.top) || 0 });
+  }
+
+  // Zapisana pozycja dotyczy WYŁĄCZNIE trybu Niestandardowe — tylko tam działa przeciąganie.
+  // News wraca na środek, żeby zapisana pozycja nie przesuwała panelu, którego nikt nie ciągnął.
+  function _newsPanelApplyPos() {
+    var p = document.getElementById('b24t-news-panel-main');
+    if (!p) return;
+    if (newsState.mode !== 'custom') {
+      p.style.position = 'relative';
+      p.style.left = ''; p.style.top = ''; p.style.right = '';
+      return;
+    }
+    var pos = lsGet(LS.NEWS_POS, null);
+    if (pos && typeof pos.left === 'number' && typeof pos.top === 'number') {
+      p.style.position = 'fixed';
+      p.style.right    = 'auto';
+      p.style.left     = pos.left + 'px';
+      p.style.top      = pos.top  + 'px';
+    }
+    // Szerokość ustala się dopiero po _applyNewsMode i toggle'u „Tylko formularz",
+    // więc przycinamy w następnej klatce, gdy offsetWidth jest już prawdziwy.
+    requestAnimationFrame(_newsPanelClamp);
   }
 
   function openNewsPanels(mode) {
@@ -10051,6 +10099,7 @@ function showOnboarding(onComplete) {
       _newsResetSubmitStatus();
       if (!newsState.wired) { _wireNewsPanels(); newsState.wired = true; }
       _applyNewsMode();
+      _newsPanelApplyPos();
       requestAnimationFrame(function() {
         if (_newsChipsRenderer) _newsChipsRenderer();
         _newsRefillTags();
@@ -10068,6 +10117,7 @@ function showOnboarding(onComplete) {
     newsState.panelsOpen = true;
     _newsResetSubmitStatus();
     _applyNewsMode();
+    _newsPanelApplyPos();
     if (newsState.mode === 'custom' && _isExternal) {
       requestAnimationFrame(function() {
         _newsRefillTags();
@@ -11211,7 +11261,13 @@ function showOnboarding(onComplete) {
         _npMain.style.left = nx + 'px';
         _npMain.style.top  = ny + 'px';
       });
-      document.addEventListener('mouseup', function() { _ndrag = false; });
+      document.addEventListener('mouseup', function() {
+        if (!_ndrag) return;
+        _ndrag = false;
+        _newsPanelSavePos();
+      });
+      // Zmiana rozmiaru okna może zostawić zapisaną pozycję poza ekranem
+      window.addEventListener('resize', _newsPanelClamp);
     }
 
     // ─── CHIPS ───
@@ -12882,6 +12938,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.16",
+      "date": "2026-09-10",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix",  "text": "Koniec fałszywego \"✓ URL nowy w projekcie\" tuż po przeładowaniu strony. Sprawdzanie duplikatów zawęża zapytanie do miesiąca z pola daty, a przy poście Instagrama data przychodzi z opóźnieniem — do tego czasu w polu stało \"dzisiaj\", więc starszy post był szukany w złym miesiącu i wychodził jako nowy. Teraz dup-check czeka na prawdziwą datę i powtarza się, gdy ta się pojawi"},
+        {"type": "fix",  "text": "Panel nie otwiera się już połową poza ekranem. Przeciągnięte współrzędne zostawały na nim po zamknięciu i przestawały pasować, gdy w międzyczasie zmienił się jego rozmiar (przełączenie \"Tylko formularz\") albo rozmiar okna. Teraz przy każdym otwarciu, przy zmianie widoku i przy zmianie rozmiaru okna panel jest wciągany z powrotem w widoczny obszar"},
+        {"type": "feat", "text": "Panel Niestandardowe pamięta, gdzie go przeciągnąłeś — otwiera się tam, gdzie go zostawiłeś, zamiast wracać na środek. Pozycja jest zapamiętana także po przeładowaniu strony"}
+      ]
+    },
+    {
       "version": "0.26.15",
       "date": "2026-09-10",
       "label": "fix",
@@ -12978,17 +13045,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#6366f1",
       "changes": [
         {"type": "feat", "text": "Dodawanie wzmianek z YouTube (zwykłe filmy i Shorts): panel sam wypełnia tytuł, datę i godzinę publikacji, autora, liczbę polubień oraz wyświetlenia. Data jest dokładna (z danych filmu), a przy przewijaniu Shortsów nie podstawia danych z poprzedniego filmu"}
-      ]
-    },
-    {
-      "version": "0.26.6",
-      "date": "2026-06-23",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Dodawanie wzmianek na stronach zewnętrznych: gdy tagi projektu nie są jeszcze w pamięci tej przeglądarki, panel sam dociąga je z Brand24 (wcześniej lista tagów bywała pusta, mimo że projekt był widoczny)"},
-        {"type": "fix", "text": "Obsługa polskiego panelu (panel.brand24.pl): poprawne wykrycie zalogowania (znacznik Panel), pobranie tokenu i wysyłka wzmianki trafiają teraz na właściwy panel (.pl/.com) także ze stron zewnętrznych — wcześniej zawsze celowało w .com"},
-        {"type": "fix", "text": "Tagi projektu nie znikają już z pamięci współdzielonej, gdy nazwa projektu jest słabo rozpoznana"}
       ]
     }
   ];
@@ -18790,6 +18846,9 @@ Tej operacji nie można cofnąć.`)) {
     // Zakres dat = miesiąc artykułu + 1 dzień buforu (na opóźnienie crawlera)
     var dateFld  = document.getElementById('b24t-news-f-date');
     var dateVal  = (dateFld && dateFld.value) || '';
+    // Puste pole daty zdarza się tylko wtedy, gdy czekamy na datę posta z sieci. Zapytanie
+    // o „bieżący miesiąc" dałoby wtedy fałszywe „URL nowy" — lepiej poczekać na ponowienie.
+    if (!dateVal) { _dupVerdict('info', '⏳ czekam na datę posta — dup-check ruszy zaraz potem'); return; }
     var dateFrom, dateTo;
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateVal)) {
       var _y = parseInt(dateVal.substring(0, 4), 10);
@@ -19041,9 +19100,14 @@ Tej operacji nie można cofnąć.`)) {
                      'rgba(99,102,241,0.4)', 'Automatycznie wypełniono z treści strony');
 
       // Data
+      // Na Instagramie datę zna dopiero _igFetchMediaInfo. Wpisanie tu „dzisiaj" nie jest
+      // niewinnym domyślnikiem: dup-check zawęża zapytanie do MIESIĄCA z tego pola, więc przy
+      // starszym poście szukałby w złym miesiącu i meldował „URL nowy" dla wzmianki, która
+      // w projekcie już jest. To był powód fałszywych „nowych" tuż po przeładowaniu strony.
       var dateFld = document.getElementById('b24t-news-f-date');
+      var _igDatePending = !!(_social && _social.igCode);
       if (!_customSetAuto(dateFld, scraped.date, 'rgba(34,197,94,0.5)', 'Data wykryta automatycznie') &&
-          dateFld && !dateFld.value) {
+          dateFld && !dateFld.value && !_igDatePending) {
         var _now = new Date();
         dateFld.value = _now.getFullYear() + '-' + String(_now.getMonth()+1).padStart(2,'0') + '-' + String(_now.getDate()).padStart(2,'0');
       }
@@ -19083,8 +19147,9 @@ Tej operacji nie można cofnąć.`)) {
           _customSetMetricsPending(false);
           if (!info) return;
           _customFillMetrics(info);
-          _customSetAuto(document.getElementById('b24t-news-f-date'), info.date,
-                         'rgba(34,197,94,0.5)', 'Data wykryta automatycznie');
+          var _dFld = document.getElementById('b24t-news-f-date');
+          var _dBefore = _dFld ? _dFld.value : '';
+          _customSetAuto(_dFld, info.date, 'rgba(34,197,94,0.5)', 'Data wykryta automatycznie');
           _customSetAuto(document.getElementById('b24t-news-f-hour'),   info.hour);
           _customSetAuto(document.getElementById('b24t-news-f-minute'), info.minute);
           // Podpis dobieramy tylko wtedy, gdy DOM nic nie dał (odtwarzacz rolek, post bez
@@ -19095,6 +19160,11 @@ Tej operacji nie można cofnąć.`)) {
                            'rgba(99,102,241,0.4)', 'Automatycznie wypełniono z treści strony');
             _customSetAuto(document.getElementById('b24t-news-f-title'),
                            _igTitleFromCaption(info.caption).slice(0, 400), 'rgba(99,102,241,0.4)');
+          }
+          // Dup-check pyta o miesiąc wzięty z pola daty. Jeśli data dopiero teraz się pojawiła
+          // albo zmieniła, poprzednie zapytanie poszło w zły zakres — trzeba je powtórzyć.
+          if (_dFld && _dFld.value && _dFld.value !== _dBefore && state.projectId) {
+            _customDupCheck((document.getElementById('b24t-news-f-url') || {}).value || '', state.projectId);
           }
         });
       }

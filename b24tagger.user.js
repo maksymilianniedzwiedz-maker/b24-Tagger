@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.23
+// @version      0.26.24
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.23';
+  const VERSION = '0.26.24';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -11195,22 +11195,18 @@ function showOnboarding(onComplete) {
         btn.textContent = '⏳';
         btn.disabled = true;
         var _doneBtn = function() { btn.disabled = false; btn.textContent = '↺ Sprawdź ponownie'; };
-        if (!_isBrand24Host) {
-          // Strona zewnętrzna — getTags() (same-origin) nie zadziała; dociągnij cross-domain
-          _extFetchTags(state.projectId, function(tags, err) {
-            if (tags && tags.length) _extApplyFetchedTags(state.projectId, tags);
-            else _newsCheckTagDodane();
-            _doneBtn();
-          });
-          return;
-        }
-        getTags().then(function(tags) {
-          state.tags = {};
-          tags.forEach(function(t) { if (!t.isProtected) state.tags[t.title] = t.id; });
-          _newsRefillTags();
-          _doneBtn();
-        }).catch(function() {
-          _newsCheckTagDodane();
+        // Ta sama droga na obu rodzajach stron. Na panelu Brand24 kusiłoby wołać same-origin
+        // `getTags()`, ale ono też bierze projekt z sesji Django — a wtyczka sama tę sesję
+        // przestawia przy każdym sprawdzeniu dostępu do innego projektu. Bez potwierdzonej
+        // rozgrzewki dostałoby się tagi czyjegoś innego projektu (zmierzone, patrz `_extFetchTags`).
+        _extFetchTags(state.projectId, function(tags, err) {
+          if (tags && tags.length) _extApplyFetchedTags(state.projectId, tags);
+          else {
+            _newsCheckTagDodane();
+            if (err) addLog('⚠ Tagi: ' + (err === 'no-access'
+              ? 'brak dostępu do projektu ' + state.projectId + ' na ' + _baseLabel(_b24PanelBase(state.projectId))
+              : 'nie udało się pobrać (' + err + ')'), 'warn');
+          }
           _doneBtn();
         });
       }
@@ -13081,6 +13077,19 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.24",
+      "date": "2026-09-11",
+      "label": "fix",
+      "labelColor": "#ef4444",
+      "changes": [
+        {"type": "fix", "text": "**Wtyczka mogła zapisać tagi cudzego projektu.** Zapytanie o tagi nie przyjmuje ID projektu — zwraca tagi tego projektu, na którym stoi sesja Brand24. Dlatego wtyczka najpierw „rozgrzewa” sesję, wchodząc na stronę właściwego projektu. **Wynik tej rozgrzewki był ignorowany**: gdy się nie udała (brak dostępu na tym panelu), wtyczka i tak pytała o tagi i dostawała tagi projektu, na którym sesja akurat stała — po czym zapisywała je jako tagi żądanego projektu, nadpisując poprawne"},
+        {"type": "fix", "text": "Konsekwencja była poważniejsza niż zła lista na ekranie: te identyfikatory tagów są potem używane do tagowania wzmianek, a odmładzanie tagów jest wołane przed autotagowaniem wielu projektów. Wzmianki mogły więc dostać tagi o cudzych identyfikatorach, bez żadnego błędu"},
+        {"type": "fix", "text": "Rozgrzewka jest teraz warunkiem: bez potwierdzenia, że strona projektu faktycznie się otworzyła, wtyczka **nie pyta o tagi w ogóle** i mówi wprost, czego brakuje"},
+        {"type": "fix", "text": "Przycisk „Sprawdź ponownie” idzie tą samą drogą na panelu Brand24 i na stronach zewnętrznych. Wcześniej na panelu pytał o tagi wprost — a to zapytanie też bierze projekt z sesji, którą wtyczka sama przestawia przy sprawdzaniu dostępu do innych projektów"},
+        {"type": "feat", "text": "Komunikat przy braku tagów podaje **konkretną domenę**, na której trzeba się zalogować, zamiast ogólnego „nie udało się pobrać tagów”"}
+      ]
+    },
+    {
       "version": "0.26.23",
       "date": "2026-09-11",
       "label": "fix",
@@ -13182,18 +13191,6 @@ function showOnboarding(onComplete) {
         {"type": "fix",  "text": "Komunikat \"✓ Dodano do Brand24!\" znika przy zamknięciu panelu i przy przejściu do kolejnego posta — wcześniej wisiał nad formularzem następnej wzmianki i wyglądał, jakby ona też była już dodana"},
         {"type": "feat", "text": "Widać, kiedy liczby jeszcze lecą z Instagrama: sekcja METRYKI pulsuje, a w jej nagłówku stoi \"⏳ pobieram dokładne liczby…\". Dzięki temu wiadomo, że wartość zaraz się zmieni, i nie ma wrażenia, że panel się zaciął"},
         {"type": "feat", "text": "Wykryty duplikat blokuje przycisk dodawania — jest wyszarzony i nieklikalny, zamiast pozwalać wysłać wzmiankę, która już jest w projekcie. Gdy duplikat jest zamierzony, obok ostrzeżenia stoi \"dodaj mimo to\", które odblokowuje wysyłkę jednym kliknięciem"}
-      ]
-    },
-    {
-      "version": "0.26.14",
-      "date": "2026-09-10",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "Dodawanie niestandardowe z Instagrama czyta teraz otwarty POST, a nie profil pod nim. Wcześniej po kliknięciu kafelka Instagram podmieniał tylko adres — znaczniki og: i <main> zostawały z profilu, więc w tytule lądował opis konta, a w treści pasek zakładek (\"PostyReelsRepostyZ oznaczeniem…\"). Teraz adres, pełny podpis, tytuł z pierwszego zdania oraz data z godziną pochodzą z drzewa samego posta"},
-        {"type": "feat", "text": "Metryki wzmianki z Instagrama uzupełniają się same i są dokładne: polubienia, komentarze, udostępnienia (reposty) oraz wyświetlenia przy rolkach. Modal Instagrama pokazuje polubienia zaokrąglone, a komentarzy i repostów nie pokazuje wcale, więc liczby pobierane są tą samą drogą, którą sam Instagram wczytuje otwierany post"},
-        {"type": "fix", "text": "Formularz odświeża się po przejściu do kolejnego posta bez przeładowania strony — dotąd trzymał dane tego, na którym panel został otwarty. Pola poprawione ręcznie nie są nadpisywane"},
-        {"type": "fix", "text": "Adresy rolek w postaci /reels/KOD sprowadzają się do kanonicznego /p/KOD, więc sprawdzanie duplikatów wreszcie je rozpoznaje"}
       ]
     }
   ];
@@ -18815,12 +18812,29 @@ Tej operacji nie można cofnąć.`)) {
   // Cross-domain pobranie listy tagów wybranego projektu (gdy brak w cache). getTags nie przyjmuje
   // projectId — bierze projekt z sesji — więc najpierw "rozgrzewamy" sesję na właściwy projekt przez
   // GET add-new-mention?sid=pid (endpoint przypisany do projektu), dopiero potem getTags.
+  // ⚠ `getTags` NIE przyjmuje projectId — zwraca tagi projektu, na którym stoi **sesja Django**.
+  // Dlatego przed pytaniem trzeba sesję „rozgrzać", wchodząc na stronę tego projektu.
+  //
+  // Rozgrzewka BYŁA best-effort („wynik ignorujemy, idziemy dalej") i to był poważny błąd.
+  // Zmierzone na żywo 2026-09-11 na panel.brand24.pl:
+  //   rozgrzewka do H&M_PL (brak dostępu na .pl) → zaślepka 1832 B, czyli nieudana
+  //   `getTags` mimo to → 11 tagów TRZECIEGO projektu (allegro_owned, …)
+  //   H&M_PL ma 90 tagów, projekt na którym stała karta ma 2 — to nie były tagi żadnego z nich
+  // Wynik trafiałby przez `_extApplyFetchedTags(pid, …)` do pamięci jako tagi H&M_PL, nadpisując
+  // poprawne. A ponieważ `_tagsFetchFreshAsync` woła tę funkcję przed autotagowaniem multi-projekt,
+  // wzmianki mogłyby dostać tagi o CUDZYCH identyfikatorach — po cichu, bez żadnego błędu.
+  //
+  // Teraz rozgrzewka jest warunkiem: `_accessCheck` czyta tę samą odpowiedź i mówi wprost, czy
+  // strona projektu się otworzyła (jest token CSRF) czy przyszła zaślepka. Bez potwierdzenia
+  // NIE pytamy o tagi w ogóle. Patrz PANEL_STATE.md §4.5.
   function _extFetchTags(pid, cb) {
     var base = _b24PanelBase(pid);
     if (!B24Bridge.token.isValid(base)) { cb(null, 'no-token'); return; }
     var headers = B24Bridge.token.headers(base);
     var _gqlBody = JSON.stringify({ operationName: 'getTags', variables: {}, query: 'query getTags{getTags{id title isProtected}}' });
-    function _doGetTags() {
+    _accessCheck(pid, base, function(rec) {
+      if (!rec)          { cb(null, 'net');       return; }  // nie wiadomo — nie zgadujemy
+      if (!rec.canAdd)   { cb(null, 'no-access'); return; }  // sesja nie stoi na tym projekcie
       GM_xmlhttpRequest({
         method: 'POST', url: base + '/api/graphql', headers: headers, data: _gqlBody, timeout: 10000,
         onload: function(resp) {
@@ -18833,11 +18847,6 @@ Tej operacji nie można cofnąć.`)) {
         onerror: function() { cb(null, 'net'); },
         ontimeout: function() { cb(null, 'timeout'); }
       });
-    }
-    // rozgrzewka sesji (best-effort) — wynik ignorujemy, idziemy dalej niezależnie
-    GM_xmlhttpRequest({
-      method: 'GET', url: base + '/searches/add-new-mention/?sid=' + pid, timeout: 9000,
-      onload: _doGetTags, onerror: _doGetTags, ontimeout: _doGetTags
     });
   }
 
@@ -18865,7 +18874,12 @@ Tej operacji nie można cofnąć.`)) {
     _extFetchTags(pid, function(tags, err) {
       if (tags && tags.length) { _extApplyFetchedTags(pid, tags); }
       else if (tagList) {
-        tagList.innerHTML = '<div style="padding:6px 9px;font-size:10px;color:#f59e0b;">⚠ Nie udało się pobrać tagów (' + (err || 'błąd') + '). Otwórz ten projekt raz na panelu Brand24, by je zapisać.</div>';
+        // „Nie udało się" nie mówi, co zrobić. Najczęstszy powód ma konkretne lekarstwo:
+        // brak sesji na panelu TEGO projektu — więc podajemy domenę, nie ogólnik.
+        var _lbl = _escHtml(_baseLabel(_tagBase));
+        tagList.innerHTML = (err === 'no-access')
+          ? '<div style="padding:6px 9px;font-size:10px;color:#f59e0b;">⚠ Brak dostępu do tego projektu na <strong>' + _lbl + '</strong> — zaloguj się tam i kliknij kropkę dostępu, by spróbować ponownie.</div>'
+          : '<div style="padding:6px 9px;font-size:10px;color:#f59e0b;">⚠ Nie udało się pobrać tagów (' + _escHtml(err || 'błąd') + '). Otwórz ten projekt raz na panelu Brand24, by je zapisać.</div>';
       }
     });
   }

@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.26.24",
+    "date": "2026-09-11",
+    "label": "fix",
+    "changes": [
+      "fix: **Wtyczka mogła zapisać tagi cudzego projektu.** Zapytanie o tagi nie przyjmuje ID projektu — zwraca tagi tego projektu, na którym stoi sesja Brand24. Dlatego wtyczka najpierw „rozgrzewa” sesję, wchodząc na stronę właściwego projektu. **Wynik tej rozgrzewki był ignorowany**: gdy się nie udała (brak dostępu na tym panelu), wtyczka i tak pytała o tagi i dostawała tagi projektu, na którym sesja akurat stała — po czym zapisywała je jako tagi żądanego projektu, nadpisując poprawne",
+      "fix: Konsekwencja była poważniejsza niż zła lista na ekranie: te identyfikatory tagów są potem używane do tagowania wzmianek, a odmładzanie tagów jest wołane przed autotagowaniem wielu projektów. Wzmianki mogły więc dostać tagi o cudzych identyfikatorach, bez żadnego błędu",
+      "fix: Rozgrzewka jest teraz warunkiem: bez potwierdzenia, że strona projektu faktycznie się otworzyła, wtyczka **nie pyta o tagi w ogóle** i mówi wprost, czego brakuje",
+      "fix: Przycisk „Sprawdź ponownie” idzie tą samą drogą na panelu Brand24 i na stronach zewnętrznych. Wcześniej na panelu pytał o tagi wprost — a to zapytanie też bierze projekt z sesji, którą wtyczka sama przestawia przy sprawdzaniu dostępu do innych projektów",
+      "feat: Komunikat przy braku tagów podaje **konkretną domenę**, na której trzeba się zalogować, zamiast ogólnego „nie udało się pobrać tagów”"
+    ]
+  },
+  {
     "version": "0.26.23",
     "date": "2026-09-11",
     "label": "fix",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.16
+// @version      0.26.17
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.16';
+  const VERSION = '0.26.17';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -10588,11 +10588,14 @@ function showOnboarding(onComplete) {
       '<div style="display:flex;gap:8px;flex-shrink:0;">',
         '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
           '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">GODZINA</label>',
-          '<input id="b24t-news-f-hour" type="text" value="12" style="' + _newsInputCss(t) + '">',
+          // data-b24t-auto = ta sama wartość co value: to domyślnik wtyczki, nie wpis użytkownika.
+          // Bez tego znacznika _customSetAuto uznaje „12" za ręczną poprawkę i godzina posta
+          // z Instagrama nigdy nie trafiała do formularza (patrz _customSetAuto).
+          '<input id="b24t-news-f-hour" type="text" value="12" data-b24t-auto="12" style="' + _newsInputCss(t) + '">',
         '</div>',
         '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
           '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">MINUTY</label>',
-          '<input id="b24t-news-f-minute" type="text" value="00" style="' + _newsInputCss(t) + '">',
+          '<input id="b24t-news-f-minute" type="text" value="00" data-b24t-auto="00" style="' + _newsInputCss(t) + '">',
         '</div>',
       '</div>',
       '<div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">',
@@ -12938,6 +12941,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.17",
+      "date": "2026-09-10",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix", "text": "Data i godzina publikacji posta z Instagrama trafiają wreszcie do formularza. Pola GODZINA i MINUTY miały wpisane na sztywno \"12\" i \"00\", a data po pierwszym otwarciu panelu dostawała \"dzisiaj\" — wtyczka brała te wartości za ręczną poprawkę użytkownika i nie pozwalała ich nadpisać. Efekt: wzmianka zapisywała się z dzisiejszą datą i godziną 12:00 zamiast prawdziwego czasu publikacji"}
+      ]
+    },
+    {
       "version": "0.26.16",
       "date": "2026-09-10",
       "label": "fix",
@@ -13036,15 +13048,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "Tagowanie pliku w wielu projektach: przed otagowaniem każdego projektu wtyczka dociąga z Brand24 jego aktualną listę tagów. Wcześniej, jeśli nie odwiedziłeś projektu po dodaniu nowego tagu, ten tag był po cichu pomijany — przez co część projektów zostawała bez niego. Gdy dociągnięcie się nie uda, używane są tagi zapisane wcześniej (bez pogorszenia)"}
-      ]
-    },
-    {
-      "version": "0.26.7",
-      "date": "2026-06-23",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "Dodawanie wzmianek z YouTube (zwykłe filmy i Shorts): panel sam wypełnia tytuł, datę i godzinę publikacji, autora, liczbę polubień oraz wyświetlenia. Data jest dokładna (z danych filmu), a przy przewijaniu Shortsów nie podstawia danych z poprzedniego filmu"}
       ]
     }
   ];
@@ -19104,22 +19107,25 @@ Tej operacji nie można cofnąć.`)) {
       // niewinnym domyślnikiem: dup-check zawęża zapytanie do MIESIĄCA z tego pola, więc przy
       // starszym poście szukałby w złym miesiącu i meldował „URL nowy" dla wzmianki, która
       // w projekcie już jest. To był powód fałszywych „nowych" tuż po przeładowaniu strony.
+      // KAŻDY zapis automatyczny idzie przez _customSetAuto, także zwykły domyślnik. Wpisanie
+      // wartości wprost (el.value = …) nie zostawia znacznika, więc pole na zawsze wygląda jak
+      // ręcznie poprawione i późniejsza, prawdziwa wartość jest odrzucana.
       var dateFld = document.getElementById('b24t-news-f-date');
       var _igDatePending = !!(_social && _social.igCode);
-      if (!_customSetAuto(dateFld, scraped.date, 'rgba(34,197,94,0.5)', 'Data wykryta automatycznie') &&
-          dateFld && !dateFld.value && !_igDatePending) {
-        var _now = new Date();
-        dateFld.value = _now.getFullYear() + '-' + String(_now.getMonth()+1).padStart(2,'0') + '-' + String(_now.getDate()).padStart(2,'0');
+      if (!_customSetAuto(dateFld, scraped.date, 'rgba(34,197,94,0.5)', 'Data wykryta automatycznie') && !_igDatePending) {
+        _customSetAuto(dateFld, _localDateStr(new Date()));
       }
 
-      // Godzina i minuty — z posta social media jeśli znane, inaczej z bieżącego czasu
+      // Godzina i minuty — z posta social media jeśli znane, inaczej z bieżącego czasu.
+      // Tu domyślnik zostaje nawet na Instagramie (w odróżnieniu od daty, która zawęża
+      // dup-check): jest oznaczony, więc odpowiedź z sieci go nadpisze.
       var hourFld = document.getElementById('b24t-news-f-hour');
       var minFld  = document.getElementById('b24t-news-f-minute');
-      if (!_customSetAuto(hourFld, _social && _social.hour) && hourFld && !hourFld.value) {
-        hourFld.value = String(new Date().getHours()).padStart(2,'0');
+      if (!_customSetAuto(hourFld, _social && _social.hour)) {
+        _customSetAuto(hourFld, String(new Date().getHours()).padStart(2, '0'));
       }
-      if (!_customSetAuto(minFld, _social && _social.minute) && minFld && !minFld.value) {
-        minFld.value = String(new Date().getMinutes()).padStart(2,'0');
+      if (!_customSetAuto(minFld, _social && _social.minute)) {
+        _customSetAuto(minFld, String(new Date().getMinutes()).padStart(2, '0'));
       }
 
       // Kategoria — auto-detect z URL; zapisujemy też w datasecie, żeby Clear mógł przywrócić auto-wartość

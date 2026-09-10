@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.26.17",
+    "date": "2026-09-10",
+    "label": "fix",
+    "changes": [
+      "fix: Data i godzina publikacji posta z Instagrama trafiają wreszcie do formularza. Pola GODZINA i MINUTY miały wpisane na sztywno \"12\" i \"00\", a data po pierwszym otwarciu panelu dostawała \"dzisiaj\" — wtyczka brała te wartości za ręczną poprawkę użytkownika i nie pozwalała ich nadpisać. Efekt: wzmianka zapisywała się z dzisiejszą datą i godziną 12:00 zamiast prawdziwego czasu publikacji"
+    ]
+  },
+  {
     "version": "0.26.16",
     "date": "2026-09-10",
     "label": "fix",

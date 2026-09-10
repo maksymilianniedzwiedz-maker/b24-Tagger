@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.27.0",
+    "date": "2026-09-11",
+    "label": "feat",
+    "changes": [
+      "feat: **Eksperyment: formularz wzmianki w wyglądzie i24 Tools.** W ustawieniach → Funkcje opcjonalne doszedł przełącznik „🧪 Formularz wzmianki w stylu i24 Tools”, domyślnie wyłączony. Po włączeniu formularz dostaje ciemny panel, fioletowy akcent i pola monospace — czyli język wizualny rozszerzenia, do którego dodawanie wzmianek ma docelowo trafić. Widać od razu, jak to będzie wyglądać, zanim cokolwiek tam przeniesiemy",
+      "feat: Zmienia się **wyłącznie wygląd**. Markup ma te same identyfikatory elementów co wersja zwykła, więc autouzupełnianie z Instagrama i TikToka, sprawdzanie duplikatu, kropka dostępu, tagi i wysyłka działają dokładnie tak samo. Wyłączenie przełącznika wraca do starego wyglądu bez śladu",
+      "fix: Ustawienia funkcji opcjonalnych są teraz widoczne także poza Brand24. Pamięć przeglądarki jest osobna dla każdej domeny, więc na Instagramie wtyczka nie wiedziała, co masz włączone — a to właśnie tam dodaje się wzmianki"
+    ]
+  },
+  {
     "version": "0.26.25",
     "date": "2026-09-11",
     "label": "fix",

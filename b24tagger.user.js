@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.25
+// @version      0.27.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -120,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.25';
+  const VERSION = '0.27.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -10749,6 +10749,14 @@ function showOnboarding(onComplete) {
     colForm.id = 'b24t-news-col-form';
     colForm.style.cssText = 'flex:0 0 22%;min-width:300px;max-width:420px;display:flex;flex-direction:column;overflow-y:auto;padding:14px 16px;gap:12px;';
 
+    // Eksperymentalny wygląd (ustawienia → Funkcje opcjonalne). Ten sam formularz, te same
+    // identyfikatory elementów — inny tylko markup i style. Patrz `_newsFormHtmlI24w`.
+    if (loadFeatures().custom_form_i24w) {
+      _i24wInjectStyles();
+      colForm.style.padding = '0';
+      colForm.style.gap = '0';
+      colForm.innerHTML = _newsFormHtmlI24w();
+    } else {
     colForm.innerHTML = [
       '<div id="b24t-news-cms-warn" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.5;flex-shrink:0;">' +
         '<span id="b24t-news-cms-warn-text"></span>' +
@@ -10872,6 +10880,7 @@ function showOnboarding(onComplete) {
       '<button id="b24t-news-submit-btn" style="flex-shrink:0;padding:9px;border-radius:9px;border:none;background:var(--b24t-accent-grad);color:#fff;font-size:12px;font-weight:700;cursor:pointer;width:100%;letter-spacing:0.03em;transition:opacity 0.15s;">✚ Dodaj wzmiankę do Brand24</button>',
       '<div id="b24t-news-submit-status" style="font-size:10px;text-align:center;min-height:14px;font-weight:500;flex-shrink:0;"></div>',
     ].join('');
+    }
 
     cols.appendChild(colList);
     cols.appendChild(colPreview);
@@ -11047,6 +11056,214 @@ function showOnboarding(onComplete) {
   }
   function _newsInputCss(t) {
     return 'width:100%;box-sizing:border-box;font-size:11px;padding:6px 8px;border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-family:Geist,\'Segoe UI\',system-ui,sans-serif;outline:none;transition:border-color 0.15s;';
+  }
+
+  // ── EKSPERYMENT: formularz w języku wizualnym i24 Tools ──────────────────────
+  // Po co: zanim dodawanie wzmianek trafi do rozszerzenia i24 Tools, chcemy zobaczyć, jak ten
+  // formularz wygląda w TAMTYM designie — a userscript jest do takich prób piaskownicą.
+  //
+  // Zasada, na której to stoi: **markup ma te same identyfikatory elementów co wersja zwykła.**
+  // Dzięki temu autouzupełnianie, adaptery social, dup-check, kropka dostępu i wysyłka działają
+  // bez jednej linijki zmian — różni się wyłącznie wygląd. Gdy eksperyment upadnie, wystarczy
+  // usunąć te dwie funkcje i flagę; nic więcej nie jest z nimi splecione.
+  //
+  // Prefiks `b24t-i24w-`, a nie `i24w-`: na stronach Brand24 może równolegle działać prawdziwe
+  // rozszerzenie i24 Tools, które wstrzykuje własne `.i24w-*`. Te same nazwy klas oznaczałyby,
+  // że jedna wtyczka stylizuje okna drugiej.
+  //
+  // Wartości kolorów i wymiarów są przepisane z `extension/shared/window.css` — nie zgadywane.
+
+  function _i24wInjectStyles() {
+    if (document.getElementById('b24t-i24w-styles')) return;
+    var st = document.createElement('style');
+    st.id = 'b24t-i24w-styles';
+    st.textContent = [
+      '.b24t-i24w{--w-bg:#131826;--w-bg2:#1b2236;--w-bd:rgba(255,255,255,.08);--w-acc:#7c5cff;',
+      '  --w-acc2:#5b7cff;--w-tx:#e4e8ef;--w-dim:#8a93a6;--w-ok:#34d399;--w-err:#f87171;--w-warn:#fbbf24;',
+      '  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;font-size:13px;',
+      '  line-height:1.45;color:var(--w-tx);}',
+      '.b24t-i24w-panel{background:var(--w-bg);border:1px solid var(--w-bd);border-radius:14px;overflow:hidden;',
+      '  display:flex;flex-direction:column;box-shadow:0 1px 0 rgba(255,255,255,.04) inset,0 18px 60px -12px rgba(0,0,0,.65);}',
+      '.b24t-i24w-header{display:flex;align-items:center;gap:8px;padding:10px 12px;',
+      '  background:linear-gradient(180deg,var(--w-bg2),var(--w-bg));border-bottom:1px solid var(--w-bd);}',
+      '.b24t-i24w-title{flex:1;font-weight:600;font-size:13px;display:flex;align-items:center;gap:7px;min-width:0;}',
+      '.b24t-i24w-icon{width:22px;height:22px;border-radius:7px;display:inline-flex;align-items:center;',
+      '  justify-content:center;font-size:13px;flex-shrink:0;background:linear-gradient(135deg,var(--w-acc),var(--w-acc2));',
+      '  box-shadow:0 4px 12px -2px rgba(124,92,255,.55);}',
+      '.b24t-i24w-body{padding:12px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;}',
+      '.b24t-i24w-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--w-dim);',
+      '  font-weight:600;margin-bottom:2px;display:block;}',
+      '.b24t-i24w-input,.b24t-i24w-textarea,.b24t-i24w-select{width:100%;background:var(--w-bg2)!important;',
+      '  border:1px solid var(--w-bd);border-radius:8px;color:var(--w-tx)!important;padding:7px 10px;',
+      '  font-size:12.5px;font-family:ui-monospace,"SF Mono",Menlo,monospace;outline:none;box-sizing:border-box;',
+      '  color-scheme:dark;transition:border-color .12s,box-shadow .12s;}',
+      '.b24t-i24w-input:focus,.b24t-i24w-textarea:focus,.b24t-i24w-select:focus{border-color:var(--w-acc);',
+      '  box-shadow:0 0 0 3px rgba(124,92,255,.15);}',
+      '.b24t-i24w-textarea{resize:vertical;min-height:60px;}',
+      '.b24t-i24w-row{display:flex;gap:8px;}',
+      '.b24t-i24w-row>*{flex:1;min-width:0;}',
+      '.b24t-i24w-field{display:flex;flex-direction:column;gap:4px;}',
+      '.b24t-i24w-hint{font-size:11px;color:var(--w-dim);}',
+      '.b24t-i24w-button{appearance:none;border:none;padding:9px 14px;border-radius:8px;font-size:13px;',
+      '  font-weight:600;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;',
+      '  font-family:inherit;transition:filter .12s,transform .05s;}',
+      '.b24t-i24w-button:hover{filter:brightness(1.1);}',
+      '.b24t-i24w-button:active{transform:translateY(1px);}',
+      '.b24t-i24w-button[disabled]{opacity:.45;cursor:not-allowed;filter:none;transform:none;}',
+      '.b24t-i24w-button-primary{background:linear-gradient(135deg,var(--w-acc),var(--w-acc2));color:#fff;',
+      '  box-shadow:0 6px 16px -4px rgba(124,92,255,.5);}',
+      '.b24t-i24w-button-ghost{background:rgba(255,255,255,.04);color:var(--w-tx);border:1px solid var(--w-bd);}',
+      '.b24t-i24w-status{padding:8px 10px;background:var(--w-bg2);border:1px solid var(--w-bd);border-radius:8px;',
+      '  font-size:12px;color:var(--w-dim);font-family:ui-monospace,"SF Mono",Menlo,monospace;min-height:18px;',
+      '  white-space:pre-wrap;word-break:break-word;}',
+      '.b24t-i24w-status.ok{color:var(--w-ok);} .b24t-i24w-status.err{color:var(--w-err);}',
+      '.b24t-i24w-status.warn{color:var(--w-warn);}',
+      '.b24t-i24w-box{padding:8px 10px;border-radius:8px;background:var(--w-bg2);border:1px solid var(--w-bd);',
+      '  display:flex;flex-direction:column;gap:8px;}',
+      // Checkboxy tagow: strona-host potrafi je resetowac, tak samo jak w rozszerzeniu (window.css)
+      '.b24t-i24w input[type="checkbox"]{position:static!important;opacity:1!important;appearance:auto!important;',
+      '  width:14px!important;height:14px!important;accent-color:var(--w-acc);flex-shrink:0;}',
+      '.b24t-i24w-req{color:var(--w-err);}',
+      // Kafelki tag\u00f3w buduje `_newsRefillTags` ze stylami INLINE (motyw zwyk\u0142ej wtyczki),
+      // a inline bije zwyk\u0142y selektor \u2014 st\u0105d `!important`. Alternatywa (rozga\u0142\u0119zienie renderera
+      // tag\u00f3w) oznacza\u0142aby wpuszczenie eksperymentu we wsp\u00f3ln\u0105 logik\u0119; tak zostaje on w CSS.
+      '.b24t-i24w #b24t-news-tag-list label{background:var(--w-bg)!important;border-color:var(--w-bd)!important;',
+      '  border-radius:7px!important;padding:4px 8px!important;}',
+      '.b24t-i24w #b24t-news-tag-list label span{color:var(--w-tx)!important;font-size:11px!important;}',
+      '.b24t-i24w #b24t-news-tag-list label:has(#b24t-news-tag-dodane){',
+      '  background:rgba(124,92,255,.14)!important;border-color:rgba(124,92,255,.4)!important;}',
+    ].join('');
+    document.head.appendChild(st);
+  }
+
+  // Wiersz etykieta+kontrolka w stylu i24 Tools. Odpowiednik `_newsFormRow` dla wersji zwykłej.
+  function _i24wField(label, inner, required, extraCss) {
+    return '<div class="b24t-i24w-field"' + (extraCss ? ' style="' + extraCss + '"' : '') + '>' +
+      '<label class="b24t-i24w-label">' + label + (required ? ' <span class="b24t-i24w-req">*</span>' : '') + '</label>' +
+      inner +
+    '</div>';
+  }
+
+  // UWAGA: każdy element MUSI zachować identyfikator z wersji zwykłej — na nich stoi cała logika.
+  // Zachowane też: `readonly` na URL-u, `data-b24t-auto` na godzinie i minucie (bez tego
+  // `_customSetAuto` uzna domyślnik za ręczną poprawkę) oraz `display:none` tam, gdzie kod
+  // przełącza widoczność na `flex`.
+  function _newsFormHtmlI24w() {
+    return '<div class="b24t-i24w"><div class="b24t-i24w-panel">' +
+      '<div class="b24t-i24w-header">' +
+        '<div class="b24t-i24w-title"><span class="b24t-i24w-icon">\u271a</span>' +
+        '<span>Dodaj wzmiank\u0119</span></div>' +
+      '</div>' +
+      '<div class="b24t-i24w-body">' +
+
+      '<div id="b24t-news-cms-warn" class="b24t-i24w-status warn" style="display:none;">' +
+        '<span id="b24t-news-cms-warn-text"></span>' +
+        '<button id="b24t-news-cms-recheck" class="b24t-i24w-button b24t-i24w-button-ghost" ' +
+          'style="margin-left:8px;padding:2px 8px;font-size:11px;">\u21ba Sprawd\u017a ponownie</button>' +
+      '</div>' +
+      '<div id="b24t-news-form-err" class="b24t-i24w-status err" style="display:none;"></div>' +
+      '<div id="b24t-news-lang-warn" class="b24t-i24w-status warn" style="display:none;"></div>' +
+
+      '<div id="b24t-news-f-project-row" class="b24t-i24w-field" style="display:none;">' +
+        '<label class="b24t-i24w-label">Projekt</label>' +
+        '<select id="b24t-news-f-project-sel" class="b24t-i24w-select">' +
+          '<option value="">\u2014 wybierz projekt \u2014</option>' +
+        '</select>' +
+      '</div>' +
+
+      _i24wField('URL wzmianki',
+        '<div style="display:flex;gap:6px;align-items:center;">' +
+          '<input id="b24t-news-f-url" class="b24t-i24w-input" type="text" readonly ' +
+            'placeholder="(kliknij URL z listy)" style="flex:1;font-size:11px;">' +
+          '<button id="b24t-news-lang-force-open" class="b24t-i24w-button b24t-i24w-button-ghost" ' +
+            'style="display:none;padding:4px 8px;font-size:11px;" title="Otw\u00f3rz mimo ostrze\u017cenia">Otw\u00f3rz</button>' +
+        '</div>', true) +
+      '<div id="b24t-news-dup-status" style="display:none;font-size:11px;"></div>' +
+
+      '<div style="display:flex;align-items:center;justify-content:space-between;">' +
+        '<span class="b24t-i24w-label" style="margin:0;">Dane artyku\u0142u</span>' +
+        '<button id="b24t-news-clear-btn" class="b24t-i24w-button b24t-i24w-button-ghost" ' +
+          'style="padding:3px 9px;font-size:11px;">\u2715 Wyczy\u015b\u0107</button>' +
+      '</div>' +
+
+      _i24wField('Tytu\u0142 artyku\u0142u',
+        '<input id="b24t-news-f-title" class="b24t-i24w-input" type="text" placeholder="Wklej tytu\u0142 artyku\u0142u\u2026">', true) +
+      _i24wField('Tre\u015b\u0107',
+        '<textarea id="b24t-news-f-content" class="b24t-i24w-textarea" rows="8" ' +
+          'placeholder="Wklej fragment tre\u015bci artyku\u0142u\u2026" style="min-height:150px;"></textarea>', true) +
+
+      _i24wField('Data',
+        '<div style="display:flex;gap:6px;align-items:center;">' +
+          '<input id="b24t-news-f-date" class="b24t-i24w-input" type="text" placeholder="YYYY-MM-DD" style="flex:1;">' +
+          '<span id="b24t-news-date-detect-icon" style="display:none;font-size:14px;" title="Data wykryta automatycznie">\U0001f50d</span>' +
+        '</div>', true) +
+
+      '<div class="b24t-i24w-row">' +
+        _i24wField('Godzina', '<input id="b24t-news-f-hour" class="b24t-i24w-input" type="text" value="12" data-b24t-auto="12" style="text-align:center;">') +
+        _i24wField('Minuty',  '<input id="b24t-news-f-minute" class="b24t-i24w-input" type="text" value="00" data-b24t-auto="00" style="text-align:center;">') +
+      '</div>' +
+
+      _i24wField('Kategoria',
+        '<input id="b24t-news-f-category-readonly" class="b24t-i24w-input" type="text" value="7 \u2014 News" readonly style="opacity:.5;">' +
+        '<select id="b24t-news-f-category-select" class="b24t-i24w-select" style="display:none;">' +
+          '<option value="1">1 \u2014 X/Twitter</option><option value="2">2 \u2014 Instagram</option>' +
+          '<option value="3">3 \u2014 Blogs</option><option value="4">4 \u2014 Videos</option>' +
+          '<option value="5">5 \u2014 Facebook</option><option value="6">6 \u2014 Other Socials</option>' +
+          '<option value="7">7 \u2014 News</option><option value="8">8 \u2014 Web</option>' +
+          '<option value="9">9 \u2014 Podcasts</option><option value="10">10 \u2014 Newsletter</option>' +
+          '<option value="11">11 \u2014 TikTok</option><option value="12">12 \u2014 LinkedIn</option>' +
+        '</select>') +
+
+      '<div id="b24t-news-f-custom-fields" class="b24t-i24w-box" style="display:none;">' +
+        '<span class="b24t-i24w-label" style="margin:0;">Metryki (opcjonalne)' +
+          '<span id="b24t-news-metrics-status" style="font-weight:500;text-transform:none;letter-spacing:0;"></span></span>' +
+        '<div class="b24t-i24w-row">' +
+          _i24wField('Likes',     '<input id="b24t-news-f-likes" class="b24t-i24w-input" type="number" min="0" placeholder="0">') +
+          _i24wField('Pageviews', '<input id="b24t-news-f-pageviews" class="b24t-i24w-input" type="number" min="0" placeholder="0">') +
+        '</div>' +
+        '<div class="b24t-i24w-row">' +
+          _i24wField('Shares',   '<input id="b24t-news-f-shares" class="b24t-i24w-input" type="number" min="0" placeholder="0">') +
+          _i24wField('Comments', '<input id="b24t-news-f-comments" class="b24t-i24w-input" type="number" min="0" placeholder="0">') +
+        '</div>' +
+      '</div>' +
+
+      '<div class="b24t-i24w-row">' +
+        _i24wField('Kraj',
+          '<select id="b24t-news-f-country" class="b24t-i24w-select">' + _countryOptionsHtml('') + '</select>' +
+          '<span id="b24t-news-proj-lang-hint" style="display:none;font-size:9px;color:var(--w-dim);text-align:center;"></span>') +
+        _i24wField('Sentyment',
+          '<select id="b24t-news-f-sentiment" class="b24t-i24w-select">' +
+            '<option value="0">0 Neutral</option><option value="1">+1 Poz.</option><option value="-1">-1 Neg.</option>' +
+          '</select>') +
+      '</div>' +
+
+      '<div id="b24t-news-tag-row" class="b24t-i24w-box" style="padding:0;gap:0;">' +
+        '<div id="b24t-news-tag-toggle" style="display:flex;align-items:center;justify-content:space-between;' +
+          'padding:8px 10px;cursor:pointer;user-select:none;" title="Rozwi\u0144/zwi\u0144 list\u0119 tag\u00f3w">' +
+          '<span class="b24t-i24w-label" style="margin:0;">Tagi</span>' +
+          '<div style="display:flex;align-items:center;gap:6px;">' +
+            '<span id="b24t-news-tag-summary" style="font-size:11px;color:var(--w-dim);">Dodane</span>' +
+            '<span id="b24t-news-tag-chevron" style="font-size:10px;color:var(--w-dim);transition:transform .2s;">\u25bc</span>' +
+          '</div>' +
+        '</div>' +
+        '<div id="b24t-news-tag-search-wrap" style="display:none;padding:0 10px 8px;">' +
+          '<input id="b24t-news-tag-search" class="b24t-i24w-input" type="text" placeholder="\U0001f50d Filtruj tagi\u2026" ' +
+            'autocomplete="off" spellcheck="false" style="font-size:11px;padding:5px 8px;">' +
+        '</div>' +
+        '<div id="b24t-news-tag-list" style="display:none;flex-wrap:wrap;gap:5px;padding:0 10px 10px;' +
+          'max-height:160px;overflow-y:auto;"></div>' +
+      '</div>' +
+
+      '<div id="b24t-news-custom-prompt-row" class="b24t-i24w-field" style="display:none;">' +
+        '<label class="b24t-i24w-label">Prompt AI</label>' +
+        '<select id="b24t-news-custom-prompt-sel" class="b24t-i24w-select"><option value="">\u2014 wybierz \u2014</option></select>' +
+      '</div>' +
+
+      '<button id="b24t-news-submit-btn" class="b24t-i24w-button b24t-i24w-button-primary" style="width:100%;">' +
+        '\u271a Dodaj wzmiank\u0119 do Brand24</button>' +
+      '<div id="b24t-news-submit-status" style="font-size:11px;text-align:center;min-height:15px;"></div>' +
+
+      '</div></div></div>';
   }
 
   function _newsFormRow(label, inputHtml, required, display) {
@@ -13086,6 +13303,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.27.0",
+      "date": "2026-09-11",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "**Eksperyment: formularz wzmianki w wyglądzie i24 Tools.** W ustawieniach → Funkcje opcjonalne doszedł przełącznik „🧪 Formularz wzmianki w stylu i24 Tools”, domyślnie wyłączony. Po włączeniu formularz dostaje ciemny panel, fioletowy akcent i pola monospace — czyli język wizualny rozszerzenia, do którego dodawanie wzmianek ma docelowo trafić. Widać od razu, jak to będzie wyglądać, zanim cokolwiek tam przeniesiemy"},
+        {"type": "feat", "text": "Zmienia się **wyłącznie wygląd**. Markup ma te same identyfikatory elementów co wersja zwykła, więc autouzupełnianie z Instagrama i TikToka, sprawdzanie duplikatu, kropka dostępu, tagi i wysyłka działają dokładnie tak samo. Wyłączenie przełącznika wraca do starego wyglądu bez śladu"},
+        {"type": "fix", "text": "Ustawienia funkcji opcjonalnych są teraz widoczne także poza Brand24. Pamięć przeglądarki jest osobna dla każdej domeny, więc na Instagramie wtyczka nie wiedziała, co masz włączone — a to właśnie tam dodaje się wzmianki"}
+      ]
+    },
+    {
       "version": "0.26.25",
       "date": "2026-09-11",
       "label": "fix",
@@ -13191,17 +13419,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "Data i godzina publikacji posta z Instagrama trafiają wreszcie do formularza. Pola GODZINA i MINUTY miały wpisane na sztywno \"12\" i \"00\", a data po pierwszym otwarciu panelu dostawała \"dzisiaj\" — wtyczka brała te wartości za ręczną poprawkę użytkownika i nie pozwalała ich nadpisać. Efekt: wzmianka zapisywała się z dzisiejszą datą i godziną 12:00 zamiast prawdziwego czasu publikacji"}
-      ]
-    },
-    {
-      "version": "0.26.16",
-      "date": "2026-09-10",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix",  "text": "Koniec fałszywego \"✓ URL nowy w projekcie\" tuż po przeładowaniu strony. Sprawdzanie duplikatów zawęża zapytanie do miesiąca z pola daty, a przy poście Instagrama data przychodzi z opóźnieniem — do tego czasu w polu stało \"dzisiaj\", więc starszy post był szukany w złym miesiącu i wychodził jako nowy. Teraz dup-check czeka na prawdziwą datę i powtarza się, gdy ta się pojawi"},
-        {"type": "fix",  "text": "Panel nie otwiera się już połową poza ekranem. Przeciągnięte współrzędne zostawały na nim po zamknięciu i przestawały pasować, gdy w międzyczasie zmienił się jego rozmiar (przełączenie \"Tylko formularz\") albo rozmiar okna. Teraz przy każdym otwarciu, przy zmianie widoku i przy zmianie rozmiaru okna panel jest wciągany z powrotem w widoczny obszar"},
-        {"type": "feat", "text": "Panel Niestandardowe pamięta, gdzie go przeciągnąłeś — otwiera się tam, gdzie go zostawiłeś, zamiast wracać na środek. Pozycja jest zapamiętana także po przeładowaniu strony"}
       ]
     }
   ];
@@ -13918,18 +14135,32 @@ function showOnboarding(onComplete) {
       desc: 'Floating panel monitorujący ruch sieciowy na stronie Brand24 — pomaga diagnozować błędy tagowania i usuwania wzmianek.',
     },
     {
+      id: 'custom_form_i24w',
+      label: '\U0001f9ea Formularz wzmianki w stylu i24 Tools',
+      desc: 'Eksperyment: formularz dodawania wzmianki dostaje wygl\u0105d okien z rozszerzenia i24 Tools (ciemny panel, akcent fioletowy, pola monospace). Zmienia si\u0119 WY\u0141\u0104CZNIE wygl\u0105d \u2014 wszystkie pola, autouzupe\u0142nianie, sprawdzanie duplikatu i wysy\u0142ka dzia\u0142aj\u0105 tak samo. Po prze\u0142\u0105czeniu zamknij i otw\u00f3rz okno wzmianek.',
+    },
+    {
       id: 'delete_by_assessment',
       label: '⚠ Usuwanie po assessmencie',
       desc: 'Ryzykowna funkcja — w mapowaniu pojawia się opcja "🗑 Usuń" dla każdego assessmentu. Wzmianki z tym assessmentem są PERMANENTNIE usuwane podczas normalnego przebiegu Start, razem z tagowaniem.',
     },
   ];
 
+  // Flagi funkcji czytamy też POZA Brand24. `localStorage` jest per origin, więc na Instagramie
+  // czy TikToku jest pusty — a to właśnie tam używa się formularza wzmianki. Stąd kopia w pamięci
+  // Tampermonkeya, dokładnie tak jak wtyczka robi to z motywem (`b24t_theme_mirror`).
   function loadFeatures() {
-    try { return JSON.parse(lsGet(LS.FEATURES, '{}')); } catch(e) { return {}; }
+    try {
+      var raw = lsGet(LS.FEATURES, null);
+      if (raw) return JSON.parse(raw);
+    } catch(e) {}
+    try { return JSON.parse(GM_getValue('b24t_features_mirror', '{}')); } catch(e) { return {}; }
   }
 
   function saveFeatures(features) {
-    lsSet(LS.FEATURES, JSON.stringify(features));
+    var json = JSON.stringify(features);
+    lsSet(LS.FEATURES, json);
+    try { GM_setValue('b24t_features_mirror', json); } catch(e) {}
   }
 
   function applyFeatures() {

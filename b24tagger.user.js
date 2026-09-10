@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.17
+// @version      0.26.18
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.17';
+  const VERSION = '0.26.18';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -12941,6 +12941,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.18",
+      "date": "2026-09-10",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "Dodawanie niestandardowe z TikToka działa teraz tak samo dobrze jak z Instagrama: wyświetlenia, udostępnienia, polubienia i komentarze uzupełniają się same i są dokładne. Wyświetleń ani udostępnień nie ma nigdzie w widoku filmu, więc pobierane są jednym zapytaniem o stronę filmu"},
+        {"type": "fix",  "text": "Tytuł wzmianki z TikToka to pierwsze zdanie opisu filmu, a nie nazwa konta. TikTok przy przejściu do filmu nie aktualizuje metadanych strony — zostają z profilu, więc do tytułu trafiała nazwa konta"},
+        {"type": "fix",  "text": "Poprawiona data publikacji filmu z TikToka. Wcześniej liczona wyłącznie z identyfikatora filmu, co jest tylko przybliżeniem — na zmierzonym przykładzie rozjazd sięgnął 2 godzin 34 minut, czyli film opublikowany tuż po północy trafiał do wzmianki z poprzednim dniem. Teraz wpisywana jest tymczasowo, a zaraz potem nadpisywana prawdziwym czasem publikacji"},
+        {"type": "fix",  "text": "Liczniki filmu czytane są z widocznego filmu, a nie pierwszego w drzewie strony. Widok TikToka trzyma w pamięci trzy filmy naraz (poprzedni, bieżący, następny), każdy z własnym kompletem liczb"}
+      ]
+    },
+    {
       "version": "0.26.17",
       "date": "2026-09-10",
       "label": "fix",
@@ -13039,15 +13051,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#22c55e",
       "changes": [
         {"type": "fix", "text": "Listy tagów w całej wtyczce zawsze aktualne: karty Usuwanie, Quick Tag i AI Tag oraz okna ustawień (Overall i Trafność AI) same dociągają z Brand24 świeże tagi projektu przy otwarciu (jeśli zapisane są starsze niż ~5 min). Koniec sytuacji, gdy nowo dodany tag nie był widoczny do wyboru, dopóki nie odwiedziłeś projektu na panelu"}
-      ]
-    },
-    {
-      "version": "0.26.8",
-      "date": "2026-06-26",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Tagowanie pliku w wielu projektach: przed otagowaniem każdego projektu wtyczka dociąga z Brand24 jego aktualną listę tagów. Wcześniej, jeśli nie odwiedziłeś projektu po dodaniu nowego tagu, ten tag był po cichu pomijany — przez co część projektów zostawała bez niego. Gdy dociągnięcie się nie uda, używane są tagi zapisane wcześniej (bez pogorszenia)"}
       ]
     }
   ];
@@ -19141,13 +19144,16 @@ Tej operacji nie można cofnąć.`)) {
       var _metrics = _hasSocialMetric ? _social : _scrapeSocialMetrics();
       _customFillMetrics(_metrics);
 
-      // Instagram: modal nie pokazuje sumy komentarzy ani repostów, a polubienia podaje
-      // zaokrąglone. Komplet dokładnych liczb daje endpoint, którym Instagram sam obsługuje
-      // otwarcie posta — dociągamy go zawsze, bo nawet gdy DOM coś dał, to gorsze dane.
+      // Platformy, które potrafią oddać komplet dokładnych liczb jednym żądaniem. W samym DOM-ie
+      // tych danych nie ma (sumy komentarzy i repostów na IG, wyświetlenia i udostępnienia na
+      // TikToku) albo są zaokrąglone — dociągamy je zawsze, nawet gdy DOM coś pokazał.
       // Odpowiedź nadpisuje pola tylko wtedy, gdy użytkownik ich nie poprawił (_customSetAuto).
-      if (_social && _social.igCode) {
+      var _enrich = null;
+      if (_social && _social.igCode)    _enrich = function(cb) { _igFetchMediaInfo(_social.igCode, cb); };
+      else if (_social && _social.ttId) _enrich = function(cb) { _ttFetchDetail(_social.url, _social.ttId, cb); };
+      if (_enrich) {
         _customSetMetricsPending(true);
-        _igFetchMediaInfo(_social.igCode, function(info) {
+        _enrich(function(info) {
           // Przy nieaktualnym pokoleniu wskaźnik należy już do nowszego odświeżenia — nie gasimy
           if (mySeq !== _customFillSeq) return;
           _customSetMetricsPending(false);
@@ -19165,7 +19171,7 @@ Tej operacji nie można cofnąć.`)) {
                            info.caption.replace(/\s+/g, ' ').trim().slice(0, 600),
                            'rgba(99,102,241,0.4)', 'Automatycznie wypełniono z treści strony');
             _customSetAuto(document.getElementById('b24t-news-f-title'),
-                           _igTitleFromCaption(info.caption).slice(0, 400), 'rgba(99,102,241,0.4)');
+                           _socialTitleFromText(info.caption).slice(0, 400), 'rgba(99,102,241,0.4)');
           }
           // Dup-check pyta o miesiąc wzięty z pola daty. Jeśli data dopiero teraz się pojawiła
           // albo zmieniła, poprzednie zapytanie poszło w zły zakres — trzeba je powtórzyć.
@@ -19226,15 +19232,15 @@ Tej operacji nie można cofnąć.`)) {
       if (!newsState.panelsOpen || newsState.mode !== 'custom') { lastHref = window.location.href; return; }
       lastHref = window.location.href;
 
-      var want = /(^|\.)instagram\.com$/.test(window.location.hostname) ? _igShortcode() : null;
       var tries = 0;
       (function waitForPost() {
-        // Bez shortcodu (wyjście z posta na profil) nie ma na co czekać — odświeżamy od razu
-        var ready = !want || (function() {
-          var s = _scrapeSocialPost();
-          return !!(s && s.igCode === want && s.ready);
-        })();
-        if (ready || ++tries > 12) { _customAutoFillFromPage(); return; }
+        // Adres zmienia się PRZED przerysowaniem widoku posta, więc czekamy, aż adapter
+        // potwierdzi, że czyta już nowy wpis (`ready`). Identyfikator adaptery biorą z adresu,
+        // czyli mają go od razu — flaga mówi o DOM-ie. Poza serwisami społecznościowymi
+        // (i po wyjściu z posta na profil) nie ma na co czekać: odświeżamy natychmiast.
+        var s = _scrapeSocialPost();
+        var postId = s ? (s.igCode || s.ttId || null) : null;
+        if (!postId || s.ready || ++tries > 12) { _customAutoFillFromPage(); return; }
         setTimeout(waitForPost, 250);
       })();
     }, 600);
@@ -19317,43 +19323,146 @@ Tej operacji nie można cofnąć.`)) {
     return isNaN(n) ? null : n;
   }
 
-  // Scraper dedykowany TikTokowi — opis, dokładna data (z ID filmu), polubienia i komentarze
-  // z żywej strony. Obsługuje oba layouty: modal ("browse-*") i pełną stronę ("video-*").
-  // Udostępnień TikTok nie pokazuje jako liczby w DOM → zostaje puste.
+  // ── TIKTOK ────────────────────────────────────────────────────────────────
+  // Pełna wiedza o tym DOM-ie, z pomiarami: TIKTOK_DOM.md (cytowane niżej jako §N).
+  //
+  // Ten sam problem co na Instagramie (§2): po kliknięciu kafelka na profilu TikTok zmienia
+  // adres, ale NIE aktualizuje `og:*` ani `__UNIVERSAL_DATA_FOR_REHYDRATION__` — zostają
+  // z profilu. Dlatego tytuł z og: to nazwa konta, a nie opis filmu.
+  //
+  // Drugi problem, groźniejszy (§3): widok filmu to pionowy feed i w drzewie stoją naraz
+  // TRZY filmy (poprzedni, bieżący, następny), każdy z własnym `data-e2e="like-count"`.
+  // `document.querySelector` bierze pierwszy w kolejności dokumentu, więc po przewinięciu
+  // strzałką czytaliśmy liczby SĄSIEDNIEGO filmu. Stąd zawężanie do widocznego bloku.
+
+  // ID filmu z adresu. TikTok trzyma zdjęciowe posty pod /photo/ zamiast /video/.
+  function _ttVideoId(href) {
+    var path;
+    try { path = href ? new URL(href, location.href).pathname : window.location.pathname; }
+    catch(e) { path = window.location.pathname; }
+    var m = path.match(/\/(?:video|photo)\/(\d+)/);
+    return m ? m[1] : null;
+  }
+
+  // Blok widocznego filmu w pionowym feedzie (§3). Zawężamy po geometrii, bo nic w tym
+  // layoucie nie wiąże kontenera z ID filmu, a klasy CSS są hashowane przy każdym buildzie.
+  // Gdy karta nie jest rysowana, prostokąty są zerowe — wtedy świadomie nie zgadujemy.
+  function _ttVisibleBlock() {
+    var vids = document.querySelectorAll('video');
+    if (vids.length < 2) return null;   // pełna strona filmu — całe drzewo jest jednego filmu
+    var mid = window.innerHeight / 2, hit = null;
+    for (var i = 0; i < vids.length; i++) {
+      var rect = vids[i].getBoundingClientRect();
+      if (!rect.height) continue;
+      if (rect.top <= mid && rect.bottom >= mid) { hit = vids[i]; break; }
+    }
+    if (!hit) return null;
+    var node = hit;
+    while (node && node !== document.body) {
+      if (node.querySelector && node.querySelector('[data-e2e="like-count"]')) return node;
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  // Scraper dedykowany TikTokowi — opis, polubienia i komentarze z żywej strony.
+  // Wyświetleń i udostępnień w DOM-ie widoku filmu NIE MA (§4) — dokłada je _ttFetchDetail.
   function _scrapeTikTok() {
-    var r = { content: '', date: '', hour: '', minute: '', author: '', likes: null, shares: null, comments: null, lang: null };
+    var id = _ttVideoId();
+    if (!id) return null;   // profil, /explore, feed — nie ma jednego filmu do przeczytania
+
+    var r = { content: '', title: '', url: '', date: '', hour: '', minute: '',
+              likes: null, shares: null, comments: null, pageviews: null, lang: null,
+              ttId: id, strict: true, ready: false };
+    r.url = 'https://www.tiktok.com' + window.location.pathname.replace(/\/+$/, '');
+
+    var root = _ttVisibleBlock() || document;
     function _pick(names) {
       for (var i = 0; i < names.length; i++) {
         try {
-          var el = document.querySelector('[data-e2e="' + names[i] + '"]');
+          var el = root.querySelector('[data-e2e="' + names[i] + '"]');
           if (el) { var t = (el.innerText || el.textContent || '').trim(); if (t) return t; }
         } catch(e) {}
       }
       return '';
     }
-    r.content  = _pick(['browse-video-desc', 'video-desc', 'new-desc-span']).replace(/\s+/g, ' ').trim().slice(0, 600);
-    r.author   = _pick(['browse-username', 'author-uniqueId', 'user-title']);
+
+    // „browse-*" to nazwy ze starszego layoutu modala — dziś nie występują, ale zostają
+    // pierwsze w kolejności, bo nic nie kosztują, a starszy wariant może wrócić (§4).
+    r.content = _pick(['browse-video-desc', 'video-desc', 'new-desc-span']).replace(/\s+/g, ' ').trim().slice(0, 600);
+    if (r.content) r.title = _socialTitleFromText(r.content);
     r.likes    = _parseSocialNum(_pick(['browse-like-count', 'like-count']));
     r.comments = _parseSocialNum(_pick(['browse-comment-count', 'comment-count']));
-    // Data + godzina z ID filmu (górne 32 bity = unix w sekundach) — niezależne od logowania i layoutu,
-    // a data względna ("1 dn. temu") jest bezużyteczna do dokładnego wpisu
+    r.ready    = !!(r.content || r.likes != null);
+
+    // Data z ID filmu (górne 32 bity = unix) — dostępna NATYCHMIAST i bez sieci, ale tylko
+    // przybliżona: to moment nadania identyfikatora, nie publikacji. Zmierzone rozjazdy wobec
+    // `createTime`: −7 s, +15 s i aż −2 h 34 min (§6). Traktujemy ją jako wartość tymczasową,
+    // którą _ttFetchDetail nadpisuje prawdziwym czasem publikacji.
     try {
-      var idm = window.location.href.match(/\/video\/(\d+)/);
-      if (idm) {
-        var ts = Number(BigInt(idm[1]) >> 32n);
-        if (ts > 1000000000 && ts < 4000000000) {
-          var d = new Date(ts * 1000);
-          r.date   = _localDateStr(d);
-          r.hour   = String(d.getHours()).padStart(2, '0');
-          r.minute = String(d.getMinutes()).padStart(2, '0');
-        }
+      var ts = Number(BigInt(id) >> 32n);
+      if (ts > 1000000000 && ts < 4000000000) {
+        var d = new Date(ts * 1000);
+        r.date   = _localDateStr(d);
+        r.hour   = String(d.getHours()).padStart(2, '0');
+        r.minute = String(d.getMinutes()).padStart(2, '0');
       }
     } catch(e) {}
-    try {
-      var hl = (document.documentElement.getAttribute('lang') || '').match(/^([a-z]{2})/i);
-      if (hl) r.lang = hl[1].toLowerCase();
-    } catch(e) {}
+
+    // Język UI TikToka ≠ język opisu filmu — jak przy YouTube i Instagramie nie ustawiamy lang,
+    // żeby nie wywoływać fałszywego ostrzeżenia o niezgodności z językiem projektu.
     return r;
+  }
+
+  // Komplet dokładnych liczb: wyświetlenia, udostępnienia, polubienia, komentarze i prawdziwy
+  // czas publikacji. Źródłem jest strona filmu, w której TikTok osadza `__UNIVERSAL_DATA_FOR_
+  // REHYDRATION__` z pełnym `itemStruct` (§5). ~420 KB, ~0,5 s, działa bez logowania.
+  //
+  // Dlaczego NIE `/api/item/detail/`, którym TikTok obsługuje się sam: te wywołania niosą
+  // podpisy `X-Bogus`, `X-Gnarly` i `msToken`, których nie da się wygenerować poza ich JS-em.
+  // To zasadnicza różnica wobec Instagrama, gdzie endpoint dało się wywołać wprost.
+  // `url` bierzemy z adaptera, a nie z window.location w chwili odpowiedzi — użytkownik może
+  // w międzyczasie przewinąć do kolejnego filmu i pobralibyśmy nie ten, o który pytaliśmy.
+  function _ttFetchDetail(url, id, cb) {
+    var done = false;
+    function finish(v) { if (done) return; done = true; try { cb(v); } catch(e) {} }
+    setTimeout(function() { finish(null); }, 10000);
+    fetch(url, { credentials: 'include' })
+      .then(function(res) { return res.ok ? res.text() : ''; })
+      .then(function(html) {
+        if (!html) return finish(null);
+        var m = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
+        if (!m) return finish(null);
+        var it;
+        try {
+          var scope = (JSON.parse(m[1]) || {}).__DEFAULT_SCOPE__ || {};
+          var detail = scope['webapp.video-detail'];
+          it = detail && detail.itemInfo && detail.itemInfo.itemStruct;
+        } catch(e) { return finish(null); }
+        // Samokontrola: payload niesie własne ID, więc trafienie w inny film wychodzi tutaj
+        if (!it || String(it.id) !== String(id)) return finish(null);
+        var s = it.statsV2 || it.stats || {};
+        function _n(v) { var x = parseInt(v, 10); return isNaN(x) ? null : x; }
+        var out = {
+          likes:     _n(s.diggCount),
+          comments:  _n(s.commentCount),
+          shares:    _n(s.shareCount),
+          pageviews: _n(s.playCount),
+          caption:   it.desc || '',
+          date: '', hour: '', minute: ''
+        };
+        var ct = _n(it.createTime);
+        if (ct) {
+          var d = new Date(ct * 1000);
+          if (!isNaN(d.getTime())) {
+            out.date   = _localDateStr(d);
+            out.hour   = String(d.getHours()).padStart(2, '0');
+            out.minute = String(d.getMinutes()).padStart(2, '0');
+          }
+        }
+        finish(out);
+      })
+      .catch(function() { finish(null); });
   }
 
   // Scraper dedykowany YouTube — zwykłe filmy (/watch) i Shorts (/shorts/). Dane czyta z
@@ -19594,9 +19703,10 @@ Tej operacji nie można cofnąć.`)) {
     return null;
   }
 
-  // Tytuł wzmianki z podpisu. textContent skleja linie podpisu bez separatora, więc nie da się
-  // ciąć po znaku nowej linii — bierzemy pierwsze zdanie, a gdy go nie widać, granicę słowa.
-  function _igTitleFromCaption(cap) {
+  // Tytuł wzmianki z treści posta — wspólny dla Instagrama i TikToka. textContent skleja linie
+  // podpisu bez separatora, więc nie da się ciąć po znaku nowej linii: bierzemy pierwsze zdanie,
+  // a gdy go nie widać, granicę słowa.
+  function _socialTitleFromText(cap) {
     var s = cap.replace(/\s+/g, ' ').trim();
     var m = s.match(/^(.{20,180}?[.!?])\s/);
     if (m) return m[1];
@@ -19645,7 +19755,7 @@ Tej operacji nie można cofnąć.`)) {
     var cap = _igCaption(root, timeEl);
     if (cap) {
       r.content = cap.replace(/\s+/g, ' ').trim().slice(0, 600);
-      r.title   = _igTitleFromCaption(cap);
+      r.title   = _socialTitleFromText(cap);
     }
 
     var counts = _igReadActionCounts(root);

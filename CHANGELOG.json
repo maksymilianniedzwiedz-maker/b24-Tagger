@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.26.18",
+    "date": "2026-09-10",
+    "label": "feat",
+    "changes": [
+      "feat: Dodawanie niestandardowe z TikToka działa teraz tak samo dobrze jak z Instagrama: wyświetlenia, udostępnienia, polubienia i komentarze uzupełniają się same i są dokładne. Wyświetleń ani udostępnień nie ma nigdzie w widoku filmu, więc pobierane są jednym zapytaniem o stronę filmu",
+      "fix: Tytuł wzmianki z TikToka to pierwsze zdanie opisu filmu, a nie nazwa konta. TikTok przy przejściu do filmu nie aktualizuje metadanych strony — zostają z profilu, więc do tytułu trafiała nazwa konta",
+      "fix: Poprawiona data publikacji filmu z TikToka. Wcześniej liczona wyłącznie z identyfikatora filmu, co jest tylko przybliżeniem — na zmierzonym przykładzie rozjazd sięgnął 2 godzin 34 minut, czyli film opublikowany tuż po północy trafiał do wzmianki z poprzednim dniem. Teraz wpisywana jest tymczasowo, a zaraz potem nadpisywana prawdziwym czasem publikacji",
+      "fix: Liczniki filmu czytane są z widocznego filmu, a nie pierwszego w drzewie strony. Widok TikToka trzyma w pamięci trzy filmy naraz (poprzedni, bieżący, następny), każdy z własnym kompletem liczb"
+    ]
+  },
+  {
     "version": "0.26.17",
     "date": "2026-09-10",
     "label": "fix",

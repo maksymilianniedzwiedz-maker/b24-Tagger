@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.20
+// @version      0.26.21
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.20';
+  const VERSION = '0.26.21';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -12941,6 +12941,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.21",
+      "date": "2026-09-10",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "Ostrzeżenie o niezgodności języka działa teraz dla TikToka. Wtyczka bierze język z wykrytego języka OPISU filmu, a nie z języka interfejsu — dlatego wcześniej było wyłączone, żeby nie krzyczeć przy każdym poście. Przy opisie złożonym z samych hashtagów ostrzeżenie się nie pojawia, bo nie ma z czego rozpoznać języka"}
+      ]
+    },
+    {
       "version": "0.26.20",
       "date": "2026-09-10",
       "label": "feat",
@@ -13043,18 +13052,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "Nazwa serwisu obcinana z tytułu (\"H&M - Max City\" → \"H&M\"), żeby projekt monitorujący markę zbieżną z nazwą wydawcy nie dostawał punktów na każdej podstronie"},
         {"type": "fix", "text": "Werdykt AI nie przepada już przez uciętą odpowiedź — wcześniej pokazywał się \"błąd parsowania\" mimo poprawnej oceny"},
         {"type": "feat", "text": "Modele Claude zaktualizowane: Haiku 4.5 i Sonnet 5 (zamiast Sonnet 4.6). Zapisane wcześniej ustawienia przepisują się same. Sonnet 5 jest przy skanach tańszy od Haiku, bo jako jedyny korzysta z pamięci podręcznej promptu"}
-      ]
-    },
-    {
-      "version": "0.26.11",
-      "date": "2026-07-30",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "fix", "text": "Dwa panele naraz (.pl i .com) bez konfliktu: token sesji trzymany jest teraz OSOBNO dla panel.brand24.pl i app.brand24.com, a każdy projekt pamięta, na którym panelu żyje. Dodawanie niestandardowe ze stron zewnętrznych (sprawdzanie duplikatów, tagi, CSRF, wysyłka) trafia w panel projektu, a nie w ten ostatnio otwarty — koniec komunikatu \"otwórz Brand24 żeby odświeżyć token\" przy pracy na projekcie PL po projekcie z .com"},
-        {"type": "fix", "text": "Token nie \"wygasa\" już po 8h przy aktywnej pracy — licznik ważności odświeża się przy każdym użyciu panelu, nie tylko gdy Brand24 zrotuje nagłówek autoryzacji"},
-        {"type": "fix", "text": "Komunikaty mówią, co jest naprawdę nie tak: przy błędzie Brand24 panel pokazuje treść błędu i domenę panelu (np. \"projekt niedostępny na app.brand24.com — otwórz go raz na panel.brand24.pl\") zamiast zawsze sugerować odświeżenie tokenu"},
-        {"type": "fix", "text": "Panel Niestandardowe na stronach zewnętrznych sam się odświeża, gdy pojawi się token właściwego panelu (wcześniej nasłuch działał tylko na stronie panelu Brand24), a kropka Panel i status CMS przeliczają się po zmianie projektu"}
       ]
     }
   ];
@@ -19177,6 +19174,7 @@ Tej operacji nie można cofnąć.`)) {
             _customSetAuto(document.getElementById('b24t-news-f-title'),
                            _socialTitleFromText(info.caption).slice(0, 400), 'rgba(99,102,241,0.4)');
           }
+          if (info.lang) _customLangWarn(info.lang);
           // Dup-check pyta o miesiąc wzięty z pola daty. Jeśli data dopiero teraz się pojawiła
           // albo zmieniła, poprzednie zapytanie poszło w zły zakres — trzeba je powtórzyć.
           if (_dFld && _dFld.value && _dFld.value !== _dBefore && state.projectId) {
@@ -19185,23 +19183,26 @@ Tej operacji nie można cofnąć.`)) {
         });
       }
 
-      // Sprawdź zgodność języka z projektem
-      if (scraped.lang && state.projectId) {
-        var _projects = _gmGetProjects();
-        var _pData = _projects[String(state.projectId)] || {};
-        var _cmap = { PL:'pl',TR:'tr',DE:'de',FR:'fr',IT:'it',ES:'es',PT:'pt',NL:'nl',SE:'sv',NO:'no',DK:'da',FI:'fi',CZ:'cs',SK:'sk',HU:'hu',RO:'ro',GR:'el',BG:'bg',HR:'hr',UA:'uk',RU:'ru',JP:'ja',KR:'ko',CN:'zh',AR:'ar',IN:'hi',BR:'pt' };
-        var _ps = (_pData.name || '').toUpperCase().match(/_([A-Z]{2})$/);
-        var _projLang = _ps ? (_cmap[_ps[1]] || '') : '';
-        var _langWarnEl = document.getElementById('b24t-news-lang-warn');
-        if (_langWarnEl && _projLang && scraped.lang !== _projLang) {
-          _langWarnEl.innerHTML = '⚠ Język strony (<strong>' + scraped.lang.toUpperCase() + '</strong>) niezgodny z projektem (<strong>' + _projLang.toUpperCase() + '</strong>)';
-          _langWarnEl.style.display = '';
-        }
-      }
+      _customLangWarn(scraped.lang);
 
       // Sprawdź duplikat URL w wybranym projekcie
       if (state.projectId) _customDupCheck(pageUrl, state.projectId);
     });
+  }
+
+  // Ostrzeżenie o niezgodności języka. Wydzielone, bo język bywa znany dopiero z odpowiedzi
+  // sieciowej (TikTok podaje `textLanguage` dla treści posta), a nie w pierwszym przebiegu.
+  function _customLangWarn(lang) {
+    var el = document.getElementById('b24t-news-lang-warn');
+    if (!el) return;
+    if (!lang || !state.projectId) { el.style.display = 'none'; return; }
+    var _pData = _gmGetProjects()[String(state.projectId)] || {};
+    var _cmap = { PL:'pl',TR:'tr',DE:'de',FR:'fr',IT:'it',ES:'es',PT:'pt',NL:'nl',SE:'sv',NO:'no',DK:'da',FI:'fi',CZ:'cs',SK:'sk',HU:'hu',RO:'ro',GR:'el',BG:'bg',HR:'hr',UA:'uk',RU:'ru',JP:'ja',KR:'ko',CN:'zh',AR:'ar',IN:'hi',BR:'pt' };
+    var _ps = (_pData.name || '').toUpperCase().match(/_([A-Z]{2})$/);
+    var _projLang = _ps ? (_cmap[_ps[1]] || '') : '';
+    if (!_projLang || lang === _projLang) { el.style.display = 'none'; return; }
+    el.innerHTML = '⚠ Język treści (<strong>' + _escHtml(lang).toUpperCase() + '</strong>) niezgodny z projektem (<strong>' + _projLang.toUpperCase() + '</strong>)';
+    el.style.display = '';
   }
 
   function _customFillMetrics(m) {
@@ -19473,6 +19474,10 @@ Tej operacji nie można cofnąć.`)) {
           shares:    _n(s.shareCount),
           pageviews: _n(s.playCount),
           caption:   it.desc || '',
+          // `textLanguage` to wykryty język OPISU, nie języka UI ani konta. Zmierzone:
+          // angielski opis na koncie GB → „en", polskie opisy → „pl", a opis złożony z samych
+          // hashtagów → puste (§9). Dlatego to jedyne źródło języka, któremu tu ufamy.
+          lang:      it.textLanguage || null,
           date: '', hour: '', minute: ''
         };
         var ct = _n(it.createTime);

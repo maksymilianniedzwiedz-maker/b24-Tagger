@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.26.21",
+    "date": "2026-09-10",
+    "label": "feat",
+    "changes": [
+      "feat: Ostrzeżenie o niezgodności języka działa teraz dla TikToka. Wtyczka bierze język z wykrytego języka OPISU filmu, a nie z języka interfejsu — dlatego wcześniej było wyłączone, żeby nie krzyczeć przy każdym poście. Przy opisie złożonym z samych hashtagów ostrzeżenie się nie pojawia, bo nie ma z czego rozpoznać języka"
+    ]
+  },
+  {
     "version": "0.26.20",
     "date": "2026-09-10",
     "label": "feat",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.26.14
+// @version      0.26.15
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -116,7 +116,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.26.14';
+  const VERSION = '0.26.15';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3657,6 +3657,11 @@
         0%   { box-shadow: 0 0 0 0 var(--b24t-primary-glow); }
         70%  { box-shadow: 0 0 0 6px transparent; }
         100% { box-shadow: 0 0 0 0 transparent; }
+      }
+      /* Sekcja metryk pulsuje, dopóki lecą dokładne liczby z Instagrama (_customSetMetricsPending) */
+      .b24t-metrics-loading {
+        animation: b24t-pulse-ring 1.4s ease-out infinite;
+        border-color: var(--b24t-primary) !important;
       }
       @keyframes b24t-shimmer {
         0%   { background-position: -200% 0; }
@@ -7705,6 +7710,10 @@ function showOnboarding(onComplete) {
     hideNonArticles: false,
     mode: 'news', // 'news' | 'custom' — 'custom' = tryb Niestandardowe (bez keyword-filtra, bez wymuszania "dodane")
     formOnly: false, // tryb tylko-formularz w Niestandardowe (ukrywa listę + podgląd)
+    // Przycisk „Dodaj wzmiankę" ma dwóch niezależnych blokujących. Trzymamy je osobno, bo
+    // szarpanie .disabled z kilku miejsc kończyło się tym, że odblokowanie po jednym powodzie
+    // kasowało blokadę z drugiego (patrz _customSubmitGate).
+    submitBlock: { cms: false, dup: false },
   };
 
   // ── CATEGORY AUTO-DETECT (Brand24 category IDs) — używane w trybie Niestandardowe ──
@@ -10039,6 +10048,7 @@ function showOnboarding(onComplete) {
     if (overlay) {
       overlay.style.display = 'flex';
       newsState.panelsOpen = true;
+      _newsResetSubmitStatus();
       if (!newsState.wired) { _wireNewsPanels(); newsState.wired = true; }
       _applyNewsMode();
       requestAnimationFrame(function() {
@@ -10056,6 +10066,7 @@ function showOnboarding(onComplete) {
     _wireNewsPanels();
     newsState.wired = true;
     newsState.panelsOpen = true;
+    _newsResetSubmitStatus();
     _applyNewsMode();
     if (newsState.mode === 'custom' && _isExternal) {
       requestAnimationFrame(function() {
@@ -10554,7 +10565,7 @@ function showOnboarding(onComplete) {
       '</div>',
       // ── CUSTOM-ONLY FIELDS (likes / pageviews / shares / comments) ──
       '<div id="b24t-news-f-custom-fields" style="display:none;flex-direction:column;gap:8px;flex-shrink:0;padding:8px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';">',
-        '<div style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">METRYKI (opcjonalne)</div>',
+        '<div style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">METRYKI (opcjonalne)<span id="b24t-news-metrics-status" style="font-weight:500;color:var(--b24t-text-faint);"></span></div>',
         '<div style="display:flex;gap:8px;">',
           '<div style="flex:1;display:flex;flex-direction:column;gap:3px;">',
             '<label style="font-size:9px;color:' + t.textFaint + ';">LIKES</label>',
@@ -10817,7 +10828,7 @@ function showOnboarding(onComplete) {
       if (checkboxEl){ checkboxEl.disabled = false; checkboxEl.checked = !isCustom; }
       if (cmsBanner) cmsBanner.style.display = 'none';
       if (cmsDot)    { cmsDot.style.color = '#22c55e'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny'; }
-      if (isCustom)  { var _sb1 = document.getElementById('b24t-news-submit-btn'); if (_sb1) _sb1.disabled = false; }
+      if (isCustom)  _customSubmitGate('cms', false);
       return;
     }
 
@@ -10826,7 +10837,7 @@ function showOnboarding(onComplete) {
     if (checkboxEl){ checkboxEl.checked = false; checkboxEl.disabled = true; }
     if (cmsBanner) cmsBanner.style.display = 'none';
     if (cmsDot)    { cmsDot.style.color = '#6b7280'; cmsDot.classList.add('b24t-cms-checking'); cmsDot.title = 'Sprawdzanie CMS...'; }
-    if (isCustom)  { var _sbChk = document.getElementById('b24t-news-submit-btn'); if (_sbChk) _sbChk.disabled = true; }
+    if (isCustom)  _customSubmitGate('cms', true);
 
     var sid = state.projectId || '';
     if (!sid) {
@@ -10851,7 +10862,7 @@ function showOnboarding(onComplete) {
             if (statusEl)  { statusEl.textContent = '✓ CMS aktywny'; statusEl.style.color = '#22c55e'; }
             if (cmsDot)    { cmsDot.style.color = '#22c55e'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny (tryb Niestandardowe — tag "dodane" niewymagany)'; }
             if (cmsBanner) cmsBanner.style.display = 'none';
-            var _sb2 = document.getElementById('b24t-news-submit-btn'); if (_sb2) _sb2.disabled = false;
+            _customSubmitGate('cms', false);
           } else {
             if (statusEl)  { statusEl.textContent = '⚠ brak tagu'; statusEl.style.color = '#f59e0b'; }
             if (cmsDot)    { cmsDot.style.color = '#f59e0b'; cmsDot.classList.remove('b24t-cms-checking'); cmsDot.title = 'CMS aktywny — brak tagu "dodane" w projekcie'; }
@@ -10871,7 +10882,7 @@ function showOnboarding(onComplete) {
             if (warnText) warnText.innerHTML = _msg;
             cmsBanner.style.display = '';
           }
-          if (isCustom) { var _sb3 = document.getElementById('b24t-news-submit-btn'); if (_sb3) _sb3.disabled = true; }
+          if (isCustom) _customSubmitGate('cms', true);
         }
       },
       onerror: function() {
@@ -10885,7 +10896,7 @@ function showOnboarding(onComplete) {
           if (warnText) warnText.innerHTML = _msg2;
           cmsBanner.style.display = '';
         }
-        if (isCustom) { var _sb4 = document.getElementById('b24t-news-submit-btn'); if (_sb4) _sb4.disabled = true; }
+        if (isCustom) _customSubmitGate('cms', true);
       }
     });
   }
@@ -12871,6 +12882,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.26.15",
+      "date": "2026-09-10",
+      "label": "fix",
+      "labelColor": "#22c55e",
+      "changes": [
+        {"type": "fix",  "text": "Pola bez odpowiednika w nowym poście nie trzymają już wartości poprzedniego. Objawiało się to najwyraźniej na PAGEVIEWS: po rolce z wyświetleniami następne zdjęcie dziedziczyło jej liczbę, bo zdjęcia tego pola nie mają. Przy każdym poście formularz zaczyna od czysta, a wartości poprawione ręcznie zostają nietknięte"},
+        {"type": "fix",  "text": "Komunikat \"✓ Dodano do Brand24!\" znika przy zamknięciu panelu i przy przejściu do kolejnego posta — wcześniej wisiał nad formularzem następnej wzmianki i wyglądał, jakby ona też była już dodana"},
+        {"type": "feat", "text": "Widać, kiedy liczby jeszcze lecą z Instagrama: sekcja METRYKI pulsuje, a w jej nagłówku stoi \"⏳ pobieram dokładne liczby…\". Dzięki temu wiadomo, że wartość zaraz się zmieni, i nie ma wrażenia, że panel się zaciął"},
+        {"type": "feat", "text": "Wykryty duplikat blokuje przycisk dodawania — jest wyszarzony i nieklikalny, zamiast pozwalać wysłać wzmiankę, która już jest w projekcie. Gdy duplikat jest zamierzony, obok ostrzeżenia stoi \"dodaj mimo to\", które odblokowuje wysyłkę jednym kliknięciem"}
+      ]
+    },
+    {
       "version": "0.26.14",
       "date": "2026-09-10",
       "label": "feat",
@@ -12966,15 +12989,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "Dodawanie wzmianek na stronach zewnętrznych: gdy tagi projektu nie są jeszcze w pamięci tej przeglądarki, panel sam dociąga je z Brand24 (wcześniej lista tagów bywała pusta, mimo że projekt był widoczny)"},
         {"type": "fix", "text": "Obsługa polskiego panelu (panel.brand24.pl): poprawne wykrycie zalogowania (znacznik Panel), pobranie tokenu i wysyłka wzmianki trafiają teraz na właściwy panel (.pl/.com) także ze stron zewnętrznych — wcześniej zawsze celowało w .com"},
         {"type": "fix", "text": "Tagi projektu nie znikają już z pamięci współdzielonej, gdy nazwa projektu jest słabo rozpoznana"}
-      ]
-    },
-    {
-      "version": "0.26.5",
-      "date": "2026-06-23",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "Dodawanie wzmianek na TikToku: panel sam wypełnia opis filmu, dokładną datę i godzinę publikacji oraz liczbę polubień i komentarzy — nie trzeba już ręcznie przeklejać tekstu ani wybierać daty. Data liczona jest niezawodnie z adresu filmu (działa niezależnie od layoutu i logowania)"}
       ]
     }
   ];
@@ -18744,10 +18758,34 @@ Tej operacji nie można cofnąć.`)) {
     var _mySeq = ++_dupCheckSeq;
     var dupEl = document.getElementById('b24t-news-dup-status');
     if (!dupEl) return;
+
+    // Jedyne miejsce, które wypisuje werdykt dup-checku — wcześniej ten sam komunikat
+    // o duplikacie powstawał w czterech miejscach i żadne z nich nie ruszało przycisku.
+    // Duplikat BLOKUJE wysyłkę, ale świadomy duplikat jest czasem potrzebny, więc zamiast
+    // ślepego zaułka dajemy jawne odblokowanie jednym kliknięciem.
+    function _dupVerdict(kind, text) {
+      if (kind === 'hidden') { dupEl.style.display = 'none'; _customSubmitGate('dup', false); return; }
+      dupEl.style.display = '';
+      dupEl.style.color = (kind === 'new') ? '#22c55e' : (kind === 'info') ? '#6b7280' : '#f59e0b';
+      _customSubmitGate('dup', kind === 'dup');
+      if (kind !== 'dup') { dupEl.textContent = text; return; }
+      dupEl.textContent = '⚠ duplikat — URL już istnieje w projekcie · ';
+      var force = document.createElement('a');
+      force.href = '#';
+      force.textContent = 'dodaj mimo to';
+      force.style.cssText = 'color:#f59e0b;text-decoration:underline;cursor:pointer;';
+      force.addEventListener('click', function(ev) {
+        ev.preventDefault();
+        _customSubmitGate('dup', false);
+        dupEl.textContent = '⚠ duplikat — wysyłka odblokowana ręcznie';
+      });
+      dupEl.appendChild(force);
+    }
+
     var normUrl = normalizeUrl(url || '');
-    if (!normUrl) { dupEl.style.display = 'none'; return; }
+    if (!normUrl) { _dupVerdict('hidden'); return; }
     var _pidInt = parseInt(pid, 10);
-    if (!pid || isNaN(_pidInt)) { dupEl.style.display = 'none'; return; }
+    if (!pid || isNaN(_pidInt)) { _dupVerdict('hidden'); return; }
 
     // Zakres dat = miesiąc artykułu + 1 dzień buforu (na opóźnienie crawlera)
     var dateFld  = document.getElementById('b24t-news-f-date');
@@ -18769,15 +18807,11 @@ Tej operacji nie można cofnąć.`)) {
 
     // Jeśli brak tokenu dla TEGO panelu — pokaż komunikat i czekaj na reaktywne odświeżenie
     if (!B24Bridge.token.isValid(_base)) {
-      dupEl.textContent = '⏳ otwórz ' + _baseLabel(_base) + ' — token załaduje się automatycznie';
-      dupEl.style.color = '#6b7280';
-      dupEl.style.display = '';
+      _dupVerdict('info', '⏳ otwórz ' + _baseLabel(_base) + ' — token załaduje się automatycznie');
       return;
     }
 
-    dupEl.textContent = '⏳ sprawdzanie duplikatów (' + _baseLabel(_base) + ')...';
-    dupEl.style.color = '#6b7280';
-    dupEl.style.display = '';
+    _dupVerdict('info', '⏳ sprawdzanie duplikatów (' + _baseLabel(_base) + ')...');
 
     var _authHeaders = B24Bridge.token.headers(_base);
 
@@ -18828,9 +18862,7 @@ Tej operacji nie można cofnąć.`)) {
           try {
             var d = JSON.parse(resp.responseText);
             if (d && d.errors && (!d.data || !d.data.getMentions)) {
-              dupEl.textContent = '⚠ dup-check: ' + _gqlErrHint(d.errors, _base, _pidInt);
-              dupEl.style.color = '#f59e0b';
-              dupEl.style.display = '';
+              _dupVerdict('warn', '⚠ dup-check: ' + _gqlErrHint(d.errors, _base, _pidInt));
               cb(-1, []);
               return;
             }
@@ -18838,22 +18870,21 @@ Tej operacji nie można cofnąć.`)) {
             cb(r ? (r.count || 0) : 0, r ? (r.results || []) : []);
           } catch(e) { cb(0, []); }
         },
-        onerror:   function() { if (_mySeq !== _dupCheckSeq) return; dupEl.textContent = '⚠ dup-check: błąd sieci'; dupEl.style.color = '#f59e0b'; dupEl.style.display = ''; cb(-1, []); },
-        ontimeout: function() { if (_mySeq !== _dupCheckSeq) return; dupEl.textContent = '⚠ dup-check: timeout'; dupEl.style.color = '#f59e0b'; dupEl.style.display = ''; cb(-1, []); }
+        onerror:   function() { if (_mySeq !== _dupCheckSeq) return; _dupVerdict('warn', '⚠ dup-check: błąd sieci'); cb(-1, []); },
+        ontimeout: function() { if (_mySeq !== _dupCheckSeq) return; _dupVerdict('warn', '⚠ dup-check: timeout'); cb(-1, []); }
       });
     }
 
     function _show() {
       if (_mySeq !== _dupCheckSeq) return;
-      var found = _hit();
-      dupEl.textContent = found ? '⚠ duplikat — URL już istnieje w projekcie' : '✓ URL nowy w projekcie';
-      dupEl.style.color  = found ? '#f59e0b' : '#22c55e';
+      if (_hit()) _dupVerdict('dup');
+      else        _dupVerdict('new', '✓ URL nowy w projekcie');
     }
 
     _fetch(1, function(count, results) {
       if (_mySeq !== _dupCheckSeq || count === -1) return;
       _page(results);
-      if (_hit()) { dupEl.textContent = '⚠ duplikat — URL już istnieje w projekcie'; dupEl.style.color = '#f59e0b'; dupEl.style.display = ''; return; }
+      if (_hit()) { _dupVerdict('dup'); return; }
       var pageSize   = results.length || 60;
       var totalPages = count > 0 ? Math.min(Math.ceil(count / pageSize), 10) : 1;
       if (totalPages <= 1) { _show(); return; }
@@ -18866,7 +18897,7 @@ Tej operacji nie można cofnąć.`)) {
         _fetch(remaining[idx++], function(c, r) {
           if (_mySeq !== _dupCheckSeq || c === -1) return;
           _page(r);
-          if (_hit()) { dupEl.textContent = '⚠ duplikat — URL już istnieje w projekcie'; dupEl.style.color = '#f59e0b'; dupEl.style.display = ''; return; }
+          if (_hit()) { _dupVerdict('dup'); return; }
           _next();
         });
       }
@@ -18893,6 +18924,64 @@ Tej operacji nie można cofnąć.`)) {
     return true;
   }
 
+  // Pola, którymi zarządza autouzupełnienie. Lista jest potrzebna, bo przy przejściu do
+  // kolejnego posta trzeba wyczyścić te, dla których nowy post NIE MA wartości — inaczej
+  // zostaje liczba z poprzedniego. Objaw: po rolce z wyświetleniami następne zdjęcie
+  // dziedziczyło jej PAGEVIEWS, bo zdjęcia tego pola nie mają i nikt go nie zerował.
+  var _CUSTOM_AUTO_FIELDS = [
+    'b24t-news-f-url', 'b24t-news-f-title', 'b24t-news-f-content', 'b24t-news-f-date',
+    'b24t-news-f-hour', 'b24t-news-f-minute',
+    'b24t-news-f-likes', 'b24t-news-f-shares', 'b24t-news-f-comments', 'b24t-news-f-pageviews'
+  ];
+
+  // Komunikat „✓ Dodano do Brand24!" dotyczy JEDNEJ wysyłki i nie może przeżyć zamknięcia
+  // panelu ani przejścia do kolejnego posta — inaczej wisi nad formularzem następnej wzmianki
+  // i wygląda, jakby ona też była już dodana.
+  function _newsResetSubmitStatus() {
+    var st = document.getElementById('b24t-news-submit-status');
+    if (st) { st.textContent = ''; st.style.color = ''; }
+    var err = document.getElementById('b24t-news-form-err');
+    if (err) err.style.display = 'none';
+  }
+
+  // Kasuje wartości wstawione automatycznie, zostawiając nietknięte to, co użytkownik poprawił
+  // ręcznie (rozpoznanie po dataset.b24tAuto, tak samo jak w _customSetAuto).
+  function _customClearAuto() {
+    _CUSTOM_AUTO_FIELDS.forEach(function(id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      if (el.value && el.value !== el.dataset.b24tAuto) return;
+      el.value = '';
+      delete el.dataset.b24tAuto;
+    });
+  }
+
+  // Sygnał „liczby jeszcze lecą z sieci". Pola metryk to <input type=number>, więc placeholder
+  // nie wystarczy — po pierwszym przebiegu z DOM-u bywają już wypełnione. Dlatego pulsuje cała
+  // ramka sekcji, a nagłówek mówi wprost, na co czekamy.
+  function _customSetMetricsPending(on) {
+    var box = document.getElementById('b24t-news-f-custom-fields');
+    if (box) box.classList.toggle('b24t-metrics-loading', !!on);
+    var lbl = document.getElementById('b24t-news-metrics-status');
+    if (lbl) lbl.textContent = on ? ' ⏳ pobieram dokładne liczby…' : '';
+  }
+
+  // Jedyne miejsce, które steruje przyciskiem submitu w trybie Niestandardowe.
+  function _customSubmitGate(which, blocked) {
+    if (which) newsState.submitBlock[which] = !!blocked;
+    var btn = document.getElementById('b24t-news-submit-btn');
+    if (!btn) return;
+    var blockedBy = newsState.submitBlock;
+    var off = !!(blockedBy.cms || blockedBy.dup);
+    btn.disabled       = off;
+    btn.style.opacity  = off ? '0.4' : '';
+    btn.style.filter   = off ? 'grayscale(1)' : '';
+    btn.style.cursor   = off ? 'not-allowed' : 'pointer';
+    btn.title = blockedBy.cms ? 'Zaloguj się do CMS Brand24 — bez tego nie da się dodać wzmianki'
+              : blockedBy.dup ? 'Ten URL już jest w projekcie. Użyj „dodaj mimo to", jeśli świadomie chcesz duplikat'
+              : '';
+  }
+
   // ── AUTO-FILL Z BIEŻĄCEJ STRONY — wypełnia pola formularza Niestandardowe ──
   // Wywoływana przy otwieraniu panelu custom oraz po nawigacji SPA (_wireCustomSpaRefresh).
   // Używa żywego DOM bez fetcha; wyjątkiem jest dobranie metryk Instagrama, których w modalu
@@ -18901,6 +18990,15 @@ Tej operacji nie można cofnąć.`)) {
     var mySeq = ++_customFillSeq;
     // Poczekaj aż DOM formularza jest w pełni wyrenderowany
     requestAnimationFrame(function() {
+      // Nowy post = czysty formularz. Bez tego pole bez odpowiednika w nowym poście trzyma
+      // wartość poprzedniego (PAGEVIEWS rolki przechodzące na kolejne zdjęcie), a werdykt
+      // dup-checku i komunikat po wysyłce zostają z tamtego adresu.
+      _customClearAuto();
+      _newsResetSubmitStatus();
+      var _dupEl0 = document.getElementById('b24t-news-dup-status');
+      if (_dupEl0) _dupEl0.style.display = 'none';
+      _customSubmitGate('dup', false);
+
       var scraped = _miniScrapeCurrentPage();
 
       // Adapter social media (TikTok, YouTube, Instagram) — nadpisuje generyczny scrape,
@@ -18978,8 +19076,12 @@ Tej operacji nie można cofnąć.`)) {
       // otwarcie posta — dociągamy go zawsze, bo nawet gdy DOM coś dał, to gorsze dane.
       // Odpowiedź nadpisuje pola tylko wtedy, gdy użytkownik ich nie poprawił (_customSetAuto).
       if (_social && _social.igCode) {
+        _customSetMetricsPending(true);
         _igFetchMediaInfo(_social.igCode, function(info) {
-          if (!info || mySeq !== _customFillSeq) return;
+          // Przy nieaktualnym pokoleniu wskaźnik należy już do nowszego odświeżenia — nie gasimy
+          if (mySeq !== _customFillSeq) return;
+          _customSetMetricsPending(false);
+          if (!info) return;
           _customFillMetrics(info);
           _customSetAuto(document.getElementById('b24t-news-f-date'), info.date,
                          'rgba(34,197,94,0.5)', 'Data wykryta automatycznie');

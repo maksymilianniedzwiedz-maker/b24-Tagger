@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.26.15",
+    "date": "2026-09-10",
+    "label": "fix",
+    "changes": [
+      "fix: Pola bez odpowiednika w nowym poście nie trzymają już wartości poprzedniego. Objawiało się to najwyraźniej na PAGEVIEWS: po rolce z wyświetleniami następne zdjęcie dziedziczyło jej liczbę, bo zdjęcia tego pola nie mają. Przy każdym poście formularz zaczyna od czysta, a wartości poprawione ręcznie zostają nietknięte",
+      "fix: Komunikat \"✓ Dodano do Brand24!\" znika przy zamknięciu panelu i przy przejściu do kolejnego posta — wcześniej wisiał nad formularzem następnej wzmianki i wyglądał, jakby ona też była już dodana",
+      "feat: Widać, kiedy liczby jeszcze lecą z Instagrama: sekcja METRYKI pulsuje, a w jej nagłówku stoi \"⏳ pobieram dokładne liczby…\". Dzięki temu wiadomo, że wartość zaraz się zmieni, i nie ma wrażenia, że panel się zaciął",
+      "feat: Wykryty duplikat blokuje przycisk dodawania — jest wyszarzony i nieklikalny, zamiast pozwalać wysłać wzmiankę, która już jest w projekcie. Gdy duplikat jest zamierzony, obok ostrzeżenia stoi \"dodaj mimo to\", które odblokowuje wysyłkę jednym kliknięciem"
+    ]
+  },
+  {
     "version": "0.26.14",
     "date": "2026-09-10",
     "label": "feat",

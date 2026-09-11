@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.27.5
+// @version      0.27.6
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -120,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.27.5';
+  const VERSION = '0.27.6';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -10136,11 +10136,32 @@ function showOnboarding(onComplete) {
   // znaków rozdzielających. Dzięki temu „hmpl” znajduje „H&M_PL”, a „makijaz” — „makijaż
   // permanentny”. Wielkość liter celowo NIE ma znaczenia: nikt nie pamięta, czy projekt
   // zapisano „H&M_HR” czy „h&m_hr”, a pomyłka dawałaby pustą listę bez wyjaśnienia.
-  function _projSearchKey(str) {
+  // Postać z ZACHOWANYMI granicami członów. Każdy ciąg znaków rozdzielających (spacja, „-”,
+  // „_”, kropka, przecinek, ukośnik) staje się jednym „_”, żeby nie trzeba było pamiętać,
+  // którym z nich projekt jest zapisany. Znaki czysto ozdobne (& i podobne) wypadają — dzięki
+  // temu „H&M_GR” to „hm_gr”, a nie „h_m_gr”, więc „hm_pl” też znajduje swoje.
+  function _projKeySep(str) {
     return String(str || '')
       .toLowerCase()
       .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9]/g, '');
+      .replace(/[^a-z0-9 _\-.,\/|:]/g, '')
+      .replace(/[ _\-.,\/|:]+/g, '_');
+  }
+
+  // Postać luźna — bez granic w ogóle. „H&M_PL” → „hmpl”.
+  function _projSearchKey(str) {
+    return _projKeySep(str).replace(/_/g, '');
+  }
+
+  // O tryb dopasowania decyduje TO, CO WPISANO. Bez znaku rozdzielającego szukamy wyrozumiale
+  // („hmpl” znajduje „H&M_PL”). Z takim znakiem — dokładnie, bo użytkownik właśnie powiedział,
+  // gdzie przebiega granica członu: „_gr” daje same projekty greckie i **nie** łapie „grupa_1”,
+  // „LPPGroup_RO” ani niczego, co ma „gr” w środku wyrazu. Zgłoszone przez użytkownika 2026-09-11.
+  function _projMatches(name, rawQuery) {
+    var qs = _projKeySep(rawQuery);
+    if (!qs || qs === '_') return true;
+    if (qs.indexOf('_') !== -1) return _projKeySep(name).indexOf(qs) !== -1;
+    return _projSearchKey(name).indexOf(qs) !== -1;
   }
 
   function _newsRefillProjectSelect() {
@@ -10172,8 +10193,8 @@ function showOnboarding(onComplete) {
     var typing = combo.dataset.typing === '1';
     if (!typing) combo.value = state.projectId ? _pnResolve(state.projectId) : '';
 
-    var q = _projSearchKey(typing ? combo.value : '');
-    var shown = q ? rows.filter(function(r) { return _projSearchKey(r.name).indexOf(q) !== -1; }) : rows;
+    var rawQ = typing ? combo.value : '';
+    var shown = _projKeySep(rawQ) ? rows.filter(function(r) { return _projMatches(r.name, rawQ); }) : rows;
 
     list.innerHTML = shown.length
       ? shown.map(function(r) {

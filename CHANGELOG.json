@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.27.6",
+    "date": "2026-09-11",
+    "label": "feat",
+    "changes": [
+      "feat: **Wpisany myślnik lub podkreślnik coś teraz znaczy.** Bez nich szukanie jest wyrozumiałe jak dotąd („hmpl” znajduje „H&M_PL”), ale gdy wpiszesz znak rozdzielający, robi się dokładne: „_GR” daje same projekty greckie i nie łapie „grupa_1_fortum”, „LPPGroup_RO” ani niczego innego, co ma „gr” w środku wyrazu",
+      "feat: Nie trzeba pamiętać, którym znakiem projekt jest zapisany — myślnik, podkreślnik, spacja, kropka i ukośnik są traktowane jednakowo, więc „-gr” działa tak samo jak „_gr”"
+    ]
+  },
+  {
     "version": "0.27.5",
     "date": "2026-09-11",
     "label": "feat",

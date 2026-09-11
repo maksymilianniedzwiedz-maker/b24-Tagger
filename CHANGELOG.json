@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.27.11",
+    "date": "2026-09-11",
+    "label": "fix",
+    "changes": [
+      "fix: **Data publikacji przestaje ginąć razem z szumem strony.** Skaner czytał znacznik daty dopiero po wycięciu bloków pobocznych, a na części serwisów (fora, instyle.gr) znikał razem z nimi — wiersz wracał bez daty, choć data stoi w kodzie strony gotowa do odczytania. Zebrana na 802 stronach z TR, GR i HR: siedem dat więcej, żadna nie zgubiona",
+      "fix: **Data z przyszłości nie trafia już do formularza.** Termin z ogłoszenia o pracę albo data zapowiadanego wydarzenia potrafiły wylądować w polu daty publikacji — zdarzyło się to dwa razy na 802 stronach",
+      "fix: **Pole Treść nie jest już puste na stronie, która coś znalazła.** Galerie zdjęć bez akapitów i bez opisu meta (miss7.24sata.hr) trafiały tytułem i śródtytułem, a annotator dostawał formularz bez cytatu i musiał wracać na stronę",
+      "fix: **Koniec z tabulatorami i łamaniem wiersza w polu Treść.** Podpis produktu przychodził z układu strony razem z odstępami i kredytem fotografa; 62 wycinki na 802 stronach były tak posklejane"
+    ]
+  },
+  {
     "version": "0.27.10",
     "date": "2026-09-11",
     "label": "fix",

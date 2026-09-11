@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.27.10
+// @version      0.27.11
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -120,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.27.10';
+  const VERSION = '0.27.11';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8353,7 +8353,19 @@ function showOnboarding(onComplete) {
   // `langs` to wynik _newsMonthLangs. Gdy język jest nieznany, przeszukujemy wszystkie tablice
   // i wybieramy NAJDŁUŻSZE dopasowanie prefiksu — [ZAŁ] przy „listopada" bez znanego języka
   // wypadnie polski listopad, co jest zgadywaniem, nie pewnikiem.
+  // Data publikacji z przyszłości to zawsze pomyłka — najczęściej termin z ogłoszenia o pracę
+  // („aplikuj do 20 września") albo data zapowiadanego wydarzenia. Zmierzone na korpusie
+  // TR/GR/HR: `checkincyprus.com` i `sczg.unizg.hr` oddawały w ten sposób datę o tydzień
+  // do przodu, a annotator dostawał ją w formularzu. 36 godzin zapasu, bo artykuł opublikowany
+  // „jutro" w UTC+13 jest prawdziwy, a zegar czytelnika chodzi w innej strefie.
   function _newsParseDate(raw, langs) {
+    var _d = _newsParseDateAny(raw, langs);
+    if (!_d) return '';
+    var _lim = new Date(Date.now() + 36 * 3600 * 1000).toISOString().slice(0, 10);
+    return _d > _lim ? '' : _d;
+  }
+
+  function _newsParseDateAny(raw, langs) {
     if (!raw) return '';
     var s = String(raw).trim();
     var iso = s.slice(0, 10);
@@ -8838,6 +8850,29 @@ function showOnboarding(onComplete) {
       }
     }
 
+    // ── DATA Z `<time>` ZEBRANA PRZED USUWANIEM ──
+    // Kaskada dat (§7) czyta `<time>` i `itemprop` dopiero po wycięciu zajawek i szumu,
+    // a te zabierają ze sobą dowody: `forum.donanimhaber.com` ma w dokumencie 20 znaczników
+    // `<time datetime>` (jeden na post), po usuwaniu ZERO — więc strona wracała bez daty,
+    // choć data stoi w atrybucie gotowa do odczytania. Zbieramy ją tu, zanim cokolwiek zniknie.
+    // Kolejność jak w kaskadzie: najpierw znacznik w strefie treści, potem gdziekolwiek.
+    // Bloki zajawek pomijamy w obu przebiegach — tam stoi data CUDZEGO artykułu.
+    // Ta wartość wchodzi do kaskady jako fallback (§7.9), więc nie rusza dat, które już działają.
+    var _preRemovalDate = null;
+    try {
+      var _tCands = doc.querySelectorAll('time[datetime],[itemprop="datePublished"]');
+      for (var _pass = 0; _pass < 2 && !_preRemovalDate; _pass++) {
+        for (var _tci = 0; _tci < _tCands.length && !_preRemovalDate; _tci++) {
+          var _tc = _tCands[_tci];
+          if (_pass === 0 && !(bodyEl && bodyEl.contains(_tc))) continue;
+          try { if (_tc.closest(_teaserSelAll)) continue; } catch(e) {}
+          _preRemovalDate = _newsParseDate(
+            _tc.getAttribute('datetime') || _tc.getAttribute('content') || _tc.textContent,
+            _dateLangs) || null;
+        }
+      }
+    } catch(e) {}
+
     // ── TEASER EXTRACTION — przed usunięciem szumu, żeby nie stracić tekstu ──
     // Wytnij sekcje polecanych/powiązanych artykułów do osobnego bucketu.
     // Jeśli keyword trafia TYLKO tu (nie w głównej treści) → status 'teasermatch'.
@@ -9038,6 +9073,9 @@ function showOnboarding(onComplete) {
         _articleDate = _newsParseDate(_ipd.getAttribute('content') || _ipd.getAttribute('datetime') || _ipd.textContent, _dateLangs) || null;
       }
     }
+    // Znacznik `<time>`, który zniknął razem z szumem (§7.9). Stoi nad odczytem z widocznego
+    // tekstu, bo atrybut `datetime` jest jednoznaczny, a tekst trzeba zgadywać regexem.
+    if (!_articleDate) _articleDate = _preRemovalDate;
     if (!_articleDate) {
       // Data w widocznym tekście — cromoda.hr i studentski-poslovi nie dają jej nigdzie w metadanych.
       // Szukamy tylko w nagłówkowej części strefy treści, żeby nie złapać daty z zajawki obok.
@@ -9338,8 +9376,29 @@ function showOnboarding(onComplete) {
       } else if (ogDesc || metaDesc) {
         snippet = (ogDesc || metaDesc).slice(0, 500);
         _snippetZone = 'opis meta (bez keyworda)';
+      } else {
+        // Galeria zdjęć bez akapitu i bez opisu meta — miss7.24sata.hr trafiał tytułem
+        // i śródtytułem (11 pkt, `contentmatch`), a annotator dostawał PUSTE pole Treść
+        // i musiał wracać na stronę. Kontekst trafienia i tak jest już policzony dla modelu
+        // (§9), więc bierzemy pierwszy, który nie pochodzi z bloku polecanych. Patrz §6.1.
+        for (var _ckChip in keywordContexts) {
+          var _ctxs = keywordContexts[_ckChip] || [];
+          for (var _cxi = 0; _cxi < _ctxs.length; _cxi++) {
+            if (_ctxs[_cxi].zone === 'polecane' || !_ctxs[_cxi].text) continue;
+            snippet = _ctxs[_cxi].text.slice(0, 500);
+            _snippetZone = _ctxs[_cxi].zone;
+            break;
+          }
+          if (snippet) break;
+        }
       }
     }
+
+    // Pole Treść trafia do formularza, a nie do `<pre>`: tabulatory i łamania wierszy z układu
+    // strony robią w nim dziury. Zmierzone na zadovoljna.dnevnik.hr i miss7.24sata.hr, gdzie
+    // strony robią w nim dziury. Zmierzone na zadovoljna.dnevnik.hr i miss7.24sata.hr: podpis
+    // produktu przychodził jako „H&M, 29,99 eura" plus dwa tabulatory i kredyt fotografa.
+    if (snippet) snippet = snippet.replace(/\s+/g, ' ').trim();
 
     score = Math.min(score, 30); // cap — żeby jeden artykuł pełen keywordów nie zaburzał skali
 

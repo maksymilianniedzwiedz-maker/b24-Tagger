@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.27.5",
+    "date": "2026-09-11",
+    "label": "feat",
+    "changes": [
+      "feat: **Wybór projektu to teraz jedno pole z podpowiedziami.** Piszesz w nim litery i lista POD spodem zawęża się na bieżąco — nie trzeba rozwijać osobnego menu, żeby zobaczyć wyniki. Poprzednia wersja miała osobne pole „szukaj” obok listy i wymagała kliknięcia w listę po każdym wpisanym słowie",
+      "feat: Strzałki góra/dół chodzą po wynikach, Enter wybiera podkreślony, Escape zamyka i przywraca poprzedni wybór. Kliknięcie w pole pokazuje pełną listę i zaznacza tekst, więc pisanie od razu zastępuje nazwę zamiast dopisywać się do niej. Aktualnie wybrany projekt jest na liście wyróżniony"
+    ]
+  },
+  {
     "version": "0.27.4",
     "date": "2026-09-11",
     "label": "feat",

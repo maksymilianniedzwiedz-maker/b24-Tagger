@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.27.4
+// @version      0.27.5
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -120,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.27.4';
+  const VERSION = '0.27.5';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4745,6 +4745,35 @@
       @keyframes b24t-dot-pulse {
         0%, 100% { opacity: 1; }
         50%       { opacity: 0.2; }
+      }
+
+      /* ── LISTA PODPOWIEDZI WYBORU PROJEKTU ──
+         Lista jest w toku dokumentu, nie na warstwie nad nim: kolumna formularza ma własne
+         przewijanie, więc element pozycjonowany absolutnie zostałby przez nią obcięty.
+         Rozwinięta lista rozpycha formularz w dół, ale jest otwarta tylko na czas wyboru. */
+      #b24t-news-f-project-list {
+        max-height: 190px; overflow-y: auto;
+        margin-top: 3px; padding: 3px;
+        border: 1px solid var(--b24t-border);
+        border-radius: 8px;
+        background: var(--b24t-bg-deep);
+      }
+      .b24t-proj-item {
+        padding: 6px 9px; border-radius: 6px;
+        font-size: 11px; color: var(--b24t-text);
+        cursor: pointer; user-select: none;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .b24t-proj-item:hover, .b24t-proj-item-hot {
+        background: color-mix(in srgb, var(--b24t-primary) 22%, transparent);
+      }
+      .b24t-proj-item-on {
+        color: var(--b24t-primary); font-weight: 600;
+        box-shadow: inset 2px 0 0 var(--b24t-primary);
+      }
+      .b24t-proj-empty {
+        padding: 8px 9px; font-size: 10px;
+        color: var(--b24t-text-faint); font-style: italic;
       }
 
       /* ── PASEK PRZEWIJANIA W MODALU WZMIANEK ──
@@ -10117,58 +10146,123 @@ function showOnboarding(onComplete) {
   function _newsRefillProjectSelect() {
     var sel = document.getElementById('b24t-news-f-project-sel');
     if (!sel) return;
-    var filterEl = document.getElementById('b24t-news-f-project-filter');
-    var q = _projSearchKey(filterEl ? filterEl.value : '');
+    var combo = document.getElementById('b24t-news-f-project-combo');
+    var list  = document.getElementById('b24t-news-f-project-list');
 
     var projects = _gmGetProjects();
     // Projekty niedostępne na swoim panelu (usunięte albo z cudzego konta) zostają w pamięci,
     // ale nie zaśmiecają listy — decyzja użytkownika 2026-09-10. Bieżący projekt pokazujemy
-    // zawsze, nawet oznaczony: inaczej wybrany projekt mógłby zniknąć z własnego selecta.
-    var pids = Object.keys(projects).filter(function(pid) {
-      return !_pnIsUnavailable(pid) || String(state.projectId) === String(pid);
-    });
-
-    var rows = pids.map(function(pid) { return { pid: pid, name: _pnResolve(pid) }; });
+    // zawsze, nawet oznaczony: inaczej wybrany projekt mógłby zniknąć z własnej listy.
+    var rows = Object.keys(projects)
+      .filter(function(pid) { return !_pnIsUnavailable(pid) || String(state.projectId) === String(pid); })
+      .map(function(pid) { return { pid: pid, name: _pnResolve(pid) }; });
     rows.sort(function(a, b) { return a.name.localeCompare(b.name, 'pl'); });
 
-    var shown = rows;
-    if (q) {
-      shown = rows.filter(function(r) {
-        // Wybrany projekt zostaje na liście zawsze — inaczej filtr wyrzuciłby własny wybór
-        // użytkownika i `sel.value` cicho zmieniłoby się na pusty.
-        return String(state.projectId) === String(r.pid) || _projSearchKey(r.name).indexOf(q) !== -1;
-      });
-    }
-
-    var opts = shown.map(function(r) {
-      return '<option value="' + r.pid + '">' + _escHtml(r.name) + '</option>';
-    }).join('');
-
-    var head = q
-      ? '<option value="">\u2014 ' + shown.length + ' z ' + rows.length + ' \u2014</option>'
-      : '<option value="">\u2014 wybierz projekt \u2014</option>';
-    sel.innerHTML = head + opts;
+    // Ukryty <select> trzyma KOMPLET projektów i pozostaje źródłem prawdy: `sel.value`, zdarzenie
+    // `change` i sztuczka z `_applyNewsMode` (przypisanie wartości, której nie ma, daje pusty string)
+    // działają dalej bez zmian. Filtrowanie dotyczy WYŁĄCZNIE widocznej listy — gdyby obcinało też
+    // <select>, wybrany projekt mógłby z niego wypaść razem ze swoją wartością.
+    sel.innerHTML = '<option value="">— wybierz projekt —</option>' +
+      rows.map(function(r) { return '<option value="' + r.pid + '">' + _escHtml(r.name) + '</option>'; }).join('');
     if (state.projectId) sel.value = String(state.projectId);
 
-    if (filterEl) {
-      var nothing = q && shown.length === 0;
-      filterEl.style.borderColor = nothing ? 'rgba(239,68,68,0.55)' : '';
-      filterEl.title = nothing ? 'Brak projektu pasuj\u0105cego do \u201e' + filterEl.value + '\u201d' : '';
-    }
+    if (!combo || !list) return;
+
+    // Pole pokazuje nazwę wybranego projektu, DOPÓKI użytkownik w nim nie pisze.
+    var typing = combo.dataset.typing === '1';
+    if (!typing) combo.value = state.projectId ? _pnResolve(state.projectId) : '';
+
+    var q = _projSearchKey(typing ? combo.value : '');
+    var shown = q ? rows.filter(function(r) { return _projSearchKey(r.name).indexOf(q) !== -1; }) : rows;
+
+    list.innerHTML = shown.length
+      ? shown.map(function(r) {
+          var on = String(state.projectId) === String(r.pid);
+          return '<div class="b24t-proj-item' + (on ? ' b24t-proj-item-on' : '') + '" data-pid="' + r.pid + '">' +
+                 _escHtml(r.name) + '</div>';
+        }).join('')
+      : '<div class="b24t-proj-empty">brak projektu pasującego do „' + _escHtml(combo.value) + '”</div>';
   }
 
-  // Pierwszy projekt z aktualnie przefiltrowanej listy — Enter w polu filtra go wybiera.
-  function _projSelectFirstMatch() {
-    var sel = document.getElementById('b24t-news-f-project-sel');
-    if (!sel) return false;
-    for (var i = 0; i < sel.options.length; i++) {
-      if (sel.options[i].value) {
-        sel.value = sel.options[i].value;
-        sel.dispatchEvent(new Event('change', { bubbles: true }));
-        return true;
-      }
-    }
-    return false;
+  function _projComboOpen(open) {
+    var list = document.getElementById('b24t-news-f-project-list');
+    if (list) list.style.display = open ? 'block' : 'none';
+  }
+
+  // Wybór projektu: ustawiamy ukryty <select> i wysyłamy `change`, żeby cała istniejąca obsługa
+  // (tagi, dup-check, kropka dostępu, zapamiętanie projektu) zadziałała bez żadnych zmian.
+  function _projComboPick(pid) {
+    var sel   = document.getElementById('b24t-news-f-project-sel');
+    var combo = document.getElementById('b24t-news-f-project-combo');
+    if (!sel || !pid) return;
+    sel.value = String(pid);
+    if (combo) { combo.dataset.typing = '0'; combo.blur(); }
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    _newsRefillProjectSelect();
+    _projComboOpen(false);
+  }
+
+  // Podkreślenie klawiaturą trzymamy na klasie, nie w zmiennej — lista bywa przerysowana
+  // między naciśnięciami klawiszy i zapamiętany indeks zdążyłby się zdezaktualizować.
+  function _projComboMove(delta) {
+    var list = document.getElementById('b24t-news-f-project-list');
+    if (!list) return;
+    var items = Array.prototype.slice.call(list.querySelectorAll('.b24t-proj-item'));
+    if (!items.length) return;
+    var cur = -1;
+    items.forEach(function(el, i) { if (el.classList.contains('b24t-proj-item-hot')) cur = i; });
+    var next = cur < 0 ? (delta > 0 ? 0 : items.length - 1) : (cur + delta + items.length) % items.length;
+    items.forEach(function(el) { el.classList.remove('b24t-proj-item-hot'); });
+    items[next].classList.add('b24t-proj-item-hot');
+    items[next].scrollIntoView({ block: 'nearest' });
+  }
+
+  function _projComboHot() {
+    var list = document.getElementById('b24t-news-f-project-list');
+    if (!list) return null;
+    return list.querySelector('.b24t-proj-item-hot') || list.querySelector('.b24t-proj-item');
+  }
+
+  function _wireProjectCombo() {
+    var combo = document.getElementById('b24t-news-f-project-combo');
+    var list  = document.getElementById('b24t-news-f-project-list');
+    if (!combo || !list || combo.dataset.wired) return;
+    combo.dataset.wired = '1';
+
+    combo.addEventListener('input', function() {
+      combo.dataset.typing = '1';
+      _newsRefillProjectSelect();
+      _projComboOpen(true);
+    });
+    combo.addEventListener('focus', function() {
+      // Kliknięcie w pole pokazuje całą listę, a zaznaczenie tekstu sprawia, że pisanie od razu
+      // zastępuje nazwę wybranego projektu, zamiast dopisywać się do niej.
+      combo.dataset.typing = '0';
+      combo.select();
+      _newsRefillProjectSelect();
+      _projComboOpen(true);
+    });
+    combo.addEventListener('keydown', function(e) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); _projComboOpen(true); _projComboMove(1); return; }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); _projComboOpen(true); _projComboMove(-1); return; }
+      if (e.key === 'Enter')     { e.preventDefault(); var h = _projComboHot(); if (h) _projComboPick(h.dataset.pid); return; }
+      if (e.key === 'Escape')    { e.preventDefault(); combo.dataset.typing = '0'; _newsRefillProjectSelect(); _projComboOpen(false); combo.blur(); }
+    });
+    // `mousedown`, nie `click`: `blur` pola leci wcześniej niż `click` i zdążyłby zamknąć listę
+    // zanim kliknięcie w pozycję zostałoby obsłużone.
+    list.addEventListener('mousedown', function(e) {
+      var it = e.target && e.target.closest ? e.target.closest('.b24t-proj-item') : null;
+      if (!it) return;
+      e.preventDefault();
+      _projComboPick(it.dataset.pid);
+    });
+    combo.addEventListener('blur', function() {
+      setTimeout(function() {
+        combo.dataset.typing = '0';
+        _newsRefillProjectSelect();
+        _projComboOpen(false);
+      }, 120);
+    });
   }
 
   // ── APPLY NEWS MODE ──
@@ -10885,8 +10979,8 @@ function showOnboarding(onComplete) {
       '<div id="b24t-news-lang-warn" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.4;flex-shrink:0;"></div>',
       '<div id="b24t-news-f-project-row" style="display:none;flex-direction:column;gap:4px;flex-shrink:0;">',
         '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">PROJEKT</label>',
-        '<input id="b24t-news-f-project-filter" type="text" placeholder="\u{1F50D} Szukaj projektu\u2026" autocomplete="off" spellcheck="false" style="' + _newsInputCss(t) + 'font-size:10px;padding:5px 8px;">',
-        '<select id="b24t-news-f-project-sel" style="' + _newsInputCss(t) + '">',
+        '<input id="b24t-news-f-project-combo" type="text" placeholder="Szukaj lub wybierz projekt\u2026" autocomplete="off" spellcheck="false" style="' + _newsInputCss(t) + '"><div id="b24t-news-f-project-list" class="b24t-proj-list" style="display:none;"></div>',
+        '<select id="b24t-news-f-project-sel" style="display:none;">',
           '<option value="">— wybierz projekt —</option>',
         '</select>',
       '</div>',
@@ -11245,6 +11339,14 @@ function showOnboarding(onComplete) {
       // Checkboxy tagow: strona-host potrafi je resetowac, tak samo jak w rozszerzeniu (window.css)
       '.b24t-i24w input[type="checkbox"]{position:static!important;opacity:1!important;appearance:auto!important;',
       '  width:14px!important;height:14px!important;accent-color:var(--w-acc);flex-shrink:0;}',
+      // Lista podpowiedzi wyboru projektu — w toku dokumentu, nie na warstwie (patrz wariant zwykły).
+      '.b24t-i24w #b24t-news-f-project-list{max-height:190px;overflow-y:auto;margin-top:3px;padding:3px;',
+      '  border:1px solid var(--w-bd);border-radius:8px;background:var(--w-bg);}',
+      '.b24t-i24w .b24t-proj-item{padding:6px 9px;border-radius:6px;font-size:12px;color:var(--w-tx);',
+      '  cursor:pointer;user-select:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+      '.b24t-i24w .b24t-proj-item:hover,.b24t-i24w .b24t-proj-item-hot{background:rgba(124,92,255,.22);}',
+      '.b24t-i24w .b24t-proj-item-on{color:#b6a6ff;font-weight:600;box-shadow:inset 2px 0 0 var(--w-acc);}',
+      '.b24t-i24w .b24t-proj-empty{padding:8px 9px;font-size:11px;color:var(--w-dim);font-style:italic;}',
       // Pasek przewijania w tonacji akcentu i24 Tools — ten sam chwyt z przezroczystą ramką.
       '.b24t-i24w *::-webkit-scrollbar{width:8px;height:8px;}',
       '.b24t-i24w *::-webkit-scrollbar-track{background:transparent;}',
@@ -11300,10 +11402,10 @@ function showOnboarding(onComplete) {
 
       '<div id="b24t-news-f-project-row" class="b24t-i24w-field" style="display:none;">' +
         '<label class="b24t-i24w-label">Projekt</label>' +
-        '<input id="b24t-news-f-project-filter" class="b24t-i24w-input" type="text" ' +
-          'placeholder="\u{1F50D} Szukaj projektu\u2026" autocomplete="off" spellcheck="false" ' +
-          'style="font-size:11px;padding:5px 8px;">' +
-        '<select id="b24t-news-f-project-sel" class="b24t-i24w-select">' +
+        '<input id="b24t-news-f-project-combo" class="b24t-i24w-input" type="text" ' +
+          'placeholder="Szukaj lub wybierz projekt\u2026" autocomplete="off" spellcheck="false">' +
+        '<div id="b24t-news-f-project-list" class="b24t-proj-list" style="display:none;"></div>' +
+        '<select id="b24t-news-f-project-sel" style="display:none;">' +
           '<option value="">\u2014 wybierz projekt \u2014</option>' +
         '</select>' +
       '</div>' +
@@ -11509,15 +11611,7 @@ function showOnboarding(onComplete) {
     // Natywny <select> nie umie filtrować pisaniem (przeskakuje tylko po pierwszej literze),
     // więc przebudowujemy jego opcje przy każdym wpisanym znaku. Sam <select> zostaje źródłem
     // prawdy — dzięki temu `sel.value`, zdarzenie `change` i cała reszta kodu działają bez zmian.
-    var _projFilterEl = document.getElementById('b24t-news-f-project-filter');
-    if (_projFilterEl && !_projFilterEl.dataset.wired) {
-      _projFilterEl.dataset.wired = '1';
-      _projFilterEl.addEventListener('input', function() { _newsRefillProjectSelect(); });
-      _projFilterEl.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter')  { e.preventDefault(); _projSelectFirstMatch(); }
-        if (e.key === 'Escape') { e.preventDefault(); this.value = ''; _newsRefillProjectSelect(); }
-      });
-    }
+    _wireProjectCombo();
 
     // ─── PROJEKT SELECTOR (strony zewnętrzne) ───
     var _projSelEl = document.getElementById('b24t-news-f-project-sel');

@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.27.4",
+    "date": "2026-09-11",
+    "label": "feat",
+    "changes": [
+      "feat: **Wyszukiwanie projektu pisaniem.** Nad listą projektów w dodawaniu wzmianki pojawiło się pole szukania — wpisujesz litery, lista zawęża się do projektów zawierających ten ciąg. Wielkość liter nie ma znaczenia, polskie ogonki też nie („makijaz” znajdzie „makijaż permanentny”), a znaki rozdzielające są pomijane — więc „hmpl” znajdzie „H&M_PL”. Enter wybiera pierwsze dopasowanie, Escape czyści pole",
+      "feat: Nagłówek listy pokazuje przy filtrowaniu, ile projektów pasuje (np. „— 4 z 93 —”), a pole robi się czerwone, gdy nic nie pasuje. Aktualnie wybrany projekt zostaje na liście zawsze, żeby filtr nie skasował po cichu Twojego wyboru. Lista jest też posortowana alfabetycznie",
+      "feat: **Pasek przewijania w oknie dodawania wzmianki** dostosowany do wyglądu wtyczki — dotąd był systemowy i odstawał od ciemnego panelu. Cienki, zaokrąglony, rozjaśnia się pod kursorem; łapie się go łatwiej, niż wygląda. W wariancie eksperymentalnym w tonacji fioletu i24 Tools"
+    ]
+  },
+  {
     "version": "0.27.3",
     "date": "2026-09-11",
     "label": "fix",

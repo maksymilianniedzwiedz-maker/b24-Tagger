@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.27.3
+// @version      0.27.4
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -120,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.27.3';
+  const VERSION = '0.27.4';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4745,6 +4745,36 @@
       @keyframes b24t-dot-pulse {
         0%, 100% { opacity: 1; }
         50%       { opacity: 0.2; }
+      }
+
+      /* ── PASEK PRZEWIJANIA W MODALU WZMIANEK ──
+         UWAGA: ten blok siedzi w szablonie literalnym JS, więc NIE wolno tu używać znaku
+         akcentu wstecznego — zamyka szablon i wywraca cały plik. Zdarzyło się 2026-09-11.
+         Reszta wtyczki ma własny pasek (3 px, zmienna --b24t-scrollbar), ale modal wzmianek
+         został z systemowym — na ciemnym panelu wygląda jak wyrwany z innej aplikacji.
+         Sztuczka z przezroczystą ramką i background-clip: kciuk wygląda na 4 px,
+         a łapi się go na 8 px. Sam pasek jest wąski, ale nie trzeba w niego celować. */
+      #b24t-news-overlay *::-webkit-scrollbar,
+      #b24t-news-overlay::-webkit-scrollbar { width: 8px; height: 8px; }
+      #b24t-news-overlay *::-webkit-scrollbar-track,
+      #b24t-news-overlay::-webkit-scrollbar-track { background: transparent; }
+      #b24t-news-overlay *::-webkit-scrollbar-thumb,
+      #b24t-news-overlay::-webkit-scrollbar-thumb {
+        background: var(--b24t-scrollbar);
+        border-radius: 99px;
+        border: 2px solid transparent;
+        background-clip: content-box;
+      }
+      #b24t-news-overlay *::-webkit-scrollbar-thumb:hover,
+      #b24t-news-overlay::-webkit-scrollbar-thumb:hover {
+        background: color-mix(in srgb, var(--b24t-primary) 65%, transparent);
+        background-clip: content-box;
+      }
+      #b24t-news-overlay *::-webkit-scrollbar-corner { background: transparent; }
+      /* Firefox nie zna prefiksu -webkit- — ma własne, uboższe API. */
+      #b24t-news-overlay, #b24t-news-overlay * {
+        scrollbar-width: thin;
+        scrollbar-color: var(--b24t-scrollbar) transparent;
       }
 
       /* ── CROSS-DOMAIN CHECKBOX RESET (neutralizuje CSS hosta) ── */
@@ -10073,9 +10103,23 @@ function showOnboarding(onComplete) {
     }).join('');
   }
 
+  // Znormalizowana postać do porównywania: bez wielkości liter, bez polskich ogonków i bez
+  // znaków rozdzielających. Dzięki temu „hmpl” znajduje „H&M_PL”, a „makijaz” — „makijaż
+  // permanentny”. Wielkość liter celowo NIE ma znaczenia: nikt nie pamięta, czy projekt
+  // zapisano „H&M_HR” czy „h&m_hr”, a pomyłka dawałaby pustą listę bez wyjaśnienia.
+  function _projSearchKey(str) {
+    return String(str || '')
+      .toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]/g, '');
+  }
+
   function _newsRefillProjectSelect() {
     var sel = document.getElementById('b24t-news-f-project-sel');
     if (!sel) return;
+    var filterEl = document.getElementById('b24t-news-f-project-filter');
+    var q = _projSearchKey(filterEl ? filterEl.value : '');
+
     var projects = _gmGetProjects();
     // Projekty niedostępne na swoim panelu (usunięte albo z cudzego konta) zostają w pamięci,
     // ale nie zaśmiecają listy — decyzja użytkownika 2026-09-10. Bieżący projekt pokazujemy
@@ -10083,12 +10127,48 @@ function showOnboarding(onComplete) {
     var pids = Object.keys(projects).filter(function(pid) {
       return !_pnIsUnavailable(pid) || String(state.projectId) === String(pid);
     });
-    sel.innerHTML = '<option value="">— wybierz projekt —</option>' +
-      pids.map(function(pid) {
-        var pName = _pnResolve(pid);
-        return '<option value="' + pid + '">' + pName.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</option>';
-      }).join('');
+
+    var rows = pids.map(function(pid) { return { pid: pid, name: _pnResolve(pid) }; });
+    rows.sort(function(a, b) { return a.name.localeCompare(b.name, 'pl'); });
+
+    var shown = rows;
+    if (q) {
+      shown = rows.filter(function(r) {
+        // Wybrany projekt zostaje na liście zawsze — inaczej filtr wyrzuciłby własny wybór
+        // użytkownika i `sel.value` cicho zmieniłoby się na pusty.
+        return String(state.projectId) === String(r.pid) || _projSearchKey(r.name).indexOf(q) !== -1;
+      });
+    }
+
+    var opts = shown.map(function(r) {
+      return '<option value="' + r.pid + '">' + _escHtml(r.name) + '</option>';
+    }).join('');
+
+    var head = q
+      ? '<option value="">\u2014 ' + shown.length + ' z ' + rows.length + ' \u2014</option>'
+      : '<option value="">\u2014 wybierz projekt \u2014</option>';
+    sel.innerHTML = head + opts;
     if (state.projectId) sel.value = String(state.projectId);
+
+    if (filterEl) {
+      var nothing = q && shown.length === 0;
+      filterEl.style.borderColor = nothing ? 'rgba(239,68,68,0.55)' : '';
+      filterEl.title = nothing ? 'Brak projektu pasuj\u0105cego do \u201e' + filterEl.value + '\u201d' : '';
+    }
+  }
+
+  // Pierwszy projekt z aktualnie przefiltrowanej listy — Enter w polu filtra go wybiera.
+  function _projSelectFirstMatch() {
+    var sel = document.getElementById('b24t-news-f-project-sel');
+    if (!sel) return false;
+    for (var i = 0; i < sel.options.length; i++) {
+      if (sel.options[i].value) {
+        sel.value = sel.options[i].value;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      }
+    }
+    return false;
   }
 
   // ── APPLY NEWS MODE ──
@@ -10805,6 +10885,7 @@ function showOnboarding(onComplete) {
       '<div id="b24t-news-lang-warn" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.yellowBg + ';border:1px solid rgba(245,158,11,0.35);font-size:10px;color:' + t.yellow + ';line-height:1.4;flex-shrink:0;"></div>',
       '<div id="b24t-news-f-project-row" style="display:none;flex-direction:column;gap:4px;flex-shrink:0;">',
         '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">PROJEKT</label>',
+        '<input id="b24t-news-f-project-filter" type="text" placeholder="\u{1F50D} Szukaj projektu\u2026" autocomplete="off" spellcheck="false" style="' + _newsInputCss(t) + 'font-size:10px;padding:5px 8px;">',
         '<select id="b24t-news-f-project-sel" style="' + _newsInputCss(t) + '">',
           '<option value="">— wybierz projekt —</option>',
         '</select>',
@@ -11164,6 +11245,13 @@ function showOnboarding(onComplete) {
       // Checkboxy tagow: strona-host potrafi je resetowac, tak samo jak w rozszerzeniu (window.css)
       '.b24t-i24w input[type="checkbox"]{position:static!important;opacity:1!important;appearance:auto!important;',
       '  width:14px!important;height:14px!important;accent-color:var(--w-acc);flex-shrink:0;}',
+      // Pasek przewijania w tonacji akcentu i24 Tools — ten sam chwyt z przezroczystą ramką.
+      '.b24t-i24w *::-webkit-scrollbar{width:8px;height:8px;}',
+      '.b24t-i24w *::-webkit-scrollbar-track{background:transparent;}',
+      '.b24t-i24w *::-webkit-scrollbar-thumb{background:rgba(124,92,255,.38);border-radius:99px;',
+      '  border:2px solid transparent;background-clip:content-box;}',
+      '.b24t-i24w *::-webkit-scrollbar-thumb:hover{background:rgba(124,92,255,.62);background-clip:content-box;}',
+      '.b24t-i24w *{scrollbar-width:thin;scrollbar-color:rgba(124,92,255,.38) transparent;}',
       '.b24t-i24w-req{color:var(--w-err);}',
       // Kafelki tag\u00f3w buduje `_newsRefillTags` ze stylami INLINE (motyw zwyk\u0142ej wtyczki),
       // a inline bije zwyk\u0142y selektor \u2014 st\u0105d `!important`. Alternatywa (rozga\u0142\u0119zienie renderera
@@ -11212,6 +11300,9 @@ function showOnboarding(onComplete) {
 
       '<div id="b24t-news-f-project-row" class="b24t-i24w-field" style="display:none;">' +
         '<label class="b24t-i24w-label">Projekt</label>' +
+        '<input id="b24t-news-f-project-filter" class="b24t-i24w-input" type="text" ' +
+          'placeholder="\u{1F50D} Szukaj projektu\u2026" autocomplete="off" spellcheck="false" ' +
+          'style="font-size:11px;padding:5px 8px;">' +
         '<select id="b24t-news-f-project-sel" class="b24t-i24w-select">' +
           '<option value="">\u2014 wybierz projekt \u2014</option>' +
         '</select>' +
@@ -11413,6 +11504,20 @@ function showOnboarding(onComplete) {
     // ─── PANEL LOGIN CHECK ───
     _newsPanelDotCheck();
     if (newsState.mode === 'custom') _accessRefresh(state.projectId, false);
+
+    // ─── FILTR PROJEKTÓW ───
+    // Natywny <select> nie umie filtrować pisaniem (przeskakuje tylko po pierwszej literze),
+    // więc przebudowujemy jego opcje przy każdym wpisanym znaku. Sam <select> zostaje źródłem
+    // prawdy — dzięki temu `sel.value`, zdarzenie `change` i cała reszta kodu działają bez zmian.
+    var _projFilterEl = document.getElementById('b24t-news-f-project-filter');
+    if (_projFilterEl && !_projFilterEl.dataset.wired) {
+      _projFilterEl.dataset.wired = '1';
+      _projFilterEl.addEventListener('input', function() { _newsRefillProjectSelect(); });
+      _projFilterEl.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter')  { e.preventDefault(); _projSelectFirstMatch(); }
+        if (e.key === 'Escape') { e.preventDefault(); this.value = ''; _newsRefillProjectSelect(); }
+      });
+    }
 
     // ─── PROJEKT SELECTOR (strony zewnętrzne) ───
     var _projSelEl = document.getElementById('b24t-news-f-project-sel');

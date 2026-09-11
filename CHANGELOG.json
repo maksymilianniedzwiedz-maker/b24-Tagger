@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.27.12",
+    "date": "2026-09-11",
+    "label": "fix",
+    "changes": [
+      "fix: **Zajawka „przeczytaj też\" wstawiona w środek artykułu przestaje liczyć się jako treść.** Krótki blok, w którym połowę tekstu albo więcej niesie jeden odnośnik do INNEGO artykułu, trafia teraz do kubła zajawek — niezależnie od tego, czy ma klasę „related\" i czy zaczyna się od znanego zwrotu. Reguła jest strukturalna, więc działa w każdym języku: greckie „Μπορείτε να διαβάσετε επίσης\" nie było na żadnej liście, a podbijało trzy strony do „wzmianki\"",
+      "fix: **Wiersz tagów przestał być akapitem.** Na stronach AMP stoi tuż pod tytułem, więc ta sama treść liczyła się dwa razy: raz jako tag redakcyjny, raz jako lead. Dziewięć stron miało przez to zawyżony wynik",
+      "fix: Sprawdzone na 1865 stronach z 14 rynków: cztery strony zmieniają koszyk i wszystkie cztery na właściwy — trzy schodzą do „tylko zajawka\", jedna strona tagowa z „temat główny\" na „w treści\". Żadnej innej zmiany, żadnej utraty treści",
+      "fix: Wiersz kredytowy z listy zakupowej („spódnica, 52,99 €, H&M\") zostaje treścią — progi są tak dobrane, żeby krótki link z nazwą marki nigdy nie wyglądał jak cudzy tytuł"
+    ]
+  },
+  {
     "version": "0.27.11",
     "date": "2026-09-11",
     "label": "fix",

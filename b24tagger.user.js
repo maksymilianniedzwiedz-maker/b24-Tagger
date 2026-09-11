@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.27.11
+// @version      0.27.12
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -120,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.27.11';
+  const VERSION = '0.27.12';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8294,6 +8294,15 @@ function showOnboarding(onComplete) {
   // newsletterowe i widgety takich akapitów praktycznie nie mają.
   var NEWS_PROSE_PARAGRAPH_MIN = 150;
   var NEWS_PROSE_BLOCK_MIN = 40;   // tyle znaków musi mieć blok, żeby liczył się jako akapit
+  // Strefa tagów redakcyjnych. Ta sama lista rozstrzyga dwie rzeczy: skąd brać tagi (punktują
+  // +6, §5) i czego NIE uznawać za akapit. Bez drugiego zastosowania wiersz tagów wpadał na
+  // listę akapitów — na AMP-owych stronach miss7.24sata.hr stoi tuż pod tytułem, więc łapał
+  // się w okno leadu i ta sama treść liczyła się dwa razy: „tag redakcyjny +6" i „lead +4".
+  var NEWS_TAG_ZONE_SEL =
+    '[rel="tag"],[class*="article-tag"],[class*="entry-tag"],[class*="post-tag"],' +
+    '[class*="article__tag"],[class*="tags__item"],[class*="tag-list"]';
+  // Odnośnik o tylu znakach tekstu to tytuł, nie link w zdaniu (§4.8).
+  var NEWS_FOREIGN_HEADLINE_MIN = 30;
   var NEWS_LEAD_CHARS = 600;       // pierwsze tyle znaków prozy strefy to jeszcze lead (§5.5)
 
   // Tytuly stron-wyzwan antybotowych. Serwis oddaje HTTP 200 i poprawny HTML, tylko zamiast
@@ -8593,7 +8602,7 @@ function showOnboarding(onComplete) {
   var NEWS_TEASER_BLOCK_TAGS = { P: 1, LI: 1, DIV: 1, SECTION: 1, ASIDE: 1 };
   var NEWS_TEASER_LINK_RATIO = 0.7; // proza z linkiem trzyma się poniżej ~0.5, zajawka jest linkiem w całości
 
-  function _newsStripTeaserBlocks(bodyEl, teaserTexts) {
+  function _newsStripTeaserBlocks(bodyEl, teaserTexts, pageUrl) {
     if (!bodyEl) return;
     var anchors;
     try { anchors = Array.prototype.slice.call(bodyEl.querySelectorAll('a'), 0, 500); } catch(e) { return; }
@@ -8614,9 +8623,26 @@ function showOnboarding(onComplete) {
       var isMarked = NEWS_TEASER_TEXT_RE.test(text) ||
         (text.indexOf('İ') !== -1 && NEWS_TEASER_TEXT_RE.test(text.replace(/İ/g, 'i')));
       if (!isMarked) {
-        var linkLen = 0;
-        block.querySelectorAll('a').forEach(function(el) { linkLen += (el.textContent || '').trim().length; });
-        if (linkLen / text.length <= NEWS_TEASER_LINK_RATIO) return;
+        // Trzeci kształt zajawki, obok zwrotu i gęstości linków: krótki blok, w którym
+        // POŁOWĘ tekstu albo więcej niesie JEDEN odnośnik prowadzący gdzie indziej, długi
+        // na tyle, że jest tytułem, a nie linkiem w zdaniu. Reguła jest strukturalna, więc
+        // działa w każdym języku — lista zwrotów nigdy nie będzie kompletna dla PL, HR, GR
+        // i TR naraz. Zmierzone na thefashionbible.gr: „Μπορείτε να διαβάσετε επίσης: <tytuł
+        // cudzego artykułu>" ma 68% linku, czyli mieści się pod progiem gęstości, a zwrotu
+        // („διαβάσετε", nie „διαβάστε", i jeszcze z przedrostkiem) wzorzec nie łapie.
+        // Wiersz kredytowy z listy zakupowej jest bezpieczny: linki mają tam po kilka znaków
+        // (nazwa marki), więc żaden nie pokrywa połowy bloku. Patrz NEWS_SCANNER.md §4.8.
+        var linkLen = 0, foreignHeadline = 0;
+        block.querySelectorAll('a').forEach(function(el) {
+          var len = (el.textContent || '').trim().length;
+          linkLen += len;
+          if (len >= NEWS_FOREIGN_HEADLINE_MIN && el.getAttribute('href') &&
+              _newsLinksElsewhere(el, pageUrl)) {
+            if (len > foreignHeadline) foreignHeadline = len;
+          }
+        });
+        if (linkLen / text.length <= NEWS_TEASER_LINK_RATIO &&
+            foreignHeadline < text.length * 0.5) return;
       }
       teaserTexts.push(text.toLowerCase());
       block.remove();
@@ -8799,11 +8825,26 @@ function showOnboarding(onComplete) {
     // _BLOCK_ANY_SEL + znakowanie przodków w Secie) jest w Chrome WOLNIEJSZA: na wątku forum
     // z 9,4 tys. elementów 7,3 ms wobec 5,4 ms tutaj. jsdom sugeruje coś odwrotnego — mierzyć
     // w przeglądarce (§11.3).
-    function _proseBlocks(el, minLen) {
+    // `skipEls` to GOTOWA lista elementów do pominięcia (dziś: wiersze tagów przy budowaniu
+    // listy akapitów), a nie selektor — i to jest zmierzona decyzja. `closest` na każdym bloku
+    // kosztuje: w Chrome na wątku forum (9,6 tys. elementów) jeden przebieg po `<body>` to
+    // 2,7 ms bez pomijania, **6,1 ms z `closest`** i **2,8 ms z `contains`** po gotowej liście.
+    // Na większości stron lista jest pusta, więc kosztu nie ma w ogóle.
+    //
+    // Miary strefy to nie dotyczy — tam `skipEls` nie przekazujemy. To NIE jest pułapka dwóch
+    // skal z §2.2: miara zostaje jedna dla wszystkich kandydatów, różni się tylko lista akapitów
+    // budowana później, na jednym elemencie.
+    function _proseBlocks(el, minLen, skipEls) {
       var out = [];
+      var skip = (skipEls && skipEls.length) ? skipEls : null;
       try {
         el.querySelectorAll(_PROSE_LEAF_SEL).forEach(function(b) {
           if (b.querySelector(_BLOCK_ANY_SEL)) return;   // nie liść — jego tekst policzą dzieci
+          if (skip) {
+            for (var si = 0; si < skip.length; si++) {
+              if (skip[si] === b || skip[si].contains(b)) return;
+            }
+          }
           var t = (b.textContent || '').trim();
           if (t.length > minLen) out.push(t);
         });
@@ -8895,7 +8936,7 @@ function showOnboarding(onComplete) {
       });
     } catch(e) {}
     // Zajawki bez rozpoznawalnej klasy — po kształcie tekstu (patrz _newsStripTeaserBlocks).
-    _newsStripTeaserBlocks(bodyEl, _teaserTexts);
+    _newsStripTeaserBlocks(bodyEl, _teaserTexts, pageUrl);
 
     // Usuń szum — reklamy, nawigację, stopki, popupy.
     // bodyEl i jego przodkowie są chronieni: el !== bodyEl && !el.contains(bodyEl)
@@ -8994,7 +9035,11 @@ function showOnboarding(onComplete) {
       // Ta sama definicja bloku, co przy wyborze strefy — inaczej strefa wybrana po liściach
       // oddawałaby ZERO akapitów na serwisach bez `<p>` (onet.pl), a z akapitami znika lead,
       // sygnał „5+p" przy rozpoznaniu rodzaju strony i snippet do pola Treść.
-      paragraphs = _proseBlocks(bodyEl, NEWS_PROSE_BLOCK_MIN)
+      // Wiersz tagów redakcyjnych nie jest akapitem (§4.9) — kontenery zbieramy raz,
+      // bo `closest` na każdym bloku kosztuje dwa razy tyle, co cały przebieg.
+      var _tagZones = [];
+      try { _tagZones = Array.prototype.slice.call(bodyEl.querySelectorAll(NEWS_TAG_ZONE_SEL), 0, 20); } catch(e) {}
+      paragraphs = _proseBlocks(bodyEl, NEWS_PROSE_BLOCK_MIN, _tagZones)
         // Limit 12 gubił ETYKIETĘ strefy, nie punkty: marka w akapicie 13+ wypadała poza tę
         // listę i lądowała w kuble „tekst poboczny", więc model dostawał informację, że to
         // tekst poboczny, choć to normalna proza artykułu. Zmierzone na 11 stronach
@@ -9038,10 +9083,7 @@ function showOnboarding(onComplete) {
     var articleTagTexts = [];
     if (bodyEl) {
       try {
-        bodyEl.querySelectorAll(
-          '[rel="tag"],[class*="article-tag"],[class*="entry-tag"],[class*="post-tag"],' +
-          '[class*="article__tag"],[class*="tags__item"],[class*="tag-list"] a'
-        ).forEach(function(el) {
+        bodyEl.querySelectorAll(NEWS_TAG_ZONE_SEL + ',[class*="tag-list"] a').forEach(function(el) {
           var t = (el.textContent || '').trim().toLowerCase();
           if (t.length > 1 && t.length < 60) articleTagTexts.push(t);
         });

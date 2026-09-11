@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.27.2
+// @version      0.27.3
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -120,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.27.2';
+  const VERSION = '0.27.3';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -580,7 +580,27 @@
     var t  = m[1].replace(/\s+/g, ' ').trim();
     var nm = t.match(/^(.*?)\s*-\s*Brand24\b/i);
     var name = nm ? nm[1].trim() : '';
-    return name && name !== 'Brand24' ? name : null;
+    if (!name || name === 'Brand24') return null;
+    return _decodeHtmlEntities(name);
+  }
+
+  // Tytu\u0142 czytamy wyra\u017ceniem regularnym z surowego HTML, wi\u0119c encje s\u0105 w nim nietkni\u0119te:
+  // \u201eH&amp;M_PL\u201d zamiast \u201eH&M_PL\u201d. Zapisana w tej postaci nazwa jest potem escapowana
+  // DRUGI raz przy renderowaniu listy projekt\u00f3w i u\u017cytkownik widzi dos\u0142owne \u201eH&amp;M_PL\u201d.
+  // `textarea` rozwija encje i NIE wykonuje niczego \u2014 jego zawarto\u015b\u0107 jest parsowana jako tekst.
+  function _decodeHtmlEntities(str) {
+    if (!str || str.indexOf('&') === -1) return str;
+    try {
+      var ta = document.createElement('textarea');
+      ta.innerHTML = str;
+      return ta.value;
+    } catch(e) { return str; }
+  }
+
+  // Nazwa, kt\u00f3ra wygl\u0105da na zapisan\u0105 z encjami \u2014 \u015blad po b\u0142\u0119dzie powy\u017cej. Traktujemy j\u0105 jak
+  // niepotwierdzon\u0105, \u017ceby wr\u00f3ci\u0142a do sprawdzenia i sama si\u0119 naprawi\u0142a przy kolejnym klikni\u0119ciu.
+  function _looksHtmlEscaped(name) {
+    return !!name && /&(amp|lt|gt|quot|#\d+);/i.test(name);
   }
 
   // Zapis potwierdzonej nazwy do wszystkich trzech magazynów naraz (§2). `nameSrc` odróżnia
@@ -605,8 +625,13 @@
   function _pnIsVerified(pid) {
     try {
       var rec = B24Bridge.projects.get(pid);
-      var src = rec && rec.nameSrc;
-      return src === PN_SRC_GQL || src === PN_SRC_CMS;
+      if (!rec) return false;
+      var src = rec.nameSrc;
+      if (src !== PN_SRC_GQL && src !== PN_SRC_CMS) return false;
+      // Samonaprawa: nazwa zapisana z encjami pochodzi sprzed poprawki parsera \u2014 niech wr\u00f3ci
+      // do sprawdzenia zamiast zosta\u0107 na li\u015bcie jako \u201eH&amp;M_PL\u201d na zawsze.
+      if (_looksHtmlEscaped(rec.name)) return false;
+      return true;
     } catch(e) { return false; }
   }
 
@@ -684,7 +709,16 @@
         return { name: r.name, src: PN_SRC_CMS, canAdd: r.canAdd };
       }
     }
-    if (netError) return null;   // niepewne — nie oznaczamy jako niedostępny
+    if (netError) return null;   // niepewne \u2014 nie oznaczamy jako niedost\u0119pny
+
+    // Za\u015blepka z serwera wygl\u0105da IDENTYCZNIE dla \u201enie masz dost\u0119pu\u201d i dla \u201enie masz tu sesji\u201d.
+    // Oznaczenie projektu jako niedost\u0119pnego wolno postawi\u0107 tylko wtedy, gdy sesja na pytanym
+    // panelu na pewno \u017cyje. Inaczej jedno klikni\u0119cie bez zalogowania na drugim panelu ukrywa
+    // wszystkie tamtejsze projekty \u2014 dok\u0142adnie to si\u0119 sta\u0142o u u\u017cytkownika 2026-09-11 (80 sztuk).
+    for (var k = 0; k < bases.length; k++) {
+      var aliveK = await new Promise(function(res) { _sessionAlive(bases[k], res); });
+      if (aliveK !== true) return { unknown: true, base: bases[k] };
+    }
     _pnMarkUnavailable(pid);
     return { unavailable: true };
   }
@@ -14611,19 +14645,33 @@ function showOnboarding(onComplete) {
       // listy projektów), więc przycisk ich nigdy nie tknął. Patrz PANEL_STATE.md §5.9.
       // Projekty oznaczone jako niedostępne pomijamy — inaczej każde kliknięcie odpytywałoby
       // od nowa trupy, których i tak nie da się rozstrzygnąć.
-      function _getMissingIds() {
+      function _allKnownPids() {
         var lsProjects = lsGet(LS.PROJECTS, {});
         var gmProjects = B24Bridge.projects.all();
         var allPids = Object.keys(lsProjects);
         Object.keys(gmProjects).forEach(function(pid) { if (allPids.indexOf(pid) < 0) allPids.push(pid); });
-        return allPids.filter(function(pid) {
+        return allPids;
+      }
+      function _getMissingIds() {
+        return _allKnownPids().filter(function(pid) {
           return !_pnIsVerified(pid) && !_pnIsUnavailable(pid);
         });
       }
+      // Projekty ukryte po nieudanym sprawdzeniu. Kliknięcie przycisku próbuje je ODZYSKAĆ.
+      // Pierwotnie były trwale pomijane „żeby nie odpytywać trupów” — i to był zły kompromis:
+      // jedno kliknięcie bez sesji na drugim panelu ukryło użytkownikowi 80 projektów bez drogi
+      // powrotu. Kilka zapytań więcej jest tańsze niż trwała utrata projektu z listy.
+      function _getHiddenIds() {
+        return _allKnownPids().filter(_pnIsUnavailable);
+      }
 
-      var initialMissing = _getMissingIds();
-      if (pnCountEl) pnCountEl.textContent = initialMissing.length;
-      if (pnFillBtn && initialMissing.length === 0) pnFillBtn.disabled = true;
+      function _refreshPnCount() {
+        var miss = _getMissingIds().length, hid = _getHiddenIds().length;
+        if (pnCountEl) pnCountEl.textContent = hid ? (miss + ' (+' + hid + ' ukrytych)') : String(miss);
+        // Przycisk zostaje aktywny takłe wtedy, gdy są same ukryte — to jedyna droga do ich odzyskania.
+        if (pnFillBtn) pnFillBtn.disabled = (miss + hid) === 0;
+      }
+      _refreshPnCount();
 
       if (pnFillBtn) {
         pnFillBtn.addEventListener('click', function() {
@@ -14631,7 +14679,14 @@ function showOnboarding(onComplete) {
             if (pnStatusEl) { pnStatusEl.style.color = '#f87171'; pnStatusEl.textContent = 'Brak tokenu — otwórz projekt w Brand24'; }
             return;
           }
-          var missingIds = _getMissingIds();
+          // Ukryte idą razem z niesprawdzonymi: to jest jawna prośba użytkownika, więc ma prawo
+          // kosztować kilka zapytań więcej. Znacznik „niedostępny” kasujemy PRZED sprawdzeniem,
+          // żeby projekt, który wrócił, od razu pojawił się na liście.
+          var hiddenIds = _getHiddenIds();
+          hiddenIds.forEach(function(pid) {
+            try { B24Bridge.projects.update(pid, { unavailable: false }); } catch(e) {}
+          });
+          var missingIds = _getMissingIds().concat(hiddenIds);
           if (!missingIds.length) {
             if (pnStatusEl) { pnStatusEl.style.color = '#22c55e'; pnStatusEl.textContent = 'Wszystkie nazwy są znane'; }
             return;
@@ -14642,18 +14697,22 @@ function showOnboarding(onComplete) {
           var found = 0, renamed = 0, dead = 0, unknown = 0;
 
           function _finish() {
-            var stillMissing = _getMissingIds().length;
             pnFillBtn.disabled = false;
-            if (pnCountEl) pnCountEl.textContent = stillMissing;
+            _refreshPnCount();
             _newsRefillProjectSelect();   // dropdown modalu może być otwarty — pokaż nowe nazwy
             if (!pnStatusEl) return;
             var parts = [];
             if (found)   parts.push('potwierdzono ' + found);
             if (renamed) parts.push('poprawiono ' + renamed);
             if (dead)    parts.push('ukryto niedostępnych ' + dead);
-            if (unknown) parts.push('bez odpowiedzi ' + unknown);
+            if (unknown) parts.push('nie sprawdzono ' + unknown);
             pnStatusEl.style.color = found || renamed ? '#22c55e' : (unknown ? '#f59e0b' : 'var(--b24t-text-faint)');
             pnStatusEl.textContent = parts.length ? '✓ ' + parts.join(', ') : 'Nic do zrobienia';
+            // „Nie sprawdzono” prawie zawsze znaczy: brak sesji na panelu tamtych projektów.
+            // Bez tej podpowiedzi wynik wygląda jak awaria, a wystarczy się gdzieś zalogować.
+            if (unknown) {
+              pnStatusEl.textContent += ' — zaloguj się na drugim panelu i kliknij ponownie';
+            }
             addLog('✓ Nazwy projektów: ' + (parts.join(', ') || 'brak zmian'), 'success');
           }
 
@@ -14667,7 +14726,10 @@ function showOnboarding(onComplete) {
               if (pnStatusEl) pnStatusEl.textContent = '⏳ ' + (i + 1) + '/' + missingIds.length + '…';
               var res;
               try { res = await _pnVerifyOne(pid); } catch(e) { res = null; }
-              if (!res)                   unknown++;
+              // `_pnVerifyOne` ma cztery wyniki, nie trzy: null = błąd sieci, {unknown} = jest
+              // zaślepka, ale sesja na tym panelu nie żyje (więc NIE wiemy, czy projekt istnieje),
+              // {unavailable} = sesja żyje i projektu tam nie ma, reszta = nazwa.
+              if (!res || res.unknown)    unknown++;
               else if (res.unavailable)   dead++;
               else if (res.name === prev) found++;
               else {

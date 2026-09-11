@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.27.3",
+    "date": "2026-09-11",
+    "label": "fix",
+    "changes": [
+      "fix: **Sprawdzanie nazw ukrywało projekty, do których po prostu nie było sesji.** Serwer odpowiada identycznie na „nie masz dostępu” i „nie jesteś tu zalogowany”, a wtyczka brała to za pierwsze. Jedno kliknięcie na panelu .pl bez zalogowania na .com ukryło 80 projektów. Teraz projekt zostaje ukryty **tylko wtedy, gdy sesja na jego panelu na pewno żyje**",
+      "fix: **Ukryte projekty da się odzyskać** — przycisk sprawdza je ponownie i zdejmuje oznaczenie, jeśli tym razem odpowiedzą. Wcześniej były pomijane na zawsze, więc po nieudanej próbie nie było drogi powrotu. Licznik pokazuje je osobno, a przycisk jest aktywny także wtedy, gdy zostały same ukryte",
+      "fix: **Nazwy z ampersandem zapisywały się połamane** — na liście widniało „H&amp;M_PL” zamiast „H&M_PL”. Nazwa czytana ze strony Brand24 nie miała rozwijanych encji HTML, a lista escapowała ją drugi raz. Nazwy zapisane w tej postaci wracają automatycznie do sprawdzenia i naprawiają się przy kolejnym kliknięciu",
+      "fix: Podsumowanie mówi teraz „nie sprawdzono” zamiast „bez odpowiedzi” i dopowiada, co z tym zrobić — zalogować się na drugim panelu i kliknąć ponownie"
+    ]
+  },
+  {
     "version": "0.27.2",
     "date": "2026-09-11",
     "label": "fix",

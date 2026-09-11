@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.27.7
+// @version      0.27.8
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -120,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.27.7';
+  const VERSION = '0.27.8';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -989,6 +989,12 @@
     if (next !== u && /^[^\/?#]+\.[^\/?#]+/.test(next)) { wasAmp = true; u = next; }
 
     if (wasAmp) u = u.replace(/^app-/i, '');                 // app-diva.vecernji.hr → diva...
+
+    // Parametry śledzące nie zmieniają treści strony, a rozbijają dedup. Zmierzone na korpusie
+    // 732 stron: +2 wiersze ponad to, co łapała sama obsługa AMP. Celowo WĄSKA lista —
+    // wycinanie dowolnego parametru sklejałoby realnie różne strony (?page=, ?id=).
+    u = u.replace(/([?&])(utm_[a-z_]+|fbclid|gclid|_ga|mc_cid|mc_eid)=[^&]*/gi, '$1')
+         .replace(/\?&+/g, '?').replace(/&&+/g, '&');
 
     return u.replace(/[?&]+$/, '').replace(/\/+$/, '');
   }
@@ -8801,6 +8807,26 @@ function showOnboarding(onComplete) {
     // Z <title> i og:title zdejmujemy doklejoną nazwę serwisu („H&M - Max City" → „H&M"),
     // bo strefa nagłówka waży +8: projekt, którego keyword pokrywa się z nazwą wydawcy,
     // dostawałby ten bonus na KAŻDEJ podstronie serwisu.
+    // Kanoniczny URL zadeklarowany przez wydawcę — jedyna podstawa scalania wierszy, jakiej
+    // ufamy poza tożsamością samego adresu. Zmierzone na 732 stronach: +8 wierszy ponad
+    // kanonizację adresu, ZERO błędnych sklejeń.
+    //
+    // ⛔ Nie scalać po tytule ani po numerze ze ścieżki. Zmierzone przecieki, każdy osobno:
+    //  - sam tytuł skleił 19 RÓŻNYCH artykułów cosmopolitan.com (wszystkie miały wtedy tytuł
+    //    ściany antybotowej), 5 stron forum donanimhaber i 2 ogłoszenia o pracę;
+    //  - tytuł + wspólny człon ścieżki skleił kolejne strony forum (wspólny identyfikator wątku);
+    //  - tytuł + ostatnia liczba w ścieżce skleił 5 artykułów, bo złapał rok „2026” ze sluga.
+    // Odrzucamy też canonical wskazujący na stronę główną — cromoda.com tak oznacza podstrony,
+    // więc scalanie po nim zlałoby cały serwis w jeden wiersz.
+    var _canonicalUrl = null;
+    try {
+      var _canEl = doc.querySelector('link[rel="canonical"][href]');
+      if (_canEl && pageUrl) {
+        var _canAbs = new URL(_canEl.getAttribute('href'), pageUrl);
+        if (_canAbs.pathname.replace(/\/+$/, '') !== '') _canonicalUrl = _newsCanonicalUrl(_canAbs.href);
+      }
+    } catch(e) {}
+
     var _siteNameEl = doc.querySelector('meta[property="og:site_name"]') || doc.querySelector('meta[name="og:site_name"]');
     var _siteName = _siteNameEl ? (_siteNameEl.getAttribute('content') || '').trim() : '';
     function _stripSiteName(t) {
@@ -8992,6 +9018,21 @@ function showOnboarding(onComplete) {
     var _matchedZoneHints = []; // zone hints dla stref pobocznych (podpis, adres itp.)
     var _secondaryChips = [];   // chipy dopasowane wyłącznie w strefach pobocznych
     var _outsideChips = [];     // chipy znalezione poza treścią (cudzy tytuł, nawigacja, stopka)
+    // Strefa punktuje RAZ, niezależnie od tego, ile wariantów nazwy marki w nią trafiło.
+    // `NEWS_DEFAULT_KEYWORDS` to 10 zapisów JEDNEJ marki (§0), więc pętla po chipach naliczała
+    // tę samą strefę wielokrotnie. Zmierzone na 712 stronach: 11 z nich miało zawyżony wynik,
+    // najgorzej ogłoszenia o pracę firmy „H&M Hennes & Mauritz d.o.o." — nazwa zawiera trzy
+    // warianty naraz, więc sam tytuł dawał 3 × 8 = 24 pkt, a z opisem meta wynik bił w sufit 30.
+    // Konteksty i lista dopasowanych wariantów nadal zbierane per wariant — tam powtórzenie
+    // niesie informację dla modelu. Patrz NEWS_SCANNER.md §5.4.
+    var _zoneScored = {};
+    function _scoreZone(key, pts, label) {
+      if (_zoneScored[key]) return;
+      _zoneScored[key] = true;
+      score += pts;
+      _scoreParts.push(label);
+    }
+    var _paraHits = {};         // indeksy akapitów trafionych przez DOWOLNY wariant
     var _scoreParts = [];       // rozbicie punktacji do promptu AI, np. "tytuł +8"
 
     // Konteksty per chip z etykietą strefy — bez tego AI nie odróżni akapitu od podpisu zdjęcia.
@@ -9028,18 +9069,16 @@ function showOnboarding(onComplete) {
         return t && t.toLowerCase().indexOf(kw) !== -1;
       })[0] || '';
       if (_headlineSrc) {
-        score += 8;
         chipMatched = true;
-        _scoreParts.push('tytuł +8');
+        _scoreZone('tytul', 8, 'tytuł +8');
         _pushCtx(chip, 'tytuł', _headlineSrc, kw);
       }
 
       // Strefa opisu meta
       var inMeta = ogDesc.toLowerCase().indexOf(kw) !== -1 || metaDesc.toLowerCase().indexOf(kw) !== -1;
       if (inMeta) {
-        score += 5;
         chipMatched = true;
-        _scoreParts.push('opis meta +5');
+        _scoreZone('meta', 5, 'opis meta +5');
         var _metaSrc = ogDesc.toLowerCase().indexOf(kw) !== -1 ? ogDesc : metaDesc;
         if (!_metaSnippet) _metaSnippet = _metaSrc.slice(0, 500);
         _pushCtx(chip, 'opis meta', _metaSrc, kw);
@@ -9051,19 +9090,17 @@ function showOnboarding(onComplete) {
         if (subHeadings[_hi].toLowerCase().indexOf(kw) !== -1) { h2h3Match = subHeadings[_hi]; break; }
       }
       if (h2h3Match) {
-        score += 3;
         chipMatched = true;
-        _scoreParts.push('śródtytuł +3');
+        _scoreZone('srodtytul', 3, 'śródtytuł +3');
         _pushCtx(chip, 'śródtytuł', h2h3Match, kw);
       }
 
-      // Strefa akapitów — rozróżniamy pierwszy akapit (lede) od reszty
-      var firstPMatch = false;
-      var extraPMatches = 0;
+      // Strefa akapitów — rozróżniamy pierwszy akapit (lede) od reszty. Indeksy zbieramy
+      // do wspólnego zbioru, żeby ten sam akapit trafiony przez trzy warianty nazwy liczył
+      // się raz; punkty naliczane są po przejściu wszystkich wariantów.
       paragraphs.forEach(function(p, idx) {
         if (p.toLowerCase().indexOf(kw) !== -1) {
-          if (idx === 0) { firstPMatch = true; }
-          else { extraPMatches++; }
+          _paraHits[idx] = true;
           chipMatched = true;
           _pushCtx(chip, idx === 0 ? 'lead' : 'akapit', p, kw);
           if (!_bodySnippet) {
@@ -9083,28 +9120,20 @@ function showOnboarding(onComplete) {
           }
         }
       });
-      if (firstPMatch) { score += 4; _scoreParts.push('lead +4'); }
-      if (extraPMatches > 0) {
-        var _extraPts = Math.min(extraPMatches, 4); // maks. +4 za wielokrotne wzmianki w treści
-        score += _extraPts;
-        _scoreParts.push('akapity ×' + extraPMatches + ' +' + _extraPts);
-      }
 
       // Strefa blockquote — cytaty w treści artykułu
       var _quoteSrc = blockquotes.filter(function(q) { return q.toLowerCase().indexOf(kw) !== -1; })[0] || '';
       if (_quoteSrc) {
-        score += 2;
         chipMatched = true;
-        _scoreParts.push('cytat +2');
+        _scoreZone('cytat', 2, 'cytat +2');
         _pushCtx(chip, 'cytat', _quoteSrc, kw);
       }
 
       // Tagi redakcyjne artykułu — bardzo silny sygnał (autor/redakcja oznaczyła temat tagem)
       var _tagSrc = articleTagTexts.filter(function(t) { return t.indexOf(kw) !== -1; })[0] || '';
       if (_tagSrc) {
-        score += 6;
         chipMatched = true;
-        _scoreParts.push('tag redakcyjny +6');
+        _scoreZone('tag', 6, 'tag redakcyjny +6');
         _pushCtx(chip, 'tag redakcyjny', _tagSrc, kw);
       }
 
@@ -9112,12 +9141,11 @@ function showOnboarding(onComplete) {
       if (!chipMatched && _secZones.length > 0) {
         for (var _szi = 0; _szi < _secZones.length; _szi++) {
           if (_secZones[_szi].text.toLowerCase().indexOf(kw) !== -1) {
-            score += 2;
             chipMatched = true;
             // Kafelek produktu bywa oznaczony klasą „caption" — cena obok marki mówi więcej
             // o naturze tekstu niż nazwa klasy, więc nadpisuje etykietę strefy.
             var _szHint = NEWS_PRICE_RE.test(_secZones[_szi].text) ? 'lista produktów' : _secZones[_szi].hint;
-            _scoreParts.push(_szHint + ' +2');
+            _scoreZone('sec:' + _szHint, 2, _szHint + ' +2');
             _pushCtx(chip, _szHint, _secZones[_szi].text, kw);
             if (!_weakSnippet) { _weakSnippet = _secZones[_szi].text.slice(0, 200); _weakSnippetZone = _szHint; }
             if (_matchedZoneHints.indexOf(_szHint) === -1) _matchedZoneHints.push(_szHint);
@@ -9144,9 +9172,8 @@ function showOnboarding(onComplete) {
           _outsideChips.push(chip);
           _teaserTexts.push(_gSrc.toLowerCase());
         } else {
-          score += 1;
           chipMatched = true;
-          _scoreParts.push(_gZone + ' +1');
+          _scoreZone('gen:' + _gZone, 1, _gZone + ' +1');
           _pushCtx(chip, _gZone, _gSrc, kw);
           if (!_weakSnippet) { _weakSnippet = _gSrc.slice(0, 200); _weakSnippetZone = _gZone; }
         }
@@ -9154,6 +9181,17 @@ function showOnboarding(onComplete) {
 
       if (chipMatched) matchedChips.push(chip);
     });
+
+    // Akapity: lede osobno (+4), pozostałe po +1 do maks. +4 — liczone po UNIKALNYCH
+    // akapitach, nie po wariantach nazwy.
+    var _paraIdx = Object.keys(_paraHits);
+    if (_paraHits[0]) { score += 4; _scoreParts.push('lead +4'); }
+    var _extraP = _paraIdx.length - (_paraHits[0] ? 1 : 0);
+    if (_extraP > 0) {
+      var _extraPts = Math.min(_extraP, 4);
+      score += _extraPts;
+      _scoreParts.push('akapity ×' + _extraP + ' +' + _extraPts);
+    }
 
     // ── MARKA POZA STREFĄ TREŚCI ──
     // Menu sklepów galerii handlowej, widget „najczęściej czytane", stopka, kafelek innego
@@ -9285,6 +9323,7 @@ function showOnboarding(onComplete) {
       teaserMatchOnly:   _teaserMatchOnly,
       teaserChips:       _teaserChips,
       outsideChips:      _outsideChips,
+      canonicalUrl:      _canonicalUrl,
       pageType:          _pageType,
       pageTypeSignals:   _articleSignals,
       pageLang:          _pageLang,
@@ -12594,6 +12633,12 @@ function showOnboarding(onComplete) {
           var _tc = entry.teaserChips.map(function(c) { return c.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }).join(', ');
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Keyword \'' + _tc + '\' wyst\u0105pi\u0142 tylko w sekcji polecanych artyku\u0142\u00f3w \u2014 nie w g\u0142\u00f3wnej tre\u015bci">w polecanym art.</span>');
         }
+        if (entry.duplicateOf) {
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;'
+            + 'background:rgba(148,163,184,0.14);border:1px solid rgba(148,163,184,0.32);color:#94a3b8;" '
+            + 'title="Ta sama strona co: ' + _esc(entry.duplicateOf)
+            + ' \u2014 wed\u0142ug kanonicznego adresu podanego przez wydawc\u0119">\u29C9 duplikat</span>');
+        }
         var _pt = entry.pageType;
         if (_pt === 'jobPosting' || _pt === 'product' || _pt === 'recipe' || _pt === 'event') {
           var _ptLabel = { jobPosting: '\uD83D\uDCBC og\u0142oszenie o prac\u0119', product: '\uD83D\uDCE6 karta produktu',
@@ -13314,6 +13359,19 @@ function showOnboarding(onComplete) {
             entry.teaserMatchOnly    = result.teaserMatchOnly || false;
             entry.teaserChips        = result.teaserChips || [];
             entry.outsideChips       = result.outsideChips || [];
+            entry.canonicalUrl       = result.canonicalUrl || null;
+            // Duplikat tylko OZNACZAMY, nie usuwamy — wiersz zostaje widoczny, a decyzja
+            // należy do annotatora. Cicho znikający wiersz to gorszy błąd niż wiersz zbędny.
+            if (entry.canonicalUrl) {
+              for (var _di = 0; _di < newsState.urls.length; _di++) {
+                var _other = newsState.urls[_di];
+                if (_other === entry || !_other.canonicalUrl) continue;
+                if (_other.canonicalUrl === entry.canonicalUrl && !_other.duplicateOf) {
+                  entry.duplicateOf = _other.url;
+                  break;
+                }
+              }
+            }
             entry.pageType           = result.pageType || 'unknown';
             entry.pageTypeSignals    = result.pageTypeSignals || [];
             entry.pageLang           = result.pageLang || '';

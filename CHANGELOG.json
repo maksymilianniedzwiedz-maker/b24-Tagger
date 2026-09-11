@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.27.8",
+    "date": "2026-09-11",
+    "label": "fix",
+    "changes": [
+      "fix: **Ogłoszenia o pracę przestały bić w sufit skali.** Każda strefa strony liczyła się tyle razy, ile wariantów nazwy marki w nią trafiło — a „H&M Hennes & Mauritz d.o.o.” zawiera trzy naraz, więc sam tytuł dawał 24 punkty zamiast 8. Trzy ogłoszenia spadły z maksymalnych 30 na 13, jedno z „temat główny” na „treść”",
+      "fix: **Strona autora w serwisie nie udaje już artykułu o marce.** Ten sam błąd podwójnego liczenia podbijał strony z listami cudzych tekstów",
+      "feat: **Duplikat tego samego artykułu dostaje plakietkę.** Wtyczka porównuje kanoniczny adres podany przez wydawcę — wiersz zostaje widoczny, decyzja należy do Ciebie. Świadomie NIE scalamy po tytule: zmierzone na 732 stronach, sam tytuł skleiłby 19 różnych artykułów jednego serwisu",
+      "fix: **Parametry śledzące (utm_, fbclid, gclid) nie rozbijają już usuwania duplikatów przy wklejaniu listy**"
+    ]
+  },
+  {
     "version": "0.27.7",
     "date": "2026-09-11",
     "label": "fix",

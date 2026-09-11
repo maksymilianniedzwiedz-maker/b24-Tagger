@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.27.10",
+    "date": "2026-09-11",
+    "label": "fix",
+    "changes": [
+      "fix: **Skaner News widzi wreszcie treść serwisów, które nie używają akapitów.** onet.pl trzyma tekst artykułu w zwykłych blokach, nie w akapitach — skaner brał wtedy samą zajawkę i widział 44 słowa zamiast siedmiuset. Teraz mierzy tekst niezależnie od tego, w czym wydawca go trzyma. Na 51 stronach onetu w próbce: dwa razy więcej treści i dziewięć razy więcej akapitów. Poprawa dotyczy też lsm.lv, jolie.hr, elle.gr, bloombergtv.bg i forum.gazeta.pl",
+      "fix: **Marka w pierwszym akapicie liczy się jako lead także wtedy, gdy nad akapitem stoi podpis zdjęcia albo „dalszy ciąg pod materiałem wideo”.** Dotąd liczyła się wyłącznie pozycja pierwsza na liście, więc byle wstawka nad tekstem odbierała stronie punkty i spychała ją o koszyk niżej",
+      "fix: **Nagłówek karty „polecane” przestał punktować jako śródtytuł.** Strony z listami cudzych tekstów (autorskie, tagowe) trafiały przez to do puli do obrobienia, choć marka jest tam wyłącznie w tytule cudzego artykułu. Własny tytuł strony zostaje rozpoznany jako własny nawet wtedy, gdy wydawca opakowuje go w skrócony odnośnik do samego siebie",
+      "fix: Sprawdzone na 1865 stronach z 14 rynków: 52 strony trafiają do wyższego koszyka, żadna nie traci treści, a 9 stron listingowych słusznie spada do „tylko zajawka”"
+    ]
+  },
+  {
     "version": "0.27.9",
     "date": "2026-09-11",
     "label": "fix",

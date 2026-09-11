@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.27.9
+// @version      0.27.10
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -120,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.27.9';
+  const VERSION = '0.27.10';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8293,6 +8293,8 @@ function showOnboarding(onComplete) {
   // Akapit dłuższy niż tyle znaków traktujemy jako prozę artykułu. Boksy reklamowe,
   // newsletterowe i widgety takich akapitów praktycznie nie mają.
   var NEWS_PROSE_PARAGRAPH_MIN = 150;
+  var NEWS_PROSE_BLOCK_MIN = 40;   // tyle znaków musi mieć blok, żeby liczył się jako akapit
+  var NEWS_LEAD_CHARS = 600;       // pierwsze tyle znaków prozy strefy to jeszcze lead (§5.5)
 
   // Tytuly stron-wyzwan antybotowych. Serwis oddaje HTTP 200 i poprawny HTML, tylko zamiast
   // tresci jest ekran „udowodnij, ze nie jestes botem". Patrz NEWS_SCANNER.md §12.1.
@@ -8394,6 +8396,39 @@ function showOnboarding(onComplete) {
   // przypadkach model dostawal etykiete, ktora nic nie mowi. Zmierzony rozklad tych 44:
   // 24x link do innego artykulu, 9x zwykly akapit (poza limitem), 4x punkt listy,
   // 3x goly div, 2x nawigacja, 1x naglowek. Patrz NEWS_SCANNER.md §5.2.
+  // Czy odnośnik prowadzi GDZIE INDZIEJ niż ta strona. Brak `pageUrl` albo niepoprawny adres
+  // traktujemy jak „gdzie indziej" — tak samo jak `_newsPlacementZone` niżej, żeby obie
+  // ścieżki mówiły to samo o tym samym linku.
+  function _newsLinksElsewhere(a, pageUrl) {
+    try {
+      return new URL(a.getAttribute('href'), pageUrl).href.split('#')[0] !==
+             String(pageUrl || '').split('#')[0];
+    } catch(e) {}
+    return true;
+  }
+
+  // Nagłówek, którego treść w całości niesie odnośnik prowadzący gdzie indziej, jest tytułem
+  // CUDZEGO materiału (kafelek „polecane"), a nie śródtytułem tego artykułu. To ta sama reguła,
+  // co pierwszy test w `_newsPlacementZone`, tylko sprawdzana w obie strony: kafelki zapisuje
+  // się i jako `<a><h3>…</h3></a>`, i jako `<h3><a>…</a></h3>`, a `closest` widzi tylko pierwszy
+  // z tych dwóch. Zmierzone na jolie.hr — po poszerzeniu strefy treści (§2.5) nagłówek karty
+  // „…noviteta koje želimo iz Manga, Zare i H&M Homea" punktował jako śródtytuł +3 i wciągał
+  // stronę o manicurze do puli do obrobienia. Patrz NEWS_SCANNER.md §5.6.
+  function _newsForeignHeadline(h, pageUrl) {
+    try {
+      var up = h.closest('a[href]');
+      if (up && _newsLinksElsewhere(up, pageUrl)) return true;
+      var len = (h.textContent || '').trim().length;
+      if (!len) return false;
+      var inner = h.querySelectorAll('a[href]');
+      for (var i = 0; i < inner.length; i++) {
+        if ((inner[i].textContent || '').trim().length >= len * 0.9 &&
+            _newsLinksElsewhere(inner[i], pageUrl)) return true;
+      }
+    } catch(e) {}
+    return false;
+  }
+
   function _newsPlacementZone(el, pageUrl) {
     if (!el) return 'tekst poboczny';
     try {
@@ -8723,15 +8758,50 @@ function showOnboarding(onComplete) {
     // nawigacji i stopki razem z artykułem.
     var _CONTENT_ZONE_MIN_LEN = 400;
     var _ZONE_PROSE_TOLERANCE = 0.9;  // kandydat „mieści ~cały tekst" = ma ≥90% prozy lidera
-    var _ZONE_BODY_FALLBACK   = 0.5;  // gdy najlepszy kandydat ma <50% prozy <body> → bierzemy body
+    // Próg jest ZWIĄZANY ZE SKALĄ MIARY: proza po liściach liczy też nawigację, kafelki
+    // polecanych i stopkę, więc `<body>` ma jej systematycznie więcej niż strefa treści.
+    // 0.5 z miary po `<p>` odsyłało do `<body>` 56 stron z 754 (jolie.hr, zadovoljna.dnevnik.hr),
+    // a razem z `<body>` wracały nagłówki cudzych artykułów i fałszywe trafienia. Przemiatanie
+    // progu na tym samym korpusie: 0.4 → 25 stron, 0.3 → 16, 0.25 → 12, 0.2 → 10, 0.15 → 8 —
+    // poniżej 0.3 krzywa siada, więc zostaje 0.25. Zmieniając miarę prozy, przelicz ten próg
+    // od nowa. Patrz §2.5.
+    var _ZONE_BODY_FALLBACK   = 0.25; // gdy najlepszy kandydat ma <25% prozy <body> → bierzemy body
     var _teaserSelAll = NEWS_TEASER_SELECTORS.join(',');
 
+    // Blok prozy to LIŚĆ — element, w którym nie ma już żadnego innego bloku. Liczy się nie
+    // tylko `<p>`: onet.pl trzyma akapity w `<div>` (korpus artykułu ma 26 `<div>` i dwa `<p>`
+    // po 28 i 16 znaków), więc miara po samym `<p>` dawała mu ZERO i przegrywał z leadem —
+    // skaner widział 44 słowa zamiast siedmiuset. Patrz NEWS_SCANNER.md §2.5.
+    //
+    // ⛔ NIE ROBIĆ Z TEGO FALLBACKU „gdy `<p>` dało zero". Było próbowane i psuje fora:
+    // kandydaci są wtedy mierzeni w dwóch skalach naraz i przestają być porównywalni
+    // (forum.donanimhaber.com — pojedynczy post wygrywał z całym wątkiem i po usunięciu szumu
+    // zostawało z niego 0 słów zamiast 520). Miara ma być JEDNA dla wszystkich kandydatów;
+    // liście nią są, bo suma po liściach rośnie monotonicznie wraz z zagnieżdżeniem.
+    var _PROSE_LEAF_SEL = 'p,div,li,td,dd,section,blockquote';
+    // Nagłówki, listy, tabele i formularze odbierają rodzicowi liściowość, ale same prozą
+    // nie są (śródtytuł punktuje osobno, §5) — dlatego stoją wyłącznie w tym drugim selektorze.
+    var _BLOCK_ANY_SEL = _PROSE_LEAF_SEL +
+      ',article,main,aside,header,footer,nav,figure,figcaption,form,table,tr,ul,ol,pre,h1,h2,h3,h4,h5,h6';
+    // Zostaw to zapytanie w tej postaci. Wersja „jednym przebiegiem" (querySelectorAll po
+    // _BLOCK_ANY_SEL + znakowanie przodków w Secie) jest w Chrome WOLNIEJSZA: na wątku forum
+    // z 9,4 tys. elementów 7,3 ms wobec 5,4 ms tutaj. jsdom sugeruje coś odwrotnego — mierzyć
+    // w przeglądarce (§11.3).
+    function _proseBlocks(el, minLen) {
+      var out = [];
+      try {
+        el.querySelectorAll(_PROSE_LEAF_SEL).forEach(function(b) {
+          if (b.querySelector(_BLOCK_ANY_SEL)) return;   // nie liść — jego tekst policzą dzieci
+          var t = (b.textContent || '').trim();
+          if (t.length > minLen) out.push(t);
+        });
+      } catch(e) {}
+      return out;
+    }
     function _zoneProse(el) {
       var sum = 0;
-      el.querySelectorAll('p').forEach(function(p) {
-        var len = (p.textContent || '').trim().length;
-        if (len > 40) sum += len;
-      });
+      var blocks = _proseBlocks(el, NEWS_PROSE_BLOCK_MIN);
+      for (var i = 0; i < blocks.length; i++) sum += blocks[i].length;
       return sum;
     }
     // Tekst bez kodu — miara zapasowa dla stron bez <p> (katalogi sklepów, listingi produktów).
@@ -8810,6 +8880,13 @@ function showOnboarding(onComplete) {
     _newsRemoveNoise(NEWS_NOISE_HARD, false);
     _newsRemoveNoise(NEWS_NOISE_SOFT, true);
 
+    // Bezpiecznik NIEZALEŻNY od miary wyboru strefy: jeśli po usunięciu szumu w wybranej
+    // strefie nie zostało nic, wracamy do `<body>`. Tego błędu nie widać w miarach kandydatów,
+    // bo powstaje dopiero po usunięciu szumu — tak zachował się odrzucony wariant liczenia
+    // liści per kandydat (jeden post forum zamiast wątku: 0 słów zamiast 520). Ma chronić
+    // każdą przyszłą zmianę w tej okolicy, nie tylko tę jedną.
+    if (bodyEl !== doc.body && (bodyEl.textContent || '').trim().length < 200) bodyEl = doc.body;
+
     // Wyciągnij tekst z kluczowych stref strony.
     // Z <title> i og:title zdejmujemy doklejoną nazwę serwisu („H&M - Max City" → „H&M"),
     // bo strefa nagłówka waży +8: projekt, którego keyword pokrywa się z nazwą wydawcy,
@@ -8879,9 +8956,10 @@ function showOnboarding(onComplete) {
     var articleH1Text = articleH1El ? (articleH1El.textContent || '').trim() : h1Text;
     var paragraphs = [];
     if (bodyEl) {
-      paragraphs = Array.from(bodyEl.querySelectorAll('p'))
-        .map(function(p) { return (p.textContent || '').trim(); })
-        .filter(function(t) { return t.length > 40; }) // pomijaj krótkie fragmenty (np. podpisy, etykiety)
+      // Ta sama definicja bloku, co przy wyborze strefy — inaczej strefa wybrana po liściach
+      // oddawałaby ZERO akapitów na serwisach bez `<p>` (onet.pl), a z akapitami znika lead,
+      // sygnał „5+p" przy rozpoznaniu rodzaju strony i snippet do pola Treść.
+      paragraphs = _proseBlocks(bodyEl, NEWS_PROSE_BLOCK_MIN)
         // Limit 12 gubił ETYKIETĘ strefy, nie punkty: marka w akapicie 13+ wypadała poza tę
         // listę i lądowała w kuble „tekst poboczny", więc model dostawał informację, że to
         // tekst poboczny, choć to normalna proza artykułu. Zmierzone na 11 stronach
@@ -8889,11 +8967,26 @@ function showOnboarding(onComplete) {
         // biznesowe i nadal ucina ogon stron-list. Patrz NEWS_SCANNER.md §5.2.
         .slice(0, 40);
     }
+    // Ile znaków prozy stoi PRZED każdym akapitem — podstawa progu leadu przy punktacji (§5.5).
+    var _paraOffset = [];
+    (function() {
+      var off = 0;
+      for (var i = 0; i < paragraphs.length; i++) { _paraOffset[i] = off; off += paragraphs[i].length; }
+    })();
 
     // h2/h3 podrozdziały — tylko wewnątrz artykułu/main (nie globalne nagłówki nawigacji)
     var subHeadings = [];
     if (bodyEl) {
+      // Nagłówek powtarzający tytuł TEJ strony zostaje, nawet jeśli wisi na odnośniku:
+      // serwisy opakowują własny tytuł w skrócony link do samych siebie (index.hu — adres
+      // ucięty w połowie sluga), więc porównanie adresów uznałoby go za cudzy.
+      var _ownHeadline = (articleH1Text || h1Text || ogTitle || titleText || '').trim().toLowerCase();
       subHeadings = Array.from(bodyEl.querySelectorAll('h2,h3'))
+        .filter(function(h) {
+          var _ht = (h.textContent || '').trim().toLowerCase();
+          if (_ownHeadline.length > 20 && (_ht.indexOf(_ownHeadline) !== -1 || _ownHeadline.indexOf(_ht) !== -1)) return true;
+          return !_newsForeignHeadline(h, pageUrl);
+        })
         .map(function(h) { return (h.textContent || '').trim(); })
         .filter(function(t) { return t.length > 3 && t.length < 200; });
     }
@@ -9109,7 +9202,7 @@ function showOnboarding(onComplete) {
         if (p.toLowerCase().indexOf(kw) !== -1) {
           _paraHits[idx] = true;
           chipMatched = true;
-          _pushCtx(chip, idx === 0 ? 'lead' : 'akapit', p, kw);
+          _pushCtx(chip, _paraOffset[idx] < NEWS_LEAD_CHARS ? 'lead' : 'akapit', p, kw);
           if (!_bodySnippet) {
             if (p.length <= 600) {
               _bodySnippet = p;
@@ -9192,8 +9285,19 @@ function showOnboarding(onComplete) {
     // Akapity: lede osobno (+4), pozostałe po +1 do maks. +4 — liczone po UNIKALNYCH
     // akapitach, nie po wariantach nazwy.
     var _paraIdx = Object.keys(_paraHits);
-    if (_paraHits[0]) { score += 4; _scoreParts.push('lead +4'); }
-    var _extraP = _paraIdx.length - (_paraHits[0] ? 1 : 0);
+    // Lead po POŁOŻENIU W TEKŚCIE, nie po indeksie [0]. Indeks jest kruchy: wystarczy, że
+    // serwis wstawi przed pierwszym akapitem zajawkę, podpis zdjęcia albo „dalszy ciąg pod
+    // materiałem wideo", a bonus +4 przechodzi na śmieć albo znika. Zmierzone na 11 stronach
+    // (glamour.hu ×3, kroonika.delfi.ee ×2, forbes.com.tr, forbes.kz, arileht.delfi.ee,
+    // seoghoer.dk, elmundo.es, app-diva.vecernji.hr): po dopuszczeniu bloków `<div>` do akapitów
+    // właściwy lead przesunął się o jedną pozycję i każda straciła 2–3 pkt, czyli spadła
+    // o koszyk — mimo że skaner widział ten sam tekst, a na części stron nawet więcej. Patrz §5.5.
+    var _leadHit = false;
+    for (var _pi = 0; _pi < _paraIdx.length; _pi++) {
+      if (_paraOffset[_paraIdx[_pi]] < NEWS_LEAD_CHARS) { _leadHit = true; break; }
+    }
+    if (_leadHit) { score += 4; _scoreParts.push('lead +4'); }
+    var _extraP = _paraIdx.length - (_leadHit ? 1 : 0);
     if (_extraP > 0) {
       var _extraPts = Math.min(_extraP, 4);
       score += _extraPts;

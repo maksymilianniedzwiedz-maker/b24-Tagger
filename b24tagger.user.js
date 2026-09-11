@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.27.8
+// @version      0.27.9
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -120,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.27.8';
+  const VERSION = '0.27.9';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8646,8 +8646,13 @@ function showOnboarding(onComplete) {
     // `keytopic`, trzy z wynikiem 30 (sufit skali), bo tytul konczyl sie na „- H&M" — a wg
     // polityki §10 ogloszenie o prace to ZAWSZE `miss`. JSON-LD z JobPosting lezal w HTML-u
     // nieuzywany. Patrz NEWS_SCANNER.md §5.3.
+    // ⛔ Bez `Offer`. Zmierzone na aktuality.sk: artykul o zamykaniu sklepow H&M w Hiszpanii
+    // dostal rodzaj `product`, bo strona ma dwa bloki SoftwareApplication z zagniezdzonym
+    // Offer — to promo aplikacji mobilnej wydawcy, nie karta produktu. `Offer` nigdy nie stoi
+    // samodzielnie jako rodzaj strony, zawsze siedzi w czyms innym. To samo dotyczy
+    // SoftwareApplication, ktorego celowo tu nie ma. Patrz NEWS_SCANNER.md §5.3.
     var _LD_KIND_MAP = { JobPosting: 'jobPosting', Product: 'product', ProductGroup: 'product',
-                         Offer: 'product', Recipe: 'recipe', Event: 'event' };
+                         Recipe: 'recipe', Event: 'event' };
     var _ldKind = null;
     var _isPaywall = false;
     // Schodzimy REKURENCYJNIE, bo wydawcy pakują artykuł w @graph albo w mainEntityOfPage —
@@ -8664,9 +8669,7 @@ function showOnboarding(onComplete) {
                 _t.some(function(x) { return _ARTICLE_LD_TYPES.indexOf(x) !== -1; })) {
               _articleSignals.push('ld+json');
             }
-            // Artykul wygrywa z reszta: strona z NewsArticle i Product naraz to recenzja,
-            // nie karta produktu.
-            if (!_ldKind && _articleSignals.indexOf('ld+json') === -1) {
+            if (!_ldKind) {
               for (var _ti = 0; _ti < _t.length && !_ldKind; _ti++) {
                 if (_LD_KIND_MAP[_t[_ti]]) _ldKind = _LD_KIND_MAP[_t[_ti]];
               }
@@ -8683,6 +8686,10 @@ function showOnboarding(onComplete) {
         })(JSON.parse(el.textContent), 0);
       } catch(e) {}
     });
+    // Artykuł wygrywa z resztą — strona z NewsArticle i Product naraz to recenzja, nie karta
+    // produktu. Rozstrzygamy PO przejrzeniu wszystkich bloków, bo inaczej decydowała ich
+    // kolejność na stronie: blok reklamowy przed właściwym artykułem przesądzał rodzaj.
+    if (_ldKind && _articleSignals.indexOf('ld+json') !== -1) _ldKind = null;
 
     // Paywall — meta access/content_tier
     var _accessMeta = doc.querySelector('meta[name="access"]') ||

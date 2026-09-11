@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.27.6
+// @version      0.27.7
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -120,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.27.6';
+  const VERSION = '0.27.7';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8037,6 +8037,13 @@ function showOnboarding(onComplete) {
   var _newsChipsRenderer = null; // set by _wireNewsPanels, called on every panel open
   var _newsListRenderer = null;  // set by _wireNewsPanels, called from module-scope (_newsAiAnalyze)
 
+  // CALA SEKCJA NEWS ("Dodaj z listy URL-i") JEST ZBUDOWANA WYLACZNIE POD H&M
+  // i nigdy nie bedzie dotyczyc innej marki — decyzja wlasciciela, potwierdzona wielokrotnie
+  // (ostatnio 2026-09-11). Ta lista NIE jest zaszytym kodem do uogolnienia: nie czytaj fraz
+  // projektu z ustawien Brand24 (phrases_relevant itd.), nie parametryzuj marki, nie dodawaj
+  // innych marek. Sufiks _XX w nazwie projektu to tez mechanizm wylacznie H&M-owy.
+  // Przy czytaniu samego kodu wniosek jest odwrotny — dlatego stoi tu ten komentarz.
+  // Kontekst: Tagger/CMS_CAPABILITIES.md §2.1, Tagger/NEWS_SCANNER.md §0.
   var NEWS_DEFAULT_KEYWORDS = [
     'hm-', '-hm-', '-hm', '/hm/', '/hm',
     'h-m', 'h&m', 'h%26m', 'hennes', 'mauritz',
@@ -8255,12 +8262,21 @@ function showOnboarding(onComplete) {
 
   // Szum dzieli się na dwie klasy, bo ryzyko pomyłki jest zupełnie inne.
   // TWARDY to elementy, które nigdy nie niosą treści artykułu — kasujemy je wszędzie.
-  var NEWS_NOISE_HARD = ['script','style','noscript','svg','iframe','form'];
+  // <form> NIE jest tu — i nie wolno go tu wracać. ASP.NET WebForms owija CAŁĄ stronę
+  // w jeden <form id="..." runat="server">, więc twarde usuwanie kasowało 100% treści:
+  // zmierzone na esube.iskur.gov.tr — 15 575 znaków tekstu → 0, wynik `nomatch` i puste pole
+  // Treść, mimo że na stronie stoi „H&M, Inditex ve benzeri…". Ochrona `el.contains(bodyEl)`
+  // tu nie działa, bo <form> jest POTOMKIEM strefy treści, nie jej przodkiem.
+  // Formularz siedzi na liście miękkiej, gdzie chroni go brama na prozę (_newsHasProse):
+  // wyszukiwarki i boksy newsletterowe nie mają akapitów po 150+ znaków, więc nadal wylatują.
+  // Patrz NEWS_SCANNER.md §3.3.
+  var NEWS_NOISE_HARD = ['script','style','noscript','svg','iframe'];
   // MIĘKKI to zgadywanie po nazwie klasy. Poza strefą treści kasujemy bez pytania, ale WEWNĄTRZ
   // niej dopiero po sprawdzeniu, że element nie niesie prozy — inaczej zdarza się katastrofa:
   // journal.hr trzyma cały tekst artykułu w <div class="block__block-sidebar">, więc
   // [class*="sidebar"] kasował 1503 z 1503 znaków treści i zostawał sam tytuł.
   var NEWS_NOISE_SOFT = [
+    'form',
     'aside','footer','nav','body > header',
     '[class*="ad-"]','[class*="-ad"]','[class*="__ad"]',
     '[class*="banner"]','[class*="sponsor"]','[class*="widget"]',
@@ -8271,6 +8287,14 @@ function showOnboarding(onComplete) {
   // Akapit dłuższy niż tyle znaków traktujemy jako prozę artykułu. Boksy reklamowe,
   // newsletterowe i widgety takich akapitów praktycznie nie mają.
   var NEWS_PROSE_PARAGRAPH_MIN = 150;
+
+  // Tytuly stron-wyzwan antybotowych. Serwis oddaje HTTP 200 i poprawny HTML, tylko zamiast
+  // tresci jest ekran „udowodnij, ze nie jestes botem". Patrz NEWS_SCANNER.md §12.1.
+  var NEWS_CHALLENGE_TITLE_RE = /^\s*(client challenge|just a moment|attention required|checking your browser|please wait|security check|ddos-guard|access denied|bot verification|verifying you are human)/i;
+  // Powyzej tylu znakow tekstu strona NIE jest sciana, choćby tytul pasowal — zeby nie ubic
+  // artykulu, ktory akurat nazywa sie „Access denied". Na korpusie 802 stron najdluzsza
+  // zmierzona sciana miala ~250 znakow, wiec zapas jest osmiokrotny.
+  var NEWS_CHALLENGE_MAX_TEXT = 2000;
 
   // ── DATA PUBLIKACJI ──
   // Nazwy miesięcy w dopełniaczu — tak zapisują je serwisy: „12. kolovoza 2026.",
@@ -8358,6 +8382,101 @@ function showOnboarding(onComplete) {
   // bo dla monitoringu marki produkt z ceną to prawidłowa wzmianka, a element nawigacji nie.
   var NEWS_PRICE_RE = /\d+[.,]\d{2}\s*(€|₺|z[łl]|\b(eur|kn|hrk|pln|tl)\b)|\d+\s*(€|₺|z[łl]|\b(eura?|kuna?|kn|tl|lira(s[ıi])?)\b)/i;
 
+  // Nazwa strefy dla trafienia, ktore wypadlo poza rozpoznane strefy artykulu.
+  // Wczesniej wszystko ladowalo w jednym worku „tekst poboczny": na korpusie 802 stron
+  // to bylo 44 z 247 punktowanych stron (18%), czyli akurat w najbardziej niejednoznacznych
+  // przypadkach model dostawal etykiete, ktora nic nie mowi. Zmierzony rozklad tych 44:
+  // 24x link do innego artykulu, 9x zwykly akapit (poza limitem), 4x punkt listy,
+  // 3x goly div, 2x nawigacja, 1x naglowek. Patrz NEWS_SCANNER.md §5.2.
+  function _newsPlacementZone(el, pageUrl) {
+    if (!el) return 'tekst poboczny';
+    try {
+      // Kolejnosc testow od najbardziej rozstrzygajacego: jesli tekst siedzi w linku
+      // prowadzacym GDZIE INDZIEJ, to jest tytul cudzego materialu — niezaleznie od tego,
+      // w jakim kontenerze stoi.
+      var _a = el.closest('a[href]');
+      if (_a) {
+        var _same = false;
+        try {
+          _same = new URL(_a.getAttribute('href'), pageUrl).href.split('#')[0] ===
+                  String(pageUrl || '').split('#')[0];
+        } catch(e) {}
+        if (!_same) return 'link do innego artykułu';
+      }
+      if (el.closest('[class*="breadcrumb" i],[id*="breadcrumb" i]')) return 'okruszki nawigacji';
+      if (el.closest('nav,[class*="menu" i],[id*="menu" i]')) return 'nawigacja';
+      if (el.closest('footer')) return 'stopka';
+      if (el.closest('h1,h2,h3,h4,h5,h6')) return 'nagłówek poboczny';
+      if (el.closest('li')) return 'punkt listy';
+      if (el.closest('table')) return 'tabela';
+    } catch(e) {}
+    return 'tekst poboczny';
+  }
+
+  // Szuka ciagu w tekscie poddrzewa i zwraca { el, text } — element, ktory ten tekst nosi,
+  // oraz jego pelna tresc (czyli np. caly tytul karty, nie sam keyword). `skipEl` pozwala
+  // pominac poddrzewo strefy tresci, zeby przeszukac wylacznie to, co jest POZA nia.
+  //
+  // Dwie wersje odrzucone po pomiarze, obie na tym samym korpusie (jsdom, strony 0,5–1,4 MB):
+  //  - rekurencja po elementach z `textContent` na kazdym wezle: kazdy wezel serializowal
+  //    cale swoje poddrzewo, koszt kwadratowy — srednia 112 -> 328 ms, maks. 818 -> 2236 ms;
+  //  - skladanie calego tekstu spoza strefy w jeden lancuch i `indexOf`: na stronie 1,2 MB
+  //    samo to podwajalo czas (146 -> 619 ms), bo alokowalo megabajt na kazdej stronie
+  //    bez trafienia — czyli na wiekszosci;
+  //  - osobne przejscie TreeWalkerem na KAZDY wariant nazwy marki: jeszcze gorzej (372 ms
+  //    sredniej), bo `NEWS_DEFAULT_KEYWORDS` ma 10 pozycji, wiec 10 pelnych obchodow
+  //    dokumentu, z czego wiekszosc konczyla sie bez trafienia i szla do konca drzewa.
+  // Stad wersja ponizej: JEDNO przejscie szukajace wszystkich wariantow naraz, konczone
+  // gdy wszystkie sie znajda. Nie zamieniac tego na „czytelniejsza” rekurencje ani na
+  // petle po wariantach.
+  //
+  // Ograniczenie przyjete swiadomie: ciag rozbity miedzy wezlami (np. „H&” i „M” w osobnych
+  // elementach) nie zostanie znaleziony — wtedy wracamy null i etykieta zostaje domyslna,
+  // czyli dokladnie to, co bylo przed ta zmiana.
+  // Marka potrafi wystapic na stronie wielokrotnie: raz w kafelku polecanych, raz w tresci.
+  // Zadowolenie sie PIERWSZYM trafieniem dawalo falszywy negatyw — zmierzone na journal.hr,
+  // gdzie „H&M" jest w tytule cudzego artykulu w kafelku (wczesniej w dokumencie) i w podpisie
+  // „Foto: Mango, H&M, Europa 92…" w tresci. Pierwsze trafienie szlo do kubla zajawek i strona
+  // spadala na `teasermatch`, mimo ze marka jest tez w akapicie.
+  // Dlatego dla kazdego wariantu trzymamy DWA slots: dowolne trafienie i trafienie poza linkiem.
+  // Wygrywa to poza linkiem, bo tylko ono moze byc trescia tej strony. Przejscie konczy sie,
+  // gdy kazdy wariant ma trafienie poza linkiem (albo drzewo sie skonczy).
+  function _newsFindAllInDom(root, needles, skipEl) {
+    var any = {}, free = {};
+    if (!root || !root.ownerDocument || !needles || !needles.length) return {};
+    var leftFree = needles.length;
+    try {
+      var SHOW_TEXT = (typeof NodeFilter !== 'undefined' && NodeFilter.SHOW_TEXT) || 4;
+      var w = root.ownerDocument.createTreeWalker(root, SHOW_TEXT, null);
+      var n;
+      while (leftFree > 0 && (n = w.nextNode())) {
+        if (skipEl && skipEl.contains(n)) continue;
+        var v = n.nodeValue;
+        if (!v) continue;
+        var lv = v.toLowerCase();
+        var el = null, inLink = false, resolved = false;
+        for (var i = 0; i < needles.length; i++) {
+          var k = needles[i];
+          if (free[k] || lv.indexOf(k) === -1) continue;
+          if (!resolved) {
+            el = n.parentElement;
+            try { inLink = !!(el && el.closest('a[href]')); } catch(e) { inLink = false; }
+            resolved = true;
+          }
+          var hit = { el: el, text: ((el ? el.textContent : v) || '').replace(/\s+/g, ' ').trim() };
+          if (!any[k]) any[k] = hit;
+          if (!inLink) { free[k] = hit; leftFree--; }
+        }
+      }
+    } catch(e) {}
+    var out = {};
+    for (var j = 0; j < needles.length; j++) {
+      var key = needles[j];
+      if (free[key] || any[key]) out[key] = free[key] || any[key];
+    }
+    return out;
+  }
+
   function _newsHasProse(el) {
     var ps = el.querySelectorAll('p');
     for (var i = 0; i < ps.length; i++) {
@@ -8369,28 +8488,39 @@ function showOnboarding(onComplete) {
   // Selektory sekcji z polecanymi/powiązanymi artykułami — wycinane PRZED skanowaniem głównej treści.
   // Tekst z tych sekcji trafia do osobnego bucketu (_teaserTexts) — jeśli keyword trafił TYLKO tu,
   // status = 'teasermatch' (nie liczy jako relevantny artykuł).
-  var NEWS_TEASER_SELECTORS = [
-    // Świadomie BEZ gołego [class*="teaser"] — Drupal/TYPO3 nazywają tak lead artykułu,
-    // a wycięcie ledu kosztuje mocny sygnał. Zajawki bez klasy łapie _newsStripTeaserBlocks.
-    '[class*="related"]','[class*="recommended"]',
-    '[class*="more-articles"]','[class*="more-stories"]','[class*="more-news"]',
-    '[class*="also-read"]','[class*="you-may"]','[class*="you-might"]',
-    '[class*="read-next"]','[class*="next-article"]','[class*="crosslink"]',
-    '[class*="suggestions"]','[class*="suggested"]','[class*="most-read"]',
-    '[data-module*="related"]','[data-type*="related"]','[data-widget*="related"]',
-    // polskie CMS-y — najczęstsze nazwy bloków „czytaj też" / „polecane".
-    // „czytaj" celowo tylko w wariantach złożonych: samo [class*="czytaj"] trafia w „czytaj-dalej"
-    // rozwijające dalszą część artykułu i wycinałoby treść.
-    '[class*="czytaj-tez"]','[class*="czytaj-takze"]','[class*="czytajtez"]',
-    '[class*="zobacz-tez"]','[class*="zobacz-takze"]',
-    '[class*="polecam"]','[class*="powiazan"]','[class*="pozostale"]','[class*="inne-artykuly"]',
+  // Nazwy klas i identyfikatorów, po których poznajemy blok „polecane / czytaj też".
+  // Z KAŻDEJ robimy parę selektorów — po class i po id — obie z flagą "i".
+  // Dwa powody, oba zmierzone na korpusie 802 stron (2026-09-11), patrz NEWS_SCANNER.md §4.7:
+  //  1. dopasowanie atrybutu w CSS jest WIELKOŚCIOLITEROWE: class="itemRelated" (Joomla K2,
+  //     standard w greckich serwisach) nie pasuje do [class*="related"] bez flagi "i";
+  //  2. blok bywa oznaczony wyłącznie identyfikatorem — capital.gr ma id="articles-related-list"
+  //     przy class="articles__list", więc lista patrząca tylko na class go nie widziała.
+  // Przez te dwa braki nagłówki cudzych artykułów punktowały jako śródtytuły tego artykułu.
+  //
+  // Świadomie BEZ gołego „teaser" — Drupal/TYPO3 nazywają tak lead artykułu, a wycięcie ledu
+  // kosztuje mocny sygnał. Bez gołego „czytaj" — trafia w „czytaj-dalej" rozwijające dalszą
+  // część tekstu. Zajawki bez rozpoznawalnej nazwy łapie _newsStripTeaserBlocks.
+  var NEWS_TEASER_KEYS = [
+    'related','recommended',
+    'more-articles','more-stories','more-news',
+    'also-read','you-may','you-might',
+    'read-next','next-article','crosslink',
+    'suggestions','suggested','most-read',
+    // polskie CMS-y — najczęstsze nazwy bloków „czytaj też" / „polecane"
+    'czytaj-tez','czytaj-takze','czytajtez','zobacz-tez','zobacz-takze',
+    'polecam','powiazan','pozostale','inne-artykuly',
     // tureckie CMS-y (greckie serwisy używają zwykle angielskich nazw klas)
-    '[class*="ilgili"]','[class*="onerilen"]','[class*="benzer-haber"]',
+    'ilgili','onerilen','benzer-haber',
     // widgety rekomendacji treści — pełne clickbaitu z nazwami marek
-    '[class*="outbrain"]','[id*="outbrain"]','[class*="taboola"]','[id*="taboola"]','[class*="plista"]',
+    'outbrain','taboola','plista',
     // WordPress
-    '[class*="yarpp"]','[class*="jp-relatedposts"]','[class*="td_block_related"]','[class*="wp-block-latest-posts"]',
+    'yarpp','jp-relatedposts','td_block_related','wp-block-latest-posts',
   ];
+  var NEWS_TEASER_SELECTORS = NEWS_TEASER_KEYS
+    .reduce(function(acc, k) {
+      acc.push('[class*="' + k + '" i]', '[id*="' + k + '" i]');
+      return acc;
+    }, ['[data-module*="related" i]','[data-type*="related" i]','[data-widget*="related" i]']);
 
   // Blok zaczynający się od takiego zwrotu to zajawka innego artykułu, nie treść tego.
   // Zakotwiczone na ^ celowo: „(czytaj też: …)" w środku zdania to część akapitu i zostaje.
@@ -8450,6 +8580,21 @@ function showOnboarding(onComplete) {
       return { status: 'nomatch', score: 0, snippet: '' };
     }
 
+    // ── SCIANA ANTYBOTOWA — zanim cokolwiek policzymy ──
+    // Bez tego skaner zwracal `nomatch, score 0` — nie do odroznienia od „marki nie ma na
+    // stronie" — i wiersz gasl po cichu. Zmierzone 2026-09-11: przy 5 rownoleglych zadaniach
+    // cosmopolitan.com odcina sie po ~10 URL-ach, a w jednej partii bylo ich 68. Po zwolnieniu
+    // tempa te same adresy wracaja normalnie, wiec to stan PRZEJSCIOWY — dlatego `blocked`
+    // (wiersz do ponowienia / otwarcia recznie), a nie `nomatch`.
+    // Warunek jest podwojny: sam tytul nie wystarcza (patrz NEWS_CHALLENGE_MAX_TEXT).
+    var _chTitleEl = doc.querySelector('title');
+    var _chTitle = _chTitleEl ? (_chTitleEl.textContent || '').trim() : '';
+    if (NEWS_CHALLENGE_TITLE_RE.test(_chTitle) &&
+        (doc.body ? (doc.body.textContent || '').trim().length : 0) < NEWS_CHALLENGE_MAX_TEXT) {
+      return { status: 'blocked', blockReason: 'challenge', score: 0, snippet: '',
+               title: _chTitle, matchedChips: [] };
+    }
+
     // ── DETEKCJA TYPU STRONY (przed usunięciem szumu — skrypty jeszcze obecne) ──
     var _articleSignals = [];
 
@@ -8490,6 +8635,14 @@ function showOnboarding(onComplete) {
 
     // JSON-LD — jeden przebieg: typ artykułu + data publikacji + paywall
     var _ARTICLE_LD_TYPES = ['NewsArticle','Article','BlogPosting','ReportageNewsArticle','AnalysisNewsArticle','Review'];
+    // Rodzaj strony zadeklarowany wprost przez wydawce. Mocniejszy od liczenia sygnalow,
+    // bo to deklaracja, nie domysl. Zmierzone 2026-09-11: 7 ogloszen o prace dostalo status
+    // `keytopic`, trzy z wynikiem 30 (sufit skali), bo tytul konczyl sie na „- H&M" — a wg
+    // polityki §10 ogloszenie o prace to ZAWSZE `miss`. JSON-LD z JobPosting lezal w HTML-u
+    // nieuzywany. Patrz NEWS_SCANNER.md §5.3.
+    var _LD_KIND_MAP = { JobPosting: 'jobPosting', Product: 'product', ProductGroup: 'product',
+                         Offer: 'product', Recipe: 'recipe', Event: 'event' };
+    var _ldKind = null;
     var _isPaywall = false;
     // Schodzimy REKURENCYJNIE, bo wydawcy pakują artykuł w @graph albo w mainEntityOfPage —
     // płaski przebieg po tablicy top-level gubił datę na maxcity.hr, citycenterone.hr i indizajn.hr.
@@ -8498,11 +8651,19 @@ function showOnboarding(onComplete) {
         (function walk(node, depth) {
           if (!node || typeof node !== 'object' || depth > 6) return;
           if (Array.isArray(node)) { node.forEach(function(x) { walk(x, depth + 1); }); return; }
-          if (_articleSignals.indexOf('ld+json') === -1) {
-            var _t = node['@type'] || '';
-            if (typeof _t === 'string') _t = [_t];
-            if (Array.isArray(_t) && _t.some(function(x) { return _ARTICLE_LD_TYPES.indexOf(x) !== -1; })) {
+          var _t = node['@type'] || '';
+          if (typeof _t === 'string') _t = [_t];
+          if (Array.isArray(_t)) {
+            if (_articleSignals.indexOf('ld+json') === -1 &&
+                _t.some(function(x) { return _ARTICLE_LD_TYPES.indexOf(x) !== -1; })) {
               _articleSignals.push('ld+json');
+            }
+            // Artykul wygrywa z reszta: strona z NewsArticle i Product naraz to recenzja,
+            // nie karta produktu.
+            if (!_ldKind && _articleSignals.indexOf('ld+json') === -1) {
+              for (var _ti = 0; _ti < _t.length && !_ldKind; _ti++) {
+                if (_LD_KIND_MAP[_t[_ti]]) _ldKind = _LD_KIND_MAP[_t[_ti]];
+              }
             }
           }
           if (!_articleDate) {
@@ -8600,16 +8761,21 @@ function showOnboarding(onComplete) {
     // bodyEl i jego przodkowie chronieni tak samo jak przy usuwaniu szumu — inaczej
     // szeroki wzorzec typu [class*="czytaj"] mógłby wyciąć cały artykuł.
     var _teaserTexts = [];
-    NEWS_TEASER_SELECTORS.forEach(function(sel) {
-      try {
-        doc.querySelectorAll(sel).forEach(function(el) {
-          if (el === bodyEl || el.contains(bodyEl)) return;
-          var t = (el.textContent || '').toLowerCase();
-          if (t.length > 10) _teaserTexts.push(t);
-          el.remove();
-        });
-      } catch(e) {}
-    });
+    // JEDNO zapytanie zamiast jednego na selektor. Lista urosla z 38 do 69 pozycji, gdy
+    // doszly warianty po id i flaga wielkosci liter, a kazde osobne querySelectorAll to
+    // osobny obchod dokumentu. Zmierzone na korpusie TR (jsdom): srednia parsowania strony
+    // 112 -> 343 ms przy petli po selektorach. Selektory laczy sie przecinkiem, wiec wynik
+    // jest identyczny — tylko w kolejnosci dokumentu zamiast w kolejnosci listy.
+    // Element usuniety razem z rodzicem trafia tu drugi raz jako odlaczony wezel; `remove()`
+    // na nim nic nie robi, a jego tekst i tak byl juz zlapany w tekscie rodzica.
+    try {
+      doc.querySelectorAll(_teaserSelAll).forEach(function(el) {
+        if (el === bodyEl || el.contains(bodyEl)) return;
+        var t = (el.textContent || '').toLowerCase();
+        if (t.length > 10) _teaserTexts.push(t);
+        el.remove();
+      });
+    } catch(e) {}
     // Zajawki bez rozpoznawalnej klasy — po kształcie tekstu (patrz _newsStripTeaserBlocks).
     _newsStripTeaserBlocks(bodyEl, _teaserTexts);
 
@@ -8683,7 +8849,12 @@ function showOnboarding(onComplete) {
       paragraphs = Array.from(bodyEl.querySelectorAll('p'))
         .map(function(p) { return (p.textContent || '').trim(); })
         .filter(function(t) { return t.length > 40; }) // pomijaj krótkie fragmenty (np. podpisy, etykiety)
-        .slice(0, 12); // max 12 pierwszych akapitów — lede artykułu, nie ogon
+        // Limit 12 gubił ETYKIETĘ strefy, nie punkty: marka w akapicie 13+ wypadała poza tę
+        // listę i lądowała w kuble „tekst poboczny", więc model dostawał informację, że to
+        // tekst poboczny, choć to normalna proza artykułu. Zmierzone na 11 stronach
+        // (skai.gr — akapit 16 i 22 przy 21 i 50 akapitach). 40 mieści długie teksty
+        // biznesowe i nadal ucina ogon stron-list. Patrz NEWS_SCANNER.md §5.2.
+        .slice(0, 40);
     }
 
     // h2/h3 podrozdziały — tylko wewnątrz artykułu/main (nie globalne nagłówki nawigacji)
@@ -8720,8 +8891,10 @@ function showOnboarding(onComplete) {
     var _timeEl = bodyEl ? bodyEl.querySelector('time[datetime]') : null;
     if (_timeEl) _articleSignals.push('time[datetime]');
     if (paragraphs.length >= 5) _articleSignals.push('5+p');
-    // Klasyfikacja: 2+ sygnałów = artykuł, 1 = niepewny, 0 = nie-artykuł/katalog
-    var _pageType = _articleSignals.length >= 2 ? 'article' :
+    // Klasyfikacja: deklaracja wydawcy (JSON-LD) bije domysl; dalej 2+ sygnałów = artykuł,
+    // 1 = niepewny, 0 = nie-artykuł/katalog.
+    var _pageType = _ldKind ? _ldKind :
+                    _articleSignals.length >= 2 ? 'article' :
                     _articleSignals.length === 1 ? 'uncertain' : 'nonArticle';
 
     // Kaskada fallbacków — od najbardziej wiarygodnego źródła do najsłabszego.
@@ -8818,10 +8991,22 @@ function showOnboarding(onComplete) {
     var matchedChips = [];      // chipy które znaleziono na stronie
     var _matchedZoneHints = []; // zone hints dla stref pobocznych (podpis, adres itp.)
     var _secondaryChips = [];   // chipy dopasowane wyłącznie w strefach pobocznych
+    var _outsideChips = [];     // chipy znalezione poza treścią (cudzy tytuł, nawigacja, stopka)
     var _scoreParts = [];       // rozbicie punktacji do promptu AI, np. "tytuł +8"
 
     // Konteksty per chip z etykietą strefy — bez tego AI nie odróżni akapitu od podpisu zdjęcia.
     // Shape: { chip: [{ zone, text }] }. Maks. 4 na chip, żeby nie rozdmuchać promptu.
+    // Mapa „wariant nazwy -> gdzie stoi w strefie tresci", liczona co najwyzej RAZ i tylko
+    // wtedy, gdy ktorys wariant wypadl poza rozpoznane strefy. Na wiekszosci stron w ogole
+    // sie nie liczy.
+    var _zoneFindCache = null;
+    function _zoneFind(kw) {
+      if (!_zoneFindCache) {
+        _zoneFindCache = _newsFindAllInDom(bodyEl, chips.map(function(c) { return c.toLowerCase(); }), null);
+      }
+      return _zoneFindCache[kw] || null;
+    }
+
     var keywordContexts = {};
     function _pushCtx(chip, zone, source, kw) {
       var arr = keywordContexts[chip] || (keywordContexts[chip] = []);
@@ -8942,22 +9127,52 @@ function showOnboarding(onComplete) {
         }
       }
 
-      // Fallback: pełny tekst body — łapie keyword w <div>, <li>, <dd> itp. (strony katalogowe).
-      // Najsłabszy sygnał: to surowy textContent, więc trafienie może pochodzić z niewyciętej
-      // zajawki albo z nawigacji. Nie może wygrać z akapitem ani z opisem meta w polu Treść.
+      // Fallback: pełny tekst strefy — łapie keyword w <div>, <li>, <dd> itp. (strony
+      // katalogowe). Zamiast wrzucać wszystko do jednego worka „tekst poboczny", ustalamy
+      // GDZIE to stoi (_newsPlacementZone) — etykieta strefy jest najważniejszą rzeczą
+      // w payloadzie dla modelu (§9), a stąd szła pusta.
       if (!chipMatched && _genericTextLower.indexOf(kw) !== -1) {
-        score += 1;
-        chipMatched = true;
         var _gIdx = _genericTextLower.indexOf(kw);
         var _gSrc = _genericText.slice(Math.max(0, _gIdx - 100), _gIdx + 150).trim();
-        var _gZone = NEWS_PRICE_RE.test(_gSrc) ? 'lista produktów' : 'tekst poboczny';
-        _scoreParts.push(_gZone + ' +1');
-        _pushCtx(chip, _gZone, _gSrc, kw);
-        if (!_weakSnippet) { _weakSnippet = _gSrc.slice(0, 200); _weakSnippetZone = _gZone; }
+        var _gFound = NEWS_PRICE_RE.test(_gSrc) ? null : _zoneFind(kw);
+        var _gZone = _gFound ? _newsPlacementZone(_gFound.el, pageUrl) : 'lista produktów';
+        if (_gZone === 'link do innego artykułu') {
+          // Tytuł CUDZEGO materiału w karcie „polecane" / „najczęściej czytane", którego nie
+          // złapały selektory zajawek. To nie jest treść tej strony, więc NIE punktuje —
+          // idzie do kubła zajawek (§4.6), żeby model wiedział, że marka na stronie jest,
+          // ale nie w tym tekście. Zmierzone: 24 z 44 takich trafień.
+          _outsideChips.push(chip);
+          _teaserTexts.push(_gSrc.toLowerCase());
+        } else {
+          score += 1;
+          chipMatched = true;
+          _scoreParts.push(_gZone + ' +1');
+          _pushCtx(chip, _gZone, _gSrc, kw);
+          if (!_weakSnippet) { _weakSnippet = _gSrc.slice(0, 200); _weakSnippetZone = _gZone; }
+        }
       }
 
       if (chipMatched) matchedChips.push(chip);
     });
+
+    // ── MARKA POZA STREFĄ TREŚCI ──
+    // Menu sklepów galerii handlowej, widget „najczęściej czytane", stopka, kafelek innego
+    // artykułu obok tekstu. Skaner w ogóle tam nie zaglądał (`_genericText` to wyłącznie
+    // bodyEl), więc zwracał `nomatch` — nie do odróżnienia od „marki nie ma na stronie".
+    // Zmierzone 2026-09-11: 30 stron, na każdej marka siedziała w nagłówku CUDZEGO artykułu
+    // albo w nawigacji. To NIE punktuje — podnosi status do `teasermatch` i niesie nazwaną
+    // strefę do promptu. Patrz NEWS_SCANNER.md §5.2.
+    if (matchedChips.length === 0 && bodyEl && doc.body && bodyEl !== doc.body) {
+      var _outFound = _newsFindAllInDom(doc.body, chips.map(function(c) { return c.toLowerCase(); }), bodyEl);
+      chips.forEach(function(chip) {
+        var kw = chip.toLowerCase();
+        var _out = _outFound[kw];
+        if (!_out) return;
+        if (_outsideChips.indexOf(chip) === -1) _outsideChips.push(chip);
+        _pushCtx(chip, _newsPlacementZone(_out.el, pageUrl), _out.text.slice(0, 300), kw);
+        _teaserTexts.push(_out.text.toLowerCase());
+      });
+    }
 
     // snippet dla pola Treść: akapit artykułu > opis meta > strefa poboczna/surowy tekst.
     // Kolejność jest istotna — wcześniej surowy textContent trafiał do formularza przed opisem meta
@@ -9069,6 +9284,7 @@ function showOnboarding(onComplete) {
       zoneHints:         _matchedZoneHints,
       teaserMatchOnly:   _teaserMatchOnly,
       teaserChips:       _teaserChips,
+      outsideChips:      _outsideChips,
       pageType:          _pageType,
       pageTypeSignals:   _articleSignals,
       pageLang:          _pageLang,
@@ -9752,6 +9968,7 @@ function showOnboarding(onComplete) {
         'Secondary zone only: ' + !!entry.secondaryZoneOnly,
         'Teaser match only: ' + !!entry.teaserMatchOnly,
         _teaserOnlyChips.length ? 'Also found in recommendation blocks only: ' + _teaserOnlyChips.join(', ') : '',
+        (entry.outsideChips || []).length ? 'Found outside the article body (other headlines, navigation, footer): ' + entry.outsideChips.join(', ') : '',
         'Paywall: ' + !!entry.isPaywall,
         ctxLines ? 'Keyword contexts (zone in brackets):\n' + ctxLines : '',
       ].filter(Boolean).join('\n');
@@ -12378,7 +12595,11 @@ function showOnboarding(onComplete) {
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Keyword \'' + _tc + '\' wyst\u0105pi\u0142 tylko w sekcji polecanych artyku\u0142\u00f3w \u2014 nie w g\u0142\u00f3wnej tre\u015bci">w polecanym art.</span>');
         }
         var _pt = entry.pageType;
-        if (_pt === 'nonArticle') {
+        if (_pt === 'jobPosting' || _pt === 'product' || _pt === 'recipe' || _pt === 'event') {
+          var _ptLabel = { jobPosting: '\uD83D\uDCBC og\u0142oszenie o prac\u0119', product: '\uD83D\uDCE6 karta produktu',
+                           recipe: '\uD83C\uDF72 przepis', event: '\uD83D\uDCC5 wydarzenie' }[_pt];
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.28);color:#d97706;" title="Rodzaj strony zadeklarowany przez wydawc\u0119 w JSON-LD">' + _ptLabel + '</span>');
+        } else if (_pt === 'nonArticle') {
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Brak sygna\u0142\u00f3w \u017ce to artyku\u0142/news (og:type, JSON-LD, published_time, &lt;time&gt;, paragraphs)">\uD83D\uDCC4 nie-artyku\u0142</span>');
         } else if (_pt === 'uncertain') {
           var _sigList = (entry.pageTypeSignals || []).join(', ');
@@ -13092,6 +13313,7 @@ function showOnboarding(onComplete) {
             entry.zoneHints          = result.zoneHints || [];
             entry.teaserMatchOnly    = result.teaserMatchOnly || false;
             entry.teaserChips        = result.teaserChips || [];
+            entry.outsideChips       = result.outsideChips || [];
             entry.pageType           = result.pageType || 'unknown';
             entry.pageTypeSignals    = result.pageTypeSignals || [];
             entry.pageLang           = result.pageLang || '';

@@ -1,5 +1,19 @@
 [
   {
+    "version": "0.27.7",
+    "date": "2026-09-11",
+    "label": "fix",
+    "changes": [
+      "fix: **Strony, na których marka jest tylko w bloku „polecane”, nie udają już wzmianek.** Lista bloków polecanych nie widziała nazw pisanych wielką literą w środku (`itemRelated` — tak nazywa to Joomla, standard w greckich serwisach) ani bloków oznaczonych samym identyfikatorem, więc nagłówki cudzych artykułów liczyły się jak śródtytuły otwartego tekstu. Zmierzone: artykuł o kopalniach w Tracji i dwa o zupełnie innych firmach dostawały wzmiankę o H&M z sąsiedniego kafelka",
+      "fix: **Strony w technologii ASP.NET przestały wracać jako puste.** Cała treść takiej strony siedzi w jednym formularzu, a wtyczka wycinała formularze razem z resztą śmieci — na stronach urzędu pracy znikało 15 tysięcy znaków tekstu i wiersz gasł jako „brak wzmianki”, choć H&M stało wprost w treści",
+      "fix: **Ściana antybotowa nie udaje już braku wzmianki.** Gdy serwis odcina zbyt szybkie pobieranie, oddaje stronę „Client Challenge” ze statusem OK — wtyczka brała to za stronę bez marki i wiersz gasł po cichu. Teraz dostaje status zablokowanego, czyli do ponowienia albo otwarcia ręcznie",
+      "feat: **Wiadomo, GDZIE na stronie stoi marka.** Zamiast jednego worka „tekst poboczny” wiersz i AI dostają nazwę miejsca: link do innego artykułu, nawigacja, okruszki, stopka, punkt listy, tabela, nagłówek poboczny. Na co piątej punktowanej stronie ta informacja wcześniej w ogóle nie istniała",
+      "feat: **Marka znaleziona wyłącznie poza treścią — w menu sklepów galerii handlowej, w widgecie „najczęściej czytane”, w stopce — daje status „w polecanym”, a nie „brak wzmianki”.** Wcześniej wtyczka w te miejsca nie zaglądała wcale",
+      "fix: **Wzmianka w dalszej części długiego artykułu jest opisana poprawnie.** Wtyczka patrzyła tylko na 12 pierwszych akapitów, więc marka w akapicie 16 czy 22 trafiała do „tekstu pobocznego” zamiast do treści — razem z gorszym fragmentem w polu Treść",
+      "feat: **Ogłoszenia o pracę i karty produktów mają plakietkę.** Rodzaj strony brany jest wprost z danych wydawcy, nie zgadywany. Ogłoszenia o pracę dostawały wcześniej najwyższy priorytet, bo tytuł kończył się nazwą marki — trzy z nich miały maksymalny wynik 30"
+    ]
+  },
+  {
     "version": "0.27.6",
     "date": "2026-09-11",
     "label": "feat",

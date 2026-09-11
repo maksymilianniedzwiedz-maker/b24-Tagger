@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.27.13",
+    "date": "2026-09-11",
+    "label": "fix",
+    "changes": [
+      "fix: **Karta produktowa w środku artykułu przestała wyglądać jak blok polecanych.** Moduł zakupowy składa się z nagłówka („H&M Giacca utility oversize\") i osobnego linku z ceną („45 € su h&m\") — ten drugi, jako czysty link, lądował w kuble zajawek i AI dostawało sygnał, że marka stoi w rekomendacjach. Na 12 identycznych stronach cosmopolitan.com model oddał przez to 4 razy „trafne\" i 8 razy „nietrafne\"; po poprawce 11 razy „trafne\". Na korpusie TR 21 stron przeszło z „tylko zajawka\" (czyli w ogóle bez oceny AI) na zwykłą wzmiankę",
+      "fix: **Cena pisana symbolem z przodu jest już ceną** — „€ 25\", „€25\", „$30\". Tak piszą serwisy holenderskie i angielskie, więc ich karty produktowe nie były rozpoznawane jako produkt",
+      "fix: **Nazwa marki znaleziona w środku innego słowa nie punktuje.** Wariant „hennes\" łapał „LVMH Moët Hennessy\" i dawał +4 za lead artykułowi o Louis Vuittonie",
+      "fix: **Skanowanie zwalnia dla serwisu, który dostaje serię adresów.** Pięć równoległych żądań pod jeden portal wywoływało ścianę antybotową — teraz między żądaniami do tego samego hosta jest odstęp, a po ścianie wtyczka zwalnia dwukrotnie i ponawia (do trzech razy na domenę). Import z wielu serwisów nadal idzie równolegle"
+    ]
+  },
+  {
     "version": "0.27.12",
     "date": "2026-09-11",
     "label": "fix",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.27.12
+// @version      0.27.13
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -120,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.27.12';
+  const VERSION = '0.27.13';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8055,6 +8055,29 @@ function showOnboarding(onComplete) {
     'h-m', 'h&m', 'h%26m', 'hennes', 'mauritz',
   ];
   var NEWS_KEYWORD_EXCLUSIONS = ['h-mart'];
+  // `NEWS_KEYWORD_EXCLUSIONS` dotyczy ADRESU. Ta lista dotyczy TRESCI: slowa, w ktorych
+  // wariant nazwy siedzi w srodku i nie znaczy marki. Zmierzone na 712 stronach TR/GR/HR:
+  // wariant `hennes` trafil w „LVMH Moët Hennessy" na forbes.com.tr i dal +4 za lead
+  // artykulowi o Louis Vuittonie. Pozostale trafienia w srodku slowa (`hm-com` w skrypcie,
+  // „a[hm]atise") wypadaja w kuble zajawek, wiec nic nie psuja — dlatego lista jest krotka
+  // i ma taka zostac: kazda pozycja to zmierzony przypadek, nie przeczucie.
+  var NEWS_CONTENT_EXCLUSIONS = ['hennessy'];
+  // Zwraca pozycje trafienia, ktore NIE lezy w srodku slowa-pulapki, albo -1.
+  function _newsChipIdx(lowerText, kw) {
+    if (!lowerText || !kw) return -1;
+    var i = lowerText.indexOf(kw);
+    while (i !== -1) {
+      var inside = false;
+      for (var e = 0; e < NEWS_CONTENT_EXCLUSIONS.length; e++) {
+        var ex = NEWS_CONTENT_EXCLUSIONS[e];
+        var s = lowerText.lastIndexOf(ex, i);
+        if (s !== -1 && i < s + ex.length) { inside = true; break; }
+      }
+      if (!inside) return i;
+      i = lowerText.indexOf(kw, i + 1);
+    }
+    return -1;
+  }
 
   var NEWS_TLD_MAP = {
     pl:'PL', tr:'TR', gr:'GR', hr:'HR', ro:'RO', bg:'BG',
@@ -8252,6 +8275,15 @@ function showOnboarding(onComplete) {
   //   teasermatch → 0 pkt     (keyword tylko w sekcji polecanych artykułów, nie w głównej treści)
 
   var NEWS_CONTENT_SCAN_CONCURRENCY = 5;
+  // Odstęp między żądaniami do TEGO SAMEGO hosta. Pięć workerów bez bramki potrafi wysłać
+  // pięć żądań pod jeden serwis w tej samej chwili, a lista z crawlera bywa pogrupowana po
+  // domenie (60 URL-i z rzędu z jednego portalu to norma). Tak powstaje ściana antybotowa
+  // opisana w §12.1: cosmopolitan.com odcinał się po ~10 adresach, a po zwolnieniu tempa
+  // te same adresy wracały normalnie. Bramka jest per host, więc import z wielu serwisów
+  // nadal idzie równolegle — zwalnia tylko ten, który dostaje serię.
+  var NEWS_HOST_GAP_MS = 1200;
+  var NEWS_HOST_GAP_MAX = 8000;   // po ścianie zwalniamy dwukrotnie, ale nie w nieskończoność
+  var NEWS_HOST_RETRY_MAX = 3;    // tyle ponowień na domenę w jednym imporcie
   var NEWS_CONTENT_SCAN_TIMEOUT_MS  = 10000; // minimum / fallback
   var _scanTimings = []; // sliding window: czasy udanych skanów (ms), max 20
 
@@ -8409,7 +8441,10 @@ function showOnboarding(onComplete) {
   // Cena obok keyworda oznacza, że to zestawienie produktowe („H&M; 34,99 €") — czyli treść
   // redakcyjna w układzie tabelarycznym, a nie menu czy chmura tagów. Rozróżnienie jest istotne,
   // bo dla monitoringu marki produkt z ceną to prawidłowa wzmianka, a element nawigacji nie.
-  var NEWS_PRICE_RE = /\d+[.,]\d{2}\s*(€|₺|z[łl]|\b(eur|kn|hrk|pln|tl)\b)|\d+\s*(€|₺|z[łl]|\b(eura?|kuna?|kn|tl|lira(s[ıi])?)\b)/i;
+  // Trzecia gałąź: symbol PRZED liczbą („€ 25", „€25"). Tak piszą ceny serwisy holenderskie,
+  // angielskie i część niemieckich, a bez tego karta produktowa z takiego serwisu nie była
+  // rozpoznawana jako produkt — zmierzone na cosmopolitan.com (§4.10).
+  var NEWS_PRICE_RE = /\d+[.,]\d{2}\s*(€|₺|z[łl]|\b(eur|kn|hrk|pln|tl)\b)|\d+\s*(€|₺|z[łl]|\b(eura?|kuna?|kn|tl|lira(s[ıi])?)\b)|(€|₺|\$|£)\s*\d+([.,]\d{1,2})?/i;
 
   // Nazwa strefy dla trafienia, ktore wypadlo poza rozpoznane strefy artykulu.
   // Wczesniej wszystko ladowalo w jednym worku „tekst poboczny": na korpusie 802 stron
@@ -8641,8 +8676,20 @@ function showOnboarding(onComplete) {
             if (len > foreignHeadline) foreignHeadline = len;
           }
         });
-        if (linkLen / text.length <= NEWS_TEASER_LINK_RATIO &&
-            foreignHeadline < text.length * 0.5) return;
+        var jestCudzyTytul = foreignHeadline >= text.length * 0.5;
+        // Krótki blok z CENĄ to link do sklepu z karty produktowej („45 € su h&m"), nie zajawka:
+        // zajawka niesie TYTUŁ cudzego tekstu, nie cenę. Bez tego karta produktowa osadzona
+        // w artykule rozrywała się na pół — nagłówek zostawał jako `śródtytuł`, a link z ceną lądował
+        // w kuble zajawek. Model dostawał wtedy „Also found in recommendation blocks only"
+        // i odrzucał stronę jako sekcję polecanych: 12 identycznych stron cosmopolitan.com
+        // dostało 4 razy `match` i 8 razy `miss`. Patrz NEWS_SCANNER.md §4.10.
+        //
+        // Kolejność testów jest istotna: cudzy tytuł BIJE cenę, bo tytuł też bywa z ceną
+        // („H&M's £20 fringed jacket gives Chanel vibes"). Zmierzone — bez tego warunku ta strona
+        // spadała z `teasermatch` na `nomatch`, czyli z „marka jest, ale w polecanych"
+        // na „marki nie ma", co jest gorszą informacją dla annotatora.
+        if (!jestCudzyTytul && text.length <= 120 && NEWS_PRICE_RE.test(text)) return;
+        if (linkLen / text.length <= NEWS_TEASER_LINK_RATIO && !jestCudzyTytul) return;
       }
       teaserTexts.push(text.toLowerCase());
       block.remove();
@@ -9246,7 +9293,7 @@ function showOnboarding(onComplete) {
 
       // Strefa nagłówka — tytuł, og:title i h1 traktowane jako jeden sygnał (ta sama treść)
       var _headlineSrc = [titleText, ogTitle, h1Text].filter(function(t) {
-        return t && t.toLowerCase().indexOf(kw) !== -1;
+        return t && _newsChipIdx(t.toLowerCase(), kw) !== -1;
       })[0] || '';
       if (_headlineSrc) {
         chipMatched = true;
@@ -9255,11 +9302,12 @@ function showOnboarding(onComplete) {
       }
 
       // Strefa opisu meta
-      var inMeta = ogDesc.toLowerCase().indexOf(kw) !== -1 || metaDesc.toLowerCase().indexOf(kw) !== -1;
+      var inMeta = _newsChipIdx(ogDesc.toLowerCase(), kw) !== -1 ||
+                   _newsChipIdx(metaDesc.toLowerCase(), kw) !== -1;
       if (inMeta) {
         chipMatched = true;
         _scoreZone('meta', 5, 'opis meta +5');
-        var _metaSrc = ogDesc.toLowerCase().indexOf(kw) !== -1 ? ogDesc : metaDesc;
+        var _metaSrc = _newsChipIdx(ogDesc.toLowerCase(), kw) !== -1 ? ogDesc : metaDesc;
         if (!_metaSnippet) _metaSnippet = _metaSrc.slice(0, 500);
         _pushCtx(chip, 'opis meta', _metaSrc, kw);
       }
@@ -9267,7 +9315,7 @@ function showOnboarding(onComplete) {
       // Strefa nagłówków h2/h3 — podrozdziały artykułu (po usunięciu szumu i teaserów, tylko bodyEl)
       var h2h3Match = '';
       for (var _hi = 0; _hi < subHeadings.length; _hi++) {
-        if (subHeadings[_hi].toLowerCase().indexOf(kw) !== -1) { h2h3Match = subHeadings[_hi]; break; }
+        if (_newsChipIdx(subHeadings[_hi].toLowerCase(), kw) !== -1) { h2h3Match = subHeadings[_hi]; break; }
       }
       if (h2h3Match) {
         chipMatched = true;
@@ -9279,7 +9327,7 @@ function showOnboarding(onComplete) {
       // do wspólnego zbioru, żeby ten sam akapit trafiony przez trzy warianty nazwy liczył
       // się raz; punkty naliczane są po przejściu wszystkich wariantów.
       paragraphs.forEach(function(p, idx) {
-        if (p.toLowerCase().indexOf(kw) !== -1) {
+        if (_newsChipIdx(p.toLowerCase(), kw) !== -1) {
           _paraHits[idx] = true;
           chipMatched = true;
           _pushCtx(chip, _paraOffset[idx] < NEWS_LEAD_CHARS ? 'lead' : 'akapit', p, kw);
@@ -9302,7 +9350,7 @@ function showOnboarding(onComplete) {
       });
 
       // Strefa blockquote — cytaty w treści artykułu
-      var _quoteSrc = blockquotes.filter(function(q) { return q.toLowerCase().indexOf(kw) !== -1; })[0] || '';
+      var _quoteSrc = blockquotes.filter(function(q) { return _newsChipIdx(q.toLowerCase(), kw) !== -1; })[0] || '';
       if (_quoteSrc) {
         chipMatched = true;
         _scoreZone('cytat', 2, 'cytat +2');
@@ -9310,7 +9358,7 @@ function showOnboarding(onComplete) {
       }
 
       // Tagi redakcyjne artykułu — bardzo silny sygnał (autor/redakcja oznaczyła temat tagem)
-      var _tagSrc = articleTagTexts.filter(function(t) { return t.indexOf(kw) !== -1; })[0] || '';
+      var _tagSrc = articleTagTexts.filter(function(t) { return _newsChipIdx(t, kw) !== -1; })[0] || '';
       if (_tagSrc) {
         chipMatched = true;
         _scoreZone('tag', 6, 'tag redakcyjny +6');
@@ -9320,7 +9368,7 @@ function showOnboarding(onComplete) {
       // Strefy poboczne — tylko jeśli chip nie trafił w żadną strefę główną
       if (!chipMatched && _secZones.length > 0) {
         for (var _szi = 0; _szi < _secZones.length; _szi++) {
-          if (_secZones[_szi].text.toLowerCase().indexOf(kw) !== -1) {
+          if (_newsChipIdx(_secZones[_szi].text.toLowerCase(), kw) !== -1) {
             chipMatched = true;
             // Kafelek produktu bywa oznaczony klasą „caption" — cena obok marki mówi więcej
             // o naturze tekstu niż nazwa klasy, więc nadpisuje etykietę strefy.
@@ -9339,8 +9387,9 @@ function showOnboarding(onComplete) {
       // katalogowe). Zamiast wrzucać wszystko do jednego worka „tekst poboczny", ustalamy
       // GDZIE to stoi (_newsPlacementZone) — etykieta strefy jest najważniejszą rzeczą
       // w payloadzie dla modelu (§9), a stąd szła pusta.
-      if (!chipMatched && _genericTextLower.indexOf(kw) !== -1) {
-        var _gIdx = _genericTextLower.indexOf(kw);
+      var _genIdx = chipMatched ? -1 : _newsChipIdx(_genericTextLower, kw);
+      if (!chipMatched && _genIdx !== -1) {
+        var _gIdx = _genIdx;
         var _gSrc = _genericText.slice(Math.max(0, _gIdx - 100), _gIdx + 150).trim();
         var _gFound = NEWS_PRICE_RE.test(_gSrc) ? null : _zoneFind(kw);
         var _gZone = _gFound ? _newsPlacementZone(_gFound.el, pageUrl) : 'lista produktów';
@@ -13474,6 +13523,21 @@ function showOnboarding(onComplete) {
       // Sliding window — NEWS_CONTENT_SCAN_CONCURRENCY równoległych workerów
       var nextScanIdx = 0;
       var _domainTimeouts = {}; // licznik timeoutów per domena (reset na każdy import)
+      // Stan tempa per host: kiedy wolno wysłać następne żądanie, jaki jest aktualny odstęp
+      // i ile razy już ponawialiśmy. Reset na każdy import.
+      var _hostPace = {};
+      function _paceOf(host) {
+        if (!_hostPace[host]) _hostPace[host] = { free: 0, gap: NEWS_HOST_GAP_MS, retries: 0 };
+        return _hostPace[host];
+      }
+      function _hostGate(host) {
+        if (!host) return Promise.resolve();
+        var p = _paceOf(host);
+        var now = Date.now();
+        var wait = Math.max(0, p.free - now);
+        p.free = Math.max(now, p.free) + p.gap;
+        return wait ? new Promise(function(r) { setTimeout(r, wait); }) : Promise.resolve();
+      }
       // Throttle renderu listy podczas skanu — pełny rebuild DOM po każdym URL-u zabijał
       // płynność przy dużych importach; max 1 render / 300ms + trailing render na końcu okna
       var _scanLastRender = 0;
@@ -13526,7 +13590,26 @@ function showOnboarding(onComplete) {
           }
 
           try {
+            await _hostGate(_entryDomain);
             var result = await _newsContentScan(entry.url, chips);
+
+            // Ściana antybotowa i 429 to stany PRZEJŚCIOWE (§12.1), nie werdykt o stronie.
+            // Zwalniamy tempo dla tego hosta (dwukrotnie, do 8 s) i ponawiamy RAZ. Limit
+            // ponowień na domenę jest po to, żeby import 60 adresów z zablokowanego serwisu
+            // nie zamienił się w 60 × odczekaj-i-spróbuj — po trzech próbach przyjmujemy,
+            // że serwis nas nie wpuści, i zostawiamy wiersz do ręcznego otwarcia.
+            var _transient = result.blockReason === 'challenge' || result.httpStatus === 429 ||
+                             result.httpStatus === 403;
+            if (_transient && _entryDomain) {
+              var _p = _paceOf(_entryDomain);
+              _p.gap = Math.min(_p.gap * 2, NEWS_HOST_GAP_MAX);
+              if (_p.retries < NEWS_HOST_RETRY_MAX) {
+                _p.retries++;
+                await new Promise(function(r) { setTimeout(r, _p.gap); });
+                var _retry = await _newsContentScan(entry.url, chips);
+                if (_retry && _retry.status !== 'blocked') result = _retry;
+              }
+            }
 
             // Zlicz timeout dla domeny — po 2 z tej samej domeny kolejne będą skipowane
             if (result.blockReason === 'timeout' && _entryDomain) {

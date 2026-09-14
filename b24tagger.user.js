@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.31.5
+// @version      0.31.6
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -171,7 +171,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.31.5';
+  const VERSION = '0.31.6';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3953,10 +3953,14 @@
       }
       .b24t-tr-wait { animation: b24t-tr-wait 1.25s ease-in-out infinite; }
       .b24t-tr-land { animation: b24t-tr-land 0.55s ease-out; }
-      @media (prefers-reduced-motion: reduce) {
-        .b24t-tr-wait { animation: none; opacity: 0.55; }
-        .b24t-tr-land { animation: none; }
-      }
+      /* ⚠ Celowo BEZ wyciszenia pod media-query prefers-reduced-motion. Pierwsza wersja je miała i to był
+         błąd: zmierzone u właściciela 2026-09-15 — Windows ma wyłączone animacje, więc puls
+         zmieniał się w statyczne przygaszenie i cała funkcja wyglądała na niedziałającą
+         („żadnych animacji też nie widziałem"). Te dwie animacje zmieniają wyłącznie
+         przezroczystość i kolor, nie ruszają niczego po ekranie — czyli nie są tym, przed czym
+         to ustawienie ma chronić. Sygnał „ta linijka jeszcze czeka" jest tu całym sensem
+         funkcji, a nie ozdobą. Wyciszenie pod tym ustawieniem zostaje w kodzie tam, gdzie
+         coś faktycznie się przesuwa (wjazdy paneli, zmienna _b24tRM w JS). */
 
       /* LAYOUT CONTRACT: Only #b24t-log has flex-grow inside the panel tree.
          Do not add flex-grow to any other child of #b24t-panel-inner.
@@ -8810,9 +8814,23 @@ function showOnboarding(onComplete) {
     // ── DETEKCJA TYPU STRONY (przed usunięciem szumu — skrypty jeszcze obecne) ──
     var _articleSignals = [];
 
-    // Język strony — <html lang="pl-PL"> → "pl"
+    // Język strony — <html lang="pl-PL"> → "pl". Kaskada, bo serwisy gubią ten atrybut częściej,
+    // niż się wydaje, a bez języka nie rusza automatyczne tłumaczenie fragmentów na karcie:
+    // annotator dostawał obcy tekst i przycisk „przetłumacz" do ręcznego kliknięcia.
+    // `og:locale` bywa jedynym miejscem, gdzie wydawca deklaruje język (format `el_GR`).
     var _pageLang = (doc.documentElement.getAttribute('lang') || '').toLowerCase();
+    if (!_pageLang) {
+      var _ogLocEl = doc.querySelector('meta[property="og:locale"]') || doc.querySelector('meta[name="og:locale"]');
+      _pageLang = ((_ogLocEl && _ogLocEl.getAttribute('content')) || '').toLowerCase();
+    }
+    if (!_pageLang) {
+      var _clEl = doc.querySelector('meta[http-equiv="content-language" i]');
+      _pageLang = ((_clEl && _clEl.getAttribute('content')) || '').toLowerCase();
+    }
+    _pageLang = _pageLang.replace('_', '-').split(',')[0].trim();
     if (_pageLang.indexOf('-') !== -1) _pageLang = _pageLang.split('-')[0];
+    // Kod musi wyglądać jak kod języka. `meta` potrafi nieść śmieć („undefined", „default").
+    if (!/^[a-z]{2,3}$/.test(_pageLang)) _pageLang = '';
     // Kolejność tablic miesięcy dla tej strony — liczona raz, przekazywana do _newsParseDate.
     var _dateLangs = _newsMonthLangs(_pageLang, pageUrl);
 
@@ -10478,8 +10496,15 @@ function showOnboarding(onComplete) {
     if (!entry || entry.tr || entry.trStatus) return false;   // już jest albo już leci
     if (!_newsAiShouldRun()) return false;                    // brak klucza albo AI wyłączone
     if (!_newsTranslatePromptText()) return false;            // brak wskazanego promptu
-    // Bez wykrytego języka NIE zgadujemy — wywołanie kosztuje, a strona może być po polsku.
     var lang = String(entry.pageLang || '').toLowerCase().split('-')[0];
+    // Strona nie zadeklarowała języka nigdzie (§7 kaskady wyżej). Zamiast odpuścić, bierzemy
+    // język RYNKU projektu: lista URL-i w projekcie H&M_GR to greckie serwisy, więc „nie wiem"
+    // jest tu gorszą odpowiedzią niż „pewnie po grecku". Wcześniej taki wiersz wymagał
+    // ręcznego kliknięcia „przetłumacz" i wyglądał na zepsuty — zgłoszone 2026-09-15.
+    if (!lang) {
+      var _pc = _newsProjectCountry();
+      lang = _pc ? (LANG_BY_COUNTRY[_pc] || '') : '';
+    }
     if (!lang) return false;
     return NEWS_READABLE_LANGS.indexOf(lang) === -1;
   }
@@ -10568,7 +10593,11 @@ function showOnboarding(onComplete) {
     entry.trTotal = pairs.length;
     if (_newsCardRenderer) _newsCardRenderer(entry);
 
+    var seenText = '', tail = '', modelText = '', landed = 0, streamErr = '', settled = false;
+
     function _fail(msg) {
+      if (settled) return;
+      settled = true;
       // Częściowe tłumaczenie znika razem z błędem — powód przy kontroli długości niżej.
       entry.tr = null;
       entry.trStatus = 'error';
@@ -10576,22 +10605,22 @@ function showOnboarding(onComplete) {
       if (_newsCardRenderer) _newsCardRenderer(entry);
     }
 
-    var seenText = '', tail = '', modelText = '', landed = 0, streamErr = '';
-
-    // Menedżer skryptów może oddawać odpowiedź NARASTAJĄCO (za każdym razem całą dotychczasową
-    // treść) albo PRZYROSTOWO (samą nową porcję) — kontrakt `GM_xmlhttpRequest` tego nie rozstrzyga,
-    // a `onload` na koniec podaje komplet. Rozróżniamy oba warianty po tym, czy nowa treść zaczyna
-    // się od tej, którą już widzieliśmy. Odmierzanie samą DŁUGOŚCIĄ gubiło dane przy wariancie
-    // przyrostowym: porcja krótsza od poprzedniej zerowała licznik, a następne były obcinane od
-    // początku, aż JSON przestawał się parsować. Patrz NEWS_CARD.md §3.3.
+    // Porcja odpowiedzi. `isDelta` mówi, czy dostaliśmy sam przyrost (strumień `fetch`), czy
+    // całą dotychczasową treść (`onprogress` menedżera skryptów) — bo te dwa transporty podają
+    // ją inaczej, a zgadywanie po długości gubi dane. Patrz NEWS_CARD.md §3.3.
     // Ostatnia linia porcji bywa ucięta w połowie zdarzenia, więc wraca do bufora.
-    function _feed(full) {
-      var txt = String(full || '');
-      if (!txt || txt === seenText) return;
+    function _feed(text, isDelta) {
+      var txt = String(text || '');
+      if (!txt) return;
       var delta;
-      if (seenText && txt.lastIndexOf(seenText, 0) === 0) { delta = txt.slice(seenText.length); seenText = txt; }
-      else { delta = txt; seenText += txt; }
-      var ls = (tail + delta).split('\n');
+      if (isDelta) {
+        delta = txt;
+      } else {
+        if (txt === seenText) return;
+        if (seenText && txt.lastIndexOf(seenText, 0) === 0) { delta = txt.slice(seenText.length); seenText = txt; }
+        else { delta = txt; seenText += txt; }
+      }
+      var ls = (tail + delta).split(String.fromCharCode(10));
       tail = ls.pop();
       for (var i = 0; i < ls.length; i++) {
         if (ls[i].slice(0, 5) !== 'data:') continue;
@@ -10622,63 +10651,121 @@ function showOnboarding(onComplete) {
       if (_newsCardSlotPatcher) _newsCardSlotPatcher(entry, 'progress', '⏳ tłumaczę ' + landed + '/' + pairs.length);
     }
 
-    try {
-      var s = _aiGetSettings();
-      var model = (s.news && s.news.model) || 'claude-haiku-4-5';
-      GM_xmlhttpRequest({
+    // Domknięcie: komplet odpowiedzi jest już w `modelText`, niezależnie od transportu.
+    function _complete() {
+      if (settled) return;
+      var out;
+      try { out = JSON.parse(String(modelText).replace(/```json|```/g, '').trim()); }
+      catch(e) { _fail(streamErr || (modelText ? 'odpowiedź nie jest JSON-em' : 'model nie odesłał treści')); return; }
+      var arr = out && out.items;
+      if (!Array.isArray(arr)) { _fail('brak pola items w odpowiedzi'); return; }
+      // Niezgodna długość = fragmenty mogły przesunąć się o jeden i każdy stoi pod cudzą
+      // strefą. To, co zdążyło wejść na kartę w trakcie strumienia, cofamy (`_fail` zeruje
+      // `entry.tr`) — lepszy brak tłumaczenia niż polski tekst podpisany nie tym fragmentem.
+      if (arr.length !== pairs.length) { _fail('model zwrócił ' + arr.length + ' z ' + pairs.length + ' fragmentów'); return; }
+      settled = true;
+      // Przepisanie z kompletnej odpowiedzi, nie ze strumienia: skaner przyrostowy widzi
+      // tylko domknięte elementy, a ostatni domyka się dopiero tutaj.
+      var tr = { title: null, ctx: [], snippet: null };
+      for (var i = 0; i < pairs.length; i++) _newsTrPut(tr, pairs[i].slot, String(arr[i] == null ? '' : arr[i]));
+      entry.tr = tr;
+      entry.trDone = pairs.length;
+      entry.trStatus = 'done';
+      // Jedno pełne przerysowanie na koniec — domyka etykiety, przycisk „oryginał" i oryginał
+      // tytułu pod przetłumaczonym, czyli to, czego podmiana pojedynczego slotu nie rusza.
+      if (_newsCardRenderer) _newsCardRenderer(entry);
+    }
+
+    var s = _aiGetSettings();
+    var model = (s.news && s.news.model) || 'claude-haiku-4-5';
+    var payload = {
+      model: model,
+      thinking: { type: 'disabled' },
+      // Tłumaczenie jest dłuższe od oryginału, a fragmentów bywa kilkanaście po ~200 znaków.
+      max_tokens: 2000,
+      // Strumień jest jedynym sposobem, żeby fragmenty pojawiały się pojedynczo: jedno
+      // wywołanie zwracające komplet nie ma czego pokazać po drodze. Koszt ten sam.
+      stream: true,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: JSON.stringify({ lang: entry.pageLang || '', items: pairs.map(function(p) { return p.text; }) }) }],
+    };
+
+    // ── TRANSPORT 1: `fetch` ze strumieniem ──
+    // Anthropic wpuszcza żądania prosto z przeglądarki po nagłówku
+    // `anthropic-dangerous-direct-browser-access`, a `response.body` jest wtedy zwykłym
+    // strumieniem — porcje przychodzą w trakcie, kiedy model jeszcze pisze.
+    // ⚠ To jest JEDYNY transport, który faktycznie daje „linijka po linijce".
+    // `GM_xmlhttpRequest` częściowej odpowiedzi NIE oddaje (zmierzone 2026-09-15: licznik stał
+    // na 0/8 do samego końca, po czym wszystko wchodziło naraz). Nie zamieniaj tego z powrotem.
+    // Klucz API i tak leży w `localStorage` tej strony (`b24t_ai_settings`), więc wysłanie go
+    // z kontekstu strony nie zmienia tego, kto może go odczytać.
+    function _viaFetch() {
+      return fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        url: 'https://api.anthropic.com/v1/messages',
         headers: {
-          'Content-Type': 'application/json',
+          'content-type': 'application/json',
           'x-api-key': s.apiKey,
           'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
         },
-        data: JSON.stringify({
-          model: model,
-          thinking: { type: 'disabled' },
-          // Tłumaczenie jest dłuższe od oryginału, a fragmentów bywa kilkanaście po ~200 znaków.
-          max_tokens: 2000,
-          // Strumień jest jedynym sposobem, żeby fragmenty pojawiały się pojedynczo: jedno
-          // wywołanie zwracające komplet nie ma czego pokazać po drodze. Koszt ten sam.
-          stream: true,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: JSON.stringify({ lang: entry.pageLang || '', items: pairs.map(function(p) { return p.text; }) }) }],
-        }),
-        timeout: 25000,
-        // Menedżer skryptów nie musi oddać częściowej odpowiedzi. Gdy nie odda, `onload`
-        // przepuszcza przez ten sam parser komplet naraz — karta wypełnia się jednym skokiem
-        // zamiast linijka po linijce, ale nie ma błędu i nie ma czego naprawiać.
-        onprogress: function(resp) { try { _feed(resp && resp.responseText); } catch(e) {} },
-        onload: function(resp) {
-          if (resp.status === 401) { _fail('błędny klucz API'); return; }
-          if (resp.status === 429) { _fail('limit API (429)'); return; }
-          if (resp.status < 200 || resp.status >= 300) { _fail('HTTP ' + resp.status); return; }
-          _feed(resp.responseText);
-          var out;
-          try { out = JSON.parse(String(modelText).replace(/```json|```/g, '').trim()); }
-          catch(e) { _fail(streamErr || (modelText ? 'odpowiedź nie jest JSON-em' : 'model nie odesłał treści')); return; }
-          var arr = out && out.items;
-          if (!Array.isArray(arr)) { _fail('brak pola items w odpowiedzi'); return; }
-          // Niezgodna długość = fragmenty mogły przesunąć się o jeden i każdy stoi pod cudzą
-          // strefą. To, co zdążyło wejść na kartę w trakcie strumienia, cofamy (`_fail` zeruje
-          // `entry.tr`) — lepszy brak tłumaczenia niż polski tekst podpisany nie tym fragmentem.
-          if (arr.length !== pairs.length) { _fail('model zwrócił ' + arr.length + ' z ' + pairs.length + ' fragmentów'); return; }
-          // Przepisanie z kompletnej odpowiedzi, nie ze strumienia: skaner przyrostowy widzi
-          // tylko domknięte elementy, a ostatni domyka się dopiero tym `onload`.
-          var tr = { title: null, ctx: [], snippet: null };
-          for (var i = 0; i < pairs.length; i++) _newsTrPut(tr, pairs[i].slot, String(arr[i] == null ? '' : arr[i]));
-          entry.tr = tr;
-          entry.trDone = pairs.length;
-          entry.trStatus = 'done';
-          // Jedno pełne przerysowanie na koniec — domyka etykiety, przycisk „oryginał" i oryginał
-          // tytułu pod przetłumaczonym, czyli to, czego podmiana pojedynczego slotu nie rusza.
-          if (_newsCardRenderer) _newsCardRenderer(entry);
-        },
-        onerror:   function() { _fail('brak połączenia'); },
-        ontimeout: function() { _fail('timeout'); },
+        body: JSON.stringify(payload),
+      }).then(function(r) {
+        if (r.status === 401) { _fail('błędny klucz API'); return; }
+        if (r.status === 429) { _fail('limit API (429)'); return; }
+        if (r.status < 200 || r.status >= 300) { _fail('HTTP ' + r.status); return; }
+        if (!r.body) throw new Error('brak strumienia');
+        var reader = r.body.getReader();
+        var dec = new TextDecoder();
+        return (function _pump() {
+          return reader.read().then(function(res) {
+            if (res.done) { _complete(); return; }
+            _feed(dec.decode(res.value, { stream: true }), true);
+            return _pump();
+          });
+        })();
+      });
+    }
+
+    // ── TRANSPORT 2: `GM_xmlhttpRequest` ──
+    // Zapasowy, na wypadek gdyby polityka bezpieczeństwa strony (CSP) nie wypuściła `fetch`.
+    // Tą drogą karta wypełnia się jednym skokiem zamiast linijka po linijce — ale tłumaczenie
+    // jest kompletne i nie ma błędu. Wchodzi WYŁĄCZNIE wtedy, gdy pierwszy transport nie
+    // przesłał ani bajtu; inaczej płacilibyśmy dwa razy za to samo.
+    function _viaGm() {
+      try {
+        GM_xmlhttpRequest({
+          method: 'POST',
+          url: 'https://api.anthropic.com/v1/messages',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': s.apiKey,
+            'anthropic-version': '2023-06-01',
+          },
+          data: JSON.stringify(payload),
+          timeout: 25000,
+          onprogress: function(resp) { try { _feed(resp && resp.responseText, false); } catch(e) {} },
+          onload: function(resp) {
+            if (resp.status === 401) { _fail('błędny klucz API'); return; }
+            if (resp.status === 429) { _fail('limit API (429)'); return; }
+            if (resp.status < 200 || resp.status >= 300) { _fail('HTTP ' + resp.status); return; }
+            _feed(resp.responseText, false);
+            _complete();
+          },
+          onerror:   function() { _fail('brak połączenia'); },
+          ontimeout: function() { _fail('timeout'); },
+        });
+      } catch(e) { _fail('błąd wywołania'); }
+    }
+
+    try {
+      _viaFetch().catch(function(e) {
+        if (settled) return;
+        // Padło po pierwszej porcji — powtórzenie znaczyłoby drugie wywołanie modelu za to samo.
+        if (modelText) { _fail(streamErr || 'strumień urwany'); return; }
+        _viaGm();
       });
     } catch(e) {
-      _fail('błąd wywołania');
+      _viaGm();
     }
   }
 
@@ -15516,6 +15603,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.31.6",
+      "date": "2026-09-15",
+      "label": "fix",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "fix", "text": "**Tłumaczenie naprawdę wchodzi linijka po linijce.** W 0.31.4 licznik stał na „tłumaczę 0/8” do samego końca i wszystko podmieniało się naraz — wtyczka prosiła menedżera skryptów o odpowiedź po kawałku, a ten oddaje ją dopiero w całości. Teraz odpowiedź czytana jest strumieniem bezpośrednio z API, więc fragmenty pojawiają się pojedynczo, w miarę jak model je pisze. Gdyby ta droga była gdzieś zablokowana, wtyczka po cichu wraca na starą — tłumaczenie wtedy wchodzi jednym skokiem, ale nie ginie i nie ma błędu"},
+        {"type": "fix", "text": "**Wracają migające podświetlenia, które wcześniej nie miały prawa się pokazać.** Fragment czekający na tłumaczenie pulsuje, a po wejściu polskiego tekstu błyska. Poprzednia wersja wyłączała oba efekty, gdy w systemie wyłączone są animacje interfejsu — a wtedy właśnie cała funkcja wyglądała na martwą. Te dwa efekty zmieniają wyłącznie przezroczystość i kolor, nic nie przesuwa się po ekranie"},
+        {"type": "fix", "text": "**Strona, która nie deklaruje swojego języka, też tłumaczy się sama.** Dotąd wtyczka czytała język wyłącznie z jednego atrybutu na początku strony; gdy go brakowało, wiersz trzeba było tłumaczyć ręcznie przyciskiem. Teraz sprawdzane są jeszcze dwa miejsca w nagłówku strony, a gdy i tam nic nie ma — brany jest język rynku projektu"}
+      ]
+    },
+    {
       "version": "0.31.5",
       "date": "2026-09-14",
       "label": "fix",
@@ -15613,16 +15711,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "**Podgląd artykułu pokazuje wreszcie to, na czym stoi decyzja.** Środkowa kolumna zamiast samej wizytówki pokazuje teraz werdykt AI z pełnym uzasadnieniem, listę wszystkich miejsc, w których pada nazwa marki — każde z etykietą strefy (tytuł, lead, akapit, cytat, blok polecanych) i podświetloną frazą — ostrzeżenia w rodzaju „marka stoi tylko w polecanych artykułach\", rozbicie punktacji oraz fragment, który wtyczka wstawiła do pola Treść. Te dane były liczone od dawna, ale szły wyłącznie do modelu AI: uzasadnienie werdyktu wisiało w dymku plakietki wysokiej na 8 px, a miejsc trafienia nie było widać wcale. Większość decyzji da się teraz podjąć bez otwierania strony"},
         {"type": "feat", "text": "**Cała pętla pracy na klawiaturze.** `J` i `K` (albo strzałki) przechodzą po wierszach listy, `Enter` otwiera artykuł w oknie, `Ctrl+Enter` dodaje wzmiankę — także wtedy, gdy kursor stoi w polu formularza — a `X` odrzuca wiersz i przeskakuje do następnego nieobsłużonego. Po udanym dodaniu panel sam przechodzi dalej; przy duplikacie i błędzie zostaje na miejscu, żeby dało się przeczytać komunikat. Całość spisana w legendzie pod „?\""},
         {"type": "fix",  "text": "**Kursor nie wskakuje już do pola DATA przy każdym otwartym wierszu.** Wchodzi tam dopiero wtedy, gdy skan daty jej nie znalazł — czyli gdy naprawdę trzeba ją wpisać. Wcześniej pole tekstowe przechwytywało każdy klawisz, więc skróty listy nie miałyby prawa zadziałać"}
-      ]
-    },
-    {
-      "version": "0.27.14",
-      "date": "2026-09-14",
-      "label": "fix",
-      "labelColor": "#f59e0b",
-      "changes": [
-        {"type": "fix", "text": "**Lista URL-i w News przestaje się blokować na duplikacie.** Od 0.27.8 wiersz z plakietką duplikatu wywalał rysowanie listy błędem: kafelki stojące za nim w ogóle się nie pokazywały, a kliknięcie w którykolwiek z pozostałych podmieniało tylko pole adresu — data, tytuł, treść i karta podglądu zostawały z pierwszego otwartego artykułu, więc „Otwórz w oknie” wiozło ciągle tę samą stronę. Wyglądało to na zablokowany panel. Wchodziło tylko na listach, w których dwa adresy wskazują tę samą stronę według wydawcy"},
-        {"type": "fix", "text": "Plakietki wiersza i karta podglądu escapują wstawiane wartości jednym wspólnym mechanizmem — adres albo tytuł z cudzysłowem nie rozsypie już atrybutu HTML"}
       ]
     }
   ];

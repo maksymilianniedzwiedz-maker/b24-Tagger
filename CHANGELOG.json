@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.31.6",
+    "date": "2026-09-15",
+    "label": "fix",
+    "changes": [
+      "fix: **Tłumaczenie naprawdę wchodzi linijka po linijce.** W 0.31.4 licznik stał na „tłumaczę 0/8” do samego końca i wszystko podmieniało się naraz — wtyczka prosiła menedżera skryptów o odpowiedź po kawałku, a ten oddaje ją dopiero w całości. Teraz odpowiedź czytana jest strumieniem bezpośrednio z API, więc fragmenty pojawiają się pojedynczo, w miarę jak model je pisze. Gdyby ta droga była gdzieś zablokowana, wtyczka po cichu wraca na starą — tłumaczenie wtedy wchodzi jednym skokiem, ale nie ginie i nie ma błędu",
+      "fix: **Wracają migające podświetlenia, które wcześniej nie miały prawa się pokazać.** Fragment czekający na tłumaczenie pulsuje, a po wejściu polskiego tekstu błyska. Poprzednia wersja wyłączała oba efekty, gdy w systemie wyłączone są animacje interfejsu — a wtedy właśnie cała funkcja wyglądała na martwą. Te dwa efekty zmieniają wyłącznie przezroczystość i kolor, nic nie przesuwa się po ekranie",
+      "fix: **Strona, która nie deklaruje swojego języka, też tłumaczy się sama.** Dotąd wtyczka czytała język wyłącznie z jednego atrybutu na początku strony; gdy go brakowało, wiersz trzeba było tłumaczyć ręcznie przyciskiem. Teraz sprawdzane są jeszcze dwa miejsca w nagłówku strony, a gdy i tam nic nie ma — brany jest język rynku projektu"
+    ]
+  },
+  {
     "version": "0.31.5",
     "date": "2026-09-14",
     "label": "fix",

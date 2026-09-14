@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.30.0
+// @version      0.31.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -111,6 +111,37 @@
           }
         });
       }
+
+      // ── CAŁA TREŚĆ STRONY do panelu ──
+      // To jest skan przez przeglądarkę: strona, której `GM_xmlhttpRequest` nie pobrał
+      // (403 dla bota, treść z JS-a, ciastka, ściana antybotowa), tutaj jest już gotowa —
+      // z sesją, ciastkami i wykonanymi skryptami. Panel przepuszcza ten HTML przez ten sam
+      // skaner co zawsze, więc wiersz wypełnia się bez czytania strony przez człowieka.
+      var _htmlSent = 0;
+      function _sendHtml() {
+        if (_htmlSent >= 2) return;
+        try {
+          var el = document.documentElement;
+          var html = el ? el.outerHTML : '';
+          if (!html) return;
+          // Zdarzają się strony po kilkanaście MB (galerie z base64). postMessage to udźwignie,
+          // ale skaner i tak czyta tylko tekst — obcinamy, żeby nie zamrozić panelu.
+          if (html.length > 3000000) html = html.slice(0, 3000000);
+          _htmlSent++;
+          window.opener.postMessage({ type: 'b24t_news_html', url: location.href, html: html }, '*');
+        } catch(e) {}
+      }
+      function _sendHtmlWhenReady() {
+        _sendHtml();
+        // Druga wysyłka tylko dla stron, które w chwili `load` nie mają jeszcze treści —
+        // typowe dla serwisów budujących artykuł JS-em po stronie klienta.
+        setTimeout(function() {
+          var txt = document.body ? (document.body.innerText || '') : '';
+          if (txt.length < 2000) _sendHtml();
+        }, 2500);
+      }
+      if (document.readyState === 'complete') _sendHtmlWhenReady();
+      else window.addEventListener('load', _sendHtmlWhenReady);
     })();
     return; // Nie inicjalizuj reszty wtyczki na zewnętrznych stronach
   }
@@ -120,7 +151,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.30.0';
+  const VERSION = '0.31.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -10588,6 +10619,17 @@ function showOnboarding(onComplete) {
     entry.httpStatus  = result.httpStatus  || null;
   }
 
+  // Adres z przestawionym `www` albo null, gdy nie da się przestawić.
+  function _newsAltHostUrl(url) {
+    try {
+      var u = new URL(url);
+      if (/^www\./i.test(u.hostname)) u.hostname = u.hostname.replace(/^www\./i, '');
+      else if (u.hostname.split('.').length >= 2) u.hostname = 'www.' + u.hostname;
+      else return null;
+      return u.href;
+    } catch(e) { return null; }
+  }
+
   function _newsContentScan(url, chips, timeoutMs) {
     return new Promise(function(resolve) {
       var resolved = false;
@@ -10601,7 +10643,9 @@ function showOnboarding(onComplete) {
         }
       }
 
-      function _attempt(timeoutMs) {
+      var _altTried = false;
+      function _attempt(timeoutMs, altUrl) {
+        var reqUrl = altUrl || url;
         // Zewnętrzny timer — ochrona gdyby GM_xmlhttpRequest nie wywołał żadnego callbacku
         var timer = setTimeout(function() {
           _done({ status: 'blocked', blockReason: 'timeout', score: 0, snippet: '' });
@@ -10610,7 +10654,7 @@ function showOnboarding(onComplete) {
         try {
           GM_xmlhttpRequest({
             method:  'GET',
-            url:     url,
+            url:     reqUrl,
             headers: { 'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8' },
             timeout: timeoutMs,
             onload: function(resp) {
@@ -10646,7 +10690,7 @@ function showOnboarding(onComplete) {
                     }
                   }
                 }
-                var _sr = _newsParseContent(resp.responseText, chips, url);
+                var _sr = _newsParseContent(resp.responseText, chips, reqUrl);
                 _sr.iframeable = _iframeable;
                 _done(_sr, true);
               } catch(e) {
@@ -10655,6 +10699,16 @@ function showOnboarding(onComplete) {
             },
             onerror: function() {
               clearTimeout(timer);
+              // Zmierzone 2026-09-14: `www.llearn.gr` ma certyfikat wystawiony wyłącznie na
+              // `llearn.gr`, więc KAŻDY z 33 adresów padał na uścisku TLS i wyglądał jak awaria
+              // sieci. Jedna próba po zdjęciu (albo dodaniu) `www` kosztuje tyle co nic,
+              // a odróżnia zepsuty certyfikat od serwisu, którego naprawdę nie ma.
+              var alt = _newsAltHostUrl(url);
+              if (alt && !_altTried) {
+                _altTried = true;
+                _attempt(timeoutMs || _getAdaptiveScanTimeout(), alt);
+                return;
+              }
               _done({ status: 'blocked', blockReason: 'error', score: 0, snippet: '' });
             },
             ontimeout: function() {
@@ -10673,7 +10727,10 @@ function showOnboarding(onComplete) {
   }
 
   // ── NEWS URL OPENER (sized window) ──
-  function _newsOpenUrl(url) {
+  // `quiet` — przestaw okno na inny adres, ale NIE zabieraj mu fokusu. Używa tego kolejka
+  // skanu przez przeglądarkę: inaczej przy pierwszej stronie panel traci klawiaturę
+  // i J/K przestaje działać do czasu alt-taba.
+  function _newsOpenUrl(url, quiet) {
     var col = document.getElementById('b24t-news-col-preview');
     var rect = col ? col.getBoundingClientRect() : null;
     var w = (rect && rect.width  > 100) ? Math.round(rect.width)  : 900;
@@ -10685,10 +10742,11 @@ function showOnboarding(onComplete) {
     var existingWin = window._b24tnewsWin;
     if (existingWin && !existingWin.closed) {
       existingWin.location.href = url;
-      existingWin.focus();
+      if (!quiet) existingWin.focus();
     } else {
       window._b24tnewsWin = window.open(url, '_b24tnews', features);
     }
+    return window._b24tnewsWin;
   }
 
   // ── CSRF TOKEN RESOLUTION ──
@@ -12848,6 +12906,159 @@ function showOnboarding(onComplete) {
       return false;
     }
 
+    // ─── SKAN PRZEZ OKNO PRZEGLĄDARKI ───
+    // `GM_xmlhttpRequest` przegrywa wszędzie tam, gdzie serwis chce prawdziwej przeglądarki:
+    // 403 dla bota, treść budowana JS-em, ciastka, ściana antybotowa, zalogowany paywall.
+    // Przeglądarka to wszystko ma — a wtyczka od dawna wstrzykuje się w każdą stronę otwartą
+    // w oknie `_b24tnews` (relay na początku pliku) i dotąd odsyłała stamtąd samą datę.
+    // Teraz odsyła całą treść, więc OTWARCIE STRONY JEST SKANEM: wiersz wypełnia się sam,
+    // zamiast zmuszać annotatora do przeczytania i ocenienia strony własnymi oczami.
+    //
+    // Kolejka istnieje po to, żeby okna się nie gryzły. Bez niej przelot J/K po liście
+    // zablokowanych wierszy otwierałby okno na każdy z nich, a każde kolejne przejmowałoby
+    // fokus poprzedniemu i przerywało ładowanie. Zasady:
+    //   1. JEDNO okno (`_newsOpenUrl` reużywa `_b24tnews`) i JEDNA strona w locie.
+    //   2. Nawigacja kolejki NIE zabiera fokusu — inaczej panel traci klawiaturę przy
+    //      pierwszym skanie i J/K przestaje działać do czasu alt-taba.
+    //   3. Wiersz, przez który annotator tylko przelatuje, nie uruchamia niczego: skan rusza
+    //      dopiero, gdy zostanie na nim NEWS_BS_ARM_MS.
+    var _bsQueue   = [];    // wiersze czekające na okno
+    var _bsPending = null;  // { entry, timer } — strona w locie
+    var _bsArm     = null;  // odliczanie dla wiersza, na którym stoi annotator
+    var _bsBatch   = null;  // { total, done } gdy leci przelot wsadowy
+    var NEWS_BS_TIMEOUT_MS = 20000;
+    var NEWS_BS_ARM_MS     = 800;
+
+    function _bsSameUrl(a, b) {
+      return String(a || '').replace(/\/+$/, '') === String(b || '').replace(/\/+$/, '');
+    }
+
+    // Wiersz, który warto pobrać przez okno: skaner go nie zdobył, a strona nie jest martwa.
+    // 404 pomijamy — przeglądarka też dostanie 404, tylko wolniej.
+    function _newsBrowserScannable(entry) {
+      return !!entry && entry.status === 'blocked' && entry.httpStatus !== 404 && !entry.bsDone;
+    }
+
+    function _newsBrowserScanArm(entry) {
+      if (_bsArm) { clearTimeout(_bsArm); _bsArm = null; }
+      if (!_newsBrowserScannable(entry)) return;
+      if (_bsPending && _bsPending.entry === entry) return;
+      _bsArm = setTimeout(function() {
+        _bsArm = null;
+        _newsBrowserScanEnqueue(entry);
+      }, NEWS_BS_ARM_MS);
+    }
+
+    function _newsBrowserScanEnqueue(entry) {
+      if (!_newsBrowserScannable(entry)) return;
+      if (_bsPending && _bsPending.entry === entry) return;
+      if (_bsQueue.indexOf(entry) !== -1) return;
+      _bsQueue.push(entry);
+      _bsPump();
+    }
+
+    function _bsPump() {
+      if (_bsPending || _bsQueue.length === 0) return;
+      var entry = _bsQueue.shift();
+      if (!_newsBrowserScannable(entry)) { _bsPump(); return; }
+      entry.bsStatus = 'pending';
+      // `quiet` — nawigujemy oknem bez zabierania mu fokusu. Fokus zabiera tylko pierwsze
+      // otwarcie, bo przeglądarka inaczej nie umie; kolejne strony wchodzą po cichu.
+      var win = _newsOpenUrl(entry.url, true);
+      if (!win) {
+        // Przeglądarka zdusiła okno. Czekanie 20 s na treść, która nigdy nie przyjdzie,
+        // dałoby annotatorowi fałszywą diagnozę „strona nie odpowiada".
+        entry.bsStatus = 'popup';
+        entry.bsDone = true;
+        renderUrlList();
+        if (newsState.activeIdx >= 0 && newsState.urls[newsState.activeIdx] === entry) {
+          _newsShowRichPreviewCard(entry, _newsThemeVars());
+        }
+        _bsPump();
+        return;
+      }
+      _bsPending = {
+        entry: entry,
+        timer: setTimeout(function() { _bsFinish(entry, null); }, NEWS_BS_TIMEOUT_MS),
+      };
+      renderUrlList();
+      if (newsState.activeIdx >= 0 && newsState.urls[newsState.activeIdx] === entry) {
+        _newsShowRichPreviewCard(entry, _newsThemeVars());
+      }
+    }
+
+    // html === null oznacza, że strona nie odesłała niczego w wyznaczonym czasie.
+    function _bsFinish(entry, html, finalUrl) {
+      if (!_bsPending || _bsPending.entry !== entry) return;
+      clearTimeout(_bsPending.timer);
+      _bsPending = null;
+      entry.bsDone = true;           // jedna próba na wiersz — inaczej kolejka kręci się w kółko
+      entry.bsStatus = null;
+
+      if (html) {
+        try {
+          var chips = _newsGetKeywords(newsState.detectedCountry || 'DEFAULT');
+          var result = _newsParseContent(html, chips, finalUrl || entry.url);
+          _newsApplyScanResult(entry, result, _newsProjectCountry());
+          if (entry.status !== 'blocked') {
+            entry.scannedViaBrowser = true;
+            if (entry.status === 'mention' || entry.status === 'contentmatch' || entry.status === 'keytopic') {
+              try { _newsAiAnalyze(entry); } catch(e) {}
+            }
+          }
+        } catch(e) {
+          entry.bsStatus = 'fail';
+        }
+      } else {
+        entry.bsStatus = 'fail';
+      }
+
+      if (_bsBatch) {
+        _bsBatch.done++;
+        if (_bsQueue.length === 0) _bsBatch = null;
+      }
+      renderUrlList();
+      if (newsState.activeIdx >= 0 && newsState.urls[newsState.activeIdx] === entry) {
+        _newsShowRichPreviewCard(entry, _newsThemeVars());
+      }
+      _bsPump();
+    }
+
+    function _newsBrowserScanCancel() {
+      if (_bsArm) { clearTimeout(_bsArm); _bsArm = null; }
+      _bsQueue.length = 0;
+      _bsBatch = null;
+      if (_bsPending) {
+        clearTimeout(_bsPending.timer);
+        _bsPending.entry.bsStatus = null;
+        _bsPending = null;
+      }
+      renderUrlList();
+    }
+
+    function _newsBrowserScanBatch() {
+      if (_bsBatch) { _newsBrowserScanCancel(); return; }
+      var targets = newsState.urls.filter(_newsBrowserScannable);
+      if (targets.length === 0) return;
+      _bsBatch = { total: targets.length, done: 0 };
+      targets.forEach(function(e) { if (_bsQueue.indexOf(e) === -1) _bsQueue.push(e); });
+      _bsPump();
+    }
+
+    // Treść z okna. Nadawcą jest nasza własna karta (`window.name === '_b24tnews'`), ale
+    // postMessage przyjmuje wszystko — dlatego bierzemy wiadomość tylko wtedy, gdy sami
+    // czekamy na stronę. Adres porównujemy luźno: serwisy przekierowują (www, kraj, AMP),
+    // więc `location.href` w oknie bywa inny niż ten, o który prosiliśmy.
+    window.addEventListener('message', function(ev) {
+      if (!ev.data || ev.data.type !== 'b24t_news_html') return;
+      if (!_bsPending) return;
+      var entry = _bsPending.entry;
+      var sameHost = false;
+      try { sameHost = new URL(ev.data.url).hostname === new URL(entry.url).hostname; } catch(e) {}
+      if (!sameHost && !_bsSameUrl(ev.data.url, entry.url)) return;
+      _bsFinish(entry, ev.data.html || '', ev.data.url);
+    }, false);
+
     // ─── PONOWIENIE NIEPRZESKANOWANYCH ───
     // Świadomie osobna, wolna pętla, a nie ponowny import: przy ponawianiu liczy się
     // skuteczność, nie czas. Sekwencyjnie, z przerwą między żądaniami i podwojonym limitem
@@ -12859,9 +13070,23 @@ function showOnboarding(onComplete) {
     // (tempo, chwilowy timeout), a ile prawdziwą blokadą serwisu. Wynik wypisujemy wprost.
     var NEWS_RETRY_GAP_MS = 2500;
 
-    async function _newsRetryBlocked() {
+    // Wiersze, dla ktorych ponowienie ma sens. `error` (DNS/SSL/odrzucone) i 404 sa trwale —
+    // zmierzone: ani jeden taki wiersz nie wrocil po ponowieniu, a bylo ich 45.
+    function _newsRetryTargets() {
+      return newsState.urls.filter(function(e) {
+        return e.status === 'blocked' && _newsBlockInfo(e).retryable;
+      });
+    }
+
+    // Górny limit jednego przebiegu — przy 2,5 s na wiersz setka adresów to ponad cztery
+    // minuty, a tyle nikt nie będzie patrzył na pasek postępu.
+    var NEWS_RETRY_MAX_BATCH = 25;
+
+    async function _newsRetryBlocked(auto) {
       if (newsState.scanning) return;
-      var targets = newsState.urls.filter(function(e) { return e.status === 'blocked'; });
+      var targets = _newsRetryTargets();
+      var skipped = Math.max(0, targets.length - NEWS_RETRY_MAX_BATCH);
+      targets = targets.slice(0, NEWS_RETRY_MAX_BATCH);
       if (targets.length === 0) return;
 
       var pc = _newsProjectCountry();
@@ -12900,10 +13125,14 @@ function showOnboarding(onComplete) {
       var stillBlocked = targets.length - recovered;
       var info = document.getElementById('b24t-news-import-info');
       if (info) {
-        info.textContent = '↻ Ponowiono ' + targets.length + ': odzyskano ' + recovered +
-          (stillBlocked > 0 ? ', nadal nieprzeskanowanych ' + stillBlocked : '');
+        var msg = '↻ Ponowiono ' + targets.length + ': odzyskano ' + recovered +
+          (stillBlocked > 0 ? ', nadal nieprzeskanowanych ' + stillBlocked : '') +
+          (skipped > 0 ? ' (' + skipped + ' czeka na kolejne kliknięcie)' : '');
+        // Po skanie dopisujemy się do jego podsumowania zamiast je kasować — annotator ma
+        // widzieć oba wyniki naraz.
+        info.textContent = auto && info.textContent ? info.textContent + ' · ' + msg : msg;
         info.style.display = '';
-        info.style.color = recovered > 0 ? '#22c55e' : '#f59e0b';
+        if (!auto) info.style.color = recovered > 0 ? '#22c55e' : '#f59e0b';
       }
       renderUrlList();
     }
@@ -12975,11 +13204,29 @@ function showOnboarding(onComplete) {
         });
         bar.appendChild(b1);
       }
-      if (blockedCount > 0) {
+      var bsCount = newsState.urls.filter(_newsBrowserScannable).length;
+      if (bsCount > 0 || _bsBatch) {
+        var bbs = document.createElement('button');
+        bbs.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid rgba(34,197,94,0.4);background:rgba(34,197,94,0.10);color:#22c55e;cursor:pointer;white-space:nowrap;';
+        bbs.textContent = _bsBatch
+          ? '\u23f9 Przerwij (' + _bsBatch.done + '/' + _bsBatch.total + ')'
+          : '\u{1F310} Skanuj przez okno (' + bsCount + ')';
+        bbs.title = _bsBatch
+          ? 'Przerywa przelot. Strona w locie zostanie dokończona.'
+          : 'Otwiera po kolei każdą nieprzeskanowaną stronę w tym samym oknie i skanuje ją z przeglądarki — z ciastkami, sesją i wykonanym JS-em. Jedno okno, jedna strona naraz, bez zabierania fokusu panelowi.';
+        bbs.addEventListener('click', function() { _newsBrowserScanBatch(); });
+        bar.appendChild(bbs);
+      }
+      var retryableCount = newsState.urls.filter(function(e) {
+        return e.status === 'blocked' && _newsBlockInfo(e).retryable;
+      }).length;
+      if (retryableCount > 0) {
         var bret = document.createElement('button');
         bret.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid rgba(99,102,241,0.4);background:rgba(99,102,241,0.12);color:#a78bfa;cursor:pointer;white-space:nowrap;';
-        bret.textContent = '\u21bb Pon\u00f3w nieprzeskanowane (' + blockedCount + ')';
-        bret.title = 'Skanuje je jeszcze raz — pojedynczo, wolniej i z dłuższym limitem czasu. Liczniki timeoutów per domena nie obowiązują, więc strony pominięte jako „domena odcięta" dostają pierwszą próbę.';
+        bret.textContent = '\u21bb Pon\u00f3w (' + retryableCount + ' z ' + blockedCount + ')';
+        bret.title = 'Skanuje jeszcze raz te wiersze, dla których ponowienie ma sens: timeout, odcięta domena, ściana antybotowa, 403/429 i błędy serwera. ' +
+          'Pojedynczo, wolniej i z dłuższym limitem czasu, bez liczników timeoutów per domena. ' +
+          'Pomija błędy sieci (DNS/SSL) i 404 — zmierzone 2026-09-14: z 45 takich wierszy nie wrócił ani jeden.';
         bret.disabled = !!newsState.scanning;
         if (bret.disabled) { bret.style.opacity = '0.5'; bret.style.cursor = 'default'; }
         bret.addEventListener('click', function() { _newsRetryBlocked(); });
@@ -13010,6 +13257,36 @@ function showOnboarding(onComplete) {
         });
         bar.appendChild(bblk);
       }
+      // Domena, z której nie otworzyła się ani jedna strona z kilku prób, jest martwa albo
+      // twardo zamknięta — i tak jest w całości do wyrzucenia. Zmierzone 2026-09-14 na liście
+      // GR: dwie takie domeny dawały 43 z 54 nieprzeskanowanych wierszy, każdy do usunięcia
+      // ręcznie. Próg trzech prób odróżnia martwy serwis od jednego pechowego adresu.
+      var _byHost = {};
+      newsState.urls.forEach(function(u) {
+        var h = '';
+        try { h = new URL(u.url).hostname.replace(/^www\./, ''); } catch(_e) { return; }
+        if (!_byHost[h]) _byHost[h] = { total: 0, blocked: 0 };
+        _byHost[h].total++;
+        if (u.status === 'blocked') _byHost[h].blocked++;
+      });
+      var _deadHosts = Object.keys(_byHost).filter(function(h) {
+        return _byHost[h].total >= 3 && _byHost[h].blocked === _byHost[h].total;
+      });
+      var _deadCount = _deadHosts.reduce(function(a, h) { return a + _byHost[h].total; }, 0);
+      if (_deadHosts.length > 0) {
+        var bdead = document.createElement('button');
+        bdead.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid rgba(239,68,68,0.35);background:rgba(239,68,68,0.08);color:#f87171;cursor:pointer;white-space:nowrap;';
+        bdead.textContent = '\u2715 Domeny bez odpowiedzi (' + _deadCount + ')';
+        bdead.title = 'Serwisy, z których nie otworzyła się ANI JEDNA strona przy co najmniej trzech próbach:\n' +
+          _deadHosts.map(function(h) { return '  ' + h + ' (' + _byHost[h].total + ')'; }).join('\n');
+        bdead.addEventListener('click', function() {
+          _newsRemoveByStatus(function(u) {
+            try { return _deadHosts.indexOf(new URL(u.url).hostname.replace(/^www\./, '')) !== -1; } catch(_e) { return false; }
+          });
+        });
+        bar.appendChild(bdead);
+      }
+
       var httpErrCount = newsState.urls.filter(function(u) { return u.status === 'blocked' && u.blockReason === 'http'; }).length;
       if (httpErrCount > 0) {
         var bhttp = document.createElement('button');
@@ -13386,6 +13663,12 @@ function showOnboarding(onComplete) {
         // Pozostałe badże
         var _metaBadges = [];
 
+        if (entry.bsStatus === 'pending') {
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(34,197,94,0.10);border:1px solid rgba(34,197,94,0.28);color:#22c55e;" title="Strona jest otwierana w oknie przeglądarki i skanowana stamtąd">🌐 okno…</span>');
+        }
+        if (entry.scannedViaBrowser) {
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.22);color:#22c55e;" title="Treść pobrana z okna przeglądarki, nie zapytaniem w tle — z Twoją sesją i ciasteczkami">🌐 z okna</span>');
+        }
         if (entry.iframeable === true) {
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.18);color:#818cf8;" title="Podgl\u0105d iframe dost\u0119pny">\u25a2</span>');
         }
@@ -13648,6 +13931,9 @@ function showOnboarding(onComplete) {
       // Pokaż podgląd w środkowej kolumnie, fetch page info asynchronicznie
       _newsShowPreview(entry);
       _newsFetchPageInfo(entry.url);
+      // Nieprzeskanowany wiersz pobiera się sam przez okno przeglądarki — ale dopiero gdy
+      // annotator na nim ZOSTANIE. Przelot J/K po liście nie ma prawa otwierać okien.
+      _newsBrowserScanArm(entry);
     }
 
     // ─── STEROWANIE KLAWIATURĄ ───
@@ -13936,6 +14222,17 @@ function showOnboarding(onComplete) {
       if (entry.iframeable === true) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.18);color:#818cf8;" title="Stronę można pokazać w ramce — przycisk „▣ Strona" w nagłówku podglądu">▢ ramka</span>');
       if (entry.wordCount > 0) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textFaint + ';">' + entry.wordCount + ' słów</span>');
       if (_badges.length > 0) parts.push('<div style="display:flex;flex-wrap:wrap;gap:5px;">' + _badges.join('') + '</div>');
+
+      // ── Skan przez okno przeglądarki ──
+      if (entry.bsStatus === 'pending') {
+        parts.push('<div style="font-size:11px;line-height:1.6;color:#22c55e;border-radius:9px;padding:9px 11px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.28);">🌐 Otwieram tę stronę w oknie przeglądarki i skanuję stamtąd — z Twoją sesją i wykonanym JS-em. Chwila.</div>');
+      } else if (entry.bsStatus === 'popup') {
+        parts.push('<div style="font-size:11px;line-height:1.6;color:#d97706;border-radius:9px;padding:9px 11px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.28);">🌐 Przeglądarka zablokowała wyskakujące okno, więc nie da się pobrać tej strony z Twojej sesji. Zezwól na wyskakujące okna dla Brand24 i kliknij wiersz ponownie.</div>');
+      } else if (entry.bsStatus === 'fail') {
+        parts.push('<div style="font-size:11px;line-height:1.6;color:#d97706;border-radius:9px;padding:9px 11px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.28);">🌐 Okno nie odesłało treści w wyznaczonym czasie — strona może być martwa albo trzymać weryfikację. Otwórz ją i zobacz sam.</div>');
+      } else if (entry.scannedViaBrowser) {
+        parts.push('<div style="font-size:10px;line-height:1.5;color:' + t.textFaint + ';">🌐 Treść pobrana z okna przeglądarki — zapytanie w tle tej strony nie dostało.</div>');
+      }
 
       // ── Werdykt AI z pełnym uzasadnieniem ──
       if (entry.aiStatus === 'pending') {
@@ -14474,6 +14771,10 @@ function showOnboarding(onComplete) {
       if (importInfo) { importInfo.textContent = doneMsg; importInfo.style.display = ''; importInfo.style.color = '#22c55e'; }
 
       renderUrlList();
+      // Druga próba od razu po skanie — zmierzone 2026-09-14: odzyskuje komplet wierszy
+      // z domen prasowych, które przy pięciu równoległych wątkach nie zdążyły odpowiedzieć.
+      // Bez tego annotator musiał o tym pamiętać i kliknąć sam.
+      await _newsRetryBlocked(true);
       _newsRunProjectCheck();
     }
 
@@ -14914,6 +15215,19 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.31.0",
+      "date": "2026-09-14",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "**Nieprzeskanowana strona skanuje się sama, przez okno przeglądarki.** Wtyczka od dawna wstrzykuje się w każdą stronę otwartą w swoim oknie, ale odsyłała stamtąd jedną rzecz: datę publikacji. Teraz odsyła całą treść, więc otwarcie strony JEST skanem — wiersz dostaje tytuł, fragmenty, „Gdzie stoi marka\", punktację i ocenę AI, zamiast kazać Ci ją przeczytać i ocenić samemu. Działa tam, gdzie zapytanie w tle przegrywa: 403 dla bota, treść budowana JS-em, ciasteczka, ściana antybotowa, zalogowany paywall"},
+        {"type": "feat", "text": "**Przelot wsadowy „Skanuj przez okno\".** Bierze po kolei wszystkie nieprzeskanowane strony, z licznikiem i przyciskiem przerwania. Okna się nie gryzą: jedno okno i jedna strona naraz, nawigacja NIE zabiera fokusu panelowi (inaczej klawiatura przestawałaby działać po pierwszym skanie), a wiersz, przez który tylko przelatujesz klawiszami, nie uruchamia niczego — skan rusza dopiero po chwili postoju. Zduszony przez przeglądarkę popup jest rozpoznawany od razu i mówi, co zrobić, zamiast udawać przez 20 sekund, że strona nie odpowiada"},
+        {"type": "feat", "text": "**Druga próba leci sama po skanie** i celuje tylko w to, co ma szanse: timeout, odciętą domenę, ścianę antybotową, 403/429 i błędy serwera. Zmierzone na 440 adresach greckich: ponowienie odzyskało 9 z 9 wierszy z serwisów prasowych i 0 z 45 z błędami sieci i 404 — dlatego te drugie są pomijane, zamiast zjadać minuty na pewną porażkę"},
+        {"type": "feat", "text": "**„Domeny bez odpowiedzi\" jednym kliknięciem.** Serwis, z którego przy co najmniej trzech próbach nie otworzyła się ani jedna strona, można wyrzucić hurtem. Na zmierzonej liście GR były to dwie domeny i 43 wiersze do usunięcia po jednym"},
+        {"type": "fix", "text": "**Błąd połączenia dostaje drugą szansę po przestawieniu „www\".** Zmierzone: jeden z greckich serwisów ma certyfikat wystawiony wyłącznie na domenę bez „www\", więc wszystkie 33 adresy z przedrostkiem padały na uścisku TLS i wyglądały na awarię sieci. Jedna próba po przestawieniu przedrostka odróżnia zepsuty certyfikat od serwisu, którego naprawdę nie ma"}
+      ]
+    },
+    {
       "version": "0.30.0",
       "date": "2026-09-14",
       "label": "feat",
@@ -15018,20 +15332,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "Sprawdzanie odnawia się samo po powrocie do karty i wtedy, gdy inna karta Brand24 przechwyci świeży token — to drugie nie kosztuje żadnego zapytania"},
         {"type": "fix", "text": "Gdy wysyłka nie dostanie tokenu, kropka natychmiast robi się czerwona, a komunikat mówi wprost, że **formularz zostaje wypełniony** — wystarczy się zalogować i kliknąć drugi raz"},
         {"type": "fix", "text": "Blokada wysyłki z trybu Niestandardowego nie zostaje już na przycisku po przełączeniu na News — przycisk jest wspólny dla obu trybów, a zdejmować blokadę nie miał kto"}
-      ]
-    },
-    {
-      "version": "0.26.22",
-      "date": "2026-09-11",
-      "label": "fix",
-      "labelColor": "#f59e0b",
-      "changes": [
-        {"type": "fix", "text": "Nazwy projektów w liście wyboru brały się z tytułu karty przeglądarki, a nie z Brand24. Jeśli wtyczka trafiła w moment, gdy tytuł pokazywał jeszcze listę projektów albo nazwę konta, zapisywała to jako nazwę projektu na zawsze — stąd ten sam wpis powtórzony kilkadziesiąt razy i nazwy niezgodne z projektem. Teraz nazwa pochodzi z API, a raz potwierdzonej nie da się nadpisać tytułem strony"},
-        {"type": "fix", "text": "Przycisk uzupełniania nazw (Ustawienia → Ogólne, teraz „Sprawdź nazwy w Brand24\") nigdy nie działał: prosił o zapytanie, którego w API nie ma, a potem o właściwe, ale ze złą nazwą argumentu — i oba błędy były wyciszone, więc wyglądało to na „nie znaleziono\". Poprawione, a błędy trafiają teraz do logu"},
-        {"type": "fix", "text": "Do sprawdzenia kwalifikują się nazwy niepotwierdzone, nie tylko puste. Wcześniej nazwa zła, ale wyglądająca porządnie, nie miała żadnej drogi do poprawy"},
-        {"type": "fix", "text": "Nazwy zastępcze w postaci „Project <numer>\" nie trafiają już do pamięci wtyczki i nie pojawiają się na liście wyboru na stronach zewnętrznych"},
-        {"type": "feat", "text": "Sprawdzenie nazwy ustala przy okazji, na którym panelu (.pl czy .com) projekt się znajduje. Wcześniej, gdy wtyczka tego nie wiedziała, celowała w ostatnio używany panel — przy dwóch panelach otwartych naraz mogła trafić w zły"},
-        {"type": "feat", "text": "Projekty usunięte albo z innych kont są ukrywane na liście wyboru, ale zostają w pamięci razem z zapisanymi tagami — jedno nieudane sprawdzenie nie kosztuje danych"}
       ]
     }
   ];

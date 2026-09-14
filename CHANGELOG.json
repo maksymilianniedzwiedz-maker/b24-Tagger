@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.31.0",
+    "date": "2026-09-14",
+    "label": "feat",
+    "changes": [
+      "feat: **Nieprzeskanowana strona skanuje się sama, przez okno przeglądarki.** Wtyczka od dawna wstrzykuje się w każdą stronę otwartą w swoim oknie, ale odsyłała stamtąd jedną rzecz: datę publikacji. Teraz odsyła całą treść, więc otwarcie strony JEST skanem — wiersz dostaje tytuł, fragmenty, „Gdzie stoi marka\", punktację i ocenę AI, zamiast kazać Ci ją przeczytać i ocenić samemu. Działa tam, gdzie zapytanie w tle przegrywa: 403 dla bota, treść budowana JS-em, ciasteczka, ściana antybotowa, zalogowany paywall",
+      "feat: **Przelot wsadowy „Skanuj przez okno\".** Bierze po kolei wszystkie nieprzeskanowane strony, z licznikiem i przyciskiem przerwania. Okna się nie gryzą: jedno okno i jedna strona naraz, nawigacja NIE zabiera fokusu panelowi (inaczej klawiatura przestawałaby działać po pierwszym skanie), a wiersz, przez który tylko przelatujesz klawiszami, nie uruchamia niczego — skan rusza dopiero po chwili postoju. Zduszony przez przeglądarkę popup jest rozpoznawany od razu i mówi, co zrobić, zamiast udawać przez 20 sekund, że strona nie odpowiada",
+      "feat: **Druga próba leci sama po skanie** i celuje tylko w to, co ma szanse: timeout, odciętą domenę, ścianę antybotową, 403/429 i błędy serwera. Zmierzone na 440 adresach greckich: ponowienie odzyskało 9 z 9 wierszy z serwisów prasowych i 0 z 45 z błędami sieci i 404 — dlatego te drugie są pomijane, zamiast zjadać minuty na pewną porażkę",
+      "feat: **„Domeny bez odpowiedzi\" jednym kliknięciem.** Serwis, z którego przy co najmniej trzech próbach nie otworzyła się ani jedna strona, można wyrzucić hurtem. Na zmierzonej liście GR były to dwie domeny i 43 wiersze do usunięcia po jednym",
+      "fix: **Błąd połączenia dostaje drugą szansę po przestawieniu „www\".** Zmierzone: jeden z greckich serwisów ma certyfikat wystawiony wyłącznie na domenę bez „www\", więc wszystkie 33 adresy z przedrostkiem padały na uścisku TLS i wyglądały na awarię sieci. Jedna próba po przestawieniu przedrostka odróżnia zepsuty certyfikat od serwisu, którego naprawdę nie ma"
+    ]
+  },
+  {
     "version": "0.30.0",
     "date": "2026-09-14",
     "label": "feat",

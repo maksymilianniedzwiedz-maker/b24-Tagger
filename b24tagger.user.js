@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.29.0
+// @version      0.30.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -120,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.29.0';
+  const VERSION = '0.30.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -10475,7 +10475,120 @@ function showOnboarding(onComplete) {
   // Dla URL-i które już mają status 'match' nie wywołuj tej funkcji — jest zbędna.
   // Timeout jest adaptacyjny: rośnie na podstawie historii udanych skanów (p90 * 2, min 8s, max 40s).
   // Przy pierwszym timeout: jeden retry z 2× timeout. onerror → blocked bez retry (prawdziwy block).
-  function _newsContentScan(url, chips) {
+  // Dlaczego wiersz jest „nieprzeskanowany" — jedno miejsce dla listy, dymka i karty.
+  // Wcześniej te same etykiety stały w trzech miejscach i dwie z sześciu przyczyn nie były
+  // obsłużone nigdzie: `challenge` i `domain_timeout` pokazywały się jako gołe „Zablokowana",
+  // czyli annotator nie miał jak zgłosić, co się właściwie stało.
+  //
+  // ⚠ `domain_timeout` NIE jest werdyktem o tej stronie. Skaner odcina domenę po dwóch
+  // timeoutach i pomija resztę jej adresów — przy liście z jednego dużego serwisu potrafi
+  // to oznaczyć dziesiątki stron, które nigdy nie były nawet spróbowane.
+  function _newsBlockInfo(entry) {
+    var r = entry && entry.blockReason;
+    if (r === 'timeout') return {
+      label: 'Timeout',
+      tip: 'Strona nie odpowiedziała w wyznaczonym czasie. Ponowienie często pomaga — spróbuj „↻ Ponów nieprzeskanowane"',
+      retryable: true };
+    if (r === 'error') return {
+      label: 'Błąd sieci',
+      tip: 'Błąd połączenia (DNS, SSL albo odrzucone połączenie). Zwykle trwały — sprawdź adres ręcznie',
+      retryable: false };
+    if (r === 'http') return {
+      label: 'HTTP ' + (entry.httpStatus || ''),
+      tip: 'Serwer odrzucił zapytanie kodem ' + (entry.httpStatus || '?') +
+           (entry.httpStatus === 403 || entry.httpStatus === 429 ? '. To zwykle blokada za tempo — ponowienie po przerwie bywa skuteczne' :
+            entry.httpStatus === 404 ? '. Strona nie istnieje — ponowienie nic nie da' :
+            entry.httpStatus >= 500 ? '. Błąd po stronie serwisu — ponowienie za chwilę bywa skuteczne' : ''),
+      retryable: entry.httpStatus !== 404 };
+    if (r === 'challenge') return {
+      label: 'Ściana antybotowa',
+      tip: 'Serwis oddał stronę weryfikacyjną (Cloudflare itp.) zamiast treści. Stan zwykle przejściowy — ponowienie w wolniejszym tempie bywa skuteczne',
+      retryable: true };
+    if (r === 'domain_timeout') return {
+      label: 'Domena odcięta',
+      tip: 'Dwa wcześniejsze adresy z tej domeny nie odpowiedziały, więc skaner pominął resztę jej stron. ' +
+           'To NIE znaczy, że akurat ta strona jest zablokowana — nie była nawet spróbowana. Użyj „↻ Ponów nieprzeskanowane"',
+      retryable: true };
+    if (r === 'exception') return {
+      label: 'Błąd',
+      tip: 'Nieoczekiwany błąd podczas skanowania. Kliknij, aby otworzyć ręcznie',
+      retryable: true };
+    return {
+      label: 'Nieprzeskanowana',
+      tip: 'Wtyczka nie mogła pobrać strony. Kliknij, aby sprawdzić ręcznie',
+      retryable: true };
+  }
+
+  // Przepisanie wyniku skanu na wiersz listy. Wyciągnięte z pętli importu, bo ponawianie
+  // zablokowanych musi robić DOKŁADNIE to samo — rozjazd tych dwóch miejsc oznaczałby wiersz,
+  // który po ponowieniu wygląda inaczej niż ten sam wiersz po zwykłym skanie.
+  function _newsApplyScanResult(entry, result, pc) {
+    // URL sygnalizuje obcy kraj → nadpisz wynik (włącznie z blocked/timeout)
+    if (pc) {
+      var _urlCountries = _newsCountriesInUrl(entry.url);
+      var _urlCountryKeys = Object.keys(_urlCountries);
+      if (_urlCountryKeys.length > 0 && !_urlCountries[pc]) {
+        result.status = 'wrongcountry';
+      }
+    }
+    // Język strony vs kraj projektu (tylko gdy skan się udał i mamy dane języka)
+    if (result.status !== 'nomatch' && result.status !== 'blocked' &&
+        result.status !== 'wrongcountry' && result.pageLang && pc) {
+      // User-editable mapa kraj→języki ma priorytet nad modułowym fallbackem.
+      // (Inaczej edycje w _newsOpenLangMapEditor nie wpływały na scan worker.)
+      var _userLangMap = (typeof _newsGetLangMap === 'function') ? _newsGetLangMap() : null;
+      var _expLangs = (_userLangMap && _userLangMap[pc]) || (_userLangMap && _userLangMap[pc.toLowerCase()]) || (_NEWS_LANG_MAP[pc.toLowerCase()] || []);
+      if (_expLangs.length > 0 && _expLangs.indexOf(result.pageLang) === -1) {
+        result.status = 'wrongcountry';
+      }
+    }
+    // Staleness — data publikacji vs dziś (próg: 60 dni)
+    var _isStale = false;
+    if (result.articleDate) {
+      var _diffDays = (Date.now() - new Date(result.articleDate).getTime()) / 86400000;
+      _isStale = _diffDays > 60;
+    }
+    entry.status             = result.status;
+    entry.scanStatus         = result.status;
+    entry.score              = result.score;
+    entry.scoreParts         = result.scoreParts || [];
+    entry.snippet            = result.snippet;
+    entry.snippetZone        = result.snippetZone || '';
+    entry.title              = result.title || '';
+    entry.matchedChips       = result.matchedChips || [];
+    entry.secondaryZoneOnly  = result.secondaryZoneOnly || false;
+    entry.zoneHints          = result.zoneHints || [];
+    entry.teaserMatchOnly    = result.teaserMatchOnly || false;
+    entry.teaserChips        = result.teaserChips || [];
+    entry.outsideChips       = result.outsideChips || [];
+    entry.canonicalUrl       = result.canonicalUrl || null;
+    // Duplikat tylko OZNACZAMY, nie usuwamy — wiersz zostaje widoczny, a decyzja
+    // należy do annotatora. Cicho znikający wiersz to gorszy błąd niż wiersz zbędny.
+    if (entry.canonicalUrl) {
+      for (var _di = 0; _di < newsState.urls.length; _di++) {
+        var _other = newsState.urls[_di];
+        if (_other === entry || !_other.canonicalUrl) continue;
+        if (_other.canonicalUrl === entry.canonicalUrl && !_other.duplicateOf) {
+          entry.duplicateOf = _other.url;
+          break;
+        }
+      }
+    }
+    entry.pageType           = result.pageType || 'unknown';
+    entry.pageTypeSignals    = result.pageTypeSignals || [];
+    entry.pageLang           = result.pageLang || '';
+    entry.articleDate        = result.articleDate || null;
+    entry.isStale            = _isStale;
+    entry.isPaywall          = result.isPaywall || false;
+    entry.keywordContexts    = result.keywordContexts || {};
+    entry.author             = result.author || '';
+    entry.wordCount          = result.wordCount || 0;
+    if (result.iframeable !== undefined) entry.iframeable = result.iframeable;
+    entry.blockReason = result.blockReason || null;
+    entry.httpStatus  = result.httpStatus  || null;
+  }
+
+  function _newsContentScan(url, chips, timeoutMs) {
     return new Promise(function(resolve) {
       var resolved = false;
       var _scanStart = Date.now();
@@ -10555,7 +10668,7 @@ function showOnboarding(onComplete) {
         }
       }
 
-      _attempt(_getAdaptiveScanTimeout());
+      _attempt(timeoutMs || _getAdaptiveScanTimeout());
     });
   }
 
@@ -12702,14 +12815,8 @@ function showOnboarding(onComplete) {
       if (s === 'inproject')    return { dot: '●', color: '#64748b', label: 'Już w projekcie (ten miesiąc)' };
       if (s === 'scanning')     return { dot: '◌', color: '#818cf8', label: 'Skanowanie treści...' };
       if (s === 'blocked') {
-        var _lbl = 'Nie przeskanowana — kliknij aby sprawdzić ręcznie';
-        if (entry) {
-          if (entry.blockReason === 'timeout')    _lbl = 'Timeout — brak odpowiedzi w wyznaczonym czasie. Kliknij aby otworzyć ręcznie';
-          else if (entry.blockReason === 'error') _lbl = 'Błąd połączenia (DNS, SSL lub connection refused). Kliknij aby otworzyć ręcznie';
-          else if (entry.blockReason === 'http')  _lbl = 'HTTP ' + (entry.httpStatus || '') + ' — serwer odrzucił zapytanie. Kliknij aby otworzyć ręcznie';
-          else if (entry.blockReason === 'exception') _lbl = 'Nieoczekiwany błąd podczas skanowania. Kliknij aby otworzyć ręcznie';
-        }
-        return { dot: '—', color: '#6b7280', label: _lbl };
+        var _bi = _newsBlockInfo(entry);
+        return { dot: '—', color: '#6b7280', label: _bi.label + ' — ' + _bi.tip };
       }
       return { dot: '○', color: '#4b5563', label: 'Brak keyword w URL ani treści' };
     }
@@ -12741,6 +12848,114 @@ function showOnboarding(onComplete) {
       return false;
     }
 
+    // ─── PONOWIENIE NIEPRZESKANOWANYCH ───
+    // Świadomie osobna, wolna pętla, a nie ponowny import: przy ponawianiu liczy się
+    // skuteczność, nie czas. Sekwencyjnie, z przerwą między żądaniami i podwojonym limitem
+    // czasu — dokładnie odwrotnie niż skan importu, który jedzie pięcioma wątkami naraz.
+    // Liczniki timeoutów per domena z importu NIE obowiązują, więc strony pominięte przez
+    // `domain_timeout` dostają wreszcie swoją pierwszą próbę.
+    //
+    // To jest przy okazji POMIAR: ile z „nieprzeskanowanych" było stanem przejściowym
+    // (tempo, chwilowy timeout), a ile prawdziwą blokadą serwisu. Wynik wypisujemy wprost.
+    var NEWS_RETRY_GAP_MS = 2500;
+
+    async function _newsRetryBlocked() {
+      if (newsState.scanning) return;
+      var targets = newsState.urls.filter(function(e) { return e.status === 'blocked'; });
+      if (targets.length === 0) return;
+
+      var pc = _newsProjectCountry();
+      var chips = _newsGetKeywords(newsState.detectedCountry || 'DEFAULT');
+      var timeoutMs = Math.min(45000, Math.max(20000, _getAdaptiveScanTimeout() * 2));
+
+      newsState.scanning   = true;
+      newsState.scanTotal  = targets.length;
+      newsState.scanDone   = 0;
+      newsState.scanStartTime = Date.now();
+      renderUrlList();
+
+      var recovered = 0;
+      for (var i = 0; i < targets.length; i++) {
+        var entry = targets[i];
+        entry.status = 'scanning';
+        renderUrlList();
+        try {
+          var result = await _newsContentScan(entry.url, chips, timeoutMs);
+          _newsApplyScanResult(entry, result, pc);
+          if (entry.status !== 'blocked') {
+            recovered++;
+            if (entry.status === 'mention' || entry.status === 'contentmatch' || entry.status === 'keytopic') {
+              try { _newsAiAnalyze(entry); } catch(e) {}
+            }
+          }
+        } catch(e) {
+          entry.status = 'blocked'; entry.scanStatus = 'blocked'; entry.blockReason = 'exception';
+        }
+        newsState.scanDone++;
+        renderUrlList();
+        if (i < targets.length - 1) await new Promise(function(r) { setTimeout(r, NEWS_RETRY_GAP_MS); });
+      }
+
+      newsState.scanning = false;
+      var stillBlocked = targets.length - recovered;
+      var info = document.getElementById('b24t-news-import-info');
+      if (info) {
+        info.textContent = '↻ Ponowiono ' + targets.length + ': odzyskano ' + recovered +
+          (stillBlocked > 0 ? ', nadal nieprzeskanowanych ' + stillBlocked : '');
+        info.style.display = '';
+        info.style.color = recovered > 0 ? '#22c55e' : '#f59e0b';
+      }
+      renderUrlList();
+    }
+
+    // Raport do schowka — surowe liczby, które da się wkleić w rozmowę.
+    // Bez tego „dużo stron się nie skanuje" jest nie do rozwiązania: nie wiadomo, czego jest
+    // dużo. Rozkład powodów i domen mówi, czy walczymy z tempem, z Cloudflare, czy z siecią.
+    function _newsBlockedReport() {
+      var rows = newsState.urls;
+      var blocked = rows.filter(function(e) { return e.status === 'blocked'; });
+      function _key(e) { return e.blockReason === 'http' ? 'http ' + (e.httpStatus || '?') : (e.blockReason || 'nieznany'); }
+      function _host(e) { try { return new URL(e.url).hostname.replace(/^www\./, ''); } catch(_e) { return '(zły adres)'; } }
+
+      var byReason = {}, byHost = {};
+      blocked.forEach(function(e) {
+        var k = _key(e), h = _host(e);
+        byReason[k] = (byReason[k] || 0) + 1;
+        if (!byHost[h]) byHost[h] = { n: 0, reasons: {} };
+        byHost[h].n++;
+        byHost[h].reasons[k] = (byHost[h].reasons[k] || 0) + 1;
+      });
+
+      var L = [];
+      L.push('DIAGNOSTYKA SKANOWANIA — ' + new Date().toISOString().slice(0, 16).replace('T', ' '));
+      L.push('Projekt: ' + (state.projectId || '?') +
+             (newsState.detectedCountry ? ' | kraj URL-i: ' + newsState.detectedCountry : ''));
+      L.push('Wierszy: ' + rows.length + ' | nieprzeskanowanych: ' + blocked.length +
+             (rows.length ? ' (' + Math.round(blocked.length / rows.length * 100) + '%)' : ''));
+      if (blocked.length === 0) return L.join('\n');
+
+      L.push('');
+      L.push('POWODY:');
+      Object.keys(byReason).sort(function(a, b) { return byReason[b] - byReason[a]; }).forEach(function(k) {
+        L.push('  ' + (k + '                  ').slice(0, 18) + byReason[k]);
+      });
+
+      L.push('');
+      L.push('DOMENY:');
+      Object.keys(byHost).sort(function(a, b) { return byHost[b].n - byHost[a].n; }).forEach(function(h) {
+        var rs = Object.keys(byHost[h].reasons).map(function(k) { return byHost[h].reasons[k] + '× ' + k; }).join(', ');
+        L.push('  ' + (h + '                                  ').slice(0, 34) + rs);
+      });
+
+      // Adresy do ręcznego sprawdzenia — z limitem, żeby schowek dało się jeszcze wkleić.
+      var CAP = 80;
+      L.push('');
+      L.push('ADRESY:');
+      blocked.slice(0, CAP).forEach(function(e) { L.push('  [' + _key(e) + '] ' + e.url); });
+      if (blocked.length > CAP) L.push('  … i ' + (blocked.length - CAP) + ' dalszych');
+      return L.join('\n');
+    }
+
     function _newsUpdateBulkBar() {
       var bar = document.getElementById('b24t-news-bulk-bar');
       if (!bar) return;
@@ -12761,6 +12976,31 @@ function showOnboarding(onComplete) {
         bar.appendChild(b1);
       }
       if (blockedCount > 0) {
+        var bret = document.createElement('button');
+        bret.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid rgba(99,102,241,0.4);background:rgba(99,102,241,0.12);color:#a78bfa;cursor:pointer;white-space:nowrap;';
+        bret.textContent = '\u21bb Pon\u00f3w nieprzeskanowane (' + blockedCount + ')';
+        bret.title = 'Skanuje je jeszcze raz — pojedynczo, wolniej i z dłuższym limitem czasu. Liczniki timeoutów per domena nie obowiązują, więc strony pominięte jako „domena odcięta" dostają pierwszą próbę.';
+        bret.disabled = !!newsState.scanning;
+        if (bret.disabled) { bret.style.opacity = '0.5'; bret.style.cursor = 'default'; }
+        bret.addEventListener('click', function() { _newsRetryBlocked(); });
+        bar.appendChild(bret);
+
+        var bdiag = document.createElement('button');
+        bdiag.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid ' + t.borderSub + ';background:transparent;color:' + t.textMuted + ';cursor:pointer;white-space:nowrap;';
+        bdiag.textContent = '\u{1FA7A} Diagnostyka';
+        bdiag.title = 'Kopiuje do schowka rozkład powodów i domen — do wklejenia przy zgłaszaniu problemu';
+        bdiag.addEventListener('click', function() {
+          var txt = _newsBlockedReport();
+          navigator.clipboard.writeText(txt).then(function() {
+            bdiag.textContent = '\u2713 Skopiowane';
+            setTimeout(function() { bdiag.textContent = '\u{1FA7A} Diagnostyka'; }, 1800);
+          }).catch(function() {
+            bdiag.textContent = '\u2717 Schowek odm\u00f3wi\u0142';
+            setTimeout(function() { bdiag.textContent = '\u{1FA7A} Diagnostyka'; }, 1800);
+          });
+        });
+        bar.appendChild(bdiag);
+
         var bblk = document.createElement('button');
         bblk.style.cssText = 'font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid rgba(107,114,128,0.4);background:rgba(107,114,128,0.1);color:#9ca3af;cursor:pointer;white-space:nowrap;';
         bblk.textContent = '\u2715 Usu\u0144 nieprzeskanowane (' + blockedCount + ')';
@@ -13107,13 +13347,7 @@ function showOnboarding(onComplete) {
         if (!newsState.scanning) {
           row.style.animation = 'b24t-fadein 0.15s ease ' + Math.min(idx * 30, 240) + 'ms both';
         }
-        if (isBlocked) {
-          if (entry.blockReason === 'timeout')         row.title = 'Timeout — strona nie odpowiedziała w czasie. Kliknij aby otworzyć ręcznie';
-          else if (entry.blockReason === 'error')      row.title = 'Błąd połączenia (DNS, SSL, connection refused). Kliknij aby otworzyć ręcznie';
-          else if (entry.blockReason === 'http')       row.title = 'HTTP ' + (entry.httpStatus || '') + ' — serwer odrzucił zapytanie. Kliknij aby otworzyć ręcznie';
-          else if (entry.blockReason === 'exception')  row.title = 'Nieoczekiwany błąd podczas skanowania. Kliknij aby otworzyć ręcznie';
-          else                                         row.title = 'Wtyczka nie mogła przeskanować — kliknij aby sprawdzić ręcznie';
-        }
+        if (isBlocked) row.title = _newsBlockInfo(entry).tip;
 
         var displayUrl = entry.url.replace(/^https?:\/\//, '');
 
@@ -13125,13 +13359,7 @@ function showOnboarding(onComplete) {
         }
 
         // Status badge — pierwszy w górnym wierszu
-        var _blockedLabel = isBlocked ? (
-          entry.blockReason === 'timeout'   ? 'Timeout' :
-          entry.blockReason === 'error'     ? 'B\u0142\u0105d sieci' :
-          entry.blockReason === 'http'      ? 'HTTP ' + (entry.httpStatus || '') :
-          entry.blockReason === 'exception' ? 'B\u0142\u0105d' :
-          'Zablokowana'
-        ) : 'Zablokowana';
+        var _blockedLabel = _newsBlockInfo(entry).label;
         var _sLabels = { match:'Keyword w URL', keytopic:'G\u0142\u00f3wny temat', contentmatch:'W tre\u015bci', mention:'Wzmianka', teasermatch:'Polecany art.', wrongcountry:'Z\u0142y kraj', opened:'Otwarty', checked:'Sprawdzony', added:'Dodano', error:'B\u0142\u0105d', inproject:'W projekcie', scanning:'Skanowanie\u2026', blocked:_blockedLabel, nomatch:'Brak keyword' };
         var _sbStyle;
         if (isScanning) {
@@ -13697,12 +13925,7 @@ function showOnboarding(onComplete) {
       var _sc = _statusColors[entry.status] || '#9ca3af';
       var _sb = _statusBgs[entry.status]    || 'rgba(107,114,128,0.10)';
       var _sl = _statusLabels[entry.status] || entry.status || '';
-      if (entry.status === 'blocked' && entry.blockReason) {
-        if (entry.blockReason === 'timeout')         _sl = 'timeout';
-        else if (entry.blockReason === 'error')      _sl = 'błąd sieci';
-        else if (entry.blockReason === 'http')       _sl = 'HTTP ' + (entry.httpStatus || '');
-        else if (entry.blockReason === 'exception')  _sl = 'błąd';
-      }
+      if (entry.status === 'blocked') _sl = _newsBlockInfo(entry).label;
       var _badges = [];
       if (_sl) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:' + _sb + ';border:1px solid ' + _sc + '33;color:' + _sc + ';font-weight:600;">' + _escHtml(_sl) + '</span>');
       if (entry.articleDate) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textMuted + ';">📅 ' + _escHtml(entry.articleDate) + '</span>');
@@ -14212,69 +14435,7 @@ function showOnboarding(onComplete) {
               _domainTimeouts[_entryDomain] = (_domainTimeouts[_entryDomain] || 0) + 1;
             }
 
-            // URL sygnalizuje obcy kraj → nadpisz wynik (włącznie z blocked/timeout)
-            if (pc) {
-              var _urlCountries = _newsCountriesInUrl(entry.url);
-              var _urlCountryKeys = Object.keys(_urlCountries);
-              if (_urlCountryKeys.length > 0 && !_urlCountries[pc]) {
-                result.status = 'wrongcountry';
-              }
-            }
-            // Język strony vs kraj projektu (tylko gdy skan się udał i mamy dane języka)
-            if (result.status !== 'nomatch' && result.status !== 'blocked' &&
-                result.status !== 'wrongcountry' && result.pageLang && pc) {
-              // User-editable mapa kraj→języki ma priorytet nad modułowym fallbackem.
-              // (Inaczej edycje w _newsOpenLangMapEditor nie wpływały na scan worker.)
-              var _userLangMap = (typeof _newsGetLangMap === 'function') ? _newsGetLangMap() : null;
-              var _expLangs = (_userLangMap && _userLangMap[pc]) || (_userLangMap && _userLangMap[pc.toLowerCase()]) || (_NEWS_LANG_MAP[pc.toLowerCase()] || []);
-              if (_expLangs.length > 0 && _expLangs.indexOf(result.pageLang) === -1) {
-                result.status = 'wrongcountry';
-              }
-            }
-            // Staleness — data publikacji vs dziś (próg: 60 dni)
-            var _isStale = false;
-            if (result.articleDate) {
-              var _diffDays = (Date.now() - new Date(result.articleDate).getTime()) / 86400000;
-              _isStale = _diffDays > 60;
-            }
-            entry.status             = result.status;
-            entry.scanStatus         = result.status;
-            entry.score              = result.score;
-            entry.scoreParts         = result.scoreParts || [];
-            entry.snippet            = result.snippet;
-            entry.snippetZone        = result.snippetZone || '';
-            entry.title              = result.title || '';
-            entry.matchedChips       = result.matchedChips || [];
-            entry.secondaryZoneOnly  = result.secondaryZoneOnly || false;
-            entry.zoneHints          = result.zoneHints || [];
-            entry.teaserMatchOnly    = result.teaserMatchOnly || false;
-            entry.teaserChips        = result.teaserChips || [];
-            entry.outsideChips       = result.outsideChips || [];
-            entry.canonicalUrl       = result.canonicalUrl || null;
-            // Duplikat tylko OZNACZAMY, nie usuwamy — wiersz zostaje widoczny, a decyzja
-            // należy do annotatora. Cicho znikający wiersz to gorszy błąd niż wiersz zbędny.
-            if (entry.canonicalUrl) {
-              for (var _di = 0; _di < newsState.urls.length; _di++) {
-                var _other = newsState.urls[_di];
-                if (_other === entry || !_other.canonicalUrl) continue;
-                if (_other.canonicalUrl === entry.canonicalUrl && !_other.duplicateOf) {
-                  entry.duplicateOf = _other.url;
-                  break;
-                }
-              }
-            }
-            entry.pageType           = result.pageType || 'unknown';
-            entry.pageTypeSignals    = result.pageTypeSignals || [];
-            entry.pageLang           = result.pageLang || '';
-            entry.articleDate        = result.articleDate || null;
-            entry.isStale            = _isStale;
-            entry.isPaywall          = result.isPaywall || false;
-            entry.keywordContexts    = result.keywordContexts || {};
-            entry.author             = result.author || '';
-            entry.wordCount          = result.wordCount || 0;
-            if (result.iframeable !== undefined) entry.iframeable = result.iframeable;
-            entry.blockReason = result.blockReason || null;
-            entry.httpStatus  = result.httpStatus  || null;
+            _newsApplyScanResult(entry, result, pc);
           } catch(e) {
             entry.status = 'blocked'; entry.blockReason = 'exception'; entry.scanStatus = 'blocked';
           }
@@ -14753,6 +14914,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.30.0",
+      "date": "2026-09-14",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "**„Ponów nieprzeskanowane\" — drugie podejście do stron, których skaner nie umiał pobrać.** Przycisk w pasku akcji bierze wszystkie wiersze ze statusem „nieprzeskanowana\" i skanuje je jeszcze raz, ale odwrotnie niż przy imporcie: pojedynczo, z przerwą między żądaniami i z limitem czasu podwojonym do 20–45 sekund. Nie obowiązują też liczniki timeoutów per domena, więc strony pominięte wcześniej jako „domena odcięta\" dostają wreszcie swój pierwszy strzał. Po przebiegu wtyczka pisze wprost, ile udało się odzyskać"},
+        {"type": "fix", "text": "**Wiersz mówi wreszcie, DLACZEGO nie został przeskanowany.** Skaner rozróżnia sześć przyczyn, a panel podał do tej pory cztery — ściana antybotowa i odcięcie domeny pokazywały się jako gołe „Zablokowana\". Każda ma teraz własną etykietę i podpowiedź, która mówi też, czy ponawianie ma sens: przy 404 nie ma, przy 403 i błędzie serwera owszem"},
+        {"type": "fix", "text": "**„Domena odcięta\" przestała udawać blokadę.** Po dwóch timeoutach z jednego serwisu skaner pomija resztę jego adresów — przy liście z jednego dużego wydawcy potrafi to oznaczyć dziesiątki stron, których **w ogóle nie spróbował pobrać**. Wyglądało to identycznie jak prawdziwa blokada. Teraz podpowiedź mówi to wprost i kieruje do ponowienia"},
+        {"type": "feat", "text": "**„Diagnostyka\" kopiuje do schowka rozkład nieprzeskanowanych** — ile którego powodu, na jakich domenach, plus listę adresów. Do wklejenia przy zgłaszaniu problemu, żeby rozmowa zaczynała się od liczb, a nie od „dużo stron się nie skanuje\""}
+      ]
+    },
+    {
       "version": "0.29.0",
       "date": "2026-09-14",
       "label": "feat",
@@ -14859,15 +15032,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "Nazwy zastępcze w postaci „Project <numer>\" nie trafiają już do pamięci wtyczki i nie pojawiają się na liście wyboru na stronach zewnętrznych"},
         {"type": "feat", "text": "Sprawdzenie nazwy ustala przy okazji, na którym panelu (.pl czy .com) projekt się znajduje. Wcześniej, gdy wtyczka tego nie wiedziała, celowała w ostatnio używany panel — przy dwóch panelach otwartych naraz mogła trafić w zły"},
         {"type": "feat", "text": "Projekty usunięte albo z innych kont są ukrywane na liście wyboru, ale zostają w pamięci razem z zapisanymi tagami — jedno nieudane sprawdzenie nie kosztuje danych"}
-      ]
-    },
-    {
-      "version": "0.26.21",
-      "date": "2026-09-10",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "Ostrzeżenie o niezgodności języka działa teraz dla TikToka. Wtyczka bierze język z wykrytego języka OPISU filmu, a nie z języka interfejsu — dlatego wcześniej było wyłączone, żeby nie krzyczeć przy każdym poście. Przy opisie złożonym z samych hashtagów ostrzeżenie się nie pojawia, bo nie ma z czego rozpoznać języka"}
       ]
     }
   ];

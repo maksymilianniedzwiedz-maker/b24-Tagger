@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.30.0",
+    "date": "2026-09-14",
+    "label": "feat",
+    "changes": [
+      "feat: **„Ponów nieprzeskanowane\" — drugie podejście do stron, których skaner nie umiał pobrać.** Przycisk w pasku akcji bierze wszystkie wiersze ze statusem „nieprzeskanowana\" i skanuje je jeszcze raz, ale odwrotnie niż przy imporcie: pojedynczo, z przerwą między żądaniami i z limitem czasu podwojonym do 20–45 sekund. Nie obowiązują też liczniki timeoutów per domena, więc strony pominięte wcześniej jako „domena odcięta\" dostają wreszcie swój pierwszy strzał. Po przebiegu wtyczka pisze wprost, ile udało się odzyskać",
+      "fix: **Wiersz mówi wreszcie, DLACZEGO nie został przeskanowany.** Skaner rozróżnia sześć przyczyn, a panel podał do tej pory cztery — ściana antybotowa i odcięcie domeny pokazywały się jako gołe „Zablokowana\". Każda ma teraz własną etykietę i podpowiedź, która mówi też, czy ponawianie ma sens: przy 404 nie ma, przy 403 i błędzie serwera owszem",
+      "fix: **„Domena odcięta\" przestała udawać blokadę.** Po dwóch timeoutach z jednego serwisu skaner pomija resztę jego adresów — przy liście z jednego dużego wydawcy potrafi to oznaczyć dziesiątki stron, których **w ogóle nie spróbował pobrać**. Wyglądało to identycznie jak prawdziwa blokada. Teraz podpowiedź mówi to wprost i kieruje do ponowienia",
+      "feat: **„Diagnostyka\" kopiuje do schowka rozkład nieprzeskanowanych** — ile którego powodu, na jakich domenach, plus listę adresów. Do wklejenia przy zgłaszaniu problemu, żeby rozmowa zaczynała się od liczb, a nie od „dużo stron się nie skanuje\""
+    ]
+  },
+  {
     "version": "0.29.0",
     "date": "2026-09-14",
     "label": "feat",

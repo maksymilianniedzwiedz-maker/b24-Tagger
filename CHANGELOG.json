@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.31.5",
+    "date": "2026-09-14",
+    "label": "fix",
+    "changes": [
+      "fix: **Pole Treść przestaje łapać ścieżkę nawigacyjną zamiast pierwszego akapitu.** Na części serwisów (zgłoszone na olanea.gr) okruszki „Główna › Gospodarka › «tytuł tej strony»” stoją wewnątrz artykułu, a że ostatni okruszek to ucięty tytuł, zawierały markę — więc skaner liczył je jako akapit zerowy i to one trafiały do formularza, sklejone bez spacji. Teraz okruszki nie są akapitem, a do pola Treść idzie pierwszy prawdziwy akapit z marką. Kontener, który mimo nazwy klasy niesie prawdziwą treść, zostaje nietknięty",
+      "fix: **Tłumaczenie linijka po linijce działa niezależnie od tego, jak menedżer skryptów oddaje odpowiedź.** Poprzednia wersja zakładała, że Tampermonkey podaje za każdym razem całość od początku. Gdyby podawał same przyrosty, część odpowiedzi byłaby obcinana i zamiast tłumaczenia pojawiałby się błąd „odpowiedź nie jest JSON-em” na każdym wierszu. Do tego: gdy model złamie kontrakt i wstawi element, który nie jest tekstem, tłumaczenie zatrzymuje się w tym miejscu zamiast przesuwać pozostałe fragmenty pod cudze etykiety"
+    ]
+  },
+  {
     "version": "0.31.4",
     "date": "2026-09-14",
     "label": "feat",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.31.4
+// @version      0.31.5
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -171,7 +171,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.31.4';
+  const VERSION = '0.31.5';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8410,6 +8410,15 @@ function showOnboarding(onComplete) {
   var NEWS_TAG_ZONE_SEL =
     '[rel="tag"],[class*="article-tag"],[class*="entry-tag"],[class*="post-tag"],' +
     '[class*="article__tag"],[class*="tags__item"],[class*="tag-list"]';
+  // Okruszki nawigacyjne („Główna › Gospodarka › <ucięty tytuł tej strony>"). Ta sama lista
+  // rozstrzyga DWIE rzeczy: etykietę strefy („okruszki nawigacji", `_newsPlacementZone`)
+  // i to, że taki blok NIE jest akapitem. Bez drugiego zastosowania okruszki lądowały na liście
+  // akapitów jako pozycja ZERO — a że ostatni okruszek to zwykle ucięty tytuł tej samej strony,
+  // blok trafiał marką, łapał się w okno leadu (+4 pkt) i wygrywał wyścig o pole Treść.
+  // Zmierzone na olanea.gr (motyw tagDiv Newspaper): annotator dostawał w polu Treść
+  // „ΑρχικήΕΛΛΑΔΑ - ΚΟΣΜΟΣΟΙΚΟΝΟΜΙΑH H&M ποντάρει…" zamiast leadu artykułu.
+  // Patrz NEWS_SCANNER.md §4.9a.
+  var NEWS_CRUMB_SEL = '[class*="breadcrumb" i],[id*="breadcrumb" i],[itemtype*="BreadcrumbList" i]';
   // Odnośnik o tylu znakach tekstu to tytuł, nie link w zdaniu (§4.8).
   var NEWS_FOREIGN_HEADLINE_MIN = 30;
   var NEWS_LEAD_CHARS = 600;       // pierwsze tyle znaków prozy strefy to jeszcze lead (§5.5)
@@ -8577,7 +8586,7 @@ function showOnboarding(onComplete) {
         } catch(e) {}
         if (!_same) return 'link do innego artykułu';
       }
-      if (el.closest('[class*="breadcrumb" i],[id*="breadcrumb" i]')) return 'okruszki nawigacji';
+      if (el.closest(NEWS_CRUMB_SEL)) return 'okruszki nawigacji';
       if (el.closest('nav,[class*="menu" i],[id*="menu" i]')) return 'nawigacja';
       if (el.closest('footer')) return 'stopka';
       if (el.closest('h1,h2,h3,h4,h5,h6')) return 'nagłówek poboczny';
@@ -9159,11 +9168,22 @@ function showOnboarding(onComplete) {
       // Ta sama definicja bloku, co przy wyborze strefy — inaczej strefa wybrana po liściach
       // oddawałaby ZERO akapitów na serwisach bez `<p>` (onet.pl), a z akapitami znika lead,
       // sygnał „5+p" przy rozpoznaniu rodzaju strony i snippet do pola Treść.
-      // Wiersz tagów redakcyjnych nie jest akapitem (§4.9) — kontenery zbieramy raz,
-      // bo `closest` na każdym bloku kosztuje dwa razy tyle, co cały przebieg.
-      var _tagZones = [];
-      try { _tagZones = Array.prototype.slice.call(bodyEl.querySelectorAll(NEWS_TAG_ZONE_SEL), 0, 20); } catch(e) {}
-      paragraphs = _proseBlocks(bodyEl, NEWS_PROSE_BLOCK_MIN, _tagZones)
+      // Wiersz tagów redakcyjnych (§4.9) ani okruszki nawigacji (§4.9a) nie są akapitem —
+      // kontenery zbieramy raz, bo `closest` na każdym bloku kosztuje dwa razy tyle,
+      // co cały przebieg.
+      var _nonProseZones = [];
+      try {
+        _nonProseZones = Array.prototype.slice.call(bodyEl.querySelectorAll(NEWS_TAG_ZONE_SEL), 0, 20);
+        // Okruszki wyrzucamy z akapitów tylko wtedy, gdy kontener NIE niesie prozy. Nazwa klasy
+        // to zgadywanie, a skasowanie strefy treści przez trafienie w nazwę kosztowało już raz
+        // cały artykuł: journal.hr trzyma tekst w `div.block__block-sidebar`, przez co
+        // `[class*="sidebar"]` zjadał 1503 z 1503 znaków. Ta sama ostrożność, co przy miękkim
+        // szumie (`NEWS_NOISE_SOFT`) — tam ten warunek już jest.
+        Array.prototype.slice.call(bodyEl.querySelectorAll(NEWS_CRUMB_SEL), 0, 4).forEach(function(_cr) {
+          if (!_newsHasProse(_cr)) _nonProseZones.push(_cr);
+        });
+      } catch(e) {}
+      paragraphs = _proseBlocks(bodyEl, NEWS_PROSE_BLOCK_MIN, _nonProseZones)
         // Limit 12 gubił ETYKIETĘ strefy, nie punkty: marka w akapicie 13+ wypadała poza tę
         // listę i lądowała w kuble „tekst poboczny", więc model dostawał informację, że to
         // tekst poboczny, choć to normalna proza artykułu. Zmierzone na 11 stronach
@@ -10506,9 +10526,14 @@ function showOnboarding(onComplete) {
     var out = [];
     i++;
     while (i < s.length) {
-      // Między elementami stoją przecinki i białe znaki; zamknięcie tablicy kończy skan.
+      // Między elementami wolno stać wyłącznie przecinkom i białym znakom; zamknięcie tablicy
+      // kończy skan. Cokolwiek innego (liczba, `null`, obiekt) znaczy, że model złamał kontrakt —
+      // wtedy przerywamy, bo przeskoczenie takiego elementu przesunęłoby wszystkie następne
+      // o jedną pozycję i każdy stanąłby na karcie pod cudzą strefą.
       while (i < s.length && s[i] !== '"') {
-        if (s[i] === ']') return out;
+        var sep = s[i];
+        if (sep === ']') return out;
+        if (sep !== ',' && !/\s/.test(sep)) return out;
         i++;
       }
       if (i >= s.length) return out;
@@ -10551,15 +10576,22 @@ function showOnboarding(onComplete) {
       if (_newsCardRenderer) _newsCardRenderer(entry);
     }
 
-    var seen = 0, tail = '', modelText = '', landed = 0, streamErr = '';
+    var seenText = '', tail = '', modelText = '', landed = 0, streamErr = '';
 
-    // `onprogress` dostaje CAŁĄ dotychczasową odpowiedź, nie sam przyrost — tniemy ją sami.
+    // Menedżer skryptów może oddawać odpowiedź NARASTAJĄCO (za każdym razem całą dotychczasową
+    // treść) albo PRZYROSTOWO (samą nową porcję) — kontrakt `GM_xmlhttpRequest` tego nie rozstrzyga,
+    // a `onload` na koniec podaje komplet. Rozróżniamy oba warianty po tym, czy nowa treść zaczyna
+    // się od tej, którą już widzieliśmy. Odmierzanie samą DŁUGOŚCIĄ gubiło dane przy wariancie
+    // przyrostowym: porcja krótsza od poprzedniej zerowała licznik, a następne były obcinane od
+    // początku, aż JSON przestawał się parsować. Patrz NEWS_CARD.md §3.3.
     // Ostatnia linia porcji bywa ucięta w połowie zdarzenia, więc wraca do bufora.
     function _feed(full) {
       var txt = String(full || '');
-      if (txt.length < seen) { seen = 0; tail = ''; }
-      var ls = (tail + txt.slice(seen)).split('\n');
-      seen = txt.length;
+      if (!txt || txt === seenText) return;
+      var delta;
+      if (seenText && txt.lastIndexOf(seenText, 0) === 0) { delta = txt.slice(seenText.length); seenText = txt; }
+      else { delta = txt; seenText += txt; }
+      var ls = (tail + delta).split('\n');
       tail = ls.pop();
       for (var i = 0; i < ls.length; i++) {
         if (ls[i].slice(0, 5) !== 'data:') continue;
@@ -15484,6 +15516,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.31.5",
+      "date": "2026-09-14",
+      "label": "fix",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "fix", "text": "**Pole Treść przestaje łapać ścieżkę nawigacyjną zamiast pierwszego akapitu.** Na części serwisów (zgłoszone na olanea.gr) okruszki „Główna › Gospodarka › «tytuł tej strony»” stoją wewnątrz artykułu, a że ostatni okruszek to ucięty tytuł, zawierały markę — więc skaner liczył je jako akapit zerowy i to one trafiały do formularza, sklejone bez spacji. Teraz okruszki nie są akapitem, a do pola Treść idzie pierwszy prawdziwy akapit z marką. Kontener, który mimo nazwy klasy niesie prawdziwą treść, zostaje nietknięty"},
+        {"type": "fix", "text": "**Tłumaczenie linijka po linijce działa niezależnie od tego, jak menedżer skryptów oddaje odpowiedź.** Poprzednia wersja zakładała, że Tampermonkey podaje za każdym razem całość od początku. Gdyby podawał same przyrosty, część odpowiedzi byłaby obcinana i zamiast tłumaczenia pojawiałby się błąd „odpowiedź nie jest JSON-em” na każdym wierszu. Do tego: gdy model złamie kontrakt i wstawi element, który nie jest tekstem, tłumaczenie zatrzymuje się w tym miejscu zamiast przesuwać pozostałe fragmenty pod cudze etykiety"}
+      ]
+    },
+    {
       "version": "0.31.4",
       "date": "2026-09-14",
       "label": "feat",
@@ -15581,15 +15623,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "**Lista URL-i w News przestaje się blokować na duplikacie.** Od 0.27.8 wiersz z plakietką duplikatu wywalał rysowanie listy błędem: kafelki stojące za nim w ogóle się nie pokazywały, a kliknięcie w którykolwiek z pozostałych podmieniało tylko pole adresu — data, tytuł, treść i karta podglądu zostawały z pierwszego otwartego artykułu, więc „Otwórz w oknie” wiozło ciągle tę samą stronę. Wyglądało to na zablokowany panel. Wchodziło tylko na listach, w których dwa adresy wskazują tę samą stronę według wydawcy"},
         {"type": "fix", "text": "Plakietki wiersza i karta podglądu escapują wstawiane wartości jednym wspólnym mechanizmem — adres albo tytuł z cudzysłowem nie rozsypie już atrybutu HTML"}
-      ]
-    },
-    {
-      "version": "0.27.1",
-      "date": "2026-09-11",
-      "label": "fix",
-      "labelColor": "#f59e0b",
-      "changes": [
-        {"type": "fix", "text": "Eksperymentalny formularz został **znacznie zagęszczony** — wcześniej miał wygląd okien i24 Tools, ale nie ich rozmiar. Panel zwężony z 560 do 384 px (tyle mają tamte okna), data z godziną i minutami w jednym wierszu, cztery metryki w jednym wierszu zamiast siatki, pole treści niższe, a przycisk czyszczenia przeniósł się do nagłówka — co usunęło cały wiersz. Rozmiary czcionek bez zmian: zagęszczenie idzie z odstępów i liczby wierszy, bo zmniejszony napis nie jest gęstszy, tylko gorzej czytelny"}
       ]
     }
   ];

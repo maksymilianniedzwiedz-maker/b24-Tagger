@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.31.1
+// @version      0.31.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -27,11 +27,13 @@
   // ── NEWS DATE RELAY: gdy skrypt odpala się na stronie artykułu (nie Brand24) ──
   // Czyta datę z DOM i odsyła przez postMessage do Brand24 (window.opener)
   var _isB24 = /brand24\.com|panel\.brand24\.pl/.test(location.hostname);
-  // Znacznik skanu w adresie. `window.name` NIE nadaje się na jedyny sygnał: Chrome kasuje go
-  // przy nawigacji na inną witrynę (od Chrome 88, ochrona przed śledzeniem między serwisami),
-  // więc okno przestawiane kolejno na kilka serwisów gubi nazwę po pierwszym skoku — relay
-  // milknie, panel czeka do timeoutu, a następne otwarcie robi drugie okno zamiast wejść
-  // w istniejące. Fragment adresu doklejamy sami i przeżywa każdą nawigację.
+  // Okno rozpoznaje siebie DWOMA niezależnymi sygnałami. `window.name` działa, ale Chrome kasuje
+  // go przy nawigacji na inną witrynę (od Chrome 88, ochrona przed śledzeniem między serwisami),
+  // a okno skanu przechodzi kolejno przez kilka serwisów — więc opieranie się wyłącznie na nazwie
+  // jest zakładem o zachowanie, które różni się między przeglądarkami i ich ustawieniami.
+  // Fragment adresu doklejamy sami i przeżywa każdą nawigację.
+  // ⚠ Nie przypisywać temu znacznikowi naprawy przestojów — te miały inną przyczynę
+  // (czekanie na `load` i brak krótkiego limitu na stronę, która w ogóle nie wstała).
   var _b24tScanMark = /(^|[#&])b24tscan\b/.test(location.hash);
   if (!_isB24 && window.opener && (window.name === '_b24tnews' || _b24tScanMark)) {
     (function() {
@@ -123,6 +125,8 @@
       // (403 dla bota, treść z JS-a, ciastka, ściana antybotowa), tutaj jest już gotowa —
       // z sesją, ciastkami i wykonanymi skryptami. Panel przepuszcza ten HTML przez ten sam
       // skaner co zawsze, więc wiersz wypełnia się bez czytania strony przez człowieka.
+      // Meldunek „żyję" — patrz `NEWS_BS_START_MS` po stronie panelu.
+      try { window.opener.postMessage({ type: 'b24t_news_alive', url: location.href }, '*'); } catch(e) {}
       var _htmlSent = 0;
       function _sendHtml() {
         if (_htmlSent >= 2) return;
@@ -167,7 +171,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.31.1';
+  const VERSION = '0.31.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -12943,6 +12947,11 @@ function showOnboarding(onComplete) {
     var _bsArm     = null;  // odliczanie dla wiersza, na którym stoi annotator
     var _bsBatch   = null;  // { total, done } gdy leci przelot wsadowy
     var NEWS_BS_TIMEOUT_MS = 12000;   // strona oddaje tekst przy DOMContentLoaded, nie przy `load`
+    // Strona, która w ogóle nie wstała, nie ma po co zajmować pełnego limitu. Relay startuje
+    // przy document-start i melduje się od razu, więc brak meldunku w tym czasie znaczy:
+    // dokument nie doszedł (DNS, odrzucone połączenie, własna strona błędu przeglądarki —
+    // tam userscripty się nie uruchamiają). Czekanie dłużej niczego nie zmieni.
+    var NEWS_BS_START_MS = 5000;
     var NEWS_BS_ARM_MS     = 800;
     // Serwis, który dwa razy z rzędu nie oddał treści, nie odda jej też za trzecim razem.
     // Zmierzone na liście GR: 33 adresy jednej domeny zwracającej HTTP 500 to przy 12 s
@@ -13013,7 +13022,11 @@ function showOnboarding(onComplete) {
       }
       _bsPending = {
         entry: entry,
+        alive: false,
         timer: setTimeout(function() { _bsFinish(entry, null); }, NEWS_BS_TIMEOUT_MS),
+        startTimer: setTimeout(function() {
+          if (_bsPending && _bsPending.entry === entry && !_bsPending.alive) _bsFinish(entry, null);
+        }, NEWS_BS_START_MS),
       };
       renderUrlList();
       if (newsState.activeIdx >= 0 && newsState.urls[newsState.activeIdx] === entry) {
@@ -13025,6 +13038,7 @@ function showOnboarding(onComplete) {
     function _bsFinish(entry, html, finalUrl) {
       if (!_bsPending || _bsPending.entry !== entry) return;
       clearTimeout(_bsPending.timer);
+      if (_bsPending.startTimer) clearTimeout(_bsPending.startTimer);
       _bsPending = null;
       entry.bsDone = true;           // jedna próba na wiersz — inaczej kolejka kręci się w kółko
       entry.bsStatus = null;
@@ -13077,6 +13091,7 @@ function showOnboarding(onComplete) {
       _bsHostFails = {};   // nowy przelot zaczyna z czystym kontem
       if (_bsPending) {
         clearTimeout(_bsPending.timer);
+        if (_bsPending.startTimer) clearTimeout(_bsPending.startTimer);
         _bsPending.entry.bsStatus = null;
         _bsPending = null;
       }
@@ -13098,6 +13113,13 @@ function showOnboarding(onComplete) {
     // czekamy na stronę. Adres porównujemy luźno: serwisy przekierowują (www, kraj, AMP),
     // więc `location.href` w oknie bywa inny niż ten, o który prosiliśmy.
     window.addEventListener('message', function(ev) {
+      // Meldunek startu: strona wstała, więc przestajemy odliczać krótki limit i dajemy jej
+      // dociągnąć treść.
+      if (ev.data && ev.data.type === 'b24t_news_alive' && _bsPending) {
+        _bsPending.alive = true;
+        if (_bsPending.startTimer) { clearTimeout(_bsPending.startTimer); _bsPending.startTimer = null; }
+        return;
+      }
       if (!ev.data || ev.data.type !== 'b24t_news_html') return;
       if (!_bsPending) return;
       var entry = _bsPending.entry;
@@ -13622,7 +13644,11 @@ function showOnboarding(onComplete) {
       if (_bsBatch) {
         // Przelot przez okno ma własny licznik — bez niego pasek stoi i nie widać, czy coś
         // się dzieje, a jedna strona potrafi zająć kilka sekund.
-        if (progressLbl) progressLbl.textContent = '🌐 Skan przez okno: ' + _bsBatch.done + ' / ' + _bsBatch.total;
+        // Nazwa serwisu w pasku — inaczej dłuższa strona wygląda jak zawieszenie.
+        var _bsHostNow = '';
+        if (_bsPending) { try { _bsHostNow = new URL(_bsPending.entry.url).hostname.replace(/^www\./, ''); } catch(e) {} }
+        if (progressLbl) progressLbl.textContent = '🌐 Skan przez okno: ' + _bsBatch.done + ' / ' + _bsBatch.total +
+          (_bsHostNow ? ' — ' + _bsHostNow : '');
         _getBarNews().set(_bsBatch.total > 0 ? Math.round(_bsBatch.done / _bsBatch.total * 100) : 0);
       } else if (newsState.scanning) {
         var total = newsState.scanTotal || 1;
@@ -15270,6 +15296,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.31.2",
+      "date": "2026-09-14",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "fix", "text": "**Strona, która w ogóle się nie wczytuje, nie blokuje już przelotu na kilkanaście sekund.** Wtyczka odzywa się ze strony w chwili, gdy przeglądarka zaczyna ją parsować — więc brak tego sygnału znaczy coś innego niż wolne ładowanie: dokument nie doszedł (DNS, odrzucone połączenie, własna strona błędu przeglądarki). Taki adres jest odpuszczany po 5 sekundach zamiast po pełnym limicie; strona, która faktycznie się ładuje, dostaje tyle czasu, co wcześniej"},
+        {"type": "fix", "text": "**W pasku postępu widać, na którym serwisie stoi przelot** — bez nazwy dłuższa strona wyglądała jak zawieszenie"}
+      ]
+    },
+    {
       "version": "0.31.1",
       "date": "2026-09-14",
       "label": "feat",
@@ -15371,19 +15407,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "Treść błędu i ślad stosu trafiają na ekran jako tekst, nie jako HTML — potrafią zawierać fragment odpowiedzi serwera"},
         {"type": "feat", "text": "Porządki bez zmiany zachowania: filtry panelu statystyk czytane w jednym miejscu zamiast w trzech (eksport CSV i JSON mogły się rozjeść z tym, co pokazuje ekran), predykat filtra sesji w jednym zamiast dwóch, nakładka modali ustawień w jednym zamiast trzech, mapa kraj→język w jednym zamiast dwóch"},
         {"type": "feat", "text": "Powtarzane wzorce dat i sufiksu kraju dostały nazwy (dziesięć, cztery i pięć kopii) — z komentarzem, który blokuje jedną kuszącą, ale błędną podmianę: kod przekazujący datę artykułu działa, zanim te stałe w ogóle powstaną"}
-      ]
-    },
-    {
-      "version": "0.26.24",
-      "date": "2026-09-11",
-      "label": "fix",
-      "labelColor": "#ef4444",
-      "changes": [
-        {"type": "fix", "text": "**Wtyczka mogła zapisać tagi cudzego projektu.** Zapytanie o tagi nie przyjmuje ID projektu — zwraca tagi tego projektu, na którym stoi sesja Brand24. Dlatego wtyczka najpierw „rozgrzewa” sesję, wchodząc na stronę właściwego projektu. **Wynik tej rozgrzewki był ignorowany**: gdy się nie udała (brak dostępu na tym panelu), wtyczka i tak pytała o tagi i dostawała tagi projektu, na którym sesja akurat stała — po czym zapisywała je jako tagi żądanego projektu, nadpisując poprawne"},
-        {"type": "fix", "text": "Konsekwencja była poważniejsza niż zła lista na ekranie: te identyfikatory tagów są potem używane do tagowania wzmianek, a odmładzanie tagów jest wołane przed autotagowaniem wielu projektów. Wzmianki mogły więc dostać tagi o cudzych identyfikatorach, bez żadnego błędu"},
-        {"type": "fix", "text": "Rozgrzewka jest teraz warunkiem: bez potwierdzenia, że strona projektu faktycznie się otworzyła, wtyczka **nie pyta o tagi w ogóle** i mówi wprost, czego brakuje"},
-        {"type": "fix", "text": "Przycisk „Sprawdź ponownie” idzie tą samą drogą na panelu Brand24 i na stronach zewnętrznych. Wcześniej na panelu pytał o tagi wprost — a to zapytanie też bierze projekt z sesji, którą wtyczka sama przestawia przy sprawdzaniu dostępu do innych projektów"},
-        {"type": "feat", "text": "Komunikat przy braku tagów podaje **konkretną domenę**, na której trzeba się zalogować, zamiast ogólnego „nie udało się pobrać tagów”"}
       ]
     }
   ];

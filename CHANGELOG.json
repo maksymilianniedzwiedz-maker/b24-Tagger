@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.31.2",
+    "date": "2026-09-14",
+    "label": "feat",
+    "changes": [
+      "fix: **Strona, która w ogóle się nie wczytuje, nie blokuje już przelotu na kilkanaście sekund.** Wtyczka odzywa się ze strony w chwili, gdy przeglądarka zaczyna ją parsować — więc brak tego sygnału znaczy coś innego niż wolne ładowanie: dokument nie doszedł (DNS, odrzucone połączenie, własna strona błędu przeglądarki). Taki adres jest odpuszczany po 5 sekundach zamiast po pełnym limicie; strona, która faktycznie się ładuje, dostaje tyle czasu, co wcześniej",
+      "fix: **W pasku postępu widać, na którym serwisie stoi przelot** — bez nazwy dłuższa strona wyglądała jak zawieszenie"
+    ]
+  },
+  {
     "version": "0.31.1",
     "date": "2026-09-14",
     "label": "feat",

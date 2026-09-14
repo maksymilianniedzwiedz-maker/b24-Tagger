@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.27.13
+// @version      0.27.14
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -120,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.27.13';
+  const VERSION = '0.27.14';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -12895,9 +12895,14 @@ function showOnboarding(onComplete) {
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Keyword \'' + _tc + '\' wyst\u0105pi\u0142 tylko w sekcji polecanych artyku\u0142\u00f3w \u2014 nie w g\u0142\u00f3wnej tre\u015bci">w polecanym art.</span>');
         }
         if (entry.duplicateOf) {
+          // Modułowy `_escHtml`, nie lokalna kopia eskapera: wartość idzie do atrybutu title,
+          // więc musi escapować też cudzysłów. Stało tu `_esc` — nazwa żywa wyłącznie w ciele
+          // _newsShowRichPreviewCard, więc pierwszy duplikat na liście przerywał render
+          // ReferenceError-em: kafelki za nim znikały, a activateUrl nie dochodził do podglądu
+          // — klikanie kolejnych wierszy nie zmieniało już nic.
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;'
             + 'background:rgba(148,163,184,0.14);border:1px solid rgba(148,163,184,0.32);color:#94a3b8;" '
-            + 'title="Ta sama strona co: ' + _esc(entry.duplicateOf)
+            + 'title="Ta sama strona co: ' + _escHtml(entry.duplicateOf)
             + ' \u2014 wed\u0142ug kanonicznego adresu podanego przez wydawc\u0119">\u29C9 duplikat</span>');
         }
         var _pt = entry.pageType;
@@ -13202,7 +13207,6 @@ function showOnboarding(onComplete) {
     function _newsShowRichPreviewCard(entry, t) {
       var richEl = document.getElementById('b24t-news-rich-preview');
       if (!richEl) return;
-      function _esc(s) { return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
       var _statusColors = { keytopic: '#22c55e', contentmatch: '#818cf8', mention: '#fb923c', teasermatch: '#9ca3af', blocked: '#9ca3af', opened: '#818cf8', checked: '#64748b' };
       var _statusBgs    = { keytopic: 'rgba(34,197,94,0.12)', contentmatch: 'rgba(129,140,248,0.12)', mention: 'rgba(251,146,60,0.12)', teasermatch: 'rgba(107,114,128,0.10)', blocked: 'rgba(107,114,128,0.10)', opened: 'rgba(99,102,241,0.10)', checked: 'rgba(100,116,139,0.10)' };
@@ -13218,33 +13222,33 @@ function showOnboarding(onComplete) {
       }
 
       var _badges = [];
-      if (_sl) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:' + _sb + ';border:1px solid ' + _sc + '33;color:' + _sc + ';font-weight:600;">' + _esc(_sl) + '</span>');
+      if (_sl) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:' + _sb + ';border:1px solid ' + _sc + '33;color:' + _sc + ';font-weight:600;">' + _escHtml(_sl) + '</span>');
       if (entry.score !== undefined && entry.score > 0) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textFaint + ';">score ' + entry.score + '</span>');
-      if (entry.articleDate) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textMuted + ';">\uD83D\uDCC5 ' + _esc(entry.articleDate) + '</span>');
-      if (entry.pageLang) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);color:#a78bfa;">\uD83C\uDF10 ' + _esc(entry.pageLang) + '</span>');
+      if (entry.articleDate) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textMuted + ';">\uD83D\uDCC5 ' + _escHtml(entry.articleDate) + '</span>');
+      if (entry.pageLang) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);color:#a78bfa;">\uD83C\uDF10 ' + _escHtml(entry.pageLang) + '</span>');
       if (entry.isPaywall) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);color:#f59e0b;">\uD83D\uDD12 paywall</span>');
       if (entry.pageType === 'nonArticle') _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textMuted + ';">\uD83D\uDCC4 nie-artyku\u0142</span>');
       if (entry.iframeable === true) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.18);color:#818cf8;" title="Podgl\u0105d iframe dost\u0119pny">▢ iframe</span>');
       if (entry.wordCount > 0) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textFaint + ';">' + entry.wordCount + ' s\u0142\u00f3w</span>');
-      if (entry.zoneHints && entry.zoneHints.length > 0) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.25);color:#fb923c;" title="Keyword znaleziony w strefach: ' + _esc(entry.zoneHints.join(', ')) + '">\uD83D\uDCCD ' + _esc(entry.zoneHints[0]) + (entry.zoneHints.length > 1 ? ' +' + (entry.zoneHints.length - 1) : '') + '</span>');
+      if (entry.zoneHints && entry.zoneHints.length > 0) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.25);color:#fb923c;" title="Keyword znaleziony w strefach: ' + _escHtml(entry.zoneHints.join(', ')) + '">\uD83D\uDCCD ' + _escHtml(entry.zoneHints[0]) + (entry.zoneHints.length > 1 ? ' +' + (entry.zoneHints.length - 1) : '') + '</span>');
 
       var _chipHtml = '';
       if (entry.matchedChips && entry.matchedChips.length > 0) {
         _chipHtml = '<div style="display:flex;flex-wrap:wrap;gap:4px;">' +
           entry.matchedChips.map(function(c) {
-            return '<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.28);color:#a78bfa;font-family:monospace;">' + _esc(c) + '</span>';
+            return '<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.28);color:#a78bfa;font-family:monospace;">' + _escHtml(c) + '</span>';
           }).join('') + '</div>';
       }
 
       var _snippetText = entry.snippet ? entry.snippet.slice(0, 400) + (entry.snippet.length > 400 ? '\u2026' : '') : '';
 
       richEl.innerHTML =
-        (entry.title ? '<div style="font-size:15px;font-weight:700;line-height:1.4;color:' + t.text + ';margin-bottom:' + (entry.author ? '4px' : '10px') + ';">' + _esc(entry.title) + '</div>' : '<div style="font-size:12px;color:' + t.textFaint + ';margin-bottom:10px;font-style:italic;">Brak tytu\u0142u — artyku\u0142 nie zosta\u0142 jeszcze przeskanowany</div>') +
-        (entry.author ? '<div style="font-size:11px;color:' + t.textMuted + ';margin-bottom:10px;">✍ ' + _esc(entry.author) + '</div>' : '') +
+        (entry.title ? '<div style="font-size:15px;font-weight:700;line-height:1.4;color:' + t.text + ';margin-bottom:' + (entry.author ? '4px' : '10px') + ';">' + _escHtml(entry.title) + '</div>' : '<div style="font-size:12px;color:' + t.textFaint + ';margin-bottom:10px;font-style:italic;">Brak tytu\u0142u — artyku\u0142 nie zosta\u0142 jeszcze przeskanowany</div>') +
+        (entry.author ? '<div style="font-size:11px;color:' + t.textMuted + ';margin-bottom:10px;">✍ ' + _escHtml(entry.author) + '</div>' : '') +
         (_badges.length > 0 ? '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px;">' + _badges.join('') + '</div>' : '') +
         (_chipHtml ? _chipHtml + '<div style="height:10px;"></div>' : '') +
-        (_snippetText ? '<div style="font-size:12px;line-height:1.7;color:' + t.text + ';background:' + t.bgDeep + ';border-radius:8px;padding:10px 12px;border:1px solid ' + t.borderSub + ';margin-bottom:14px;">' + _esc(_snippetText) + '</div>' : '') +
-        '<button data-url="' + _esc(entry.url) + '" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:7px 16px;border-radius:8px;background:var(--b24t-accent-grad);color:#fff;border:none;cursor:pointer;font-weight:600;box-shadow:0 2px 8px rgba(99,102,241,0.2);">\u2197 Otw\u00f3rz w oknie</button>';
+        (_snippetText ? '<div style="font-size:12px;line-height:1.7;color:' + t.text + ';background:' + t.bgDeep + ';border-radius:8px;padding:10px 12px;border:1px solid ' + t.borderSub + ';margin-bottom:14px;">' + _escHtml(_snippetText) + '</div>' : '') +
+        '<button data-url="' + _escHtml(entry.url) + '" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:7px 16px;border-radius:8px;background:var(--b24t-accent-grad);color:#fff;border:none;cursor:pointer;font-weight:600;box-shadow:0 2px 8px rgba(99,102,241,0.2);">\u2197 Otw\u00f3rz w oknie</button>';
 
       richEl.style.display = 'flex';
       richEl.style.flexDirection = 'column';
@@ -14139,6 +14143,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.27.14",
+      "date": "2026-09-14",
+      "label": "fix",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "fix", "text": "**Lista URL-i w News przestaje się blokować na duplikacie.** Od 0.27.8 wiersz z plakietką duplikatu wywalał rysowanie listy błędem: kafelki stojące za nim w ogóle się nie pokazywały, a kliknięcie w którykolwiek z pozostałych podmieniało tylko pole adresu — data, tytuł, treść i karta podglądu zostawały z pierwszego otwartego artykułu, więc „Otwórz w oknie” wiozło ciągle tę samą stronę. Wyglądało to na zablokowany panel. Wchodziło tylko na listach, w których dwa adresy wskazują tę samą stronę według wydawcy"},
+        {"type": "fix", "text": "Plakietki wiersza i karta podglądu escapują wstawiane wartości jednym wspólnym mechanizmem — adres albo tytuł z cudzysłowem nie rozsypie już atrybutu HTML"}
+      ]
+    },
+    {
       "version": "0.27.1",
       "date": "2026-09-11",
       "label": "fix",
@@ -14243,18 +14257,6 @@ function showOnboarding(onComplete) {
         {"type": "fix",  "text": "Liczniki z TikToka i Instagrama przechodzą przez jeden, odporny parser. Poprzedni czytał \"1,2 mln\" jako 12 000 000 (10x za dużo), a \"33,4 tys.\" jako 334 (100x za mało) — TikTok nie używa dziś tego formatu, ale zmiana po ich stronie wpisałaby do wzmianki liczbę rozjechaną o dwa rzędy wielkości"},
         {"type": "fix",  "text": "Gdy nie da się jednoznacznie ustalić, który film jest na ekranie (widok TikToka trzyma kilka naraz), wtyczka nie czyta liczników z DOM i czeka na dane z sieci, zamiast wpisać liczby sąsiedniego filmu"},
         {"type": "fix",  "text": "Film usunięty lub niedostępny nie wypełni już formularza zerami — odpowiedź bez poprawnego statusu jest odrzucana"}
-      ]
-    },
-    {
-      "version": "0.26.18",
-      "date": "2026-09-10",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "Dodawanie niestandardowe z TikToka działa teraz tak samo dobrze jak z Instagrama: wyświetlenia, udostępnienia, polubienia i komentarze uzupełniają się same i są dokładne. Wyświetleń ani udostępnień nie ma nigdzie w widoku filmu, więc pobierane są jednym zapytaniem o stronę filmu"},
-        {"type": "fix",  "text": "Tytuł wzmianki z TikToka to pierwsze zdanie opisu filmu, a nie nazwa konta. TikTok przy przejściu do filmu nie aktualizuje metadanych strony — zostają z profilu, więc do tytułu trafiała nazwa konta"},
-        {"type": "fix",  "text": "Poprawiona data publikacji filmu z TikToka. Wcześniej liczona wyłącznie z identyfikatora filmu, co jest tylko przybliżeniem — na zmierzonym przykładzie rozjazd sięgnął 2 godzin 34 minut, czyli film opublikowany tuż po północy trafiał do wzmianki z poprzednim dniem. Teraz wpisywana jest tymczasowo, a zaraz potem nadpisywana prawdziwym czasem publikacji"},
-        {"type": "fix",  "text": "Liczniki filmu czytane są z widocznego filmu, a nie pierwszego w drzewie strony. Widok TikToka trzyma w pamięci trzy filmy naraz (poprzedni, bieżący, następny), każdy z własnym kompletem liczb"}
       ]
     }
   ];

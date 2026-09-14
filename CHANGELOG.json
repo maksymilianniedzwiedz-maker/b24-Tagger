@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.27.14",
+    "date": "2026-09-14",
+    "label": "fix",
+    "changes": [
+      "fix: **Lista URL-i w News przestaje się blokować na duplikacie.** Od 0.27.8 wiersz z plakietką duplikatu wywalał rysowanie listy błędem: kafelki stojące za nim w ogóle się nie pokazywały, a kliknięcie w którykolwiek z pozostałych podmieniało tylko pole adresu — data, tytuł, treść i karta podglądu zostawały z pierwszego otwartego artykułu, więc „Otwórz w oknie” wiozło ciągle tę samą stronę. Wyglądało to na zablokowany panel. Wchodziło tylko na listach, w których dwa adresy wskazują tę samą stronę według wydawcy",
+      "fix: Plakietki wiersza i karta podglądu escapują wstawiane wartości jednym wspólnym mechanizmem — adres albo tytuł z cudzysłowem nie rozsypie już atrybutu HTML"
+    ]
+  },
+  {
     "version": "0.27.13",
     "date": "2026-09-11",
     "label": "fix",

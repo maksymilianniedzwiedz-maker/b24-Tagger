@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.28.0",
+    "date": "2026-09-14",
+    "label": "feat",
+    "changes": [
+      "feat: **Podgląd artykułu pokazuje wreszcie to, na czym stoi decyzja.** Środkowa kolumna zamiast samej wizytówki pokazuje teraz werdykt AI z pełnym uzasadnieniem, listę wszystkich miejsc, w których pada nazwa marki — każde z etykietą strefy (tytuł, lead, akapit, cytat, blok polecanych) i podświetloną frazą — ostrzeżenia w rodzaju „marka stoi tylko w polecanych artykułach\", rozbicie punktacji oraz fragment, który wtyczka wstawiła do pola Treść. Te dane były liczone od dawna, ale szły wyłącznie do modelu AI: uzasadnienie werdyktu wisiało w dymku plakietki wysokiej na 8 px, a miejsc trafienia nie było widać wcale. Większość decyzji da się teraz podjąć bez otwierania strony",
+      "feat: **Cała pętla pracy na klawiaturze.** `J` i `K` (albo strzałki) przechodzą po wierszach listy, `Enter` otwiera artykuł w oknie, `Ctrl+Enter` dodaje wzmiankę — także wtedy, gdy kursor stoi w polu formularza — a `X` odrzuca wiersz i przeskakuje do następnego nieobsłużonego. Po udanym dodaniu panel sam przechodzi dalej; przy duplikacie i błędzie zostaje na miejscu, żeby dało się przeczytać komunikat. Całość spisana w legendzie pod „?\"",
+      "fix: **Kursor nie wskakuje już do pola DATA przy każdym otwartym wierszu.** Wchodzi tam dopiero wtedy, gdy skan daty jej nie znalazł — czyli gdy naprawdę trzeba ją wpisać. Wcześniej pole tekstowe przechwytywało każdy klawisz, więc skróty listy nie miałyby prawa zadziałać"
+    ]
+  },
+  {
     "version": "0.27.14",
     "date": "2026-09-14",
     "label": "fix",

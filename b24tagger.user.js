@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.27.14
+// @version      0.28.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -120,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.27.14';
+  const VERSION = '0.28.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -11489,7 +11489,7 @@ function showOnboarding(onComplete) {
       '<div id="b24t-news-preview-empty" style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:24px;">',
         '<div style="font-size:30px;margin-bottom:10px;opacity:0.4;">📄</div>',
         '<div style="font-size:13px;font-weight:600;color:' + t.textMuted + ';margin-bottom:5px;">Kliknij artykuł z listy</div>',
-        '<div style="font-size:11px;color:' + t.textFaint + ';">Podgląd pojawi się tutaj</div>',
+        '<div style="font-size:11px;color:' + t.textFaint + ';line-height:1.9;">Podgląd pojawi się tutaj<br><strong style="color:' + t.textMuted + ';">J</strong> / <strong style="color:' + t.textMuted + ';">K</strong> — następny, poprzedni · <strong style="color:' + t.textMuted + ';">Enter</strong> — otwórz<br><strong style="color:' + t.textMuted + ';">Ctrl+Enter</strong> — dodaj wzmiankę · <strong style="color:' + t.textMuted + ';">X</strong> — odrzuć i dalej</div>',
       '</div>',
       '<iframe id="b24t-news-iframe" src="" style="display:none;flex:1;width:100%;border:none;background:#fff;"></iframe>',
       '<div id="b24t-news-rich-preview" style="display:none;flex:1;overflow-y:auto;padding:16px 14px;flex-direction:column;gap:12px;"></div>',
@@ -11648,6 +11648,12 @@ function showOnboarding(onComplete) {
                '<span style="font-size:10px;color:' + t.textMuted + ';display:block;line-height:1.4;">' + desc + '</span>' +
              '</div>';
     }
+    function _lgKey(keys, desc, t) {
+      return '<div style="display:flex;align-items:baseline;gap:8px;">' +
+        '<kbd style="flex-shrink:0;font-family:monospace;font-size:10px;font-weight:600;padding:1px 7px;border-radius:5px;background:' + t.bgInput + ';border:1px solid ' + t.border + ';color:' + t.text + ';white-space:nowrap;">' + _escHtml(keys) + '</kbd>' +
+        '<span style="font-size:10px;color:' + t.textMuted + ';line-height:1.5;">' + _escHtml(desc) + '</span>' +
+      '</div>';
+    }
     function _lgSection(label) {
       return '<div style="grid-column:1/-1;font-size:9px;font-weight:700;letter-spacing:0.08em;color:' + t.textMuted + ';padding-bottom:5px;border-bottom:1px solid ' + t.border + ';margin-top:14px;margin-bottom:2px;">' + label + '</div>';
     }
@@ -11711,6 +11717,18 @@ function showOnboarding(onComplete) {
             '<span style="color:' + t.border + ';font-size:10px;">·</span>' +
             '<div style="display:flex;align-items:center;gap:5px;"><span style="color:#fb923c;font-size:11px;">◆</span><span style="font-size:10px;font-weight:600;color:' + t.text + ';">Wzmianka</span><span style="font-size:10px;color:' + t.textMuted + ';">1–4 pkt</span></div>' +
           '</div>' +
+        '</div>' +
+        '<div style="margin-top:12px;padding:12px 14px;border-radius:10px;background:' + t.bgDeep + ';border:1px solid ' + t.border + ';">' +
+          '<div style="font-size:9px;font-weight:700;letter-spacing:0.08em;color:' + t.textMuted + ';margin-bottom:10px;">SKRÓTY KLAWISZOWE</div>' +
+          '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px 24px;">' +
+            _lgKey('J / ↓', 'Następny wiersz listy', t) +
+            _lgKey('K / ↑', 'Poprzedni wiersz listy', t) +
+            _lgKey('Enter', 'Otwórz artykuł w osobnym oknie', t) +
+            _lgKey('Ctrl+Enter', 'Dodaj wzmiankę (działa też z pola formularza)', t) +
+            _lgKey('X', 'Odrzuć — oznacz jako sprawdzony i skocz do następnego', t) +
+            _lgKey('Esc', 'Zamknij panel', t) +
+          '</div>' +
+          '<div style="margin-top:9px;font-size:10px;color:' + t.textFaint + ';line-height:1.5;">Po dodaniu wzmianki panel sam przechodzi na kolejny nieobsłużony wiersz. Przy duplikacie i błędzie zostaje na miejscu, żeby dało się przeczytać komunikat.</div>' +
         '</div>' +
       '</div>';
 
@@ -13079,6 +13097,11 @@ function showOnboarding(onComplete) {
       if (_prev && _prev !== entry && _prev.status === 'opened') _prev.status = 'checked';
       newsState.activeIdx = idx;
       entry.status = 'opened';
+      // Nowy wiersz to nowe zadanie „przeczytaj i zdecyduj", więc fokus wraca z formularza
+      // na panel. Bez tego wystarczy, że raz wejdzie w pole DATA (`_newsFocusDateIfBare`
+      // albo kliknięcie), i skróty listy milkną do końca sesji — pole tekstowe połyka J/K/X.
+      var _aeForm = document.activeElement;
+      if (_aeForm && _aeForm.closest && _aeForm.closest('#b24t-news-col-form')) _aeForm.blur();
       var fUrl = document.getElementById('b24t-news-f-url');
       if (fUrl) fUrl.value = entry.url;
       var pc = projectCountry || _newsProjectCountry();
@@ -13101,6 +13124,10 @@ function showOnboarding(onComplete) {
       var subStatus = document.getElementById('b24t-news-submit-status');
       if (subStatus) { subStatus.textContent = ''; subStatus.style.color = ''; }
       renderUrlList();
+      // Skok klawiaturą potrafi wyprowadzić aktywny wiersz poza widoczny kawałek listy.
+      // `nearest` nie przewija niczego, gdy wiersz i tak widać — więc klikanie myszą nie skacze.
+      var _activeRowEl = document.querySelector('.b24t-news-url-row[data-idx="' + idx + '"]');
+      if (_activeRowEl && _activeRowEl.scrollIntoView) _activeRowEl.scrollIntoView({ block: 'nearest' });
       // Prefill daty rok+miesiąc natychmiast — GM fetch nadpisze jeśli znajdzie pełną datę
       var _dateElPre = document.getElementById('b24t-news-f-date');
       var _dateIconPre = document.getElementById('b24t-news-date-detect-icon');
@@ -13109,7 +13136,10 @@ function showOnboarding(onComplete) {
         var _yy = _now.getFullYear();
         var _mm = String(_now.getMonth() + 1).padStart(2, '0');
         _dateElPre.value = _yy + '-' + _mm + '-';
-        try { _dateElPre.focus(); _dateElPre.setSelectionRange(_dateElPre.value.length, _dateElPre.value.length); } catch(e) {}
+        // Kursor NIE wchodzi tu przy każdym wierszu. W polu tekstowym skróty listy (J/K/X)
+        // musiałyby kraść litery, więc klawiatura padałaby zaraz po pierwszym kliknięciu.
+        // Fokus przenosi się do daty dopiero wtedy, gdy skan jej NIE znajdzie — czyli
+        // dokładnie wtedy, gdy trzeba ją wpisać ręcznie (`_newsFocusDateIfBare`).
       }
       if (_dateIconPre) { _dateIconPre.style.display = 'none'; }
       // Pre-fill tytułu i snippetu ze skanowania treści (jeśli dostępne)
@@ -13121,6 +13151,88 @@ function showOnboarding(onComplete) {
       _newsShowPreview(entry);
       _newsFetchPageInfo(entry.url);
     }
+
+    // ─── STEROWANIE KLAWIATURĄ ───
+    // Pętla pracy to: obejrzyj wiersz → oceń → dodaj albo odrzuć → następny. Każdy z tych
+    // kroków był ruchem myszą przez trzy kolumny, a wierszy na rynek bywa kilkadziesiąt.
+    // Skróty celowo pokrywają CAŁĄ pętlę — pół pętli na klawiaturze nie oszczędza nic,
+    // bo ręka i tak wraca na mysz.
+
+    // Ten sam warunek, co `isClickable` w renderUrlList — gdyby się rozjechał, klawiatura
+    // skakałaby na wiersze, których kliknąć nie można.
+    function _newsRowSelectable(entry) {
+      if (!entry) return false;
+      if (newsState.hideNonArticles && entry.pageType === 'nonArticle') return false;
+      if (entry.status === 'scanning') return false;
+      return entry.status !== 'nomatch' && entry.status !== 'wrongcountry' && entry.status !== 'inproject';
+    }
+
+    function _newsStepIdx(from, dir) {
+      for (var i = from + dir; i >= 0 && i < newsState.urls.length; i += dir) {
+        if (_newsRowSelectable(newsState.urls[i])) return i;
+      }
+      return -1;
+    }
+
+    // Kolejny wiersz DO ZROBIENIA — świadomie tylko w przód i bez zawijania: koniec listy
+    // ma być widoczny jako koniec, a nie jako powrót na górę.
+    function _newsNextUnhandledIdx(from) {
+      for (var i = from + 1; i < newsState.urls.length; i++) {
+        var e = newsState.urls[i];
+        if (!_newsRowSelectable(e)) continue;
+        if (e.status === 'added' || e.status === 'error' || e.status === 'checked') continue;
+        return i;
+      }
+      return -1;
+    }
+
+    function _newsRejectActive() {
+      var entry = newsState.activeIdx >= 0 ? newsState.urls[newsState.activeIdx] : null;
+      if (!entry) return;
+      // Zmieniamy TYLKO 'opened' — 'added' i 'error' niosą mocniejszą informację
+      // (ta sama reguła co przy przejściu na kolejny wiersz w activateUrl).
+      if (entry.status === 'opened') entry.status = 'checked';
+      var nx = _newsNextUnhandledIdx(newsState.activeIdx);
+      if (nx >= 0) activateUrl(nx); else renderUrlList();
+    }
+
+    document.addEventListener('keydown', function(e) {
+      if (e.altKey) return;
+      var ov = document.getElementById('b24t-news-overlay');
+      if (!ov || ov.style.display === 'none') return;   // panel zamknięty
+      if (newsState.mode === 'custom') return;          // tryb „Niestandardowe" nie ma listy
+      var im = document.getElementById('b24t-news-import-modal');
+      if (im && im.style.display === 'flex') return;    // modal importu ma własne Ctrl+Enter
+
+      // Ctrl+Enter działa TAKŻE z pola formularza — to jest jego sens: poprawiasz treść
+      // i wysyłasz bez sięgania po mysz.
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        var sb = document.getElementById('b24t-news-submit-btn');
+        if (sb && !sb.disabled) { e.preventDefault(); sb.click(); }
+        return;
+      }
+      if (e.ctrlKey || e.metaKey) return;
+
+      var ae = document.activeElement;
+      var tag = ae ? ae.tagName : '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (ae && ae.isContentEditable)) return;
+
+      var k = e.key;
+      if (k === 'j' || k === 'J' || k === 'ArrowDown') {
+        var nd = _newsStepIdx(newsState.activeIdx, 1);
+        if (nd >= 0) { e.preventDefault(); activateUrl(nd); }
+      } else if (k === 'k' || k === 'K' || k === 'ArrowUp') {
+        var nu = _newsStepIdx(newsState.activeIdx < 0 ? newsState.urls.length : newsState.activeIdx, -1);
+        if (nu >= 0) { e.preventDefault(); activateUrl(nu); }
+      } else if (k === 'Enter') {
+        // Przycisk z fokusem obsłuży Enter sam — bez tego „Otwórz w oknie" strzelałoby dwa razy.
+        if (tag === 'BUTTON' || tag === 'A') return;
+        var cur = newsState.activeIdx >= 0 ? newsState.urls[newsState.activeIdx] : null;
+        if (cur) { e.preventDefault(); _newsOpenUrl(cur.url); }
+      } else if (k === 'x' || k === 'X') {
+        if (newsState.activeIdx >= 0) { e.preventDefault(); _newsRejectActive(); }
+      }
+    });
 
     // ─── PREVIEW — iframe lub rich card ───
     function _newsShowPreview(entry) {
@@ -13204,10 +13316,85 @@ function showOnboarding(onComplete) {
       }
     }
 
+    // Strefy, w których trafienie znaczy „marka stoi w materiale redakcyjnym tej strony".
+    // Lista jest odbiciem tego, co punktuje skaner (`_scoreZone`, NEWS_SCANNER.md §5).
+    // Każda inna etykieta — polecane, nawigacja, stopka, lista produktów — to strefa
+    // poboczna i w karcie ma wyglądać inaczej, bo to najczęstsze źródło fałszywego trafienia.
+    var _NEWS_BODY_ZONES = ['tytuł', 'lead', 'akapit', 'śródtytuł', 'cytat', 'opis meta', 'tag redakcyjny'];
+
+    function _newsZoneChip(zone, t) {
+      var isBody = _NEWS_BODY_ZONES.indexOf(zone) !== -1;
+      var c  = isBody ? '#818cf8'                : '#d97706';
+      var bg = isBody ? 'rgba(99,102,241,0.12)'  : 'rgba(245,158,11,0.10)';
+      var bd = isBody ? 'rgba(99,102,241,0.30)'  : 'rgba(245,158,11,0.30)';
+      return '<span title="' + (isBody ? 'Strefa treści artykułu' : 'Strefa poboczna — nie treść artykułu') +
+        '" style="flex-shrink:0;font-size:9px;font-weight:600;padding:1px 7px;border-radius:4px;background:' + bg +
+        ';border:1px solid ' + bd + ';color:' + c + ';white-space:nowrap;">' + _escHtml(zone) + '</span>';
+    }
+
+    // Podświetla warianty nazwy marki w tekście kontekstu — to jest ten Ctrl+F, który
+    // annotator robił ręcznie na otwartej stronie.
+    // ⚠ Escapuje SAMA. Nie podawaj jej tekstu już zescapowanego: `h&m` nie trafi w `h&amp;m`.
+    function _newsHlChips(text, chips) {
+      var src   = String(text || '');
+      var lower = src.toLowerCase();
+      // Najdłuższy wariant pierwszy — inaczej `hm-` zjadłoby początek `h&m` i podświetlenie
+      // rozpadłoby się na dwa kawałki.
+      var cands = (chips || []).map(function(c) { return String(c || '').toLowerCase(); })
+        .filter(Boolean)
+        .sort(function(a, b) { return b.length - a.length; });
+      var out = '', buf = '', i = 0;
+      while (i < src.length) {
+        var hit = null;
+        for (var k = 0; k < cands.length; k++) {
+          if (lower.startsWith(cands[k], i)) { hit = cands[k]; break; }
+        }
+        if (!hit) { buf += src[i]; i++; continue; }
+        if (buf) { out += _escHtml(buf); buf = ''; }
+        out += '<mark style="background:rgba(99,102,241,0.30);color:inherit;border-radius:3px;padding:0 2px;">' +
+               _escHtml(src.slice(i, i + hit.length)) + '</mark>';
+        i += hit.length;
+      }
+      if (buf) out += _escHtml(buf);
+      return out;
+    }
+
+    // ─── KARTA DECYZYJNA ───
+    // Pokazuje wszystko, co wtyczka policzyła o stronie, w kolejności, w jakiej zapada
+    // decyzja: werdykt AI → gdzie stoi marka → za co są punkty → co pojedzie do formularza.
+    // Do 2026-09-14 `keywordContexts` i `scoreParts` szły WYŁĄCZNIE do promptu AI
+    // (`_newsAiAnalyze`), a uzasadnienie werdyktu wisiało w atrybucie `title` plakietki
+    // wysokiej na 8 px. Materiał dowodowy był więc liczony i wyrzucany, a każdą decyzję
+    // trzeba było i tak podejmować otwierając stronę.
     function _newsShowRichPreviewCard(entry, t) {
       var richEl = document.getElementById('b24t-news-rich-preview');
       if (!richEl) return;
 
+      function _sect(label, innerHtml) {
+        return '<div style="display:flex;flex-direction:column;gap:6px;">' +
+          '<div style="font-size:9px;font-weight:700;letter-spacing:0.08em;color:' + t.textMuted + ';">' + label + '</div>' +
+          innerHtml + '</div>';
+      }
+
+      // Warianty do podświetlenia: wszystko, co gdziekolwiek trafiło — także te z zajawek
+      // i spoza treści, bo w kontekstach właśnie one bywają jedynym trafieniem.
+      var _hlSet = {};
+      [].concat(entry.matchedChips || [], entry.teaserChips || [], entry.outsideChips || [],
+                Object.keys(entry.keywordContexts || {}))
+        .forEach(function(c) { if (c) _hlSet[c] = 1; });
+      var _hlChips = Object.keys(_hlSet);
+
+      var parts = [];
+
+      // ── Tytuł + autor ──
+      parts.push('<div style="display:flex;flex-direction:column;gap:4px;">' +
+        (entry.title
+          ? '<div style="font-size:15px;font-weight:700;line-height:1.4;color:' + t.text + ';">' + _newsHlChips(entry.title, _hlChips) + '</div>'
+          : '<div style="font-size:12px;color:' + t.textFaint + ';font-style:italic;">Brak tytułu — artykuł nie został jeszcze przeskanowany</div>') +
+        (entry.author ? '<div style="font-size:11px;color:' + t.textMuted + ';">✍ ' + _escHtml(entry.author) + '</div>' : '') +
+      '</div>');
+
+      // ── Plakietki stanu ──
       var _statusColors = { keytopic: '#22c55e', contentmatch: '#818cf8', mention: '#fb923c', teasermatch: '#9ca3af', blocked: '#9ca3af', opened: '#818cf8', checked: '#64748b' };
       var _statusBgs    = { keytopic: 'rgba(34,197,94,0.12)', contentmatch: 'rgba(129,140,248,0.12)', mention: 'rgba(251,146,60,0.12)', teasermatch: 'rgba(107,114,128,0.10)', blocked: 'rgba(107,114,128,0.10)', opened: 'rgba(99,102,241,0.10)', checked: 'rgba(100,116,139,0.10)' };
       var _statusLabels = { keytopic: 'Główny temat', contentmatch: 'W treści', mention: 'Wzmianka', teasermatch: 'w polecanych', blocked: 'zablokowany', opened: 'otwarty', checked: 'sprawdzony' };
@@ -13220,36 +13407,97 @@ function showOnboarding(onComplete) {
         else if (entry.blockReason === 'http')       _sl = 'HTTP ' + (entry.httpStatus || '');
         else if (entry.blockReason === 'exception')  _sl = 'błąd';
       }
-
       var _badges = [];
       if (_sl) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:' + _sb + ';border:1px solid ' + _sc + '33;color:' + _sc + ';font-weight:600;">' + _escHtml(_sl) + '</span>');
-      if (entry.score !== undefined && entry.score > 0) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textFaint + ';">score ' + entry.score + '</span>');
-      if (entry.articleDate) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textMuted + ';">\uD83D\uDCC5 ' + _escHtml(entry.articleDate) + '</span>');
-      if (entry.pageLang) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);color:#a78bfa;">\uD83C\uDF10 ' + _escHtml(entry.pageLang) + '</span>');
-      if (entry.isPaywall) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);color:#f59e0b;">\uD83D\uDD12 paywall</span>');
-      if (entry.pageType === 'nonArticle') _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textMuted + ';">\uD83D\uDCC4 nie-artyku\u0142</span>');
-      if (entry.iframeable === true) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.18);color:#818cf8;" title="Podgl\u0105d iframe dost\u0119pny">▢ iframe</span>');
-      if (entry.wordCount > 0) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textFaint + ';">' + entry.wordCount + ' s\u0142\u00f3w</span>');
-      if (entry.zoneHints && entry.zoneHints.length > 0) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.25);color:#fb923c;" title="Keyword znaleziony w strefach: ' + _escHtml(entry.zoneHints.join(', ')) + '">\uD83D\uDCCD ' + _escHtml(entry.zoneHints[0]) + (entry.zoneHints.length > 1 ? ' +' + (entry.zoneHints.length - 1) : '') + '</span>');
+      if (entry.articleDate) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textMuted + ';">📅 ' + _escHtml(entry.articleDate) + '</span>');
+      if (entry.pageLang) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);color:#a78bfa;">🌐 ' + _escHtml(entry.pageLang) + '</span>');
+      if (entry.pageType === 'nonArticle') _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textMuted + ';">📄 nie-artykuł</span>');
+      else if (entry.pageType === 'jobPosting') _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.28);color:#d97706;">💼 ogłoszenie o pracę</span>');
+      else if (entry.pageType === 'product') _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.28);color:#d97706;">📦 karta produktu</span>');
+      if (entry.iframeable === true) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.18);color:#818cf8;" title="Podgląd iframe dostępny">▢ iframe</span>');
+      if (entry.wordCount > 0) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textFaint + ';">' + entry.wordCount + ' słów</span>');
+      if (_badges.length > 0) parts.push('<div style="display:flex;flex-wrap:wrap;gap:5px;">' + _badges.join('') + '</div>');
 
-      var _chipHtml = '';
-      if (entry.matchedChips && entry.matchedChips.length > 0) {
-        _chipHtml = '<div style="display:flex;flex-wrap:wrap;gap:4px;">' +
-          entry.matchedChips.map(function(c) {
-            return '<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.28);color:#a78bfa;font-family:monospace;">' + _escHtml(c) + '</span>';
-          }).join('') + '</div>';
+      // ── Werdykt AI z pełnym uzasadnieniem ──
+      if (entry.aiStatus === 'pending') {
+        parts.push(_sect('OCENA AI', '<div style="font-size:11px;color:' + t.textMuted + ';">⏳ Model analizuje ten artykuł…</div>'));
+      } else if (entry.aiStatus === 'error') {
+        parts.push(_sect('OCENA AI', '<div style="font-size:11px;line-height:1.6;color:#f87171;">🤖 ' + _escHtml(entry.aiError || 'błąd analizy') + '</div>'));
+      } else if (entry.aiStatus === 'done') {
+        var _v  = entry.aiVerdict || (entry.aiRelevant ? 'match' : 'miss');
+        var _vc = { match: '#22c55e', borderline: '#f59e0b', spam: '#f97316' }[_v] || '#9ca3af';
+        var _vl = { match: '✅ Relevant', borderline: '⚠️ Borderline', spam: '🚫 Spam' }[_v] || '❌ Irrelevant';
+        parts.push(_sect('OCENA AI',
+          '<div style="border-radius:9px;padding:10px 12px;background:' + _vc + '14;border:1px solid ' + _vc + '44;">' +
+            '<div style="font-size:12px;font-weight:700;color:' + _vc + ';' + (entry.aiReason ? 'margin-bottom:5px;' : '') + '">' + _vl + '</div>' +
+            (entry.aiReason ? '<div style="font-size:11px;line-height:1.65;color:' + t.text + ';">' + _escHtml(entry.aiReason) + '</div>' : '') +
+          '</div>'));
       }
 
-      var _snippetText = entry.snippet ? entry.snippet.slice(0, 400) + (entry.snippet.length > 400 ? '\u2026' : '') : '';
+      // ── Gdzie stoi marka ──
+      var _ctxItems = [];
+      Object.keys(entry.keywordContexts || {}).forEach(function(chip) {
+        (entry.keywordContexts[chip] || []).forEach(function(c) {
+          if (c && c.text) _ctxItems.push(c);
+        });
+      });
+      if (_ctxItems.length > 0) {
+        var _CTX_MAX = 12;
+        var _rows = _ctxItems.slice(0, _CTX_MAX).map(function(c) {
+          return '<div style="display:flex;gap:7px;align-items:flex-start;">' +
+            _newsZoneChip(c.zone, t) +
+            '<div style="font-size:11px;line-height:1.65;color:' + t.text + ';">' + _newsHlChips(c.text, _hlChips) + '</div>' +
+          '</div>';
+        }).join('');
+        var _more = _ctxItems.length > _CTX_MAX
+          ? '<div style="font-size:10px;color:' + t.textFaint + ';">+ ' + (_ctxItems.length - _CTX_MAX) + ' dalszych trafień (skaner zapisuje maks. 4 na wariant nazwy)</div>'
+          : '';
+        parts.push(_sect('GDZIE STOI MARKA — ' + _ctxItems.length + ' trafień',
+          '<div style="display:flex;flex-direction:column;gap:9px;">' + _rows + _more + '</div>'));
+      } else if ((entry.matchedChips || []).length > 0) {
+        // Skan uproszczony (tylko URL) nie zbiera kontekstów — pokazujemy przynajmniej warianty.
+        parts.push(_sect('DOPASOWANE WARIANTY NAZWY',
+          '<div style="display:flex;flex-wrap:wrap;gap:4px;">' + entry.matchedChips.map(function(c) {
+            return '<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.28);color:#a78bfa;font-family:monospace;">' + _escHtml(c) + '</span>';
+          }).join('') + '</div>'));
+      }
 
-      richEl.innerHTML =
-        (entry.title ? '<div style="font-size:15px;font-weight:700;line-height:1.4;color:' + t.text + ';margin-bottom:' + (entry.author ? '4px' : '10px') + ';">' + _escHtml(entry.title) + '</div>' : '<div style="font-size:12px;color:' + t.textFaint + ';margin-bottom:10px;font-style:italic;">Brak tytu\u0142u — artyku\u0142 nie zosta\u0142 jeszcze przeskanowany</div>') +
-        (entry.author ? '<div style="font-size:11px;color:' + t.textMuted + ';margin-bottom:10px;">✍ ' + _escHtml(entry.author) + '</div>' : '') +
-        (_badges.length > 0 ? '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px;">' + _badges.join('') + '</div>' : '') +
-        (_chipHtml ? _chipHtml + '<div style="height:10px;"></div>' : '') +
-        (_snippetText ? '<div style="font-size:12px;line-height:1.7;color:' + t.text + ';background:' + t.bgDeep + ';border-radius:8px;padding:10px 12px;border:1px solid ' + t.borderSub + ';margin-bottom:14px;">' + _escHtml(_snippetText) + '</div>' : '') +
-        '<button data-url="' + _escHtml(entry.url) + '" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:7px 16px;border-radius:8px;background:var(--b24t-accent-grad);color:#fff;border:none;cursor:pointer;font-weight:600;box-shadow:0 2px 8px rgba(99,102,241,0.2);">\u2197 Otw\u00f3rz w oknie</button>';
+      // ── Ostrzeżenia: to są typowe powody, dla których „trafienie" nie jest wzmianką ──
+      var _warns = [];
+      var _teaserOnly = (entry.teaserChips || []).filter(function(c) { return (entry.matchedChips || []).indexOf(c) === -1; });
+      if (_teaserOnly.length > 0) _warns.push('Wariant <strong>' + _escHtml(_teaserOnly.join(', ')) + '</strong> wystąpił wyłącznie w blokach polecanych artykułów — to cudzy tekst, nie ten artykuł');
+      if (entry.secondaryZoneOnly && (entry.zoneHints || []).length > 0) _warns.push('Marka stoi tylko w strefach pobocznych: <strong>' + _escHtml(entry.zoneHints.join(', ')) + '</strong>');
+      if ((entry.outsideChips || []).length > 0) _warns.push('Poza treścią artykułu (cudze nagłówki, nawigacja, stopka): <strong>' + _escHtml(entry.outsideChips.join(', ')) + '</strong>');
+      if (entry.isPaywall) _warns.push('Strona za paywallem — przeskanowana treść może być niepełna');
+      if (_warns.length > 0) {
+        parts.push('<div style="display:flex;flex-direction:column;gap:6px;border-radius:9px;padding:9px 11px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.28);">' +
+          _warns.map(function(w) { return '<div style="font-size:10px;line-height:1.55;color:#d97706;">⚠ ' + w + '</div>'; }).join('') +
+        '</div>');
+      }
 
+      // ── Za co punkty ──
+      if ((entry.scoreParts || []).length > 0) {
+        parts.push(_sect('ZA CO PUNKTY — ' + (entry.score || 0) + '/30',
+          '<div style="display:flex;flex-wrap:wrap;gap:4px;">' + entry.scoreParts.map(function(p) {
+            return '<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.22);color:' + t.textMuted + ';">' + _escHtml(p) + '</span>';
+          }).join('') + '</div>'));
+      }
+
+      // ── Fragment, który wtyczka wstawiła do formularza ──
+      var _snippetText = entry.snippet ? entry.snippet.slice(0, 400) + (entry.snippet.length > 400 ? '…' : '') : '';
+      if (_snippetText) {
+        parts.push(_sect('FRAGMENT W POLU TREŚĆ' + (entry.snippetZone ? ' — ' + _escHtml(entry.snippetZone) : ''),
+          '<div style="font-size:12px;line-height:1.7;color:' + t.text + ';background:' + t.bgDeep + ';border-radius:8px;padding:10px 12px;border:1px solid ' + t.borderSub + ';">' +
+            _newsHlChips(_snippetText, _hlChips) + '</div>'));
+      }
+
+      // ── Akcja ──
+      parts.push('<div style="display:flex;align-items:center;gap:10px;padding-bottom:4px;">' +
+        '<button data-url="' + _escHtml(entry.url) + '" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:7px 16px;border-radius:8px;background:var(--b24t-accent-grad);color:#fff;border:none;cursor:pointer;font-weight:600;box-shadow:0 2px 8px rgba(99,102,241,0.2);">↗ Otwórz w oknie</button>' +
+        '<span style="font-size:10px;color:' + t.textFaint + ';">albo <strong style="color:' + t.textMuted + ';">Enter</strong></span>' +
+      '</div>');
+
+      richEl.innerHTML = parts.join('');
       richEl.style.display = 'flex';
       richEl.style.flexDirection = 'column';
       var _rob = richEl.querySelector('button[data-url]');
@@ -13265,6 +13513,16 @@ function showOnboarding(onComplete) {
       var langMap = _newsGetLangMap();
       var expectedLangs = pc ? (langMap[pc] || []) : [];
 
+      // Pole stoi nietknięte na samym prefiksie „RRRR-MM-", a annotator nie przeskoczył
+      // w międzyczasie na inny wiersz — dopiero wtedy zabieramy mu fokus.
+      function _newsFocusDateIfBare() {
+        if (!dateEl) return;
+        if (!/^\d{4}-\d{2}-$/.test(dateEl.value || '')) return;
+        var act = newsState.activeIdx >= 0 ? newsState.urls[newsState.activeIdx] : null;
+        if (!act || act.url !== url) return;
+        try { dateEl.focus(); dateEl.setSelectionRange(dateEl.value.length, dateEl.value.length); } catch(e) {}
+      }
+
       function _processHtml(html) {
         // Date detection
         var detectedDate = _newsDetectDateFromHtml(html);
@@ -13274,6 +13532,8 @@ function showOnboarding(onComplete) {
             dateIcon.style.display = 'inline';
             dateIcon.title = 'Data wykryta automatycznie ze strony (' + detectedDate + ') — mozesz ja edytowac';
           }
+        } else {
+          _newsFocusDateIfBare();
         }
         // Title — autofill jeśli pole jest puste (nie nadpisuj tego co wkleił użytkownik)
         var fTitleEl = document.getElementById('b24t-news-f-title');
@@ -13353,10 +13613,12 @@ function showOnboarding(onComplete) {
           var html = resp.responseText || '';
           if (html.length > 100) {
             _processHtml(html);
+          } else {
+            _newsFocusDateIfBare();
           }
         },
-        onerror: function() {},
-        ontimeout: function() {},
+        onerror: function() { _newsFocusDateIfBare(); },
+        ontimeout: function() { _newsFocusDateIfBare(); },
       });
     }
 
@@ -13997,6 +14259,13 @@ function showOnboarding(onComplete) {
               _naTagOutcome(newsState.urls.find(function(e) { return e.url === fUrl; }), 'error');
             }
             renderUrlList();
+            // Po udanym dodaniu przeskakujemy na kolejny nieobsłużony wiersz — ten ruch
+            // annotator i tak wykonuje, tylko szuka go wzrokiem. Przy duplikacie i błędzie
+            // ZOSTAJEMY: komunikat trzeba przeczytać, a activateUrl go czyści.
+            if (isOk) {
+              var _nxIdx = _newsNextUnhandledIdx(newsState.activeIdx);
+              if (_nxIdx >= 0) activateUrl(_nxIdx);
+            }
           },
           onerror: function() {
             submitBtn.disabled = false; submitBtn.style.opacity = ''; submitBtn.textContent = '✚ Dodaj wzmiankę do Brand24';
@@ -14143,6 +14412,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.28.0",
+      "date": "2026-09-14",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "**Podgląd artykułu pokazuje wreszcie to, na czym stoi decyzja.** Środkowa kolumna zamiast samej wizytówki pokazuje teraz werdykt AI z pełnym uzasadnieniem, listę wszystkich miejsc, w których pada nazwa marki — każde z etykietą strefy (tytuł, lead, akapit, cytat, blok polecanych) i podświetloną frazą — ostrzeżenia w rodzaju „marka stoi tylko w polecanych artykułach\", rozbicie punktacji oraz fragment, który wtyczka wstawiła do pola Treść. Te dane były liczone od dawna, ale szły wyłącznie do modelu AI: uzasadnienie werdyktu wisiało w dymku plakietki wysokiej na 8 px, a miejsc trafienia nie było widać wcale. Większość decyzji da się teraz podjąć bez otwierania strony"},
+        {"type": "feat", "text": "**Cała pętla pracy na klawiaturze.** `J` i `K` (albo strzałki) przechodzą po wierszach listy, `Enter` otwiera artykuł w oknie, `Ctrl+Enter` dodaje wzmiankę — także wtedy, gdy kursor stoi w polu formularza — a `X` odrzuca wiersz i przeskakuje do następnego nieobsłużonego. Po udanym dodaniu panel sam przechodzi dalej; przy duplikacie i błędzie zostaje na miejscu, żeby dało się przeczytać komunikat. Całość spisana w legendzie pod „?\""},
+        {"type": "fix",  "text": "**Kursor nie wskakuje już do pola DATA przy każdym otwartym wierszu.** Wchodzi tam dopiero wtedy, gdy skan daty jej nie znalazł — czyli gdy naprawdę trzeba ją wpisać. Wcześniej pole tekstowe przechwytywało każdy klawisz, więc skróty listy nie miałyby prawa zadziałać"}
+      ]
+    },
+    {
       "version": "0.27.14",
       "date": "2026-09-14",
       "label": "fix",
@@ -14245,18 +14525,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "feat", "text": "Wyświetlenia filmu z TikToka pojawiają się natychmiast, bez czekania na pobranie danych. Otwarty film leży na siatce profilu, więc wtyczka odnajduje jego kafelek po identyfikatorze i bierze liczbę stamtąd — a dokładną wartość i tak dociąga chwilę później"},
         {"type": "fix",  "text": "Rozpoznawanie, który post jest na ekranie, nie opiera się już na elemencie wideo. Posty zdjęciowe TikToka wideo nie mają, więc jako jedyne zostawały bez zabezpieczenia przed odczytaniem liczb sąsiedniego posta — czyli dokładnie tam, gdzie było ono potrzebne"}
-      ]
-    },
-    {
-      "version": "0.26.19",
-      "date": "2026-09-10",
-      "label": "fix",
-      "labelColor": "#22c55e",
-      "changes": [
-        {"type": "feat", "text": "Udostępnienia filmu z TikToka wypełniają się od razu, bez czekania na pobranie danych — o ile jesteś zalogowany na TikToku. Wylogowanym TikTok pokazuje w tym miejscu napis \"Udostępnij\" zamiast liczby, więc pole uzupełni się chwilę później"},
-        {"type": "fix",  "text": "Liczniki z TikToka i Instagrama przechodzą przez jeden, odporny parser. Poprzedni czytał \"1,2 mln\" jako 12 000 000 (10x za dużo), a \"33,4 tys.\" jako 334 (100x za mało) — TikTok nie używa dziś tego formatu, ale zmiana po ich stronie wpisałaby do wzmianki liczbę rozjechaną o dwa rzędy wielkości"},
-        {"type": "fix",  "text": "Gdy nie da się jednoznacznie ustalić, który film jest na ekranie (widok TikToka trzyma kilka naraz), wtyczka nie czyta liczników z DOM i czeka na dane z sieci, zamiast wpisać liczby sąsiedniego filmu"},
-        {"type": "fix",  "text": "Film usunięty lub niedostępny nie wypełni już formularza zerami — odpowiedź bez poprawnego statusu jest odrzucana"}
       ]
     }
   ];

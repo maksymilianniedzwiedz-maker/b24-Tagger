@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.31.3
+// @version      0.31.4
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -171,7 +171,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.31.3';
+  const VERSION = '0.31.4';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3936,6 +3936,26 @@
       }
       @keyframes b24t-spin {
         from { transform: rotate(0deg); } to { transform: rotate(360deg); }
+      }
+      /* Fragment karty News czekający na swoje tłumaczenie: pulsuje ORYGINAŁ, a nie szary
+         prostokąt — plakietka strefy i podświetlenia marki zostają czytelne, więc annotator
+         może podejmować decyzję zanim tłumaczenie wejdzie. Po wejściu: krótki błysk. */
+      @keyframes b24t-tr-wait {
+        0%, 100% { opacity: 0.40; }
+        50%      { opacity: 0.78; }
+      }
+      /* Błysk idzie wewnętrznym cieniem, nie tłem: własność background w animacji bije styl
+         inline'owy elementu, więc pudełko fragmentu zgubiłoby na pół sekundy swoje tło i swój
+         promień rogów. Cień wewnętrzny kładzie się NA istniejącym tle i trzyma się rogów. */
+      @keyframes b24t-tr-land {
+        from { box-shadow: inset 0 0 0 999px rgba(99,102,241,0.22); }
+        to   { box-shadow: inset 0 0 0 999px rgba(99,102,241,0); }
+      }
+      .b24t-tr-wait { animation: b24t-tr-wait 1.25s ease-in-out infinite; }
+      .b24t-tr-land { animation: b24t-tr-land 0.55s ease-out; }
+      @media (prefers-reduced-motion: reduce) {
+        .b24t-tr-wait { animation: none; opacity: 0.55; }
+        .b24t-tr-land { animation: none; }
       }
 
       /* LAYOUT CONTRACT: Only #b24t-log has flex-grow inside the panel tree.
@@ -8095,6 +8115,10 @@ function showOnboarding(onComplete) {
   var _newsChipsRenderer = null; // set by _wireNewsPanels, called on every panel open
   var _newsListRenderer = null;  // set by _wireNewsPanels, called from module-scope (_newsAiAnalyze)
   var _newsCardRenderer = null;  // j.w. — przerysowanie karty po powrocie tłumaczenia
+  // j.w. — podmiana JEDNEGO fragmentu karty w miejscu, bez przebudowy `innerHTML` całości.
+  // Tłumaczenie wchodzi po kawałku (strumień), a przerysowanie karty przy każdym z czternastu
+  // kawałków gubi pozycję scrolla, przerywa animacje i miga całą kolumną zamiast jedną linijką.
+  var _newsCardSlotPatcher = null;
 
   // CALA SEKCJA NEWS ("Dodaj z listy URL-i") JEST ZBUDOWANA WYLACZNIE POD H&M
   // i nigdy nie bedzie dotyczyc innej marki — decyzja wlasciciela, potwierdzona wielokrotnie
@@ -10440,37 +10464,130 @@ function showOnboarding(onComplete) {
     return NEWS_READABLE_LANGS.indexOf(lang) === -1;
   }
 
-  // Kolejność musi być IDENTYCZNA z tą, w której karta rysuje konteksty
-  // (`_newsShowRichPreviewCard`, sekcja „Gdzie stoi marka") — odpowiedź wraca płaską tablicą
-  // i dopasowujemy ją po indeksie. Rozjazd tutaj podpisze fragmenty cudzymi tłumaczeniami.
+  // Co leci do modelu i DOKĄD wraca — jedna lista par (fragment → slot karty). Odpowiedź
+  // jest płaską tablicą dopasowywaną po indeksie, więc dwie osobne listy (co wysłać, gdzie
+  // wstawić) rozjechałyby się przy pierwszej zmianie kolejności i podpisały fragmenty cudzymi
+  // tłumaczeniami. Kolejność musi być IDENTYCZNA z tą, w której karta rysuje konteksty
+  // (`_newsShowRichPreviewCard`, sekcja „Gdzie stoi marka").
   function _newsTranslateItems(entry) {
-    var items = [];
-    if (entry.title) items.push(entry.title);
-    var _n = 0;
+    var pairs = [];
+    if (entry.title) pairs.push({ slot: 'title', text: entry.title });
+    var n = 0;
     Object.keys(entry.keywordContexts || {}).forEach(function(chip) {
       (entry.keywordContexts[chip] || []).forEach(function(c) {
-        if (c && c.text && _n < NEWS_CARD_CTX_MAX) { items.push(c.text); _n++; }
+        if (c && c.text && n < NEWS_CARD_CTX_MAX) { pairs.push({ slot: 'ctx:' + n, text: c.text }); n++; }
       });
     });
-    if (entry.snippet) items.push(entry.snippet.slice(0, 400));
-    return items;
+    if (entry.snippet) pairs.push({ slot: 'snippet', text: entry.snippet.slice(0, 400) });
+    return pairs;
+  }
+
+  // Wpisuje jedno tłumaczenie w `entry.tr` pod kluczem, który zna karta.
+  function _newsTrPut(tr, slot, text) {
+    if (slot === 'title')   { tr.title = text; return; }
+    if (slot === 'snippet') { tr.snippet = text; return; }
+    var m = /^ctx:(\d+)$/.exec(slot);
+    if (m) tr.ctx[Number(m[1])] = text;
+  }
+
+  // Wyciąga z NIEDOKOŃCZONEJ odpowiedzi modelu te elementy tablicy `items`, które już się
+  // domknęły. Model pisze JSON znak po znaku, więc w połowie strumienia widać na przykład
+  // `{"items": ["Nowa kolekcja H&M", "Przeczytaj ta` — pierwszy fragment jest kompletny, drugi nie.
+  // Oddajemy WYŁĄCZNIE kompletne: pół zdania, które za sekundę urośnie, czyta się gorzej niż
+  // oryginał, na który annotator i tak w tej chwili patrzy.
+  // Świadomie własny skaner, a nie `JSON.parse` po doklejeniu `"]}` — tamto zgaduje, w którym
+  // miejscu struktury model skończył, i przy fragmencie z cudzysłowem albo nawiasem daje śmieci.
+  function _newsTrScanItems(raw) {
+    var s = String(raw || '');
+    var a = s.indexOf('"items"');
+    if (a === -1) return [];
+    var i = s.indexOf('[', a);
+    if (i === -1) return [];
+    var out = [];
+    i++;
+    while (i < s.length) {
+      // Między elementami stoją przecinki i białe znaki; zamknięcie tablicy kończy skan.
+      while (i < s.length && s[i] !== '"') {
+        if (s[i] === ']') return out;
+        i++;
+      }
+      if (i >= s.length) return out;
+      var from = i++;
+      var closed = false;
+      while (i < s.length) {
+        if (s[i] === '\\') { i += 2; continue; }   // ucieczka zjada też znak po sobie
+        if (s[i] === '"')  { closed = true; break; }
+        i++;
+      }
+      if (!closed) return out;
+      try { out.push(JSON.parse(s.slice(from, i + 1))); } catch(e) { return out; }
+      i++;
+    }
+    return out;
   }
 
   function _newsTranslateEntry(entry) {
     if (!entry || entry.trStatus === 'pending') return;
     var systemPrompt = _newsTranslatePromptText();
     if (!systemPrompt || !_newsAiShouldRun()) return;
-    var items = _newsTranslateItems(entry);
-    if (items.length === 0) return;
+    var pairs = _newsTranslateItems(entry);
+    if (pairs.length === 0) return;
 
     entry.trStatus = 'pending';
     entry.trError = '';
+    // Struktura powstaje PUSTA i wypełnia się w trakcie strumienia. Karta czyta z niej przy
+    // każdym przerysowaniu, więc fragment, który już wrócił, zostaje po polsku także wtedy,
+    // gdy w międzyczasie wejdzie werdykt AI i przerysuje kartę od nowa.
+    entry.tr = { title: null, ctx: [], snippet: null };
+    entry.trDone = 0;
+    entry.trTotal = pairs.length;
     if (_newsCardRenderer) _newsCardRenderer(entry);
 
     function _fail(msg) {
+      // Częściowe tłumaczenie znika razem z błędem — powód przy kontroli długości niżej.
+      entry.tr = null;
       entry.trStatus = 'error';
       entry.trError = msg;
       if (_newsCardRenderer) _newsCardRenderer(entry);
+    }
+
+    var seen = 0, tail = '', modelText = '', landed = 0, streamErr = '';
+
+    // `onprogress` dostaje CAŁĄ dotychczasową odpowiedź, nie sam przyrost — tniemy ją sami.
+    // Ostatnia linia porcji bywa ucięta w połowie zdarzenia, więc wraca do bufora.
+    function _feed(full) {
+      var txt = String(full || '');
+      if (txt.length < seen) { seen = 0; tail = ''; }
+      var ls = (tail + txt.slice(seen)).split('\n');
+      seen = txt.length;
+      tail = ls.pop();
+      for (var i = 0; i < ls.length; i++) {
+        if (ls[i].slice(0, 5) !== 'data:') continue;
+        var body = ls[i].slice(5).trim();
+        if (!body) continue;
+        var ev;
+        try { ev = JSON.parse(body); } catch(e) { continue; }
+        if (ev.type === 'content_block_delta' && ev.delta && typeof ev.delta.text === 'string') { modelText += ev.delta.text; continue; }
+        // Strumień, który się urwał w połowie, kończy się zdarzeniem błędu przy statusie 200 —
+        // bez tego annotator zobaczyłby „odpowiedź nie jest JSON-em" zamiast prawdziwej przyczyny.
+        if (ev.type === 'error' && ev.error) streamErr = ev.error.message || ev.error.type || 'błąd strumienia';
+      }
+      _land();
+    }
+
+    // Każdy domknięty fragment wchodzi na kartę od razu — to jest ta „linijka po linijce".
+    function _land() {
+      if (!entry.tr) return;
+      var items = _newsTrScanItems(modelText);
+      if (items.length <= landed) return;
+      var to = Math.min(items.length, pairs.length);
+      for (var i = landed; i < to; i++) {
+        _newsTrPut(entry.tr, pairs[i].slot, items[i]);
+        if (_newsCardSlotPatcher) _newsCardSlotPatcher(entry, pairs[i].slot, items[i]);
+      }
+      landed = to;
+      entry.trDone = landed;
+      if (_newsCardSlotPatcher) _newsCardSlotPatcher(entry, 'progress', '⏳ tłumaczę ' + landed + '/' + pairs.length);
     }
 
     try {
@@ -10489,37 +10606,40 @@ function showOnboarding(onComplete) {
           thinking: { type: 'disabled' },
           // Tłumaczenie jest dłuższe od oryginału, a fragmentów bywa kilkanaście po ~200 znaków.
           max_tokens: 2000,
+          // Strumień jest jedynym sposobem, żeby fragmenty pojawiały się pojedynczo: jedno
+          // wywołanie zwracające komplet nie ma czego pokazać po drodze. Koszt ten sam.
+          stream: true,
           system: systemPrompt,
-          messages: [{ role: 'user', content: JSON.stringify({ lang: entry.pageLang || '', items: items }) }],
+          messages: [{ role: 'user', content: JSON.stringify({ lang: entry.pageLang || '', items: pairs.map(function(p) { return p.text; }) }) }],
         }),
         timeout: 25000,
+        // Menedżer skryptów nie musi oddać częściowej odpowiedzi. Gdy nie odda, `onload`
+        // przepuszcza przez ten sam parser komplet naraz — karta wypełnia się jednym skokiem
+        // zamiast linijka po linijce, ale nie ma błędu i nie ma czego naprawiać.
+        onprogress: function(resp) { try { _feed(resp && resp.responseText); } catch(e) {} },
         onload: function(resp) {
           if (resp.status === 401) { _fail('błędny klucz API'); return; }
           if (resp.status === 429) { _fail('limit API (429)'); return; }
           if (resp.status < 200 || resp.status >= 300) { _fail('HTTP ' + resp.status); return; }
+          _feed(resp.responseText);
           var out;
-          try {
-            var data = JSON.parse(resp.responseText);
-            var text = (data.content && data.content[0] && data.content[0].text) || '';
-            out = JSON.parse(String(text).replace(/```json|```/g, '').trim());
-          } catch(e) { _fail('odpowiedź nie jest JSON-em'); return; }
+          try { out = JSON.parse(String(modelText).replace(/```json|```/g, '').trim()); }
+          catch(e) { _fail(streamErr || (modelText ? 'odpowiedź nie jest JSON-em' : 'model nie odesłał treści')); return; }
           var arr = out && out.items;
           if (!Array.isArray(arr)) { _fail('brak pola items w odpowiedzi'); return; }
-          // Niezgodna długość = niepewne dopasowanie fragmentu do tłumaczenia. Lepszy brak
-          // tłumaczenia niż polski tekst podpisany cudzą strefą.
-          if (arr.length !== items.length) { _fail('model zwrócił ' + arr.length + ' z ' + items.length + ' fragmentów'); return; }
-
-          var k = 0;
+          // Niezgodna długość = fragmenty mogły przesunąć się o jeden i każdy stoi pod cudzą
+          // strefą. To, co zdążyło wejść na kartę w trakcie strumienia, cofamy (`_fail` zeruje
+          // `entry.tr`) — lepszy brak tłumaczenia niż polski tekst podpisany nie tym fragmentem.
+          if (arr.length !== pairs.length) { _fail('model zwrócił ' + arr.length + ' z ' + pairs.length + ' fragmentów'); return; }
+          // Przepisanie z kompletnej odpowiedzi, nie ze strumienia: skaner przyrostowy widzi
+          // tylko domknięte elementy, a ostatni domyka się dopiero tym `onload`.
           var tr = { title: null, ctx: [], snippet: null };
-          if (entry.title) tr.title = String(arr[k++] || '');
-          Object.keys(entry.keywordContexts || {}).forEach(function(chip) {
-            (entry.keywordContexts[chip] || []).forEach(function(c) {
-              if (c && c.text && tr.ctx.length < NEWS_CARD_CTX_MAX) tr.ctx.push(String(arr[k++] || ''));
-            });
-          });
-          if (entry.snippet) tr.snippet = String(arr[k++] || '');
+          for (var i = 0; i < pairs.length; i++) _newsTrPut(tr, pairs[i].slot, String(arr[i] == null ? '' : arr[i]));
           entry.tr = tr;
+          entry.trDone = pairs.length;
           entry.trStatus = 'done';
+          // Jedno pełne przerysowanie na koniec — domyka etykiety, przycisk „oryginał" i oryginał
+          // tytułu pod przetłumaczonym, czyli to, czego podmiana pojedynczego slotu nie rusza.
           if (_newsCardRenderer) _newsCardRenderer(entry);
         },
         onerror:   function() { _fail('brak połączenia'); },
@@ -12862,6 +12982,24 @@ function showOnboarding(onComplete) {
       var act = newsState.activeIdx >= 0 ? newsState.urls[newsState.activeIdx] : null;
       if (act === entry) _newsShowRichPreviewCard(entry, _newsThemeVars());
     };
+    // Podmiana JEDNEGO fragmentu w miejscu — bez tego strumień tłumaczenia przebudowywałby
+    // całą kartę czternaście razy z rzędu: zgubiony scroll, przerwane animacje, miganie kolumną.
+    // Ta sama zasada co wyżej: obcy wiersz zostawiamy w spokoju, bo annotator mógł już przeskoczyć.
+    _newsCardSlotPatcher = function(entry, slot, text) {
+      var act = newsState.activeIdx >= 0 ? newsState.urls[newsState.activeIdx] : null;
+      if (act !== entry) return;
+      var richEl = document.getElementById('b24t-news-rich-preview');
+      if (!richEl || richEl.style.display === 'none') return;
+      var el = richEl.querySelector('[data-tr-slot="' + slot + '"]');
+      if (!el) return;
+      if (slot === 'progress') { el.textContent = text; return; }
+      // Annotator przełączył się na oryginał w trakcie strumienia — tłumaczenie zbiera się
+      // w `entry.tr`, ale na karcie nie ma prawa nic podmieniać.
+      if (newsState.showOriginal) return;
+      el.innerHTML = _newsHlChips(text, _newsCardHlChips(entry));
+      el.classList.remove('b24t-tr-wait');
+      el.classList.add('b24t-tr-land');
+    };
     renderChips();
 
     var addChipBtn = document.getElementById('b24t-news-add-chip-btn');
@@ -14240,6 +14378,18 @@ function showOnboarding(onComplete) {
         (info && info.tier === 'unsure' ? '? ' : '') + _escHtml(zone) + '</span>';
     }
 
+    // Warianty do podświetlenia: wszystko, co gdziekolwiek trafiło — także te z zajawek
+    // i spoza treści, bo w kontekstach właśnie one bywają jedynym trafieniem.
+    // Osobna funkcja, bo tę samą listę musi dostać punktowa podmiana slotu w trakcie
+    // tłumaczenia (`_newsCardSlotPatcher`) — inaczej przetłumaczona linijka traci podświetlenie.
+    function _newsCardHlChips(entry) {
+      var set = {};
+      [].concat(entry.matchedChips || [], entry.teaserChips || [], entry.outsideChips || [],
+                Object.keys(entry.keywordContexts || {}))
+        .forEach(function(c) { if (c) set[c] = 1; });
+      return Object.keys(set);
+    }
+
     // Podświetla warianty nazwy marki w tekście kontekstu — to jest ten Ctrl+F, który
     // annotator robił ręcznie na otwartej stronie.
     // ⚠ Escapuje SAMA. Nie podawaj jej tekstu już zescapowanego: `h&m` nie trafi w `h&amp;m`.
@@ -14287,17 +14437,17 @@ function showOnboarding(onComplete) {
           innerHtml + '</div>';
       }
 
-      // Warianty do podświetlenia: wszystko, co gdziekolwiek trafiło — także te z zajawek
-      // i spoza treści, bo w kontekstach właśnie one bywają jedynym trafieniem.
-      var _hlSet = {};
-      [].concat(entry.matchedChips || [], entry.teaserChips || [], entry.outsideChips || [],
-                Object.keys(entry.keywordContexts || {}))
-        .forEach(function(c) { if (c) _hlSet[c] = 1; });
-      var _hlChips = Object.keys(_hlSet);
+      var _hlChips = _newsCardHlChips(entry);
 
       // Tłumaczenie pokazujemy, gdy jest i gdy annotator nie przełączył się na oryginał.
       var _tr = entry.tr && !newsState.showOriginal ? entry.tr : null;
       function _txt(original, translated) { return (_tr && translated) ? translated : original; }
+      // Znacznik, po którym strumień tłumaczenia trafia w TĘ JEDNĄ linijkę, bez przebudowy karty
+      // (`_newsCardSlotPatcher`), plus puls na fragmencie, który na swoje tłumaczenie jeszcze czeka.
+      function _slot(key, translated) {
+        return ' data-tr-slot="' + key + '"' +
+          (_tr && !translated && entry.trStatus === 'pending' ? ' class="b24t-tr-wait"' : '');
+      }
 
       var parts = [];
 
@@ -14307,7 +14457,7 @@ function showOnboarding(onComplete) {
       var _titleShown = _txt(entry.title, entry.tr && entry.tr.title);
       parts.push('<div style="display:flex;flex-direction:column;gap:4px;">' +
         (entry.title
-          ? '<div style="font-size:15px;font-weight:700;line-height:1.4;color:' + t.text + ';">' + _newsHlChips(_titleShown, _hlChips) + '</div>'
+          ? '<div' + _slot('title', entry.tr && entry.tr.title) + ' style="font-size:15px;font-weight:700;line-height:1.4;color:' + t.text + ';">' + _newsHlChips(_titleShown, _hlChips) + '</div>'
           : '<div style="font-size:12px;color:' + t.textFaint + ';font-style:italic;">Brak tytułu — artykuł nie został jeszcze przeskanowany</div>') +
         (_tr && entry.tr.title && entry.title !== entry.tr.title
           ? '<div style="font-size:10px;line-height:1.5;color:' + t.textFaint + ';">' + _escHtml(entry.title) + '</div>' : '') +
@@ -14377,7 +14527,7 @@ function showOnboarding(onComplete) {
           var _shown = _txt(c.text, entry.tr && entry.tr.ctx && entry.tr.ctx[i]);
           return '<div style="display:flex;gap:7px;align-items:flex-start;">' +
             _newsZoneChip(c.zone, t) +
-            '<div style="font-size:11px;line-height:1.65;color:' + t.text + ';">' + _newsHlChips(_shown, _hlChips) + '</div>' +
+            '<div' + _slot('ctx:' + i, entry.tr && entry.tr.ctx && entry.tr.ctx[i]) + ' style="font-size:11px;line-height:1.65;color:' + t.text + ';">' + _newsHlChips(_shown, _hlChips) + '</div>' +
           '</div>';
         }).join('');
         var _more = _ctxItems.length > _CTX_MAX
@@ -14422,9 +14572,11 @@ function showOnboarding(onComplete) {
       if (_snippetText) {
         var _snippetShown = _txt(_snippetText, entry.tr && entry.tr.snippet);
         var _snippetLabel = 'FRAGMENT W POLU TREŚĆ' + (entry.snippetZone ? ' — ' + _escHtml(entry.snippetZone) : '');
-        if (_tr && entry.tr.snippet) _snippetLabel += ' · po polsku, do Brand24 idzie oryginał';
+        // Zastrzeżenie wchodzi razem z tłumaczeniem, także gdy jeszcze leci — dotyczy tego,
+        // co pojedzie do Brand24, a to jest prawdą od chwili, w której fragment robi się polski.
+        if (_tr && (entry.tr.snippet || entry.trStatus === 'pending')) _snippetLabel += ' · po polsku, do Brand24 idzie oryginał';
         parts.push(_sect(_snippetLabel,
-          '<div style="font-size:12px;line-height:1.7;color:' + t.text + ';background:' + t.bgDeep + ';border-radius:8px;padding:10px 12px;border:1px solid ' + t.borderSub + ';">' +
+          '<div' + _slot('snippet', entry.tr && entry.tr.snippet) + ' style="font-size:12px;line-height:1.7;color:' + t.text + ';background:' + t.bgDeep + ';border-radius:8px;padding:10px 12px;border:1px solid ' + t.borderSub + ';">' +
             _newsHlChips(_snippetShown, _hlChips) + '</div>'));
       }
 
@@ -14454,7 +14606,10 @@ function showOnboarding(onComplete) {
           'style="flex-shrink:0;font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid ' + t.border +
           ';background:transparent;color:' + t.textMuted + ';cursor:pointer;">' + label + '</button>';
       };
-      if (entry.trStatus === 'pending') return '<span style="flex-shrink:0;font-size:9px;color:' + t.textMuted + ';">⏳ tłumaczę…</span>';
+      if (entry.trStatus === 'pending') {
+        return '<span data-tr-slot="progress" style="flex-shrink:0;font-size:9px;color:' + t.textMuted + ';">⏳ tłumaczę ' +
+          (entry.trDone || 0) + '/' + (entry.trTotal || 0) + '</span>';
+      }
       if (entry.trStatus === 'error')   return btn('🌐 spróbuj ponownie', 'run', 'Tłumaczenie nie wyszło: ' + (entry.trError || 'nieznany błąd'));
       if (entry.tr) return btn(newsState.showOriginal ? '🌐 po polsku' : '🌐 oryginał', 'toggle',
         newsState.showOriginal ? 'Pokaż tłumaczenie' : 'Pokaż tekst oryginalny');
@@ -15329,6 +15484,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.31.4",
+      "date": "2026-09-14",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "**Tłumaczenie wchodzi linijka po linijce, zamiast całą kartą naraz.** Wcześniej karta stała w obcym języku, aż wróci komplet — potem wszystko podmieniało się w jednej chwili. Teraz każdy fragment pojawia się po polsku osobno, w swoim miejscu, a to co jeszcze czeka pulsuje. W rogu widać licznik „tłumaczę 4/14”, więc wiadomo, czy warto poczekać, czy czytać oryginał. Koszt i liczba wywołań bez zmian — to ta sama jedna odpowiedź, tylko czytana w trakcie pisania"},
+        {"type": "fix", "text": "**Karta nie przebudowuje się przy każdym fragmencie.** Podmienia się dokładnie ta jedna linijka, która wróciła — dzięki temu nie ucieka pozycja przewinięcia i nie miga cała kolumna. Gdy model zgubi fragment, tłumaczenie cofa się w całości do oryginałów: pozostałe fragmenty przesunęłyby się o jedną pozycję i każdy stałby podpisany cudzą strefą"}
+      ]
+    },
+    {
       "version": "0.31.3",
       "date": "2026-09-14",
       "label": "feat",
@@ -15425,17 +15590,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#f59e0b",
       "changes": [
         {"type": "fix", "text": "Eksperymentalny formularz został **znacznie zagęszczony** — wcześniej miał wygląd okien i24 Tools, ale nie ich rozmiar. Panel zwężony z 560 do 384 px (tyle mają tamte okna), data z godziną i minutami w jednym wierszu, cztery metryki w jednym wierszu zamiast siatki, pole treści niższe, a przycisk czyszczenia przeniósł się do nagłówka — co usunęło cały wiersz. Rozmiary czcionek bez zmian: zagęszczenie idzie z odstępów i liczby wierszy, bo zmniejszony napis nie jest gęstszy, tylko gorzej czytelny"}
-      ]
-    },
-    {
-      "version": "0.27.0",
-      "date": "2026-09-11",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "**Eksperyment: formularz wzmianki w wyglądzie i24 Tools.** W ustawieniach → Funkcje opcjonalne doszedł przełącznik „🧪 Formularz wzmianki w stylu i24 Tools”, domyślnie wyłączony. Po włączeniu formularz dostaje ciemny panel, fioletowy akcent i pola monospace — czyli język wizualny rozszerzenia, do którego dodawanie wzmianek ma docelowo trafić. Widać od razu, jak to będzie wyglądać, zanim cokolwiek tam przeniesiemy"},
-        {"type": "feat", "text": "Zmienia się **wyłącznie wygląd**. Markup ma te same identyfikatory elementów co wersja zwykła, więc autouzupełnianie z Instagrama i TikToka, sprawdzanie duplikatu, kropka dostępu, tagi i wysyłka działają dokładnie tak samo. Wyłączenie przełącznika wraca do starego wyglądu bez śladu"},
-        {"type": "fix", "text": "Ustawienia funkcji opcjonalnych są teraz widoczne także poza Brand24. Pamięć przeglądarki jest osobna dla każdej domeny, więc na Instagramie wtyczka nie wiedziała, co masz włączone — a to właśnie tam dodaje się wzmianki"}
       ]
     }
   ];

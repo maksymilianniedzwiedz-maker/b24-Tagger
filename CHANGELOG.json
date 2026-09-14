@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.31.4",
+    "date": "2026-09-14",
+    "label": "feat",
+    "changes": [
+      "feat: **Tłumaczenie wchodzi linijka po linijce, zamiast całą kartą naraz.** Wcześniej karta stała w obcym języku, aż wróci komplet — potem wszystko podmieniało się w jednej chwili. Teraz każdy fragment pojawia się po polsku osobno, w swoim miejscu, a to co jeszcze czeka pulsuje. W rogu widać licznik „tłumaczę 4/14”, więc wiadomo, czy warto poczekać, czy czytać oryginał. Koszt i liczba wywołań bez zmian — to ta sama jedna odpowiedź, tylko czytana w trakcie pisania",
+      "fix: **Karta nie przebudowuje się przy każdym fragmencie.** Podmienia się dokładnie ta jedna linijka, która wróciła — dzięki temu nie ucieka pozycja przewinięcia i nie miga cała kolumna. Gdy model zgubi fragment, tłumaczenie cofa się w całości do oryginałów: pozostałe fragmenty przesunęłyby się o jedną pozycję i każdy stałby podpisany cudzą strefą"
+    ]
+  },
+  {
     "version": "0.31.3",
     "date": "2026-09-14",
     "label": "feat",

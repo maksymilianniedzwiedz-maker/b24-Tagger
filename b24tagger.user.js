@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.28.0
+// @version      0.29.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -120,7 +120,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.28.0';
+  const VERSION = '0.29.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -7998,6 +7998,7 @@ function showOnboarding(onComplete) {
     scanDone: 0,
     scanStartTime: 0,
     hideNonArticles: false,
+    sortMode: 'confidence', // 'confidence' = najpewniejsze u góry | 'paste' = kolejność wklejenia
     mode: 'news', // 'news' | 'custom' — 'custom' = tryb Niestandardowe (bez keyword-filtra, bez wymuszania "dodane")
     formOnly: false, // tryb tylko-formularz w Niestandardowe (ukrywa listę + podgląd)
     // Przycisk „Dodaj wzmiankę" ma dwóch niezależnych blokujących. Trzymamy je osobno, bo
@@ -8042,6 +8043,7 @@ function showOnboarding(onComplete) {
 
   var _newsChipsRenderer = null; // set by _wireNewsPanels, called on every panel open
   var _newsListRenderer = null;  // set by _wireNewsPanels, called from module-scope (_newsAiAnalyze)
+  var _newsCardRenderer = null;  // j.w. — przerysowanie karty po powrocie tłumaczenia
 
   // CALA SEKCJA NEWS ("Dodaj z listy URL-i") JEST ZBUDOWANA WYLACZNIE POD H&M
   // i nigdy nie bedzie dotyczyc innej marki — decyzja wlasciciela, potwierdzona wielokrotnie
@@ -10351,6 +10353,124 @@ function showOnboarding(onComplete) {
     }
   }
 
+  // ── TŁUMACZENIE FRAGMENTÓW NA KARCIE ──
+  // Annotator pracuje na 14 rynkach i nie czyta po grecku, turecku ani łotewsku. Fragmenty
+  // z sekcji „Gdzie stoi marka" są materiałem, na którym stoi decyzja — nieprzetłumaczone
+  // nie są materiałem, tylko ozdobą.
+  //
+  // Świadomie OSOBNE wywołanie, a nie dopisek do promptu oceny: tamten jest strojony pomiarami
+  // na 1865 stronach z 14 rynków i każda zmiana jego wejścia/wyjścia wymaga powtórzenia tych
+  // pomiarów. Tłumaczenie nie ma prawa przesunąć ani jednego werdyktu.
+  // Leci tylko dla wiersza, który annotator faktycznie otworzył, i raz na wiersz.
+  var NEWS_READABLE_LANGS = ['pl', 'en'];
+
+  function _newsTranslatePromptText() {
+    var s = _aiGetSettings();
+    var id = s.news && s.news.translatePromptId;
+    if (!id || !s.prompts) return null;
+    for (var i = 0; i < s.prompts.length; i++) {
+      if (s.prompts[i].id === id) return s.prompts[i].system || null;
+    }
+    return null;
+  }
+
+  function _newsTranslateShouldAuto(entry) {
+    if (!entry || entry.tr || entry.trStatus) return false;   // już jest albo już leci
+    if (!_newsAiShouldRun()) return false;                    // brak klucza albo AI wyłączone
+    if (!_newsTranslatePromptText()) return false;            // brak wskazanego promptu
+    // Bez wykrytego języka NIE zgadujemy — wywołanie kosztuje, a strona może być po polsku.
+    var lang = String(entry.pageLang || '').toLowerCase().split('-')[0];
+    if (!lang) return false;
+    return NEWS_READABLE_LANGS.indexOf(lang) === -1;
+  }
+
+  // Kolejność musi być IDENTYCZNA z tą, w której karta rysuje konteksty
+  // (`_newsShowRichPreviewCard`, sekcja „Gdzie stoi marka") — odpowiedź wraca płaską tablicą
+  // i dopasowujemy ją po indeksie. Rozjazd tutaj podpisze fragmenty cudzymi tłumaczeniami.
+  function _newsTranslateItems(entry) {
+    var items = [];
+    if (entry.title) items.push(entry.title);
+    Object.keys(entry.keywordContexts || {}).forEach(function(chip) {
+      (entry.keywordContexts[chip] || []).forEach(function(c) { if (c && c.text) items.push(c.text); });
+    });
+    if (entry.snippet) items.push(entry.snippet.slice(0, 400));
+    return items;
+  }
+
+  function _newsTranslateEntry(entry) {
+    if (!entry || entry.trStatus === 'pending') return;
+    var systemPrompt = _newsTranslatePromptText();
+    if (!systemPrompt || !_newsAiShouldRun()) return;
+    var items = _newsTranslateItems(entry);
+    if (items.length === 0) return;
+
+    entry.trStatus = 'pending';
+    entry.trError = '';
+    if (_newsCardRenderer) _newsCardRenderer(entry);
+
+    function _fail(msg) {
+      entry.trStatus = 'error';
+      entry.trError = msg;
+      if (_newsCardRenderer) _newsCardRenderer(entry);
+    }
+
+    try {
+      var s = _aiGetSettings();
+      var model = (s.news && s.news.model) || 'claude-haiku-4-5';
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url: 'https://api.anthropic.com/v1/messages',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': s.apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        data: JSON.stringify({
+          model: model,
+          thinking: { type: 'disabled' },
+          // Tłumaczenie jest dłuższe od oryginału, a fragmentów bywa kilkanaście po ~200 znaków.
+          max_tokens: 2000,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: JSON.stringify({ lang: entry.pageLang || '', items: items }) }],
+        }),
+        timeout: 25000,
+        onload: function(resp) {
+          if (resp.status === 401) { _fail('błędny klucz API'); return; }
+          if (resp.status === 429) { _fail('limit API (429)'); return; }
+          if (resp.status < 200 || resp.status >= 300) { _fail('HTTP ' + resp.status); return; }
+          var out;
+          try {
+            var data = JSON.parse(resp.responseText);
+            var text = (data.content && data.content[0] && data.content[0].text) || '';
+            out = JSON.parse(String(text).replace(/```json|```/g, '').trim());
+          } catch(e) { _fail('odpowiedź nie jest JSON-em'); return; }
+          var arr = out && out.items;
+          if (!Array.isArray(arr)) { _fail('brak pola items w odpowiedzi'); return; }
+          // Niezgodna długość = niepewne dopasowanie fragmentu do tłumaczenia. Lepszy brak
+          // tłumaczenia niż polski tekst podpisany cudzą strefą.
+          if (arr.length !== items.length) { _fail('model zwrócił ' + arr.length + ' z ' + items.length + ' fragmentów'); return; }
+
+          var k = 0;
+          var tr = { title: null, ctx: [], snippet: null };
+          if (entry.title) tr.title = String(arr[k++] || '');
+          Object.keys(entry.keywordContexts || {}).forEach(function(chip) {
+            (entry.keywordContexts[chip] || []).forEach(function(c) {
+              if (c && c.text) tr.ctx.push(String(arr[k++] || ''));
+            });
+          });
+          if (entry.snippet) tr.snippet = String(arr[k++] || '');
+          entry.tr = tr;
+          entry.trStatus = 'done';
+          if (_newsCardRenderer) _newsCardRenderer(entry);
+        },
+        onerror:   function() { _fail('brak połączenia'); },
+        ontimeout: function() { _fail('timeout'); },
+      });
+    } catch(e) {
+      _fail('błąd wywołania');
+    }
+  }
+
   // Pobiera stronę przez GM_xmlhttpRequest (pomija CORS) i skanuje jej treść.
   // Dla URL-i które już mają status 'match' nie wywołuj tej funkcji — jest zbędna.
   // Timeout jest adaptacyjny: rośnie na podstawie historii udanych skanów (p90 * 2, min 8s, max 40s).
@@ -11358,6 +11478,12 @@ function showOnboarding(onComplete) {
             '<option value="">— wybierz —</option>',
           '</select>',
         '</div>',
+        '<div style="display:flex;align-items:center;gap:6px;margin-top:6px;">',
+          '<span style="font-size:10px;font-weight:600;color:' + t.textMuted + ';flex-shrink:0;min-width:54px;" title="Prompt używany do tłumaczenia fragmentów na karcie podglądu. Treść promptu: Tagger/prompts/news_ai_translate.txt">Tłumacz:</span>',
+          '<select id="b24t-news-translate-prompt-sel" style="flex:1;font-size:10px;padding:3px 6px;border-radius:5px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-family:inherit;">',
+            '<option value="">— wybierz —</option>',
+          '</select>',
+        '</div>',
       '</div>',
       '<div id="b24t-news-ai-brand-section" style="display:none;padding:10px 12px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;margin-bottom:12px;">',
         '<div style="font-size:10px;font-weight:700;color:' + t.textMuted + ';letter-spacing:0.06em;margin-bottom:6px;">OPIS MARKI (AI)</div>',
@@ -11455,6 +11581,7 @@ function showOnboarding(onComplete) {
       '</div>',
       // Filter bar
       '<div id="b24t-news-filter-bar" style="display:none;padding:4px 8px;flex-shrink:0;border-bottom:1px solid ' + t.borderSub + ';align-items:center;gap:6px;flex-wrap:wrap;">',
+        '<button id="b24t-news-sort-btn" style="font-size:9px;padding:2px 8px;border-radius:4px;border:1px solid ' + t.border + ';background:rgba(99,102,241,0.10);color:#a78bfa;cursor:pointer;">⇅ Najpewniejsze u góry</button>',
         '<button id="b24t-news-filter-nonarticle" style="font-size:9px;padding:2px 8px;border-radius:4px;border:1px solid ' + t.border + ';background:rgba(107,114,128,0.08);color:' + t.textMuted + ';cursor:pointer;">Ukryj nie-artykuły (0)</button>',
       '</div>',
       // URL list
@@ -11717,6 +11844,11 @@ function showOnboarding(onComplete) {
             '<span style="color:' + t.border + ';font-size:10px;">·</span>' +
             '<div style="display:flex;align-items:center;gap:5px;"><span style="color:#fb923c;font-size:11px;">◆</span><span style="font-size:10px;font-weight:600;color:' + t.text + ';">Wzmianka</span><span style="font-size:10px;color:' + t.textMuted + ';">1–4 pkt</span></div>' +
           '</div>' +
+        '</div>' +
+        '<div style="margin-top:12px;padding:12px 14px;border-radius:10px;background:' + t.bgDeep + ';border:1px solid ' + t.border + ';">' +
+          '<div style="font-size:9px;font-weight:700;letter-spacing:0.08em;color:' + t.textMuted + ';margin-bottom:4px;">SŁOWNIK STREF — SKĄD POCHODZI FRAGMENT</div>' +
+          '<div style="font-size:10px;color:' + t.textFaint + ';line-height:1.5;">Plakietka przy każdym fragmencie w sekcji „Gdzie stoi marka" mówi, w jakiej części strony skaner znalazł nazwę marki. Te same nazwy stref dostaje model AI, więc karta i ocena mówią o tym samym.</div>' +
+          _newsZoneLegendHtml(t) +
         '</div>' +
         '<div style="margin-top:12px;padding:12px 14px;border-radius:10px;background:' + t.bgDeep + ';border:1px solid ' + t.border + ';">' +
           '<div style="font-size:9px;font-weight:700;letter-spacing:0.08em;color:' + t.textMuted + ';margin-bottom:10px;">SKRÓTY KLAWISZOWE</div>' +
@@ -12118,6 +12250,81 @@ function showOnboarding(onComplete) {
     sel.value = current || '';
   }
 
+  // Słownik stref: co dana etykieta znaczy NA STRONIE i czy trafienie w niej się liczy.
+  // Nazwy są wspólne z promptem AI (`prompts/news_ai_scoring.txt`, sekcja „Keyword contexts")
+  // i muszą znaczyć tu dokładnie to samo, co tam — pilnuje tego `check_prompt_contract.py`.
+  //
+  // Poziomy są TRZY, nie dwa, bo podział na „treść / nie-treść" kłamał w obie strony:
+  // `podpis zdjęcia` i `lista produktów` to jest treść artykułu (prompt liczy je jako match),
+  // a `tekst poboczny` NIE jest strefą poboczną — to kubeł „skaner nie rozpoznał strefy".
+  // Akurat przy tej etykiecie annotator musi wiedzieć, że nie wolno jej ufać na słowo.
+  var _NEWS_ZONE_INFO = {
+    'tytuł':                  { tier: 'body',   desc: 'Nagłówek artykułu — <title>, og:title albo <h1>' },
+    'opis meta':              { tier: 'body',   desc: 'Opis dla wyszukiwarek i social (meta description). Na stronie go nie widać' },
+    'śródtytuł':              { tier: 'body',   desc: 'Nagłówek sekcji wewnątrz artykułu (h2/h3)' },
+    'lead':                   { tier: 'body',   desc: 'Początek treści — trafienie w pierwszych ~600 znakach artykułu' },
+    'akapit':                 { tier: 'body',   desc: 'Blok tekstu w treści artykułu poza leadem. Wiele CMS-ów buduje akapity z <div> albo <li>, więc mieszczą się tu też wiersze produktowe i jednozdaniowe podpisy' },
+    'cytat':                  { tier: 'body',   desc: 'Cytat blokowy w treści artykułu' },
+    'tag redakcyjny':         { tier: 'body',   desc: 'Tag albo kategoria przypisana materiałowi przez redakcję' },
+    'lista produktów':        { tier: 'body',   desc: 'Nazwa marki obok ceny — zestawienie zakupowe wewnątrz artykułu. Dla oceny liczy się jak treść' },
+    'podpis zdjęcia':         { tier: 'body',   desc: 'Podpis pod zdjęciem — obrzeże artykułu, ale nadal ten artykuł' },
+    'podpis':                 { tier: 'body',   desc: 'Podpis materiału — obrzeże artykułu, ale nadal ten artykuł' },
+    'adres/lokalizacja':      { tier: 'body',   desc: 'Adres albo lokalizacja podana przy materiale' },
+    'opis galerii':           { tier: 'body',   desc: 'Opis galerii zdjęć przy artykule' },
+    'tekst poboczny':         { tier: 'unsure', desc: 'Skaner NIE rozpoznał strefy — to kubeł na resztę. Bywa treścią (zestawienia, tabele porównawcze, listy „N najlepszych"), bywa śmieciem (menu, chmura tagów, lista cudzych nagłówków). Przeczytaj fragment i oceń sam' },
+    'punkt listy':            { tier: 'unsure', desc: 'Pozycja listy poza prozą — zwykle zestawienie produktów albo tabela specyfikacji. Jeśli to materiał redakcyjny, traktuj jak akapit' },
+    'tabela':                 { tier: 'unsure', desc: 'Komórka tabeli poza prozą — zwykle specyfikacja albo zestawienie. Jeśli to materiał redakcyjny, traktuj jak akapit' },
+    'polecane':               { tier: 'noise',  desc: 'Blok „przeczytaj też" — zajawka INNEGO artykułu. Nigdy nie jest wzmianką w tym materiale' },
+    'link do innego artykułu':{ tier: 'noise',  desc: 'Tekst siedzi w odnośniku prowadzącym gdzie indziej — to nagłówek cudzego materiału' },
+    'nawigacja':              { tier: 'noise',  desc: 'Menu strony — element szablonu, nie treść' },
+    'okruszki nawigacji':     { tier: 'noise',  desc: 'Ścieżka nawigacji (breadcrumbs) — element szablonu' },
+    'stopka':                 { tier: 'noise',  desc: 'Stopka strony — element szablonu' },
+    'nagłówek poboczny':      { tier: 'noise',  desc: 'Nagłówek spoza artykułu — zwykle tytuł innego materiału stojącego na tej samej stronie' },
+  };
+  var _NEWS_ZONE_TIER_STYLE = {
+    body:   { c: '#818cf8', bg: 'rgba(99,102,241,0.12)',  bd: 'rgba(99,102,241,0.30)',  note: 'Treść artykułu — trafienie tutaj liczy się jako wzmianka' },
+    unsure: { c: '#d97706', bg: 'rgba(245,158,11,0.10)',  bd: 'rgba(245,158,11,0.30)',  note: 'Strefa NIEROZPOZNANA — oceń z treści fragmentu' },
+    noise:  { c: '#94a3b8', bg: 'rgba(148,163,184,0.10)', bd: 'rgba(148,163,184,0.28)', note: 'Poza treścią artykułu — nie liczy się jako wzmianka' },
+  };
+
+  // Słownik stref w legendzie — jedno miejsce, w którym można się nauczyć tego języka,
+  // zamiast najeżdżania na 21 plakietek po kolei.
+  function _newsZoneLegendHtml(t) {
+    var order = ['body', 'unsure', 'noise'];
+    var head = {
+      body:   'LICZY SIĘ — treść artykułu',
+      unsure: 'SKANER NIE ROZPOZNAŁ — oceń z fragmentu',
+      noise:  'NIE LICZY SIĘ — poza treścią artykułu',
+    };
+    return order.map(function(tier) {
+      var st = _NEWS_ZONE_TIER_STYLE[tier];
+      var rows = Object.keys(_NEWS_ZONE_INFO).filter(function(z) { return _NEWS_ZONE_INFO[z].tier === tier; })
+        .map(function(z) {
+          return '<div style="display:flex;align-items:baseline;gap:8px;">' +
+            '<span style="flex-shrink:0;min-width:118px;font-size:10px;font-weight:600;color:' + st.c + ';">' + _escHtml(z) + '</span>' +
+            '<span style="font-size:10px;color:' + t.textMuted + ';line-height:1.5;">' + _escHtml(_NEWS_ZONE_INFO[z].desc) + '</span>' +
+          '</div>';
+        }).join('');
+      return '<div style="margin-top:10px;">' +
+        '<div style="font-size:9px;font-weight:700;letter-spacing:0.06em;color:' + st.c + ';margin-bottom:5px;">' + head[tier] + '</div>' +
+        '<div style="display:flex;flex-direction:column;gap:4px;">' + rows + '</div>' +
+      '</div>';
+    }).join('');
+  }
+  function _newsRefillTranslateSelect() {
+    var s = _aiGetSettings();
+    var sel = document.getElementById('b24t-news-translate-prompt-sel');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— wybierz —</option>';
+    if (s.prompts) s.prompts.forEach(function(p) {
+      var opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name || p.id;
+      sel.appendChild(opt);
+    });
+    sel.value = (s.news && s.news.translatePromptId) || '';
+  }
+
   function _wireNewsPanels() {
     if (newsState.mode !== 'custom') _naShowConsentIfNeeded();
     _naRetryPending();
@@ -12359,6 +12566,7 @@ function showOnboarding(onComplete) {
         if (kwSection)   kwSection.style.display   = isCustom ? 'none' : '';
         if (brandSection) brandSection.style.display = isCustom ? 'none' : '';
         _newsRefillPromptSelect(false);
+        _newsRefillTranslateSelect();
         importModal.style.display = 'flex';
         if (!isCustom && _newsChipsRenderer) _newsChipsRenderer();
         var pasteEl = document.getElementById('b24t-news-paste-area');
@@ -12448,6 +12656,13 @@ function showOnboarding(onComplete) {
     }
     _newsChipsRenderer = renderChips;
     _newsListRenderer = renderUrlList;
+    // Tłumaczenie wraca asynchronicznie. Kartę przerysowujemy TYLKO wtedy, gdy annotator
+    // nadal stoi na tym wierszu — inaczej odpowiedź dla poprzedniego URL-a podmieniłaby mu
+    // pod ręką to, co właśnie czyta.
+    _newsCardRenderer = function(entry) {
+      var act = newsState.activeIdx >= 0 ? newsState.urls[newsState.activeIdx] : null;
+      if (act === entry) _newsShowRichPreviewCard(entry, _newsThemeVars());
+    };
     renderChips();
 
     var addChipBtn = document.getElementById('b24t-news-add-chip-btn');
@@ -12717,6 +12932,39 @@ function showOnboarding(onComplete) {
       renderUrlList();
     }
 
+    // ─── KOLEJNOŚĆ LISTY ───
+    // Najpewniejsze u góry, żeby praca szła od najmocniejszych kandydatów i żeby było widać,
+    // kiedy zaczyna się śmieć. Sortowanie automatyczne działa TYLKO dopóki annotator nie
+    // otworzył pierwszego wiersza (`activeIdx === -1`): wtedy werdykty AI mogą dociągać
+    // i układać listę do woli. Po pierwszym kliknięciu kolejność zamarza aż do przycisku —
+    // wiersze przestawiające się pod kursorem w trakcie pracy są gorsze niż zła kolejność.
+    var _NEWS_VERDICT_RANK = { match: 0, borderline: 1, miss: 3, spam: 4 };
+    function _newsSortRank(e) {
+      if (!_newsRowSelectable(e)) return 9;                     // odrzucone przez skaner
+      if (e.status === 'added' || e.status === 'error' || e.status === 'checked') return 8;  // załatwione
+      if (e.aiStatus === 'done') {
+        var r = _NEWS_VERDICT_RANK[e.aiVerdict];
+        return r === undefined ? (e.aiRelevant ? 0 : 3) : r;
+      }
+      return 2;                                                  // bez oceny AI — między borderline a miss
+    }
+    function _newsApplySort() {
+      if (newsState.scanning) return;   // w trakcie skanu wyniki dochodzą co chwilę; tasowanie byłoby nie do czytania
+      var active = newsState.activeIdx >= 0 ? newsState.urls[newsState.activeIdx] : null;
+      if (newsState.sortMode === 'paste') {
+        newsState.urls.sort(function(a, b) { return (a._ord || 0) - (b._ord || 0); });
+      } else {
+        newsState.urls.sort(function(a, b) {
+          var d = _newsSortRank(a) - _newsSortRank(b);
+          if (d !== 0) return d;
+          var ds = (b.score || 0) - (a.score || 0);
+          if (ds !== 0) return ds;
+          return (a._ord || 0) - (b._ord || 0);   // remis rozstrzyga kolejność wklejenia, żeby lista nie drgała
+        });
+      }
+      newsState.activeIdx = active ? newsState.urls.indexOf(active) : -1;
+    }
+
     function renderUrlList() {
       var t = _newsThemeVars();
       var list = document.getElementById('b24t-news-url-list');
@@ -12737,9 +12985,31 @@ function showOnboarding(onComplete) {
         }
       });
 
+      // Dopóki nie zacząłeś pracy, lista układa się sama w miarę jak dochodzą werdykty AI.
+      if (newsState.sortMode !== 'paste' && newsState.activeIdx === -1) _newsApplySort();
+
       _newsUpdateBulkBar();
 
       // Filter bar — widoczny zawsze gdy są URLe na liście
+      var _sortBtn = document.getElementById('b24t-news-sort-btn');
+      if (_sortBtn) {
+        var _byPaste = newsState.sortMode === 'paste';
+        _sortBtn.textContent = _byPaste ? '⇅ Kolejność wklejenia' : '⇅ Najpewniejsze u góry';
+        _sortBtn.title = _byPaste
+          ? 'Lista stoi w kolejności, w jakiej wkleiłeś adresy. Kliknij, żeby ułożyć najpewniejsze u góry'
+          : 'Lista ułożona wg oceny AI, potem punktacji. Kliknij, żeby wrócić do kolejności wklejenia';
+        _sortBtn.style.background  = _byPaste ? 'rgba(107,114,128,0.08)' : 'rgba(99,102,241,0.10)';
+        _sortBtn.style.color       = _byPaste ? t.textMuted : '#a78bfa';
+        _sortBtn.style.borderColor = _byPaste ? t.border : 'rgba(99,102,241,0.4)';
+        if (!_sortBtn.dataset.wired) {
+          _sortBtn.dataset.wired = '1';
+          _sortBtn.addEventListener('click', function() {
+            newsState.sortMode = newsState.sortMode === 'paste' ? 'confidence' : 'paste';
+            _newsApplySort();
+            renderUrlList();
+          });
+        }
+      }
       var _filterBar = document.getElementById('b24t-news-filter-bar');
       var _filterBtn = document.getElementById('b24t-news-filter-nonarticle');
       var _nonArticleCnt = newsState.urls.filter(function(e) { return e.pageType === 'nonArticle'; }).length;
@@ -13234,7 +13504,11 @@ function showOnboarding(onComplete) {
       }
     });
 
-    // ─── PREVIEW — iframe lub rich card ───
+    // ─── PODGLĄD — karta decyzyjna, strona w ramce na żądanie ───
+    // Karta jest domyślna, nie ramka. Powody, w kolejności wagi: na większości serwisów ramka
+    // i tak odpada (X-Frame-Options / CSP), a tam gdzie się ładuje, annotator dostaje surową
+    // stronę w obcym języku — czyli dokładnie to, od czego karta ma go uwolnić. Ramka zostaje
+    // jako świadomy wybór („▣ Strona"), zapamiętany na czas życia wiersza w `entry._iframeOn`.
     function _newsShowPreview(entry) {
       var t = _newsThemeVars();
       var emptyEl    = document.getElementById('b24t-news-preview-empty');
@@ -13250,7 +13524,7 @@ function showOnboarding(onComplete) {
       if (headerEl) headerEl.style.display = 'flex';
 
       var shortUrl = entry.url.replace(/^https?:\/\//, '');
-      if (shortUrl.length > 60) shortUrl = shortUrl.substring(0, 60) + '\u2026';
+      if (shortUrl.length > 60) shortUrl = shortUrl.substring(0, 60) + '…';
       if (urlLabelEl) urlLabelEl.textContent = shortUrl;
       if (openLinkEl) {
         openLinkEl.dataset.url = entry.url;
@@ -13260,27 +13534,41 @@ function showOnboarding(onComplete) {
         }
       }
 
-      if (switchBtn && !switchBtn.dataset.wired) {
-        switchBtn.dataset.wired = '1';
-        switchBtn.addEventListener('click', function() {
-          if (iframeEl) { iframeEl.style.display = 'none'; iframeEl.src = ''; }
-          var _e = newsState.activeIdx >= 0 ? newsState.urls[newsState.activeIdx] : null;
-          if (_e) { _e.iframeable = false; _newsShowRichPreviewCard(_e, t); }
-        });
+      // Przełącznik karta ↔ ramka. Ma sens tylko tam, gdzie serwis w ogóle pozwala się osadzić.
+      if (switchBtn) {
+        if (entry.iframeable === true) {
+          switchBtn.style.display = '';
+          switchBtn.textContent = entry._iframeOn ? '▢ Karta' : '▣ Strona';
+          switchBtn.title = entry._iframeOn ? 'Wróć do karty decyzyjnej' : 'Pokaż stronę w ramce';
+        } else {
+          switchBtn.style.display = 'none';
+        }
+        if (!switchBtn.dataset.wired) {
+          switchBtn.dataset.wired = '1';
+          switchBtn.addEventListener('click', function() {
+            var _e = newsState.activeIdx >= 0 ? newsState.urls[newsState.activeIdx] : null;
+            if (!_e) return;
+            _e._iframeOn = !_e._iframeOn;
+            _newsShowPreview(_e);
+          });
+        }
       }
 
       iframeEl.onload = null;
       iframeEl.onerror = null;
-      if (entry.iframeable === true) {
+      if (entry.iframeable === true && entry._iframeOn) {
         richEl.style.display = 'none';
         iframeEl.style.display = 'block';
+        // Nagłówki mówiły, że wolno — a strona i tak nie weszła. Wracamy do karty i kasujemy
+        // `iframeable`, żeby przycisk przestał kłamać na tym wierszu.
         var _iframeFallback = function() {
           iframeEl.onload = null;
           iframeEl.onerror = null;
           entry.iframeable = false;
+          entry._iframeOn = false;
           iframeEl.style.display = 'none';
           iframeEl.src = '';
-          _newsShowRichPreviewCard(entry, _newsThemeVars());
+          _newsShowPreview(entry);
           renderUrlList();
         };
         iframeEl.onerror = _iframeFallback;
@@ -13295,6 +13583,9 @@ function showOnboarding(onComplete) {
         iframeEl.style.display = 'none';
         iframeEl.src = '';
         _newsShowRichPreviewCard(entry, t);
+        // Fragmenty w obcym języku są dla annotatora nieczytelne, a to na nich stoi decyzja.
+        // Tłumaczenie leci tylko dla wiersza, który faktycznie otworzył (i raz na wiersz).
+        if (_newsTranslateShouldAuto(entry)) _newsTranslateEntry(entry);
       }
 
       // Na wąskim ekranie — przełącz na zakładkę Podgląd
@@ -13316,20 +13607,13 @@ function showOnboarding(onComplete) {
       }
     }
 
-    // Strefy, w których trafienie znaczy „marka stoi w materiale redakcyjnym tej strony".
-    // Lista jest odbiciem tego, co punktuje skaner (`_scoreZone`, NEWS_SCANNER.md §5).
-    // Każda inna etykieta — polecane, nawigacja, stopka, lista produktów — to strefa
-    // poboczna i w karcie ma wyglądać inaczej, bo to najczęstsze źródło fałszywego trafienia.
-    var _NEWS_BODY_ZONES = ['tytuł', 'lead', 'akapit', 'śródtytuł', 'cytat', 'opis meta', 'tag redakcyjny'];
-
     function _newsZoneChip(zone, t) {
-      var isBody = _NEWS_BODY_ZONES.indexOf(zone) !== -1;
-      var c  = isBody ? '#818cf8'                : '#d97706';
-      var bg = isBody ? 'rgba(99,102,241,0.12)'  : 'rgba(245,158,11,0.10)';
-      var bd = isBody ? 'rgba(99,102,241,0.30)'  : 'rgba(245,158,11,0.30)';
-      return '<span title="' + (isBody ? 'Strefa treści artykułu' : 'Strefa poboczna — nie treść artykułu') +
-        '" style="flex-shrink:0;font-size:9px;font-weight:600;padding:1px 7px;border-radius:4px;background:' + bg +
-        ';border:1px solid ' + bd + ';color:' + c + ';white-space:nowrap;">' + _escHtml(zone) + '</span>';
+      var info = _NEWS_ZONE_INFO[zone];
+      var st = _NEWS_ZONE_TIER_STYLE[info ? info.tier : 'unsure'];
+      var tip = (info ? info.desc : 'Strefa spoza słownika — zgłoś to, bo skaner i karta się rozjechały') + '\n\n' + st.note;
+      return '<span title="' + _escHtml(tip) + '" style="flex-shrink:0;font-size:9px;font-weight:600;padding:1px 7px;border-radius:4px;background:' + st.bg +
+        ';border:1px solid ' + st.bd + ';color:' + st.c + ';white-space:nowrap;cursor:help;">' +
+        (info && info.tier === 'unsure' ? '? ' : '') + _escHtml(zone) + '</span>';
     }
 
     // Podświetla warianty nazwy marki w tekście kontekstu — to jest ten Ctrl+F, który
@@ -13370,9 +13654,12 @@ function showOnboarding(onComplete) {
       var richEl = document.getElementById('b24t-news-rich-preview');
       if (!richEl) return;
 
-      function _sect(label, innerHtml) {
+      function _sect(label, innerHtml, rightHtml) {
         return '<div style="display:flex;flex-direction:column;gap:6px;">' +
-          '<div style="font-size:9px;font-weight:700;letter-spacing:0.08em;color:' + t.textMuted + ';">' + label + '</div>' +
+          '<div style="display:flex;align-items:center;gap:8px;">' +
+            '<div style="flex:1;font-size:9px;font-weight:700;letter-spacing:0.08em;color:' + t.textMuted + ';">' + label + '</div>' +
+            (rightHtml || '') +
+          '</div>' +
           innerHtml + '</div>';
       }
 
@@ -13384,13 +13671,22 @@ function showOnboarding(onComplete) {
         .forEach(function(c) { if (c) _hlSet[c] = 1; });
       var _hlChips = Object.keys(_hlSet);
 
+      // Tłumaczenie pokazujemy, gdy jest i gdy annotator nie przełączył się na oryginał.
+      var _tr = entry.tr && !newsState.showOriginal ? entry.tr : null;
+      function _txt(original, translated) { return (_tr && translated) ? translated : original; }
+
       var parts = [];
 
       // ── Tytuł + autor ──
+      // Przy tłumaczeniu zostawiamy pod spodem oryginał: tytuł jest krótki, a nazwy własne
+      // i pisownia marki bywają w nim rozstrzygające.
+      var _titleShown = _txt(entry.title, entry.tr && entry.tr.title);
       parts.push('<div style="display:flex;flex-direction:column;gap:4px;">' +
         (entry.title
-          ? '<div style="font-size:15px;font-weight:700;line-height:1.4;color:' + t.text + ';">' + _newsHlChips(entry.title, _hlChips) + '</div>'
+          ? '<div style="font-size:15px;font-weight:700;line-height:1.4;color:' + t.text + ';">' + _newsHlChips(_titleShown, _hlChips) + '</div>'
           : '<div style="font-size:12px;color:' + t.textFaint + ';font-style:italic;">Brak tytułu — artykuł nie został jeszcze przeskanowany</div>') +
+        (_tr && entry.tr.title && entry.title !== entry.tr.title
+          ? '<div style="font-size:10px;line-height:1.5;color:' + t.textFaint + ';">' + _escHtml(entry.title) + '</div>' : '') +
         (entry.author ? '<div style="font-size:11px;color:' + t.textMuted + ';">✍ ' + _escHtml(entry.author) + '</div>' : '') +
       '</div>');
 
@@ -13414,7 +13710,7 @@ function showOnboarding(onComplete) {
       if (entry.pageType === 'nonArticle') _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textMuted + ';">📄 nie-artykuł</span>');
       else if (entry.pageType === 'jobPosting') _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.28);color:#d97706;">💼 ogłoszenie o pracę</span>');
       else if (entry.pageType === 'product') _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.28);color:#d97706;">📦 karta produktu</span>');
-      if (entry.iframeable === true) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.18);color:#818cf8;" title="Podgląd iframe dostępny">▢ iframe</span>');
+      if (entry.iframeable === true) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.18);color:#818cf8;" title="Stronę można pokazać w ramce — przycisk „▣ Strona" w nagłówku podglądu">▢ ramka</span>');
       if (entry.wordCount > 0) _badges.push('<span style="font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:' + t.textFaint + ';">' + entry.wordCount + ' słów</span>');
       if (_badges.length > 0) parts.push('<div style="display:flex;flex-wrap:wrap;gap:5px;">' + _badges.join('') + '</div>');
 
@@ -13436,6 +13732,8 @@ function showOnboarding(onComplete) {
 
       // ── Gdzie stoi marka ──
       var _ctxItems = [];
+      // ⚠ Ta sama kolejność, co w `_newsTranslateItems` — tłumaczenia wracają tablicą
+      // i dopasowujemy je po indeksie. Zmiana tu wymaga zmiany tam.
       Object.keys(entry.keywordContexts || {}).forEach(function(chip) {
         (entry.keywordContexts[chip] || []).forEach(function(c) {
           if (c && c.text) _ctxItems.push(c);
@@ -13443,17 +13741,19 @@ function showOnboarding(onComplete) {
       });
       if (_ctxItems.length > 0) {
         var _CTX_MAX = 12;
-        var _rows = _ctxItems.slice(0, _CTX_MAX).map(function(c) {
+        var _rows = _ctxItems.slice(0, _CTX_MAX).map(function(c, i) {
+          var _shown = _txt(c.text, entry.tr && entry.tr.ctx && entry.tr.ctx[i]);
           return '<div style="display:flex;gap:7px;align-items:flex-start;">' +
             _newsZoneChip(c.zone, t) +
-            '<div style="font-size:11px;line-height:1.65;color:' + t.text + ';">' + _newsHlChips(c.text, _hlChips) + '</div>' +
+            '<div style="font-size:11px;line-height:1.65;color:' + t.text + ';">' + _newsHlChips(_shown, _hlChips) + '</div>' +
           '</div>';
         }).join('');
         var _more = _ctxItems.length > _CTX_MAX
           ? '<div style="font-size:10px;color:' + t.textFaint + ';">+ ' + (_ctxItems.length - _CTX_MAX) + ' dalszych trafień (skaner zapisuje maks. 4 na wariant nazwy)</div>'
           : '';
         parts.push(_sect('GDZIE STOI MARKA — ' + _ctxItems.length + ' trafień',
-          '<div style="display:flex;flex-direction:column;gap:9px;">' + _rows + _more + '</div>'));
+          '<div style="display:flex;flex-direction:column;gap:9px;">' + _rows + _more + '</div>',
+          _newsTrToggleHtml(entry, t)));
       } else if ((entry.matchedChips || []).length > 0) {
         // Skan uproszczony (tylko URL) nie zbiera kontekstów — pokazujemy przynajmniej warianty.
         parts.push(_sect('DOPASOWANE WARIANTY NAZWY',
@@ -13484,11 +13784,16 @@ function showOnboarding(onComplete) {
       }
 
       // ── Fragment, który wtyczka wstawiła do formularza ──
+      // Do Brand24 leci ORYGINAŁ — tłumaczenie jest tylko do czytania. Etykieta mówi to wprost,
+      // bo inaczej annotator ma prawo myśleć, że wysyła to, co widzi.
       var _snippetText = entry.snippet ? entry.snippet.slice(0, 400) + (entry.snippet.length > 400 ? '…' : '') : '';
       if (_snippetText) {
-        parts.push(_sect('FRAGMENT W POLU TREŚĆ' + (entry.snippetZone ? ' — ' + _escHtml(entry.snippetZone) : ''),
+        var _snippetShown = _txt(_snippetText, entry.tr && entry.tr.snippet);
+        var _snippetLabel = 'FRAGMENT W POLU TREŚĆ' + (entry.snippetZone ? ' — ' + _escHtml(entry.snippetZone) : '');
+        if (_tr && entry.tr.snippet) _snippetLabel += ' · po polsku, do Brand24 idzie oryginał';
+        parts.push(_sect(_snippetLabel,
           '<div style="font-size:12px;line-height:1.7;color:' + t.text + ';background:' + t.bgDeep + ';border-radius:8px;padding:10px 12px;border:1px solid ' + t.borderSub + ';">' +
-            _newsHlChips(_snippetText, _hlChips) + '</div>'));
+            _newsHlChips(_snippetShown, _hlChips) + '</div>'));
       }
 
       // ── Akcja ──
@@ -13502,6 +13807,31 @@ function showOnboarding(onComplete) {
       richEl.style.flexDirection = 'column';
       var _rob = richEl.querySelector('button[data-url]');
       if (_rob) _rob.addEventListener('click', function() { _newsOpenUrl(this.dataset.url); });
+      var _trBtn = richEl.querySelector('#b24t-news-tr-toggle');
+      if (_trBtn) _trBtn.addEventListener('click', function() {
+        if (this.dataset.act === 'run') { _newsTranslateEntry(entry); return; }
+        newsState.showOriginal = !newsState.showOriginal;
+        _newsShowRichPreviewCard(entry, _newsThemeVars());
+      });
+    }
+
+    // Prawy górny róg sekcji „Gdzie stoi marka": stan tłumaczenia i przełącznik.
+    function _newsTrToggleHtml(entry, t) {
+      var btn = function(label, act, title) {
+        return '<button id="b24t-news-tr-toggle" data-act="' + act + '" title="' + _escHtml(title) + '" ' +
+          'style="flex-shrink:0;font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid ' + t.border +
+          ';background:transparent;color:' + t.textMuted + ';cursor:pointer;">' + label + '</button>';
+      };
+      if (entry.trStatus === 'pending') return '<span style="flex-shrink:0;font-size:9px;color:' + t.textMuted + ';">⏳ tłumaczę…</span>';
+      if (entry.trStatus === 'error')   return btn('🌐 spróbuj ponownie', 'run', 'Tłumaczenie nie wyszło: ' + (entry.trError || 'nieznany błąd'));
+      if (entry.tr) return btn(newsState.showOriginal ? '🌐 po polsku' : '🌐 oryginał', 'toggle',
+        newsState.showOriginal ? 'Pokaż tłumaczenie' : 'Pokaż tekst oryginalny');
+      if (!_newsAiShouldRun()) return '';
+      if (!_newsTranslatePromptText()) {
+        return '<span title="Wskaż prompt tłumaczenia w ustawieniach importu (⚙ w oknie „Importuj URLe")" ' +
+          'style="flex-shrink:0;font-size:9px;color:' + t.textFaint + ';cursor:help;">🌐 brak promptu</span>';
+      }
+      return btn('🌐 przetłumacz', 'run', 'Przetłumacz fragmenty na polski');
     }
 
     // ─── FETCH PAGE INFO (lang + date) ───
@@ -13746,7 +14076,7 @@ function showOnboarding(onComplete) {
           };
         });
         var _suSimple = _newsGetSessionUrls();
-        newsState.urls.forEach(function(e) { if (_suSimple[e.url]) { e.status = 'inproject'; e.scanStatus = 'inproject'; } });
+        newsState.urls.forEach(function(e, i) { e._ord = i; if (_suSimple[e.url]) { e.status = 'inproject'; e.scanStatus = 'inproject'; } });
 
         renderChips();
         renderUrlList();
@@ -13764,7 +14094,7 @@ function showOnboarding(onComplete) {
         return { url: u, status: 'scanning', opened: false, score: 0, snippet: '', matchedChips: [] };
       });
       var _suScan = _newsGetSessionUrls();
-      newsState.urls.forEach(function(e) { if (_suScan[e.url]) { e.status = 'inproject'; e.scanStatus = 'inproject'; } });
+      newsState.urls.forEach(function(e, i) { e._ord = i; if (_suScan[e.url]) { e.status = 'inproject'; e.scanStatus = 'inproject'; } });
 
       renderChips();
       renderUrlList();
@@ -14013,6 +14343,16 @@ function showOnboarding(onComplete) {
     }
 
     // Prompt AI — News (w import modalu)
+    _newsRefillTranslateSelect();
+    var translatePromptSel = document.getElementById('b24t-news-translate-prompt-sel');
+    if (translatePromptSel) {
+      translatePromptSel.addEventListener('change', function() {
+        var cfg = _aiGetSettings();
+        if (!cfg.news) cfg.news = {};
+        cfg.news.translatePromptId = translatePromptSel.value || null;
+        _aiSaveSettings(cfg);
+      });
+    }
     var importPromptSel = document.getElementById('b24t-news-import-prompt-sel');
     if (importPromptSel) {
       importPromptSel.addEventListener('change', function() {
@@ -14045,6 +14385,7 @@ function showOnboarding(onComplete) {
         if (kwSection)    kwSection.style.display    = isCustom ? 'none' : '';
         if (brandSection) brandSection.style.display = isCustom ? 'none' : '';
         _newsRefillPromptSelect(false);
+        _newsRefillTranslateSelect();
         _importModalRef.style.display = 'flex';
         if (!isCustom && _newsChipsRenderer) _newsChipsRenderer();
         var pasteEl = document.getElementById('b24t-news-paste-area');
@@ -14412,6 +14753,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.29.0",
+      "date": "2026-09-14",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "**Karta decyzyjna zastąpiła ramkę jako domyślny podgląd.** Wcześniej po kliknięciu wiersza panel próbował wczytać stronę w ramce, a kartę trzeba było włączać ręcznie — mimo że większość serwisów i tak zabrania się osadzać, a te które pozwalają, pokazują surową stronę w obcym języku. Teraz jest odwrotnie: karta od razu, a strona w ramce na żądanie przyciskiem „▣ Strona\", który pojawia się tylko tam, gdzie serwis na to pozwala"},
+        {"type": "feat", "text": "**Fragmenty w obcym języku tłumaczą się na polski.** Karta otwiera się i jeśli strona nie jest po polsku ani po angielsku, wszystkie fragmenty z „Gdzie stoi marka\", tytuł i fragment z pola Treść idą do modelu i wracają po polsku. Raz na wiersz, wynik zapamiętany. Przycisk „🌐 oryginał / po polsku\" przełącza. **Do Brand24 leci oryginał** — tłumaczenie jest wyłącznie do czytania. Wymaga wskazania promptu tłumaczenia w ustawieniach importu (⚙ → „Tłumacz\"); bez tego nic się nie wywołuje"},
+        {"type": "feat", "text": "**Lista układa się od najpewniejszych.** Kolejność: werdykt AI, potem punktacja, potem kolejność wklejenia; załatwione i odrzucone przez skaner spadają na dół. Układa się sama dopóki nie otworzysz pierwszego wiersza — potem kolejność zamarza, bo wiersze przestawiające się pod kursorem są gorsze niż zła kolejność. Przycisk „⇅\" w pasku filtrów przestawia ręcznie i wraca do kolejności wklejenia"},
+        {"type": "fix", "text": "**Plakietki stref mówią, co znaczą — i dwie z nich mówiły źle.** Każda z 21 stref ma teraz opis „gdzie to jest na stronie\" w dymku i w legendzie („Słownik stref\"). Poziomy są trzy zamiast dwóch, bo podział na „treść / nie-treść\" mylił się w obie strony: podpis zdjęcia i lista produktów to treść artykułu (marka obok ceny w zestawieniu zakupowym jest wzmianką), a „tekst poboczny\" to wcale nie strefa poboczna, tylko kubeł „skaner nie rozpoznał strefy\" — i akurat tej etykiecie nie wolno ufać na słowo"}
+      ]
+    },
+    {
       "version": "0.28.0",
       "date": "2026-09-14",
       "label": "feat",
@@ -14515,16 +14868,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#6366f1",
       "changes": [
         {"type": "feat", "text": "Ostrzeżenie o niezgodności języka działa teraz dla TikToka. Wtyczka bierze język z wykrytego języka OPISU filmu, a nie z języka interfejsu — dlatego wcześniej było wyłączone, żeby nie krzyczeć przy każdym poście. Przy opisie złożonym z samych hashtagów ostrzeżenie się nie pojawia, bo nie ma z czego rozpoznać języka"}
-      ]
-    },
-    {
-      "version": "0.26.20",
-      "date": "2026-09-10",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "Wyświetlenia filmu z TikToka pojawiają się natychmiast, bez czekania na pobranie danych. Otwarty film leży na siatce profilu, więc wtyczka odnajduje jego kafelek po identyfikatorze i bierze liczbę stamtąd — a dokładną wartość i tak dociąga chwilę później"},
-        {"type": "fix",  "text": "Rozpoznawanie, który post jest na ekranie, nie opiera się już na elemencie wideo. Posty zdjęciowe TikToka wideo nie mają, więc jako jedyne zostawały bez zabezpieczenia przed odczytaniem liczb sąsiedniego posta — czyli dokładnie tam, gdzie było ono potrzebne"}
       ]
     }
   ];

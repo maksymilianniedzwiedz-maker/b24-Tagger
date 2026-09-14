@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.29.0",
+    "date": "2026-09-14",
+    "label": "feat",
+    "changes": [
+      "feat: **Karta decyzyjna zastąpiła ramkę jako domyślny podgląd.** Wcześniej po kliknięciu wiersza panel próbował wczytać stronę w ramce, a kartę trzeba było włączać ręcznie — mimo że większość serwisów i tak zabrania się osadzać, a te które pozwalają, pokazują surową stronę w obcym języku. Teraz jest odwrotnie: karta od razu, a strona w ramce na żądanie przyciskiem „▣ Strona\", który pojawia się tylko tam, gdzie serwis na to pozwala",
+      "feat: **Fragmenty w obcym języku tłumaczą się na polski.** Karta otwiera się i jeśli strona nie jest po polsku ani po angielsku, wszystkie fragmenty z „Gdzie stoi marka\", tytuł i fragment z pola Treść idą do modelu i wracają po polsku. Raz na wiersz, wynik zapamiętany. Przycisk „🌐 oryginał / po polsku\" przełącza. **Do Brand24 leci oryginał** — tłumaczenie jest wyłącznie do czytania. Wymaga wskazania promptu tłumaczenia w ustawieniach importu (⚙ → „Tłumacz\"); bez tego nic się nie wywołuje",
+      "feat: **Lista układa się od najpewniejszych.** Kolejność: werdykt AI, potem punktacja, potem kolejność wklejenia; załatwione i odrzucone przez skaner spadają na dół. Układa się sama dopóki nie otworzysz pierwszego wiersza — potem kolejność zamarza, bo wiersze przestawiające się pod kursorem są gorsze niż zła kolejność. Przycisk „⇅\" w pasku filtrów przestawia ręcznie i wraca do kolejności wklejenia",
+      "fix: **Plakietki stref mówią, co znaczą — i dwie z nich mówiły źle.** Każda z 21 stref ma teraz opis „gdzie to jest na stronie\" w dymku i w legendzie („Słownik stref\"). Poziomy są trzy zamiast dwóch, bo podział na „treść / nie-treść\" mylił się w obie strony: podpis zdjęcia i lista produktów to treść artykułu (marka obok ceny w zestawieniu zakupowym jest wzmianką), a „tekst poboczny\" to wcale nie strefa poboczna, tylko kubeł „skaner nie rozpoznał strefy\" — i akurat tej etykiecie nie wolno ufać na słowo"
+    ]
+  },
+  {
     "version": "0.28.0",
     "date": "2026-09-14",
     "label": "feat",

@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.31.3",
+    "date": "2026-09-14",
+    "label": "feat",
+    "changes": [
+      "fix: **Tłumaczenie czeka gotowe, zamiast zaczynać się po wejściu w wiersz.** Wcześniej każdy kafelek oznaczał kilka, czasem kilkanaście sekund czekania, zanim dalo się cokolwiek przeczytać. Teraz wtyczka tłumaczy z wyprzedzeniem dwa kolejne wiersze w tej samej kolejności, którą widzisz na liście — więc po J tekst jest już po polsku. Pierwszy wiersz po skończonym skanie też jest grzany z góry. Świadomie dwa, a nie cała lista: jedno wywołanie modelu na wiersz znaczyłoby płacenie także za wiersze, które odrzucisz bez otwierania",
+      "fix: **Do tłumaczenia idzie tyle fragmentów, ile karta naprawdę pokazuje.** Wcześniej szły wszystkie zebrane przez skaner, część z nich nigdy nie trafiała na ekran — czyli dłuższe czekanie i wyższy rachunek za nic. Limit jest teraz jedną wartością dla karty i dla tłumaczenia, bo tłumaczenia są dopasowywane po pozycji i dwa różne limity oznaczałyby fragment podpisany cudzym tekstem"
+    ]
+  },
+  {
     "version": "0.31.2",
     "date": "2026-09-14",
     "label": "feat",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.31.2
+// @version      0.31.3
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -171,7 +171,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.31.2';
+  const VERSION = '0.31.3';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -10414,6 +10414,11 @@ function showOnboarding(onComplete) {
   // pomiarów. Tłumaczenie nie ma prawa przesunąć ani jednego werdyktu.
   // Leci tylko dla wiersza, który annotator faktycznie otworzył, i raz na wiersz.
   var NEWS_READABLE_LANGS = ['pl', 'en'];
+  // Ile kontekstów pokazuje karta — i dokładnie tyle idzie do tłumaczenia. Jedna stała,
+  // bo tłumaczenia wracają tablicą i są dopasowywane PO POZYCJI: dwa różne limity znaczyłyby
+  // fragment podpisany cudzym tekstem. Tłumaczenie tego, czego karta i tak nie pokaże, to
+  // tylko dłuższe czekanie i wyższy rachunek.
+  var NEWS_CARD_CTX_MAX = 12;
 
   function _newsTranslatePromptText() {
     var s = _aiGetSettings();
@@ -10441,8 +10446,11 @@ function showOnboarding(onComplete) {
   function _newsTranslateItems(entry) {
     var items = [];
     if (entry.title) items.push(entry.title);
+    var _n = 0;
     Object.keys(entry.keywordContexts || {}).forEach(function(chip) {
-      (entry.keywordContexts[chip] || []).forEach(function(c) { if (c && c.text) items.push(c.text); });
+      (entry.keywordContexts[chip] || []).forEach(function(c) {
+        if (c && c.text && _n < NEWS_CARD_CTX_MAX) { items.push(c.text); _n++; }
+      });
     });
     if (entry.snippet) items.push(entry.snippet.slice(0, 400));
     return items;
@@ -10506,7 +10514,7 @@ function showOnboarding(onComplete) {
           if (entry.title) tr.title = String(arr[k++] || '');
           Object.keys(entry.keywordContexts || {}).forEach(function(chip) {
             (entry.keywordContexts[chip] || []).forEach(function(c) {
-              if (c && c.text) tr.ctx.push(String(arr[k++] || ''));
+              if (c && c.text && tr.ctx.length < NEWS_CARD_CTX_MAX) tr.ctx.push(String(arr[k++] || ''));
             });
           });
           if (entry.snippet) tr.snippet = String(arr[k++] || '');
@@ -14013,6 +14021,8 @@ function showOnboarding(onComplete) {
       // Nieprzeskanowany wiersz pobiera się sam przez okno przeglądarki — ale dopiero gdy
       // annotator na nim ZOSTANIE. Przelot J/K po liście nie ma prawa otwierać okien.
       _newsBrowserScanArm(entry);
+      // Kolejne wiersze tłumaczą się w tle, żeby po J czekało już gotowe.
+      _newsTranslateAhead(idx);
     }
 
     // ─── STEROWANIE KLAWIATURĄ ───
@@ -14047,6 +14057,27 @@ function showOnboarding(onComplete) {
         return i;
       }
       return -1;
+    }
+
+    // ─── TŁUMACZENIE Z WYPRZEDZENIEM ───
+    // Tłumaczenie wywołane dopiero przy wejściu w wiersz znaczy kilka–kilkanaście sekund
+    // czekania na KAŻDYM wierszu, a annotator ma tu tylko przeczytać i iść dalej. Puszczamy
+    // je więc dla wierszy, w które zaraz wejdzie: kolejnych w tej samej kolejności, którą
+    // widzi na liście (`_newsStepIdx` chodzi po posortowanej tablicy).
+    //
+    // Dwa do przodu, nie cała lista: to jest kompromis między czekaniem a rachunkiem za model.
+    // Przy jednym wywołaniu na wiersz przetłumaczenie wszystkiego z góry oznaczałoby płacenie
+    // za wiersze, które annotator odrzuci, nie otwierając.
+    var NEWS_TR_AHEAD = 2;
+
+    function _newsTranslateAhead(fromIdx) {
+      var idx = fromIdx;
+      for (var n = 0; n < NEWS_TR_AHEAD; n++) {
+        idx = _newsStepIdx(idx, 1);
+        if (idx < 0) return;
+        var e = newsState.urls[idx];
+        if (_newsTranslateShouldAuto(e)) _newsTranslateEntry(e);
+      }
     }
 
     function _newsRejectActive() {
@@ -14341,7 +14372,7 @@ function showOnboarding(onComplete) {
         });
       });
       if (_ctxItems.length > 0) {
-        var _CTX_MAX = 12;
+        var _CTX_MAX = NEWS_CARD_CTX_MAX;
         var _rows = _ctxItems.slice(0, _CTX_MAX).map(function(c, i) {
           var _shown = _txt(c.text, entry.tr && entry.tr.ctx && entry.tr.ctx[i]);
           return '<div style="display:flex;gap:7px;align-items:flex-start;">' +
@@ -14856,6 +14887,8 @@ function showOnboarding(onComplete) {
       // z domen prasowych, które przy pięciu równoległych wątkach nie zdążyły odpowiedzieć.
       // Bez tego annotator musiał o tym pamiętać i kliknąć sam.
       await _newsRetryBlocked(true);
+      // Pierwszy wiersz, w który annotator wejdzie, też ma zastać tłumaczenie gotowe.
+      _newsTranslateAhead(-1);
       _newsRunProjectCheck();
     }
 
@@ -15296,6 +15329,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.31.3",
+      "date": "2026-09-14",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "fix", "text": "**Tłumaczenie czeka gotowe, zamiast zaczynać się po wejściu w wiersz.** Wcześniej każdy kafelek oznaczał kilka, czasem kilkanaście sekund czekania, zanim dalo się cokolwiek przeczytać. Teraz wtyczka tłumaczy z wyprzedzeniem dwa kolejne wiersze w tej samej kolejności, którą widzisz na liście — więc po J tekst jest już po polsku. Pierwszy wiersz po skończonym skanie też jest grzany z góry. Świadomie dwa, a nie cała lista: jedno wywołanie modelu na wiersz znaczyłoby płacenie także za wiersze, które odrzucisz bez otwierania"},
+        {"type": "fix", "text": "**Do tłumaczenia idzie tyle fragmentów, ile karta naprawdę pokazuje.** Wcześniej szły wszystkie zebrane przez skaner, część z nich nigdy nie trafiała na ekran — czyli dłuższe czekanie i wyższy rachunek za nic. Limit jest teraz jedną wartością dla karty i dla tłumaczenia, bo tłumaczenia są dopasowywane po pozycji i dwa różne limity oznaczałyby fragment podpisany cudzym tekstem"}
+      ]
+    },
+    {
       "version": "0.31.2",
       "date": "2026-09-14",
       "label": "feat",
@@ -15393,20 +15436,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "**Eksperyment: formularz wzmianki w wyglądzie i24 Tools.** W ustawieniach → Funkcje opcjonalne doszedł przełącznik „🧪 Formularz wzmianki w stylu i24 Tools”, domyślnie wyłączony. Po włączeniu formularz dostaje ciemny panel, fioletowy akcent i pola monospace — czyli język wizualny rozszerzenia, do którego dodawanie wzmianek ma docelowo trafić. Widać od razu, jak to będzie wyglądać, zanim cokolwiek tam przeniesiemy"},
         {"type": "feat", "text": "Zmienia się **wyłącznie wygląd**. Markup ma te same identyfikatory elementów co wersja zwykła, więc autouzupełnianie z Instagrama i TikToka, sprawdzanie duplikatu, kropka dostępu, tagi i wysyłka działają dokładnie tak samo. Wyłączenie przełącznika wraca do starego wyglądu bez śladu"},
         {"type": "fix", "text": "Ustawienia funkcji opcjonalnych są teraz widoczne także poza Brand24. Pamięć przeglądarki jest osobna dla każdej domeny, więc na Instagramie wtyczka nie wiedziała, co masz włączone — a to właśnie tam dodaje się wzmianki"}
-      ]
-    },
-    {
-      "version": "0.26.25",
-      "date": "2026-09-11",
-      "label": "fix",
-      "labelColor": "#f59e0b",
-      "changes": [
-        {"type": "fix", "text": "**Naprawiony błąd znaleziony przy porządkach:** automatyczne wczytywanie nieznanych projektów zapisywało połamane nazwy. Tytuł strony Brand24 ma łamanie wiersza przed słowem „Brand24”, a kod odcinał sufiks szukając spacji — więc jako nazwa projektu zapisywało się coś w rodzaju „Zalando_GR — Brand24”. Do tego wpisywało zastępcze „Project <numer>”, czyli kolejne źródło śmieci na liście projektów"},
-        {"type": "fix", "text": "Warunek „czy ta nazwa projektu cokolwiek znaczy” stał w ośmiu kopiach i zdążyły się rozjechać — jedna nie znała polskiego wariantu „Projekt 123” i przepuszczała go jako dobrą nazwę. Teraz jest jeden"},
-        {"type": "fix", "text": "Ostrzeżenie o niezgodności języka budowało swój HTML dwukrotnie — drugie przypisanie odczytywało własny wynik, żeby dokleić przedrostek. Ponowne wywołanie dokleiłoby go drugi raz. Przy okazji poprawiona literówka w tym komunikacie"},
-        {"type": "fix", "text": "Treść błędu i ślad stosu trafiają na ekran jako tekst, nie jako HTML — potrafią zawierać fragment odpowiedzi serwera"},
-        {"type": "feat", "text": "Porządki bez zmiany zachowania: filtry panelu statystyk czytane w jednym miejscu zamiast w trzech (eksport CSV i JSON mogły się rozjeść z tym, co pokazuje ekran), predykat filtra sesji w jednym zamiast dwóch, nakładka modali ustawień w jednym zamiast trzech, mapa kraj→język w jednym zamiast dwóch"},
-        {"type": "feat", "text": "Powtarzane wzorce dat i sufiksu kraju dostały nazwy (dziesięć, cztery i pięć kopii) — z komentarzem, który blokuje jedną kuszącą, ale błędną podmianę: kod przekazujący datę artykułu działa, zanim te stałe w ogóle powstaną"}
       ]
     }
   ];

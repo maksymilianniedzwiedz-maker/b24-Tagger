@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.32.0",
+    "date": "2026-09-15",
+    "label": "feat",
+    "changes": [
+      "feat: **Lista URL-i przestaje przebudowywać się w całości przy każdym werdykcie AI.** Wcześniej każda ocena kasowała i budowała od nowa wszystkie wiersze — przy liście 400 adresów to kilkaset pełnych przebudów, stąd miganie i uciekająca pozycja przewinięcia. Teraz podmienia się dokładnie ten jeden wiersz, którego dotyczy werdykt. Dopóki lista sama się układa wg ocen, nadal przestawia się w całości — ale najwyżej raz na 300 ms zamiast przy każdej odpowiedzi",
+      "feat: **Widać, co się właśnie dzieje.** Wiersz w trakcie skanowania pokazuje pasek-szkielet w miejscu, gdzie za chwilę stanie fragment treści. Plakietka „AI…” pulsuje, dopóki ocena nie wróci, a po jej wejściu błyska — wcześniej podmieniała się bez żadnego sygnału. Wiersze wjeżdżają kaskadą zamiast pojawiać się naraz",
+      "feat: **Przyciski reagują na wciśnięcie.** Do tej pory kliknięcie w cokolwiek we wtyczce nie dawało żadnego sygnału, że doszło — przycisk wyglądał identycznie przed i po. Teraz lekko się wciska. Drobiazg, ale dotyczy każdego kliknięcia w panelu",
+      "fix: **Panel przestaje podskakiwać.** Wejścia okien i paneli szły na krzywej z przeskokiem — element wylatywał poza swoje miejsce i wracał. W narzędziu, w którym siedzi się godzinami, to męczy. Zostało to zdjęte z 19 z 20 miejsc; skok został tam, gdzie jest nagrodą: na liczniku dodanych wzmianek. Przy okazji zmiany kolorów przy najechaniu skróciły się z 300 do 100 ms, przez co panel wydaje się szybszy przy tej samej prędkości działania"
+    ]
+  },
+  {
     "version": "0.31.6",
     "date": "2026-09-15",
     "label": "fix",

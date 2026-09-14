@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.31.6
+// @version      0.32.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -171,7 +171,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.31.6';
+  const VERSION = '0.32.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -439,7 +439,7 @@
     modal.id = 'b24t-prompt-lib-modal';
     modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;backdrop-filter:blur(4px);animation:b24t-fadein 0.2s ease;';
     modal.innerHTML =
-      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:16px;width:720px;max-width:94vw;height:82vh;max-height:82vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);">' +
+      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:16px;width:720px;max-width:94vw;height:82vh;max-height:82vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein var(--b24t-dur-normal) var(--b24t-ease-out);">' +
         '<div style="padding:14px 20px;background:var(--b24t-accent-grad);border-radius:16px 16px 0 0;display:flex;align-items:center;gap:10px;flex-shrink:0;">' +
           '<span style="font-size:18px;">📚</span>' +
           '<div style="flex:1;">' +
@@ -3793,6 +3793,25 @@
          Dark mode:  rich indigo/violet, multi-gradient sections
          ===================================================================== */
 
+      /* ── RUCH — jedno miejsce na czasy i krzywe ──
+         Wtyczka to narzedzie pracy na kilka godzin dziennie, nie strona produktowa: ruch ma
+         niesc informacje o stanie, nie zdobic. Stad krotkie czasy i krzywe bez przeskoku.
+         Punkt odniesienia: Linear trzyma 0.1s / 0.25s / 0.35s, czyli ponizej normy 200-350ms,
+         i wlasnie dlatego sprawia wrazenie szybszego przy tej samej odpowiedzi serwera.
+         ⚠ Czego NIE animowac (te akcje ida setki razy dziennie, animacja = opoznienie miedzy
+         klawiszem a wynikiem): skoki J/K po liscie, zmiana aktywnego wiersza, przelaczanie
+         zakladek panelu, fokus pol formularza. */
+      :root {
+        --b24t-dur-instant: 100ms;  /* najechanie, wcisniecie, zmiana koloru */
+        --b24t-dur-quick:   160ms;  /* podmiana tresci, plakietki, wejscie wiersza */
+        --b24t-dur-normal:  240ms;  /* modale, panele boczne */
+        /* Mocniejsze warianty standardowych krzywych — wbudowane sa za slabe.
+           ease-out dla wejsc: zaczyna szybko, wiec interfejs odpowiada od razu.
+           ⚠ Nigdy ease-in na elemencie UI: zwleka wlasnie w chwili, w ktorej patrzysz. */
+        --b24t-ease-out:    cubic-bezier(0.23, 1, 0.32, 1);
+        --b24t-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+      }
+
       /* ── LIGHT MODE (default) — WYSOKI KONTRAST v0.8 ── */
       :root, [data-b24t-theme="light"] {
         --b24t-bg:          #ffffff;
@@ -3940,7 +3959,25 @@
       /* Fragment karty News czekający na swoje tłumaczenie: pulsuje ORYGINAŁ, a nie szary
          prostokąt — plakietka strefy i podświetlenia marki zostają czytelne, więc annotator
          może podejmować decyzję zanim tłumaczenie wejdzie. Po wejściu: krótki błysk. */
-      @keyframes b24t-tr-wait {
+      /* Wejscie wiersza listy. Male przesuniecie w pionie zamiast samego wygaszenia — oko
+         czyta to jako „tresc wchodzi", a nie „cos mrugnelo". 6px wystarczy; wieksze wartosci
+         przy kaskadzie 400 wierszy zaczynaja falowac.
+         ⚠ Nie zaczynac od scale(0): nic w swiecie rzeczywistym nie pojawia sie z niczego. */
+      @keyframes b24t-row-in {
+        from { opacity: 0; transform: translateY(6px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      /* Blysk plakietki, gdy wchodzi werdykt AI. Ten sam jezyk co przy tlumaczeniu:
+         cien wewnetrzny, zeby nie bic sie z inline'owym tlem plakietki. */
+      @keyframes b24t-badge-land {
+        from { box-shadow: inset 0 0 0 999px rgba(99,102,241,0.30); }
+        to   { box-shadow: inset 0 0 0 999px rgba(99,102,241,0); }
+      }
+      .b24t-badge-land { animation: b24t-badge-land 0.5s var(--b24t-ease-out); }
+
+      /* Jeden puls dla wszystkich „to jeszcze nie przyszlo": fragment czekajacy na tlumaczenie
+         i plakietka czekajaca na werdykt AI. Sama przezroczystosc, zadnego ruchu. */
+      @keyframes b24t-pulse-soft {
         0%, 100% { opacity: 0.40; }
         50%      { opacity: 0.78; }
       }
@@ -3951,7 +3988,8 @@
         from { box-shadow: inset 0 0 0 999px rgba(99,102,241,0.22); }
         to   { box-shadow: inset 0 0 0 999px rgba(99,102,241,0); }
       }
-      .b24t-tr-wait { animation: b24t-tr-wait 1.25s ease-in-out infinite; }
+      .b24t-tr-wait,
+      .b24t-pending-pulse { animation: b24t-pulse-soft 1.25s ease-in-out infinite; }
       .b24t-tr-land { animation: b24t-tr-land 0.55s ease-out; }
       /* ⚠ Celowo BEZ wyciszenia pod media-query prefers-reduced-motion. Pierwsza wersja je miała i to był
          błąd: zmierzone u właściciela 2026-09-15 — Windows ma wyłączone animacje, więc puls
@@ -4097,7 +4135,7 @@
         background: #ffffff;
         border-radius: 50%;
         box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-        transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
+        transition: transform var(--b24t-dur-quick) var(--b24t-ease-out);
       }
       .b24t-slider-track.is-dark .b24t-slider-knob { transform: translateX(16px); }
 
@@ -4137,7 +4175,7 @@
         background: var(--b24t-bg-deep);
         border-bottom: 2px solid var(--b24t-border);
         font-size: 11px;
-        transition: background 0.3s, border-color 0.3s;
+        transition: background var(--b24t-dur-instant), border-color var(--b24t-dur-instant);
       }
       .b24t-token-ok      { color: var(--b24t-ok); font-weight: 700; font-size: 12px; }
       .b24t-token-pending { color: var(--b24t-warn); font-weight: 700; font-size: 12px; animation: b24t-dot-pulse 1.4s ease-in-out infinite; }
@@ -4178,7 +4216,7 @@
          RULE: no position:absolute hacks on footer.
       ── */
       /* ── BODY ── */
-      #b24t-body { display: flex; flex-direction: column; overflow: hidden; flex: 1 1 auto; min-height: 0; background: var(--b24t-panel-grad); transition: background 0.3s; }
+      #b24t-body { display: flex; flex-direction: column; overflow: hidden; flex: 1 1 auto; min-height: 0; background: var(--b24t-panel-grad); transition: background var(--b24t-dur-instant); }
       #b24t-body::-webkit-scrollbar { width: 3px; }
       #b24t-body::-webkit-scrollbar-track { background: transparent; }
       #b24t-body::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); border-radius: 99px; }
@@ -4233,7 +4271,7 @@
         background: var(--b24t-section-grad-c); border: 1px solid var(--b24t-border-strong);
         border-radius: 99px; padding: 2px 10px;
         color: var(--b24t-text-label); font-size: 11px; font-weight: 600;
-        transition: background 0.3s, border-color 0.3s;
+        transition: background var(--b24t-dur-instant), border-color var(--b24t-dur-instant);
       }
 
       /* ── MAPPING ── */
@@ -4247,7 +4285,7 @@
         background: var(--b24t-bg-input); border: 1px solid var(--b24t-border);
         color: var(--b24t-text); border-radius: 5px; font-size: 12px;
         padding: 3px 4px; width: 100%; cursor: pointer; font-family: inherit;
-        transition: border-color 0.15s, background 0.3s;
+        transition: border-color var(--b24t-dur-instant), background var(--b24t-dur-instant);
       }
       .b24t-select:focus { outline: none; border-color: var(--b24t-primary); }
       .b24t-add-tag-btn {
@@ -4273,14 +4311,14 @@
         background: var(--b24t-bg-input); border: 1px solid var(--b24t-border);
         color: var(--b24t-text); border-radius: 4px; font-size: 10px;
         padding: 2px 4px; cursor: pointer; font-family: inherit; margin-left: 4px;
-        transition: background 0.3s, border-color 0.3s;
+        transition: background var(--b24t-dur-instant), border-color var(--b24t-dur-instant);
       }
 
       /* ── PROGRESS ── */
       .b24t-progress-bar-track {
         height: 6px; background: var(--b24t-bg-input); border-radius: 99px;
         overflow: hidden; margin: 8px 0 4px;
-        transition: background 0.3s;
+        transition: background var(--b24t-dur-instant);
         border: 1px solid var(--b24t-border-sub);
       }
       #b24t-progress-bar {
@@ -4309,7 +4347,7 @@
         flex: 1 1 auto; min-height: 80px; overflow-y: auto;
         font-size: 12px; line-height: 1.6;
         background: var(--b24t-bg-section-c);
-        transition: background 0.3s;
+        transition: background var(--b24t-dur-instant);
         border-radius: 6px;
       }
       #b24t-log::-webkit-scrollbar { width: 3px; }
@@ -4338,7 +4376,7 @@
         display: flex; gap: 6px; padding: 10px 14px;
         background: var(--b24t-section-grad-c);
         border-top: 2px solid var(--b24t-border);
-        transition: background 0.3s, border-color 0.3s;
+        transition: background var(--b24t-dur-instant), border-color var(--b24t-dur-instant);
       }
       .b24t-btn-primary {
         flex: 1; background: var(--b24t-primary); color: #fff;
@@ -4422,7 +4460,7 @@
         padding: 6px 10px;
         background: var(--b24t-bg-deep);
         border-bottom: 1px solid var(--b24t-border-sub);
-        transition: background 0.3s, border-color 0.3s;
+        transition: background var(--b24t-dur-instant), border-color var(--b24t-dur-instant);
       }
       .b24t-tab {
         flex: 1;
@@ -4498,8 +4536,8 @@
         border-radius: 14px; padding: 20px; width: 320px;
         font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
         box-shadow: var(--b24t-shadow-h);
-        animation: b24t-slidein 0.22s cubic-bezier(0.34,1.56,0.64,1);
-        transition: background 0.3s, border-color 0.3s;
+        animation: b24t-slidein var(--b24t-dur-normal) var(--b24t-ease-out);
+        transition: background var(--b24t-dur-instant), border-color var(--b24t-dur-instant);
       }
       .b24t-modal-title { font-size: 13px; font-weight: 700; color: var(--b24t-warn); margin-bottom: 12px; }
       .b24t-modal-text { font-size: 11px; color: var(--b24t-text-muted); line-height: 1.6; margin-bottom: 16px; }
@@ -4518,7 +4556,7 @@
         border-radius: 14px; padding: 24px; width: 280px;
         font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
         box-shadow: var(--b24t-shadow-h);
-        animation: b24t-slidein 0.22s cubic-bezier(0.34,1.56,0.64,1);
+        animation: b24t-slidein var(--b24t-dur-normal) var(--b24t-ease-out);
       }
       .b24t-report-content h3 { font-size: 14px; color: var(--b24t-primary); margin-bottom: 16px; }
       .b24t-report-row {
@@ -4535,7 +4573,7 @@
         color: var(--b24t-text); border-radius: 5px; font-size: 12px;
         padding: 5px 8px; width: 100%; font-family: inherit;
         box-sizing: border-box;
-        transition: border-color 0.15s, background 0.3s;
+        transition: border-color var(--b24t-dur-instant), background var(--b24t-dur-instant);
       }
       .b24t-input:focus { outline: none; border-color: var(--b24t-primary); }
 
@@ -4551,7 +4589,7 @@
         border-radius: 18px; width: 480px; max-height: 90vh;
         overflow-y: auto; padding: 28px;
         box-shadow: var(--b24t-shadow-h);
-        animation: b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);
+        animation: b24t-slidein var(--b24t-dur-normal) var(--b24t-ease-out);
       }
       .b24t-setup-card::-webkit-scrollbar { width: 3px; }
       .b24t-setup-card::-webkit-scrollbar-thumb { background: var(--b24t-scrollbar); }
@@ -4603,7 +4641,7 @@
         font-size: 11px; font-weight: 700; letter-spacing: 0.05em;
         color: var(--b24t-primary); user-select: none;
         background: var(--b24t-bg-elevated); box-shadow: var(--b24t-shadow);
-        transition: transform 0.15s, background 0.15s, border-color 0.3s;
+        transition: transform var(--b24t-dur-instant), background var(--b24t-dur-instant), border-color var(--b24t-dur-instant);
       }
       #b24t-news-side-tab:hover { background: var(--b24t-bg-section-c); transform: scale(1.06); }
       #b24t-news-side-tab.active { background: #6366f1; color: #fff; border-color: #4f46e5; }
@@ -4618,13 +4656,13 @@
         font-size: 10px; font-weight: 700; letter-spacing: 0.05em;
         color: var(--b24t-primary); user-select: none;
         background: var(--b24t-bg-elevated); box-shadow: var(--b24t-shadow);
-        transition: transform 0.15s, background 0.15s, border-color 0.3s;
+        transition: transform var(--b24t-dur-instant), background var(--b24t-dur-instant), border-color var(--b24t-dur-instant);
       }
       #b24t-nm-tab:hover { background: var(--b24t-bg-section-c); transform: scale(1.06); }
       #b24t-nm-tab.active { background: #0ea5e9; color: #fff; border-color: #0284c7; }
       #b24t-nm-tab.active:hover { background: #0284c7; }
       /* ── NETWORK MONITOR PANEL ── */
-      #b24t-nm-panel { transition: background 0.3s, border-color 0.3s, box-shadow 0.3s; }
+      #b24t-nm-panel { transition: background var(--b24t-dur-instant), border-color var(--b24t-dur-instant), box-shadow var(--b24t-dur-instant); }
       /* ── ANNOTATOR FLOATING PANEL ── */
       #b24t-annotator-tab {
         transition: opacity 0.2s, transform 0.2s;
@@ -4632,7 +4670,7 @@
       #b24t-annotator-tab:hover { transform: translateY(-50%) scale(1.05) !important; }
 
       #b24t-annotator-panel {
-        transition: background 0.3s, border-color 0.3s, box-shadow 0.3s;
+        transition: background var(--b24t-dur-instant), border-color var(--b24t-dur-instant), box-shadow var(--b24t-dur-instant);
       }
 
       /* ── CROSS-PROJECT DELETE PANEL ── */
@@ -4705,6 +4743,21 @@
       #b24t-xproject-run:hover { opacity: 0.88; }
       #b24t-xproject-run:disabled { opacity: 0.4; cursor: not-allowed; }
 
+      /* ── REAKCJA NA WCISNIECIE ──
+         Najtansza rzecz z najwiekszym zwrotem: bez tego przyciski wtyczki nie daja zadnego
+         sygnalu, ze klikniecie doszlo. Skala celowo subtelna (0.97) i krotka — to ma byc
+         potwierdzenie, nie efekt. Zawezone do wnetrza kontenerow wtyczki, zeby nie ruszyc
+         przyciskow samego Brand24.
+         Wlasnosc scale skaluje tez dzieci elementu (ikone, napis) — i o to chodzi. */
+      button[id^="b24t-"], [id^="b24t-"] button, [class*="b24t-"] button {
+        transition: transform var(--b24t-dur-instant) var(--b24t-ease-out);
+      }
+      button[id^="b24t-"]:active:not(:disabled),
+      [id^="b24t-"] button:active:not(:disabled),
+      [class*="b24t-"] button:active:not(:disabled) {
+        transform: scale(0.97);
+      }
+
       /* ── SHIMMER LOADING ── */
       .b24t-shimmer {
         background: linear-gradient(90deg,
@@ -4757,7 +4810,7 @@
         box-shadow: var(--b24t-shadow-h);
         pointer-events: none;
         transform-origin: bottom center;
-        animation: b24t-slidein 0.2s cubic-bezier(0.34,1.56,0.64,1);
+        animation: b24t-slidein var(--b24t-dur-normal) var(--b24t-ease-out);
       }
       .b24t-help-tip strong { color: var(--b24t-text); display: block; margin-bottom: 4px; font-size: 12px; }
       #b24t-help-panel-overlay {
@@ -4798,6 +4851,9 @@
         45%  { transform: scale(1.22); }
         100% { transform: scale(1); }
       }
+      /* Jedyne miejsce, gdzie przeskok (wartosc 1.56 = wyskok poza cel i powrot) zostaje
+         swiadomie: licznik skacze po dodaniu wzmianki, czyli jest nagroda za wykonana prace.
+         Wszedzie indziej ta krzywa sprawiala, ze panel „podskakuje" zamiast siadac. */
       .b24t-stat-pop { animation: b24t-stat-pop 0.22s cubic-bezier(0.34,1.56,0.64,1) !important; }
 
       /* ── ROW CASCADE (Overall Stats, Tag Stats, Dashboard) ── */
@@ -4911,7 +4967,7 @@
         font-size: 13px; padding: 10px 16px;
         border-radius: 8px; border: 1px solid; border-top: 2px solid;
         box-shadow: 0 4px 20px rgba(0,0,0,0.45);
-        animation: b24t-toast-in 0.22s cubic-bezier(0.34,1.56,0.64,1) forwards;
+        animation: b24t-toast-in var(--b24t-dur-quick) var(--b24t-ease-out) forwards;
         pointer-events: all; max-width: 320px; line-height: 1.4;
       }
       .b24t-toast.b24t-toast-out { animation: b24t-toast-out 0.15s cubic-bezier(0.4,0,1,1) forwards; }
@@ -6828,7 +6884,7 @@ function injectOnboardingStyles() {
       padding: 18px 20px 14px;
       box-shadow: 0 16px 56px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.06);
       pointer-events: all;
-      transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.34,1.56,0.64,1);
+      transition: opacity var(--b24t-dur-quick) ease, transform var(--b24t-dur-quick) var(--b24t-ease-out);
     }
     #b24t-ob-bubble.ob-entering {
       opacity: 0; transform: translateY(10px) scale(0.97);
@@ -8123,6 +8179,9 @@ function showOnboarding(onComplete) {
   // Tłumaczenie wchodzi po kawałku (strumień), a przerysowanie karty przy każdym z czternastu
   // kawałków gubi pozycję scrolla, przerywa animacje i miga całą kolumną zamiast jedną linijką.
   var _newsCardSlotPatcher = null;
+  // j.w. — odswiezenie JEDNEGO wiersza listy zamiast przebudowy calej. Werdykt AI dotyczy
+  // jednego adresu, a `renderUrlList` kasuje i buduje od nowa wszystkie wiersze.
+  var _newsRowRenderer = null;
 
   // CALA SEKCJA NEWS ("Dodaj z listy URL-i") JEST ZBUDOWANA WYLACZNIE POD H&M
   // i nigdy nie bedzie dotyczyc innej marki — decyzja wlasciciela, potwierdzona wielokrotnie
@@ -10351,7 +10410,7 @@ function showOnboarding(onComplete) {
     if (!systemPrompt) return;
     entry.aiStatus = 'pending';
     entry.aiError = '';
-    if (_newsListRenderer) _newsListRenderer();
+    if (_newsRowRenderer) _newsRowRenderer(entry);
     try {
       var s = _aiGetSettings();
       var model = (s.news && s.news.model) || 'claude-haiku-4-5';
@@ -10418,25 +10477,25 @@ function showOnboarding(onComplete) {
               _aiSaveSettings(cfg);
               entry.aiStatus = 'error';
               entry.aiError = 'błędny klucz API';
-              if (_newsListRenderer) _newsListRenderer();
+              if (_newsRowRenderer) _newsRowRenderer(entry);
               return;
             }
             if (resp.status === 429) {
               entry.aiStatus = 'error';
               entry.aiError = 'limit API (429)';
-              if (_newsListRenderer) _newsListRenderer();
+              if (_newsRowRenderer) _newsRowRenderer(entry);
               return;
             }
             if (resp.status >= 500) {
               entry.aiStatus = 'error';
               entry.aiError = 'błąd serwera (' + resp.status + ')';
-              if (_newsListRenderer) _newsListRenderer();
+              if (_newsRowRenderer) _newsRowRenderer(entry);
               return;
             }
             if (resp.status < 200 || resp.status >= 300) {
               entry.aiStatus = 'error';
               entry.aiError = 'HTTP ' + resp.status;
-              if (_newsListRenderer) _newsListRenderer();
+              if (_newsRowRenderer) _newsRowRenderer(entry);
               return;
             }
             var data = JSON.parse(resp.responseText);
@@ -10454,15 +10513,15 @@ function showOnboarding(onComplete) {
             entry.aiStatus = 'error';
             entry.aiError = 'błąd parsowania';
           }
-          if (_newsListRenderer) _newsListRenderer();
+          if (_newsRowRenderer) _newsRowRenderer(entry);
         },
-        onerror: function() { entry.aiStatus = 'error'; entry.aiError = 'brak połączenia'; if (_newsListRenderer) _newsListRenderer(); },
-        ontimeout: function() { entry.aiStatus = 'error'; entry.aiError = 'timeout'; if (_newsListRenderer) _newsListRenderer(); },
+        onerror: function() { entry.aiStatus = 'error'; entry.aiError = 'brak połączenia'; if (_newsRowRenderer) _newsRowRenderer(entry); },
+        ontimeout: function() { entry.aiStatus = 'error'; entry.aiError = 'timeout'; if (_newsRowRenderer) _newsRowRenderer(entry); },
       });
     } catch(e) {
       entry.aiStatus = 'error';
       entry.aiError = 'błąd wywołania';
-      if (_newsListRenderer) _newsListRenderer();
+      if (_newsRowRenderer) _newsRowRenderer(entry);
     }
   }
 
@@ -13104,6 +13163,52 @@ function showOnboarding(onComplete) {
     // Podmiana JEDNEGO fragmentu w miejscu — bez tego strumień tłumaczenia przebudowywałby
     // całą kartę czternaście razy z rzędu: zgubiony scroll, przerwane animacje, miganie kolumną.
     // Ta sama zasada co wyżej: obcy wiersz zostawiamy w spokoju, bo annotator mógł już przeskoczyć.
+    // Dlawik pelnego rysowania listy. Potrzebny poza skanem, bo werdykty AI wracaja takze
+    // po jego zakonczeniu, a dopoki lista sama sie uklada, podmiana jednego wiersza nie
+    // wystarcza — kolejnosc i tak sie zmienia.
+    var _listRenderPending = false, _listRenderLast = 0;
+    function _newsListThrottled() {
+      var now = Date.now();
+      var elapsed = now - _listRenderLast;
+      if (elapsed >= 300) { _listRenderLast = now; try { renderUrlList(); } catch(e) {} return; }
+      if (_listRenderPending) return;
+      _listRenderPending = true;
+      setTimeout(function() {
+        _listRenderPending = false;
+        _listRenderLast = Date.now();
+        try { renderUrlList(); } catch(e) {}
+      }, 300 - elapsed);
+    }
+
+    // Podmiana JEDNEGO wiersza w miejscu. Wiersz odnajdujemy po adresie, nie po indeksie:
+    // indeks zmienia sie przy sortowaniu, adres nie.
+    _newsRowRenderer = function(entry) {
+      if (!entry) return;
+      // Dopoki annotator nie otworzyl pierwszego wiersza, lista sama sie uklada wg werdyktow
+      // (`_newsApplySort`) — czyli wchodzacy werdykt zmienia KOLEJNOSC, a nie tylko jeden
+      // wiersz. Wtedy nie ma czego podmieniac: idziemy pelnym rysowaniem, ale przez dlawik,
+      // zeby przy 400 adresach nie bylo kilkuset przebudow pod rzad.
+      if (newsState.activeIdx === -1 && newsState.sortMode !== 'paste') { _newsListThrottled(); return; }
+      var list = document.getElementById('b24t-news-url-list');
+      if (!list) return;
+      var rows = list.querySelectorAll('.b24t-news-url-row');
+      var old = null;
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i].dataset.url === entry.url) { old = rows[i]; break; }
+      }
+      if (!old) { _newsListThrottled(); return; }   // wiersza nie ma na ekranie (filtr, inna lista)
+      var idx = newsState.urls.indexOf(entry);
+      if (idx === -1) return;
+      var fresh = _newsBuildRow(entry, idx, _newsThemeVars(), false);
+      if (!fresh) { old.remove(); return; }          // filtr wlasnie go ukryl
+      old.replaceWith(fresh);
+      // Werdykt wszedl po cichu — plakietka blyska, zeby bylo widac, ze cos sie zmienilo.
+      if (entry.aiStatus === 'done') {
+        var badge = fresh.querySelector('[data-ai-badge]');
+        if (badge) badge.classList.add('b24t-badge-land');
+      }
+    };
+
     _newsCardSlotPatcher = function(entry, slot, text) {
       var act = newsState.activeIdx >= 0 ? newsState.urls[newsState.activeIdx] : null;
       if (act !== entry) return;
@@ -13817,6 +13922,298 @@ function showOnboarding(onComplete) {
       newsState.activeIdx = active ? newsState.urls.indexOf(active) : -1;
     }
 
+    // Buduje JEDEN wiersz listy URL-i i oddaje go gotowego (albo `null`, gdy filtr go ukrywa).
+    // Wydzielone z `renderUrlList`, zeby ten sam kod sluzyl do zbudowania calej listy
+    // i do podmiany pojedynczego wiersza w miejscu. Bez tego kazdy werdykt AI przebudowywal
+    // wszystkie 400 wierszy — czyli przy jednej liscie kilkaset pelnych przebudow.
+    function _newsBuildRow(entry, idx, t, animate) {
+
+        // Filtr nie-artykułów — ukryj wiersz (nie usuń z listy)
+        if (newsState.hideNonArticles && entry.pageType === 'nonArticle') return null;   // wiersz ukryty filtrem
+
+        var isActive    = idx === newsState.activeIdx;
+        var sd          = _statusDot(entry.status, entry);
+        var isScanning  = entry.status === 'scanning';
+        var isIrrelevant = entry.status === 'nomatch' || entry.status === 'wrongcountry' ||
+                           entry.status === 'inproject';
+        var isTeaserMatch = entry.status === 'teasermatch';
+        var isBlocked   = entry.status === 'blocked'; // klikalny — annotator sprawdza ręcznie
+        var isStale     = entry.isStale && !isIrrelevant && !isScanning && !isTeaserMatch;
+        var isClickable = !isIrrelevant && !isScanning; // teasermatch i blocked są klikalne
+
+        var row = document.createElement('div');
+        row.className = 'b24t-news-url-row';
+        row.dataset.idx = idx;
+        // Po tym znaczniku `_newsRowRenderer` trafia w ten wiersz. Indeks do tego NIE nadaje sie:
+        // zmienia sie przy kazdym przesortowaniu listy, a adres jest staly.
+        row.dataset.url = entry.url;
+        row.style.cssText = [
+          'display:flex;flex-direction:column;gap:3px;padding:7px 10px;border-radius:8px;',
+          'cursor:' + (isClickable ? 'pointer' : 'default') + ';',
+          'border:1px solid ' + (isActive ? 'var(--b24t-primary)' : isScanning ? 'rgba(129,140,248,0.25)' : isBlocked ? 'rgba(107,114,128,0.35)' : t.borderSub) + ';',
+          'background:' + (isActive ? t.accentAlpha : (isIrrelevant || isScanning) ? 'transparent' : t.bgDeep) + ';',
+          'opacity:' + (isIrrelevant ? '0.4' : isTeaserMatch ? '0.5' : isStale ? '0.55' : (isBlocked || isScanning) ? '0.6' : '1') + ';',
+          'transition:background 0.1s,border-color 0.1s;',
+        ].join('');
+        // Wjazd kaskadowy — tylko przy pelnym rysowaniu listy. Przy podmianie pojedynczego
+        // wiersza animacja jest wylaczona, bo wiersz mrugalby przy kazdym werdykcie AI.
+        // Opoznienie rosnie po 30 ms i urywa sie na 240 ms: dluzsza kaskada zaczyna wygladac
+        // jak zacinanie sie interfejsu, a nie jak wchodzenie tresci.
+        if (animate) {
+          row.style.animation = 'b24t-row-in var(--b24t-dur-quick) var(--b24t-ease-out) ' +
+                                Math.min(idx * 30, 240) + 'ms both';
+        }
+        if (isBlocked) row.title = _newsBlockInfo(entry).tip;
+
+        var displayUrl = entry.url.replace(/^https?:\/\//, '');
+
+        // Snippet dla wyników content scan
+        var snippetHtml = '';
+        // Wiersz w trakcie skanu dostaje pasek-szkielet dokladnie tam, gdzie za chwile stanie
+        // fragment tresci. Szkielet, a nie spinner, bo ksztalt tresci jest znany — i to jest
+        // cala roznica miedzy nimi: spinner mowi „system pracuje", szkielet „tresc juz leci
+        // i tak bedzie wygladac". Szerokosc liczona z indeksu, zeby paski mialy rozna dlugosc
+        // jak prawdziwy tekst, ale NIE skakaly przy kazdym przerysowaniu.
+        if (isScanning) {
+          snippetHtml = '<div class="b24t-shimmer" style="height:9px;border-radius:3px;margin-top:2px;width:' +
+                        (48 + (idx * 37) % 44) + '%;"></div>';
+        }
+        var _hasSnippet = (entry.status === 'contentmatch' || entry.status === 'mention' || entry.status === 'keytopic') && entry.snippet;
+        if (_hasSnippet) {
+          snippetHtml = '<div style="font-size:9px;color:' + t.textFaint + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + entry.snippet.replace(/"/g,'&quot;') + '">' + entry.snippet.slice(0,100) + '</div>';
+        }
+
+        // Status badge — pierwszy w górnym wierszu
+        var _blockedLabel = _newsBlockInfo(entry).label;
+        var _sLabels = { match:'Keyword w URL', keytopic:'G\u0142\u00f3wny temat', contentmatch:'W tre\u015bci', mention:'Wzmianka', teasermatch:'Polecany art.', wrongcountry:'Z\u0142y kraj', opened:'Otwarty', checked:'Sprawdzony', added:'Dodano', error:'B\u0142\u0105d', inproject:'W projekcie', scanning:'Skanowanie\u2026', blocked:_blockedLabel, nomatch:'Brak keyword' };
+        var _sbStyle;
+        if (isScanning) {
+          _sbStyle = 'background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.2);color:#818cf8;';
+        } else if (entry.status === 'keytopic' || entry.status === 'match') {
+          _sbStyle = 'background:rgba(34,197,94,0.10);border:1px solid rgba(34,197,94,0.25);color:#22c55e;';
+        } else if (entry.status === 'contentmatch') {
+          _sbStyle = 'background:rgba(129,140,248,0.10);border:1px solid rgba(129,140,248,0.25);color:#818cf8;';
+        } else if (entry.status === 'mention') {
+          _sbStyle = 'background:rgba(251,146,60,0.10);border:1px solid rgba(251,146,60,0.25);color:#fb923c;';
+        } else if (entry.status === 'added') {
+          _sbStyle = 'background:rgba(21,128,61,0.12);border:1px solid rgba(21,128,61,0.3);color:#15803d;';
+        } else if (entry.status === 'error') {
+          _sbStyle = 'background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);color:#ef4444;';
+        } else if (entry.status === 'opened') {
+          _sbStyle = 'background:rgba(167,139,250,0.10);border:1px solid rgba(167,139,250,0.25);color:#a78bfa;';
+        } else if (entry.status === 'checked') {
+          _sbStyle = 'background:rgba(100,116,139,0.10);border:1px solid rgba(100,116,139,0.28);color:#64748b;';
+        } else {
+          _sbStyle = 'background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:#9ca3af;';
+        }
+        var _statusBadgeHtml = '<span style="font-size:8px;padding:1px 6px;border-radius:4px;font-weight:600;flex-shrink:0;' + _sbStyle + '" title="' + sd.label + '">' + sd.dot + ' ' + (_sLabels[entry.status] || entry.status) + '</span>';
+
+        // Pozostałe badże
+        var _metaBadges = [];
+
+        if (entry.bsStatus === 'pending') {
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(34,197,94,0.10);border:1px solid rgba(34,197,94,0.28);color:#22c55e;" title="Strona jest otwierana w oknie przeglądarki i skanowana stamtąd">🌐 okno…</span>');
+        }
+        if (entry.scannedViaBrowser) {
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.22);color:#22c55e;" title="Treść pobrana z okna przeglądarki, nie zapytaniem w tle — z Twoją sesją i ciasteczkami">🌐 z okna</span>');
+        }
+        if (entry.iframeable === true) {
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.18);color:#818cf8;" title="Podgl\u0105d iframe dost\u0119pny">\u25a2</span>');
+        }
+
+        var _chips = entry.matchedChips;
+        if (_chips && _chips.length > 0 && entry.status !== 'nomatch' && entry.status !== 'blocked' && entry.status !== 'wrongcountry' && entry.status !== 'inproject') {
+          _chips.forEach(function(c) {
+            var safe = c.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);color:#a78bfa;font-family:monospace;">' + safe + '</span>');
+          });
+        }
+        if (entry.zoneHints && entry.zoneHints.length > 0) {
+          var _hintsLabel = entry.zoneHints.join(', ');
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;' +
+            (entry.secondaryZoneOnly
+              ? 'background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);color:#f59e0b;'
+              : 'background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.25);color:#a78bfa;') +
+            '" title="Keyword znaleziony w: ' + _hintsLabel + '">' +
+            (entry.secondaryZoneOnly ? '\u26a0 tylko w: ' : '+ ') + _hintsLabel + '</span>');
+        }
+        if (isTeaserMatch && entry.teaserChips && entry.teaserChips.length > 0) {
+          var _tc = entry.teaserChips.map(function(c) { return c.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }).join(', ');
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Keyword \'' + _tc + '\' wyst\u0105pi\u0142 tylko w sekcji polecanych artyku\u0142\u00f3w \u2014 nie w g\u0142\u00f3wnej tre\u015bci">w polecanym art.</span>');
+        }
+        if (entry.duplicateOf) {
+          // Modułowy `_escHtml`, nie lokalna kopia eskapera: wartość idzie do atrybutu title,
+          // więc musi escapować też cudzysłów. Stało tu `_esc` — nazwa żywa wyłącznie w ciele
+          // _newsShowRichPreviewCard, więc pierwszy duplikat na liście przerywał render
+          // ReferenceError-em: kafelki za nim znikały, a activateUrl nie dochodził do podglądu
+          // — klikanie kolejnych wierszy nie zmieniało już nic.
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;'
+            + 'background:rgba(148,163,184,0.14);border:1px solid rgba(148,163,184,0.32);color:#94a3b8;" '
+            + 'title="Ta sama strona co: ' + _escHtml(entry.duplicateOf)
+            + ' \u2014 wed\u0142ug kanonicznego adresu podanego przez wydawc\u0119">\u29C9 duplikat</span>');
+        }
+        var _pt = entry.pageType;
+        if (_pt === 'jobPosting' || _pt === 'product' || _pt === 'recipe' || _pt === 'event') {
+          var _ptLabel = { jobPosting: '\uD83D\uDCBC og\u0142oszenie o prac\u0119', product: '\uD83D\uDCE6 karta produktu',
+                           recipe: '\uD83C\uDF72 przepis', event: '\uD83D\uDCC5 wydarzenie' }[_pt];
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.28);color:#d97706;" title="Rodzaj strony zadeklarowany przez wydawc\u0119 w JSON-LD">' + _ptLabel + '</span>');
+        } else if (_pt === 'nonArticle') {
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Brak sygna\u0142\u00f3w \u017ce to artyku\u0142/news (og:type, JSON-LD, published_time, &lt;time&gt;, paragraphs)">\uD83D\uDCC4 nie-artyku\u0142</span>');
+        } else if (_pt === 'uncertain') {
+          var _sigList = (entry.pageTypeSignals || []).join(', ');
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);color:#d97706;" title="Tylko 1 sygna\u0142 artyku\u0142u: ' + _sigList + '">\u2753 typ niepewny</span>');
+        }
+        if (entry.articleDate) {
+          var _diffD = (Date.now() - new Date(entry.articleDate).getTime()) / 86400000;
+          var _dc = _diffD > 60 ? '#f87171' : _diffD > 30 ? '#f59e0b' : '#4ade80';
+          var _db = _diffD > 60 ? 'rgba(239,68,68,0.10)' : _diffD > 30 ? 'rgba(245,158,11,0.10)' : 'rgba(34,197,94,0.10)';
+          var _dbd = _diffD > 60 ? 'rgba(239,68,68,0.3)' : _diffD > 30 ? 'rgba(245,158,11,0.3)' : 'rgba(34,197,94,0.25)';
+          var _staleTitle = _diffD > 60 ? ' \u2014 zbyt stary artyku\u0142 (&gt;60 dni)' : '';
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:' + _db + ';border:1px solid ' + _dbd + ';color:' + _dc + ';" title="Data publikacji' + _staleTitle + '">📅 ' + entry.articleDate + '</span>');
+        }
+        if (entry.pageLang) {
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.25);color:#a78bfa;" title="Wykryty j\u0119zyk strony">\ud83c\udf10 ' + entry.pageLang + '</span>');
+        }
+        if (entry.isPaywall) {
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);color:#f59e0b;" title="Strona za paywallem lub blokad\u0105 \u2014 tre\u015b\u0107 mo\u017ce by\u0107 niepe\u0142na">\uD83D\uDD12 paywall</span>');
+        }
+        if (entry.aiStatus === 'pending') {
+          _metaBadges.push('<span class="b24t-pending-pulse" style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.2);color:#818cf8;">\u23f3 AI\u2026</span>');
+        } else if (entry.aiStatus === 'error') {
+          var _aiErrMsg = entry.aiError ? '\uD83E\uDD16 ' + entry.aiError : '\uD83E\uDD16 b\u0142\u0105d';
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);color:#f87171;" title="AI nie mog\u0142o przeanalizowa\u0107 artyku\u0142u \u2014 ' + (entry.aiError || 'nieznany b\u0142\u0105d') + '">' + _aiErrMsg + '</span>');
+        } else if (entry.aiStatus === 'done') {
+          var _verdict = entry.aiVerdict || (entry.aiRelevant ? 'match' : 'miss');
+          var _airsn = (entry.aiReason || '').replace(/"/g, '&quot;');
+          var _aic, _aib, _aibd, _ailbl;
+          if (_verdict === 'match') {
+            _aic = '#22c55e'; _aib = 'rgba(34,197,94,0.10)'; _aibd = 'rgba(34,197,94,0.25)'; _ailbl = '\u2705 Relevant';
+          } else if (_verdict === 'borderline') {
+            _aic = '#f59e0b'; _aib = 'rgba(245,158,11,0.10)'; _aibd = 'rgba(245,158,11,0.30)'; _ailbl = '\u26A0\uFE0F Borderline';
+          } else if (_verdict === 'spam') {
+            _aic = '#f97316'; _aib = 'rgba(249,115,22,0.10)'; _aibd = 'rgba(249,115,22,0.30)'; _ailbl = '\uD83D\uDEAB Spam';
+          } else {
+            _aic = '#9ca3af'; _aib = 'rgba(107,114,128,0.08)'; _aibd = 'rgba(107,114,128,0.2)'; _ailbl = '\u274C Irrelevant';
+          }
+          _metaBadges.push('<span data-ai-badge style="font-size:8px;padding:1px 5px;border-radius:4px;background:' + _aib + ';border:1px solid ' + _aibd + ';color:' + _aic + ';" title="' + _airsn + '">' + _ailbl + '</span>');
+        }
+
+        var _delBtnHtml = isScanning ? '' : '<button class="b24t-news-del-btn" style="flex-shrink:0;margin-left:4px;font-size:11px;width:18px;height:18px;line-height:1;border-radius:4px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Usu\u0144 z listy">\u2715</button>';
+
+        row.innerHTML =
+          '<div style="display:flex;align-items:flex-start;gap:3px;">' +
+            '<div style="flex:1;display:flex;flex-wrap:wrap;gap:3px;align-items:center;">' +
+              _statusBadgeHtml + _metaBadges.join('') +
+            '</div>' +
+            _delBtnHtml +
+          '</div>' +
+          '<div style="font-size:11px;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + t.text + ';" title="' + entry.url.replace(/"/g, '&quot;') + '">' + displayUrl + '</div>' +
+          snippetHtml;
+
+        // (dopiecie do listy nalezy do wywolujacego — patrz `renderUrlList` i `_newsRowRenderer`)
+
+        if (isClickable) {
+          row.addEventListener('click', function(e) {
+            if (e.target.classList.contains('b24t-news-del-btn')) return;
+            activateUrl(idx);
+          });
+        }
+        var delBtn = row.querySelector('.b24t-news-del-btn');
+        if (delBtn) {
+          delBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var _existing = document.getElementById('b24t-news-domain-popup');
+            if (_existing) { _existing.remove(); return; }
+            var _entry = newsState.urls[idx];
+            if (!_entry) return;
+            var _dom = '';
+            try { _dom = new URL(_entry.url).hostname.replace(/^www\./, ''); } catch(_ex) {}
+            var _domCount = 0;
+            if (_dom) newsState.urls.forEach(function(u) {
+              try { if (new URL(u.url).hostname.replace(/^www\./, '') === _dom) _domCount++; } catch(_ex) {}
+            });
+            var _dk = _newsIsDark();
+            var _pbg  = _dk ? '#1e1e2e'                    : '#ffffff';
+            var _pbor = _dk ? 'rgba(255,255,255,0.13)'     : 'rgba(0,0,0,0.12)';
+            var _pbsb = _dk ? 'rgba(255,255,255,0.07)'     : 'rgba(0,0,0,0.06)';
+            var _ptxt = _dk ? '#e2e8f0'                    : '#1e293b';
+            var _pmut = _dk ? '#94a3b8'                    : '#64748b';
+            var _pbtn = _dk ? 'rgba(255,255,255,0.06)'     : 'rgba(0,0,0,0.04)';
+            var TW = 8; // tail half-width (px)
+            var TH = 8; // tail height (px)
+            var GAP = 4;
+            var PW = 200;
+            var popup = document.createElement('div');
+            popup.id = 'b24t-news-domain-popup';
+            popup.style.cssText = 'position:fixed;z-index:2147483647;background:' + _pbg + ';border:1px solid ' + _pbor + ';border-radius:9px;padding:10px 12px;box-shadow:0 8px 32px rgba(0,0,0,0.4);display:flex;flex-direction:column;gap:6px;min-width:' + PW + 'px;visibility:hidden;font-family:\'Geist\',\'Segoe UI\',system-ui,sans-serif;';
+            var _pLabel = document.createElement('div');
+            _pLabel.style.cssText = 'font-size:10px;color:' + _pmut + ';padding-bottom:5px;border-bottom:1px solid ' + _pbsb + ';';
+            _pLabel.textContent = 'Usuń z listy:';
+            popup.appendChild(_pLabel);
+            var _btn1 = document.createElement('button');
+            _btn1.style.cssText = 'font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid ' + _pbsb + ';background:' + _pbtn + ';color:' + _ptxt + ';cursor:pointer;text-align:left;';
+            _btn1.textContent = 'Tylko ten URL';
+            _btn1.addEventListener('click', function(ev) {
+              ev.stopPropagation();
+              popup.remove();
+              var wasActive = newsState.activeIdx === idx;
+              newsState.urls.splice(idx, 1);
+              if (wasActive) { newsState.activeIdx = -1; }
+              else if (newsState.activeIdx > idx) { newsState.activeIdx--; }
+              renderUrlList();
+            });
+            popup.appendChild(_btn1);
+            if (_dom && _domCount > 1) {
+              var _btn2 = document.createElement('button');
+              _btn2.style.cssText = 'font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.08);color:#f87171;cursor:pointer;text-align:left;';
+              _btn2.textContent = 'Wszystkie z ' + _dom + ' (' + _domCount + ')';
+              _btn2.addEventListener('click', function(ev) {
+                ev.stopPropagation();
+                popup.remove();
+                _newsRemoveByStatus(function(u) {
+                  try { return new URL(u.url).hostname.replace(/^www\./, '') === _dom; } catch(_ex) { return false; }
+                });
+              });
+              popup.appendChild(_btn2);
+            }
+            // Tail divs — pozycja ustalana po zmierzeniu popupu
+            var tailOuter = document.createElement('div');
+            var tailFill  = document.createElement('div');
+            popup.appendChild(tailOuter);
+            popup.appendChild(tailFill);
+            document.body.appendChild(popup);
+            // Mierzymy i pozycjonujemy PO dodaniu do DOM
+            var btnRect = delBtn.getBoundingClientRect();
+            var popupH  = popup.offsetHeight;
+            var popupW  = popup.offsetWidth;
+            var btnCX   = Math.round(btnRect.left + btnRect.width / 2);
+            var popupLeft = Math.max(4, Math.min(btnCX - Math.round(popupW / 2), window.innerWidth - popupW - 4));
+            var tailX = Math.max(TW + 4, Math.min(btnCX - popupLeft - TW, popupW - TW * 2 - 4));
+            var popupTop = btnRect.top - popupH - TH - GAP;
+            var flipDown = popupTop < 8;
+            if (flipDown) {
+              popupTop = btnRect.bottom + TH + GAP;
+              tailOuter.style.cssText = 'position:absolute;top:-' + (TH + 1) + 'px;left:' + tailX + 'px;width:0;height:0;border-left:' + TW + 'px solid transparent;border-right:' + TW + 'px solid transparent;border-bottom:' + (TH + 1) + 'px solid ' + _pbor + ';';
+              tailFill.style.cssText  = 'position:absolute;top:-' + TH + 'px;left:' + tailX + 'px;width:0;height:0;border-left:' + TW + 'px solid transparent;border-right:' + TW + 'px solid transparent;border-bottom:' + TH + 'px solid ' + _pbg + ';';
+            } else {
+              tailOuter.style.cssText = 'position:absolute;bottom:-' + (TH + 1) + 'px;left:' + tailX + 'px;width:0;height:0;border-left:' + TW + 'px solid transparent;border-right:' + TW + 'px solid transparent;border-top:' + (TH + 1) + 'px solid ' + _pbor + ';';
+              tailFill.style.cssText  = 'position:absolute;bottom:-' + TH + 'px;left:' + tailX + 'px;width:0;height:0;border-left:' + TW + 'px solid transparent;border-right:' + TW + 'px solid transparent;border-top:' + TH + 'px solid ' + _pbg + ';';
+            }
+            popup.style.left = popupLeft + 'px';
+            popup.style.top  = popupTop + 'px';
+            popup.style.visibility = '';
+            function _closePopup(ev) {
+              if (!popup.contains(ev.target)) {
+                popup.remove();
+                document.removeEventListener('click', _closePopup, true);
+              }
+            }
+            setTimeout(function() { document.addEventListener('click', _closePopup, true); }, 0);
+          });
+        }
+      return row;
+    }
+
     function renderUrlList() {
       var t = _newsThemeVars();
       var list = document.getElementById('b24t-news-url-list');
@@ -13941,272 +14338,8 @@ function showOnboarding(onComplete) {
       }
 
       newsState.urls.forEach(function(entry, idx) {
-        // Filtr nie-artykułów — ukryj wiersz (nie usuń z listy)
-        if (newsState.hideNonArticles && entry.pageType === 'nonArticle') return;
-
-        var isActive    = idx === newsState.activeIdx;
-        var sd          = _statusDot(entry.status, entry);
-        var isScanning  = entry.status === 'scanning';
-        var isIrrelevant = entry.status === 'nomatch' || entry.status === 'wrongcountry' ||
-                           entry.status === 'inproject';
-        var isTeaserMatch = entry.status === 'teasermatch';
-        var isBlocked   = entry.status === 'blocked'; // klikalny — annotator sprawdza ręcznie
-        var isStale     = entry.isStale && !isIrrelevant && !isScanning && !isTeaserMatch;
-        var isClickable = !isIrrelevant && !isScanning; // teasermatch i blocked są klikalne
-
-        var row = document.createElement('div');
-        row.className = 'b24t-news-url-row';
-        row.dataset.idx = idx;
-        row.style.cssText = [
-          'display:flex;flex-direction:column;gap:3px;padding:7px 10px;border-radius:8px;',
-          'cursor:' + (isClickable ? 'pointer' : 'default') + ';',
-          'border:1px solid ' + (isActive ? 'var(--b24t-primary)' : isScanning ? 'rgba(129,140,248,0.25)' : isBlocked ? 'rgba(107,114,128,0.35)' : t.borderSub) + ';',
-          'background:' + (isActive ? t.accentAlpha : (isIrrelevant || isScanning) ? 'transparent' : t.bgDeep) + ';',
-          'opacity:' + (isIrrelevant ? '0.4' : isTeaserMatch ? '0.5' : isStale ? '0.55' : (isBlocked || isScanning) ? '0.6' : '1') + ';',
-          'transition:background 0.1s,border-color 0.1s;',
-        ].join('');
-        if (!newsState.scanning) {
-          row.style.animation = 'b24t-fadein 0.15s ease ' + Math.min(idx * 30, 240) + 'ms both';
-        }
-        if (isBlocked) row.title = _newsBlockInfo(entry).tip;
-
-        var displayUrl = entry.url.replace(/^https?:\/\//, '');
-
-        // Snippet dla wyników content scan
-        var snippetHtml = '';
-        var _hasSnippet = (entry.status === 'contentmatch' || entry.status === 'mention' || entry.status === 'keytopic') && entry.snippet;
-        if (_hasSnippet) {
-          snippetHtml = '<div style="font-size:9px;color:' + t.textFaint + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + entry.snippet.replace(/"/g,'&quot;') + '">' + entry.snippet.slice(0,100) + '</div>';
-        }
-
-        // Status badge — pierwszy w górnym wierszu
-        var _blockedLabel = _newsBlockInfo(entry).label;
-        var _sLabels = { match:'Keyword w URL', keytopic:'G\u0142\u00f3wny temat', contentmatch:'W tre\u015bci', mention:'Wzmianka', teasermatch:'Polecany art.', wrongcountry:'Z\u0142y kraj', opened:'Otwarty', checked:'Sprawdzony', added:'Dodano', error:'B\u0142\u0105d', inproject:'W projekcie', scanning:'Skanowanie\u2026', blocked:_blockedLabel, nomatch:'Brak keyword' };
-        var _sbStyle;
-        if (isScanning) {
-          _sbStyle = 'background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.2);color:#818cf8;';
-        } else if (entry.status === 'keytopic' || entry.status === 'match') {
-          _sbStyle = 'background:rgba(34,197,94,0.10);border:1px solid rgba(34,197,94,0.25);color:#22c55e;';
-        } else if (entry.status === 'contentmatch') {
-          _sbStyle = 'background:rgba(129,140,248,0.10);border:1px solid rgba(129,140,248,0.25);color:#818cf8;';
-        } else if (entry.status === 'mention') {
-          _sbStyle = 'background:rgba(251,146,60,0.10);border:1px solid rgba(251,146,60,0.25);color:#fb923c;';
-        } else if (entry.status === 'added') {
-          _sbStyle = 'background:rgba(21,128,61,0.12);border:1px solid rgba(21,128,61,0.3);color:#15803d;';
-        } else if (entry.status === 'error') {
-          _sbStyle = 'background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);color:#ef4444;';
-        } else if (entry.status === 'opened') {
-          _sbStyle = 'background:rgba(167,139,250,0.10);border:1px solid rgba(167,139,250,0.25);color:#a78bfa;';
-        } else if (entry.status === 'checked') {
-          _sbStyle = 'background:rgba(100,116,139,0.10);border:1px solid rgba(100,116,139,0.28);color:#64748b;';
-        } else {
-          _sbStyle = 'background:rgba(107,114,128,0.08);border:1px solid rgba(107,114,128,0.2);color:#9ca3af;';
-        }
-        var _statusBadgeHtml = '<span style="font-size:8px;padding:1px 6px;border-radius:4px;font-weight:600;flex-shrink:0;' + _sbStyle + '" title="' + sd.label + '">' + sd.dot + ' ' + (_sLabels[entry.status] || entry.status) + '</span>';
-
-        // Pozostałe badże
-        var _metaBadges = [];
-
-        if (entry.bsStatus === 'pending') {
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(34,197,94,0.10);border:1px solid rgba(34,197,94,0.28);color:#22c55e;" title="Strona jest otwierana w oknie przeglądarki i skanowana stamtąd">🌐 okno…</span>');
-        }
-        if (entry.scannedViaBrowser) {
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.22);color:#22c55e;" title="Treść pobrana z okna przeglądarki, nie zapytaniem w tle — z Twoją sesją i ciasteczkami">🌐 z okna</span>');
-        }
-        if (entry.iframeable === true) {
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.18);color:#818cf8;" title="Podgl\u0105d iframe dost\u0119pny">\u25a2</span>');
-        }
-
-        var _chips = entry.matchedChips;
-        if (_chips && _chips.length > 0 && entry.status !== 'nomatch' && entry.status !== 'blocked' && entry.status !== 'wrongcountry' && entry.status !== 'inproject') {
-          _chips.forEach(function(c) {
-            var safe = c.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-            _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);color:#a78bfa;font-family:monospace;">' + safe + '</span>');
-          });
-        }
-        if (entry.zoneHints && entry.zoneHints.length > 0) {
-          var _hintsLabel = entry.zoneHints.join(', ');
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;' +
-            (entry.secondaryZoneOnly
-              ? 'background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);color:#f59e0b;'
-              : 'background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.25);color:#a78bfa;') +
-            '" title="Keyword znaleziony w: ' + _hintsLabel + '">' +
-            (entry.secondaryZoneOnly ? '\u26a0 tylko w: ' : '+ ') + _hintsLabel + '</span>');
-        }
-        if (isTeaserMatch && entry.teaserChips && entry.teaserChips.length > 0) {
-          var _tc = entry.teaserChips.map(function(c) { return c.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }).join(', ');
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Keyword \'' + _tc + '\' wyst\u0105pi\u0142 tylko w sekcji polecanych artyku\u0142\u00f3w \u2014 nie w g\u0142\u00f3wnej tre\u015bci">w polecanym art.</span>');
-        }
-        if (entry.duplicateOf) {
-          // Modułowy `_escHtml`, nie lokalna kopia eskapera: wartość idzie do atrybutu title,
-          // więc musi escapować też cudzysłów. Stało tu `_esc` — nazwa żywa wyłącznie w ciele
-          // _newsShowRichPreviewCard, więc pierwszy duplikat na liście przerywał render
-          // ReferenceError-em: kafelki za nim znikały, a activateUrl nie dochodził do podglądu
-          // — klikanie kolejnych wierszy nie zmieniało już nic.
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;'
-            + 'background:rgba(148,163,184,0.14);border:1px solid rgba(148,163,184,0.32);color:#94a3b8;" '
-            + 'title="Ta sama strona co: ' + _escHtml(entry.duplicateOf)
-            + ' \u2014 wed\u0142ug kanonicznego adresu podanego przez wydawc\u0119">\u29C9 duplikat</span>');
-        }
-        var _pt = entry.pageType;
-        if (_pt === 'jobPosting' || _pt === 'product' || _pt === 'recipe' || _pt === 'event') {
-          var _ptLabel = { jobPosting: '\uD83D\uDCBC og\u0142oszenie o prac\u0119', product: '\uD83D\uDCE6 karta produktu',
-                           recipe: '\uD83C\uDF72 przepis', event: '\uD83D\uDCC5 wydarzenie' }[_pt];
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.28);color:#d97706;" title="Rodzaj strony zadeklarowany przez wydawc\u0119 w JSON-LD">' + _ptLabel + '</span>');
-        } else if (_pt === 'nonArticle') {
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(107,114,128,0.12);border:1px solid rgba(107,114,128,0.3);color:#9ca3af;" title="Brak sygna\u0142\u00f3w \u017ce to artyku\u0142/news (og:type, JSON-LD, published_time, &lt;time&gt;, paragraphs)">\uD83D\uDCC4 nie-artyku\u0142</span>');
-        } else if (_pt === 'uncertain') {
-          var _sigList = (entry.pageTypeSignals || []).join(', ');
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);color:#d97706;" title="Tylko 1 sygna\u0142 artyku\u0142u: ' + _sigList + '">\u2753 typ niepewny</span>');
-        }
-        if (entry.articleDate) {
-          var _diffD = (Date.now() - new Date(entry.articleDate).getTime()) / 86400000;
-          var _dc = _diffD > 60 ? '#f87171' : _diffD > 30 ? '#f59e0b' : '#4ade80';
-          var _db = _diffD > 60 ? 'rgba(239,68,68,0.10)' : _diffD > 30 ? 'rgba(245,158,11,0.10)' : 'rgba(34,197,94,0.10)';
-          var _dbd = _diffD > 60 ? 'rgba(239,68,68,0.3)' : _diffD > 30 ? 'rgba(245,158,11,0.3)' : 'rgba(34,197,94,0.25)';
-          var _staleTitle = _diffD > 60 ? ' \u2014 zbyt stary artyku\u0142 (&gt;60 dni)' : '';
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:' + _db + ';border:1px solid ' + _dbd + ';color:' + _dc + ';" title="Data publikacji' + _staleTitle + '">📅 ' + entry.articleDate + '</span>');
-        }
-        if (entry.pageLang) {
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.25);color:#a78bfa;" title="Wykryty j\u0119zyk strony">\ud83c\udf10 ' + entry.pageLang + '</span>');
-        }
-        if (entry.isPaywall) {
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);color:#f59e0b;" title="Strona za paywallem lub blokad\u0105 \u2014 tre\u015b\u0107 mo\u017ce by\u0107 niepe\u0142na">\uD83D\uDD12 paywall</span>');
-        }
-        if (entry.aiStatus === 'pending') {
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.2);color:#818cf8;">\u23f3 AI...</span>');
-        } else if (entry.aiStatus === 'error') {
-          var _aiErrMsg = entry.aiError ? '\uD83E\uDD16 ' + entry.aiError : '\uD83E\uDD16 b\u0142\u0105d';
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);color:#f87171;" title="AI nie mog\u0142o przeanalizowa\u0107 artyku\u0142u \u2014 ' + (entry.aiError || 'nieznany b\u0142\u0105d') + '">' + _aiErrMsg + '</span>');
-        } else if (entry.aiStatus === 'done') {
-          var _verdict = entry.aiVerdict || (entry.aiRelevant ? 'match' : 'miss');
-          var _airsn = (entry.aiReason || '').replace(/"/g, '&quot;');
-          var _aic, _aib, _aibd, _ailbl;
-          if (_verdict === 'match') {
-            _aic = '#22c55e'; _aib = 'rgba(34,197,94,0.10)'; _aibd = 'rgba(34,197,94,0.25)'; _ailbl = '\u2705 Relevant';
-          } else if (_verdict === 'borderline') {
-            _aic = '#f59e0b'; _aib = 'rgba(245,158,11,0.10)'; _aibd = 'rgba(245,158,11,0.30)'; _ailbl = '\u26A0\uFE0F Borderline';
-          } else if (_verdict === 'spam') {
-            _aic = '#f97316'; _aib = 'rgba(249,115,22,0.10)'; _aibd = 'rgba(249,115,22,0.30)'; _ailbl = '\uD83D\uDEAB Spam';
-          } else {
-            _aic = '#9ca3af'; _aib = 'rgba(107,114,128,0.08)'; _aibd = 'rgba(107,114,128,0.2)'; _ailbl = '\u274C Irrelevant';
-          }
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:' + _aib + ';border:1px solid ' + _aibd + ';color:' + _aic + ';" title="' + _airsn + '">' + _ailbl + '</span>');
-        }
-
-        var _delBtnHtml = isScanning ? '' : '<button class="b24t-news-del-btn" style="flex-shrink:0;margin-left:4px;font-size:11px;width:18px;height:18px;line-height:1;border-radius:4px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textFaint + ';cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Usu\u0144 z listy">\u2715</button>';
-
-        row.innerHTML =
-          '<div style="display:flex;align-items:flex-start;gap:3px;">' +
-            '<div style="flex:1;display:flex;flex-wrap:wrap;gap:3px;align-items:center;">' +
-              _statusBadgeHtml + _metaBadges.join('') +
-            '</div>' +
-            _delBtnHtml +
-          '</div>' +
-          '<div style="font-size:11px;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + t.text + ';" title="' + entry.url.replace(/"/g, '&quot;') + '">' + displayUrl + '</div>' +
-          snippetHtml;
-
-        list.appendChild(row);
-
-        if (isClickable) {
-          row.addEventListener('click', function(e) {
-            if (e.target.classList.contains('b24t-news-del-btn')) return;
-            activateUrl(idx);
-          });
-        }
-        var delBtn = row.querySelector('.b24t-news-del-btn');
-        if (delBtn) {
-          delBtn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            var _existing = document.getElementById('b24t-news-domain-popup');
-            if (_existing) { _existing.remove(); return; }
-            var _entry = newsState.urls[idx];
-            if (!_entry) return;
-            var _dom = '';
-            try { _dom = new URL(_entry.url).hostname.replace(/^www\./, ''); } catch(_ex) {}
-            var _domCount = 0;
-            if (_dom) newsState.urls.forEach(function(u) {
-              try { if (new URL(u.url).hostname.replace(/^www\./, '') === _dom) _domCount++; } catch(_ex) {}
-            });
-            var _dk = _newsIsDark();
-            var _pbg  = _dk ? '#1e1e2e'                    : '#ffffff';
-            var _pbor = _dk ? 'rgba(255,255,255,0.13)'     : 'rgba(0,0,0,0.12)';
-            var _pbsb = _dk ? 'rgba(255,255,255,0.07)'     : 'rgba(0,0,0,0.06)';
-            var _ptxt = _dk ? '#e2e8f0'                    : '#1e293b';
-            var _pmut = _dk ? '#94a3b8'                    : '#64748b';
-            var _pbtn = _dk ? 'rgba(255,255,255,0.06)'     : 'rgba(0,0,0,0.04)';
-            var TW = 8; // tail half-width (px)
-            var TH = 8; // tail height (px)
-            var GAP = 4;
-            var PW = 200;
-            var popup = document.createElement('div');
-            popup.id = 'b24t-news-domain-popup';
-            popup.style.cssText = 'position:fixed;z-index:2147483647;background:' + _pbg + ';border:1px solid ' + _pbor + ';border-radius:9px;padding:10px 12px;box-shadow:0 8px 32px rgba(0,0,0,0.4);display:flex;flex-direction:column;gap:6px;min-width:' + PW + 'px;visibility:hidden;font-family:\'Geist\',\'Segoe UI\',system-ui,sans-serif;';
-            var _pLabel = document.createElement('div');
-            _pLabel.style.cssText = 'font-size:10px;color:' + _pmut + ';padding-bottom:5px;border-bottom:1px solid ' + _pbsb + ';';
-            _pLabel.textContent = 'Usuń z listy:';
-            popup.appendChild(_pLabel);
-            var _btn1 = document.createElement('button');
-            _btn1.style.cssText = 'font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid ' + _pbsb + ';background:' + _pbtn + ';color:' + _ptxt + ';cursor:pointer;text-align:left;';
-            _btn1.textContent = 'Tylko ten URL';
-            _btn1.addEventListener('click', function(ev) {
-              ev.stopPropagation();
-              popup.remove();
-              var wasActive = newsState.activeIdx === idx;
-              newsState.urls.splice(idx, 1);
-              if (wasActive) { newsState.activeIdx = -1; }
-              else if (newsState.activeIdx > idx) { newsState.activeIdx--; }
-              renderUrlList();
-            });
-            popup.appendChild(_btn1);
-            if (_dom && _domCount > 1) {
-              var _btn2 = document.createElement('button');
-              _btn2.style.cssText = 'font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.08);color:#f87171;cursor:pointer;text-align:left;';
-              _btn2.textContent = 'Wszystkie z ' + _dom + ' (' + _domCount + ')';
-              _btn2.addEventListener('click', function(ev) {
-                ev.stopPropagation();
-                popup.remove();
-                _newsRemoveByStatus(function(u) {
-                  try { return new URL(u.url).hostname.replace(/^www\./, '') === _dom; } catch(_ex) { return false; }
-                });
-              });
-              popup.appendChild(_btn2);
-            }
-            // Tail divs — pozycja ustalana po zmierzeniu popupu
-            var tailOuter = document.createElement('div');
-            var tailFill  = document.createElement('div');
-            popup.appendChild(tailOuter);
-            popup.appendChild(tailFill);
-            document.body.appendChild(popup);
-            // Mierzymy i pozycjonujemy PO dodaniu do DOM
-            var btnRect = delBtn.getBoundingClientRect();
-            var popupH  = popup.offsetHeight;
-            var popupW  = popup.offsetWidth;
-            var btnCX   = Math.round(btnRect.left + btnRect.width / 2);
-            var popupLeft = Math.max(4, Math.min(btnCX - Math.round(popupW / 2), window.innerWidth - popupW - 4));
-            var tailX = Math.max(TW + 4, Math.min(btnCX - popupLeft - TW, popupW - TW * 2 - 4));
-            var popupTop = btnRect.top - popupH - TH - GAP;
-            var flipDown = popupTop < 8;
-            if (flipDown) {
-              popupTop = btnRect.bottom + TH + GAP;
-              tailOuter.style.cssText = 'position:absolute;top:-' + (TH + 1) + 'px;left:' + tailX + 'px;width:0;height:0;border-left:' + TW + 'px solid transparent;border-right:' + TW + 'px solid transparent;border-bottom:' + (TH + 1) + 'px solid ' + _pbor + ';';
-              tailFill.style.cssText  = 'position:absolute;top:-' + TH + 'px;left:' + tailX + 'px;width:0;height:0;border-left:' + TW + 'px solid transparent;border-right:' + TW + 'px solid transparent;border-bottom:' + TH + 'px solid ' + _pbg + ';';
-            } else {
-              tailOuter.style.cssText = 'position:absolute;bottom:-' + (TH + 1) + 'px;left:' + tailX + 'px;width:0;height:0;border-left:' + TW + 'px solid transparent;border-right:' + TW + 'px solid transparent;border-top:' + (TH + 1) + 'px solid ' + _pbor + ';';
-              tailFill.style.cssText  = 'position:absolute;bottom:-' + TH + 'px;left:' + tailX + 'px;width:0;height:0;border-left:' + TW + 'px solid transparent;border-right:' + TW + 'px solid transparent;border-top:' + TH + 'px solid ' + _pbg + ';';
-            }
-            popup.style.left = popupLeft + 'px';
-            popup.style.top  = popupTop + 'px';
-            popup.style.visibility = '';
-            function _closePopup(ev) {
-              if (!popup.contains(ev.target)) {
-                popup.remove();
-                document.removeEventListener('click', _closePopup, true);
-              }
-            }
-            setTimeout(function() { document.addEventListener('click', _closePopup, true); }, 0);
-          });
-        }
+        var row = _newsBuildRow(entry, idx, t, !newsState.scanning);
+        if (row) list.appendChild(row);
       });
     }
 
@@ -15603,6 +15736,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.32.0",
+      "date": "2026-09-15",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "**Lista URL-i przestaje przebudowywać się w całości przy każdym werdykcie AI.** Wcześniej każda ocena kasowała i budowała od nowa wszystkie wiersze — przy liście 400 adresów to kilkaset pełnych przebudów, stąd miganie i uciekająca pozycja przewinięcia. Teraz podmienia się dokładnie ten jeden wiersz, którego dotyczy werdykt. Dopóki lista sama się układa wg ocen, nadal przestawia się w całości — ale najwyżej raz na 300 ms zamiast przy każdej odpowiedzi"},
+        {"type": "feat", "text": "**Widać, co się właśnie dzieje.** Wiersz w trakcie skanowania pokazuje pasek-szkielet w miejscu, gdzie za chwilę stanie fragment treści. Plakietka „AI…” pulsuje, dopóki ocena nie wróci, a po jej wejściu błyska — wcześniej podmieniała się bez żadnego sygnału. Wiersze wjeżdżają kaskadą zamiast pojawiać się naraz"},
+        {"type": "feat", "text": "**Przyciski reagują na wciśnięcie.** Do tej pory kliknięcie w cokolwiek we wtyczce nie dawało żadnego sygnału, że doszło — przycisk wyglądał identycznie przed i po. Teraz lekko się wciska. Drobiazg, ale dotyczy każdego kliknięcia w panelu"},
+        {"type": "fix", "text": "**Panel przestaje podskakiwać.** Wejścia okien i paneli szły na krzywej z przeskokiem — element wylatywał poza swoje miejsce i wracał. W narzędziu, w którym siedzi się godzinami, to męczy. Zostało to zdjęte z 19 z 20 miejsc; skok został tam, gdzie jest nagrodą: na liczniku dodanych wzmianek. Przy okazji zmiany kolorów przy najechaniu skróciły się z 300 do 100 ms, przez co panel wydaje się szybszy przy tej samej prędkości działania"}
+      ]
+    },
+    {
       "version": "0.31.6",
       "date": "2026-09-15",
       "label": "fix",
@@ -15700,17 +15845,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "**Fragmenty w obcym języku tłumaczą się na polski.** Karta otwiera się i jeśli strona nie jest po polsku ani po angielsku, wszystkie fragmenty z „Gdzie stoi marka\", tytuł i fragment z pola Treść idą do modelu i wracają po polsku. Raz na wiersz, wynik zapamiętany. Przycisk „🌐 oryginał / po polsku\" przełącza. **Do Brand24 leci oryginał** — tłumaczenie jest wyłącznie do czytania. Wymaga wskazania promptu tłumaczenia w ustawieniach importu (⚙ → „Tłumacz\"); bez tego nic się nie wywołuje"},
         {"type": "feat", "text": "**Lista układa się od najpewniejszych.** Kolejność: werdykt AI, potem punktacja, potem kolejność wklejenia; załatwione i odrzucone przez skaner spadają na dół. Układa się sama dopóki nie otworzysz pierwszego wiersza — potem kolejność zamarza, bo wiersze przestawiające się pod kursorem są gorsze niż zła kolejność. Przycisk „⇅\" w pasku filtrów przestawia ręcznie i wraca do kolejności wklejenia"},
         {"type": "fix", "text": "**Plakietki stref mówią, co znaczą — i dwie z nich mówiły źle.** Każda z 21 stref ma teraz opis „gdzie to jest na stronie\" w dymku i w legendzie („Słownik stref\"). Poziomy są trzy zamiast dwóch, bo podział na „treść / nie-treść\" mylił się w obie strony: podpis zdjęcia i lista produktów to treść artykułu (marka obok ceny w zestawieniu zakupowym jest wzmianką), a „tekst poboczny\" to wcale nie strefa poboczna, tylko kubeł „skaner nie rozpoznał strefy\" — i akurat tej etykiecie nie wolno ufać na słowo"}
-      ]
-    },
-    {
-      "version": "0.28.0",
-      "date": "2026-09-14",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "**Podgląd artykułu pokazuje wreszcie to, na czym stoi decyzja.** Środkowa kolumna zamiast samej wizytówki pokazuje teraz werdykt AI z pełnym uzasadnieniem, listę wszystkich miejsc, w których pada nazwa marki — każde z etykietą strefy (tytuł, lead, akapit, cytat, blok polecanych) i podświetloną frazą — ostrzeżenia w rodzaju „marka stoi tylko w polecanych artykułach\", rozbicie punktacji oraz fragment, który wtyczka wstawiła do pola Treść. Te dane były liczone od dawna, ale szły wyłącznie do modelu AI: uzasadnienie werdyktu wisiało w dymku plakietki wysokiej na 8 px, a miejsc trafienia nie było widać wcale. Większość decyzji da się teraz podjąć bez otwierania strony"},
-        {"type": "feat", "text": "**Cała pętla pracy na klawiaturze.** `J` i `K` (albo strzałki) przechodzą po wierszach listy, `Enter` otwiera artykuł w oknie, `Ctrl+Enter` dodaje wzmiankę — także wtedy, gdy kursor stoi w polu formularza — a `X` odrzuca wiersz i przeskakuje do następnego nieobsłużonego. Po udanym dodaniu panel sam przechodzi dalej; przy duplikacie i błędzie zostaje na miejscu, żeby dało się przeczytać komunikat. Całość spisana w legendzie pod „?\""},
-        {"type": "fix",  "text": "**Kursor nie wskakuje już do pola DATA przy każdym otwartym wierszu.** Wchodzi tam dopiero wtedy, gdy skan daty jej nie znalazł — czyli gdy naprawdę trzeba ją wpisać. Wcześniej pole tekstowe przechwytywało każdy klawisz, więc skróty listy nie miałyby prawa zadziałać"}
       ]
     }
   ];
@@ -16171,7 +16305,7 @@ function showOnboarding(onComplete) {
     modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;animation:b24t-fadein 0.2s ease;';
 
     modal.innerHTML =
-      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:440px;max-height:86vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);">' +
+      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:440px;max-height:86vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein var(--b24t-dur-normal) var(--b24t-ease-out);">' +
         '<div style="padding:10px 14px;background:var(--b24t-accent-grad);border-radius:14px 14px 0 0;display:flex;align-items:center;flex-shrink:0;gap:10px;">' +
           '<div style="width:32px;height:32px;background:rgba(255,255,255,0.18);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">💬</div>' +
           '<div style="flex:1;">' +
@@ -16350,7 +16484,7 @@ function showOnboarding(onComplete) {
       'box-shadow:var(--b24t-shadow-h)',
       'z-index:2147483646',
       'font-family:Geist,\'Segoe UI\',system-ui,sans-serif',
-      'animation:b24t-slide-in 0.35s cubic-bezier(0.34,1.56,0.64,1)',
+      'animation:b24t-slide-in var(--b24t-dur-normal) var(--b24t-ease-out)',
     ].join(';');
 
     if (newVersion === null) {
@@ -16573,7 +16707,7 @@ function showOnboarding(onComplete) {
       '</div>';
 
     modal.innerHTML =
-      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:16px;width:400px;max-height:90vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);">' +
+      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:16px;width:400px;max-height:90vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein var(--b24t-dur-normal) var(--b24t-ease-out);">' +
         '<div style="padding:14px 0;background:var(--b24t-accent-grad);border-radius:16px 16px 0 0;display:flex;align-items:center;gap:10px;padding:14px 20px;">' +
           '<span style="font-size:18px;">⚙</span>' +
           '<div style="flex:1;">' +
@@ -17352,7 +17486,7 @@ function showOnboarding(onComplete) {
     var panel = document.createElement('div');
     panel.id = 'b24t-annotator-panel';
     panel.setAttribute('data-b24t-theme', currentTheme);
-    panel.style.cssText = 'position:fixed;right:12px;top:80px;width:420px;height:auto;max-height:calc(100vh - 100px);z-index:2147483641;border-radius:14px;display:none;flex-direction:column;overflow:hidden;animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;font-size:15px;';
+    panel.style.cssText = 'position:fixed;right:12px;top:80px;width:420px;height:auto;max-height:calc(100vh - 100px);z-index:2147483641;border-radius:14px;display:none;flex-direction:column;overflow:hidden;animation:b24t-slidein var(--b24t-dur-normal) var(--b24t-ease-out);font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;font-size:15px;';
 
     panel.innerHTML =
       // Header with gradient
@@ -17498,7 +17632,7 @@ function showOnboarding(onComplete) {
     // Re-trigger slide-in animation
     panel.style.animation = 'none';
     panel.offsetHeight; // reflow
-    panel.style.animation = 'b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1)';
+    panel.style.animation = 'b24t-slidein var(--b24t-dur-normal) var(--b24t-ease-out)';
     panel.style.height = 'auto';
     panel.style.maxHeight = 'calc(100vh - 100px)';
     panel.style.display = 'flex';
@@ -18294,7 +18428,7 @@ function showOnboarding(onComplete) {
       'flex-direction:column',
       'font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif',
       'overflow:hidden',
-      'animation:b24t-slidein 0.28s cubic-bezier(0.34,1.56,0.64,1)',
+      'animation:b24t-slidein var(--b24t-dur-normal) var(--b24t-ease-out)',
     ].join(';');
     _positionXProjectPanel(el);
     el.innerHTML =
@@ -18636,7 +18770,7 @@ To jest NIEODWRACALNE.`)) return;
       '</label>';
     }).join('') : '<div style="font-size:12px;color:var(--b24t-text-faint);padding:10px 0;line-height:1.6;">Brak zaladowanych projektow.<br>Wejdz w widok Mentions kazdego projektu.</div>';
     overlay.innerHTML =
-      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:360px;max-height:85vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.25s cubic-bezier(0.34,1.56,0.64,1);">' +
+      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:360px;max-height:85vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein var(--b24t-dur-normal) var(--b24t-ease-out);">' +
         '<div style="padding:14px 16px;background:var(--b24t-accent-grad);border-radius:14px 14px 0 0;display:flex;align-items:center;gap:10px;">' +
           '<span style="font-size:14px;font-weight:700;color:#fff;flex:1;">' + (isNew ? '+ Nowa grupa' : 'Edytuj grupe') + '</span>' +
           '<button id="b24t-grped-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;border-radius:5px;padding:2px 8px;font-size:16px;cursor:pointer;">x</button>' +
@@ -19153,7 +19287,7 @@ To jest NIEODWRACALNE.`)) return;
     var overlay = _makeSettingsOverlay();
     var _makeOpts = _tagOptionsWithId, _selStyle = SETTINGS_SELECT_CSS, _labelStyle = SETTINGS_LABEL_CSS;
     overlay.innerHTML =
-      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:320px;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.25s cubic-bezier(0.34,1.56,0.64,1);">' +
+      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:320px;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein var(--b24t-dur-normal) var(--b24t-ease-out);">' +
         '<div style="padding:12px 16px;background:var(--b24t-accent-grad);border-radius:14px 14px 0 0;display:flex;align-items:center;gap:10px;">' +
           '<span style="font-size:14px;font-weight:700;color:#fff;flex:1;">&#9881; Ustawienia: ' + group.name + '</span>' +
           '<button id="b24t-os-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;border-radius:5px;padding:2px 8px;font-size:16px;cursor:pointer;">x</button>' +
@@ -19635,7 +19769,7 @@ To jest NIEODWRACALNE.`)) return;
     var overlay = _makeSettingsOverlay();
     var _makeOpts = _tagOptionsWithId, _selStyle = SETTINGS_SELECT_CSS, _labelStyle = SETTINGS_LABEL_CSS;
     overlay.innerHTML =
-      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:340px;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein 0.25s cubic-bezier(0.34,1.56,0.64,1);">' +
+      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:340px;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein var(--b24t-dur-normal) var(--b24t-ease-out);">' +
         '<div style="padding:12px 16px;background:var(--b24t-accent-grad);border-radius:14px 14px 0 0;display:flex;align-items:center;gap:10px;">' +
           '<span style="font-size:14px;font-weight:700;color:#fff;flex:1;">🤖 Tagi trafności: ' + group.name + '</span>' +
           '<button id="b24t-aiset-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;border-radius:5px;padding:2px 8px;font-size:16px;cursor:pointer;">x</button>' +
@@ -21111,7 +21245,7 @@ Tej operacji nie można cofnąć.`)) {
 
     var panel = document.createElement('div');
     panel.id = 'b24t-nm-panel';
-    panel.style.cssText = 'position:fixed;right:12px;top:80px;width:560px;height:500px;z-index:2147483641;border-radius:14px;display:none;flex-direction:column;overflow:hidden;animation:b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1);font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;font-size:13px;background:#0d0d1a;border:1px solid #2a2a35;box-shadow:0 8px 40px rgba(0,0,0,0.6);';
+    panel.style.cssText = 'position:fixed;right:12px;top:80px;width:560px;height:500px;z-index:2147483641;border-radius:14px;display:none;flex-direction:column;overflow:hidden;animation:b24t-slidein var(--b24t-dur-normal) var(--b24t-ease-out);font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;font-size:13px;background:#0d0d1a;border:1px solid #2a2a35;box-shadow:0 8px 40px rgba(0,0,0,0.6);';
     panel.innerHTML =
       '<div id="b24t-nm-header" style="display:flex;align-items:center;gap:6px;padding:10px 14px;background:linear-gradient(135deg,#0ea5e9,#0284c7);cursor:move;user-select:none;flex-shrink:0;">' +
         '<span style="font-size:14px;">📡</span>' +
@@ -21196,7 +21330,7 @@ Tej operacji nie można cofnąć.`)) {
     if (!panel) return;
     panel.style.animation = 'none';
     panel.offsetHeight;
-    panel.style.animation = 'b24t-slidein 0.3s cubic-bezier(0.34,1.56,0.64,1)';
+    panel.style.animation = 'b24t-slidein var(--b24t-dur-normal) var(--b24t-ease-out)';
     panel.style.display = 'flex';
     if (tab) tab.style.display = 'none';
     _nmRebuildTable();

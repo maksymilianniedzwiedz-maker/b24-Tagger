@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.31.1",
+    "date": "2026-09-14",
+    "label": "feat",
+    "changes": [
+      "fix: **Skan przez okno przestał się gubić po pierwszej stronie.** Okno rozpoznawało siebie po nazwie, a Chrome kasuje nazwę okna przy przejściu na inną witrynę — więc po pierwszym przeskoku wtyczka przestawała dostawać treść (strona „nie odpowiadała\" aż do końca limitu czasu), a kolejne otwarcie robiło DRUGIE okno zamiast wejść w istniejące. Teraz okno rozpoznaje się po znaczniku w adresie, który przeżywa nawigację",
+      "fix: **Przelot przez okno jest wielokrotnie szybszy.** Treść leci do panelu, gdy tylko artykuł jest w drzewie strony, a nie po doładowaniu reklam i trackerów — to na serwisie informacyjnym kilkanaście sekund różnicy na każdej stronie. Limit czasu zjechał z 20 na 12 sekund, a przelot odpuszcza cały serwis po dwóch stronach bez treści: 33 adresy jednej martwej domeny to było wcześniej ponad sześć minut czekania na pewną porażkę",
+      "fix: **Postęp przelotu widać w pasku sesji** — „Skan przez okno: 3 / 54\". Wcześniej licznik był tylko na przycisku, więc przy dłuższym przelocie nie było wiadomo, czy cokolwiek się dzieje",
+      "fix: **Strona błędu nie udaje pustego artykułu.** Strona z błędem serwera też się ładuje i też ma treść HTML; wpisanie jej do wiersza jako „brak keyword\" byłoby cichym stwierdzeniem, że stronę przeczytano. Poniżej progu artykułu wiersz zostaje nieprzeskanowany, a serwis dostaje punkt karny w przelocie"
+    ]
+  },
+  {
     "version": "0.31.0",
     "date": "2026-09-14",
     "label": "feat",

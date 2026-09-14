@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.31.0
+// @version      0.31.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -27,7 +27,13 @@
   // ── NEWS DATE RELAY: gdy skrypt odpala się na stronie artykułu (nie Brand24) ──
   // Czyta datę z DOM i odsyła przez postMessage do Brand24 (window.opener)
   var _isB24 = /brand24\.com|panel\.brand24\.pl/.test(location.hostname);
-  if (!_isB24 && window.name === '_b24tnews' && window.opener) {
+  // Znacznik skanu w adresie. `window.name` NIE nadaje się na jedyny sygnał: Chrome kasuje go
+  // przy nawigacji na inną witrynę (od Chrome 88, ochrona przed śledzeniem między serwisami),
+  // więc okno przestawiane kolejno na kilka serwisów gubi nazwę po pierwszym skoku — relay
+  // milknie, panel czeka do timeoutu, a następne otwarcie robi drugie okno zamiast wejść
+  // w istniejące. Fragment adresu doklejamy sami i przeżywa każdą nawigację.
+  var _b24tScanMark = /(^|[#&])b24tscan\b/.test(location.hash);
+  if (!_isB24 && window.opener && (window.name === '_b24tnews' || _b24tScanMark)) {
     (function() {
       function _extractDate() {
         var patterns = [
@@ -128,20 +134,30 @@
           // ale skaner i tak czyta tylko tekst — obcinamy, żeby nie zamrozić panelu.
           if (html.length > 3000000) html = html.slice(0, 3000000);
           _htmlSent++;
-          window.opener.postMessage({ type: 'b24t_news_html', url: location.href, html: html }, '*');
+          // Adres bez naszego znacznika — panel porównuje go z adresem wiersza.
+          var cleanUrl = location.href.replace(/([#&])b24tscan\b&?/, '$1').replace(/[#&]$/, '');
+          window.opener.postMessage({ type: 'b24t_news_html', url: cleanUrl, html: html }, '*');
         } catch(e) {}
       }
-      function _sendHtmlWhenReady() {
-        _sendHtml();
-        // Druga wysyłka tylko dla stron, które w chwili `load` nie mają jeszcze treści —
-        // typowe dla serwisów budujących artykuł JS-em po stronie klienta.
-        setTimeout(function() {
-          var txt = document.body ? (document.body.innerText || '') : '';
-          if (txt.length < 2000) _sendHtml();
-        }, 2500);
+      // Czekanie na `load` to czekanie na reklamy, trackery i obrazki — na serwisie
+      // informacyjnym kilkanaście sekund po tym, jak artykuł jest już w DOM. Skanerowi
+      // wystarczy tekst, więc wysyłamy od razu, gdy tekst już jest. Strony budowane JS-em
+      // (w chwili DOMContentLoaded prawie puste) czekają na `load` i jeszcze jedną dogrywkę.
+      var NEWS_RELAY_ENOUGH_TEXT = 1200;
+      function _bodyTextLen() {
+        try { return document.body ? (document.body.innerText || '').length : 0; } catch(e) { return 0; }
       }
-      if (document.readyState === 'complete') _sendHtmlWhenReady();
-      else window.addEventListener('load', _sendHtmlWhenReady);
+      function _sendWhenTextReady() {
+        if (_bodyTextLen() >= NEWS_RELAY_ENOUGH_TEXT) { _sendHtml(); return true; }
+        return false;
+      }
+      function _relayStart() {
+        if (_sendWhenTextReady()) return;
+        // Za mało tekstu przy DOMContentLoaded — dajemy stronie dokończyć i dosypać z JS-a.
+        setTimeout(function() { if (!_sendWhenTextReady()) setTimeout(_sendHtml, 2500); }, 1200);
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _relayStart);
+      else _relayStart();
     })();
     return; // Nie inicjalizuj reszty wtyczki na zewnętrznych stronach
   }
@@ -151,7 +167,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.31.0';
+  const VERSION = '0.31.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -12926,8 +12942,17 @@ function showOnboarding(onComplete) {
     var _bsPending = null;  // { entry, timer } — strona w locie
     var _bsArm     = null;  // odliczanie dla wiersza, na którym stoi annotator
     var _bsBatch   = null;  // { total, done } gdy leci przelot wsadowy
-    var NEWS_BS_TIMEOUT_MS = 20000;
+    var NEWS_BS_TIMEOUT_MS = 12000;   // strona oddaje tekst przy DOMContentLoaded, nie przy `load`
     var NEWS_BS_ARM_MS     = 800;
+    // Serwis, który dwa razy z rzędu nie oddał treści, nie odda jej też za trzecim razem.
+    // Zmierzone na liście GR: 33 adresy jednej domeny zwracającej HTTP 500 to przy 12 s
+    // limitu ponad sześć minut czekania na pewną porażkę.
+    var NEWS_BS_HOST_FAILS_MAX = 2;
+    var _bsHostFails = {};
+
+    function _bsHost(entry) {
+      try { return new URL(entry.url).hostname.replace(/^www./, ''); } catch(e) { return ''; }
+    }
 
     function _bsSameUrl(a, b) {
       return String(a || '').replace(/\/+$/, '') === String(b || '').replace(/\/+$/, '');
@@ -12961,10 +12986,19 @@ function showOnboarding(onComplete) {
       if (_bsPending || _bsQueue.length === 0) return;
       var entry = _bsQueue.shift();
       if (!_newsBrowserScannable(entry)) { _bsPump(); return; }
+      var host = _bsHost(entry);
+      if (host && (_bsHostFails[host] || 0) >= NEWS_BS_HOST_FAILS_MAX) {
+        entry.bsDone = true;
+        entry.bsStatus = 'hostdead';
+        if (_bsBatch) _bsBatch.done++;
+        _bsPump();
+        return;
+      }
       entry.bsStatus = 'pending';
       // `quiet` — nawigujemy oknem bez zabierania mu fokusu. Fokus zabiera tylko pierwsze
       // otwarcie, bo przeglądarka inaczej nie umie; kolejne strony wchodzą po cichu.
-      var win = _newsOpenUrl(entry.url, true);
+      // Znacznik `#b24tscan` włącza relay w oknie — patrz komentarz przy `_b24tScanMark`.
+      var win = _newsOpenUrl(entry.url + (entry.url.indexOf('#') === -1 ? '#b24tscan' : '&b24tscan'), true);
       if (!win) {
         // Przeglądarka zdusiła okno. Czekanie 20 s na treść, która nigdy nie przyjdzie,
         // dałoby annotatorowi fałszywą diagnozę „strona nie odpowiada".
@@ -12999,11 +13033,19 @@ function showOnboarding(onComplete) {
         try {
           var chips = _newsGetKeywords(newsState.detectedCountry || 'DEFAULT');
           var result = _newsParseContent(html, chips, finalUrl || entry.url);
-          _newsApplyScanResult(entry, result, _newsProjectCountry());
-          if (entry.status !== 'blocked') {
-            entry.scannedViaBrowser = true;
-            if (entry.status === 'mention' || entry.status === 'contentmatch' || entry.status === 'keytopic') {
-              try { _newsAiAnalyze(entry); } catch(e) {}
+          // Strona błędu (HTTP 500, „coś poszło nie tak") też się ładuje i też ma HTML —
+          // wpisanie jej jako „brak keyword" byłoby cichym kłamstwem, że stronę przeczytano.
+          // Poniżej progu artykułu zostawiamy wiersz nieprzeskanowany i liczymy to jako
+          // porażkę serwisu, żeby przelot mógł go odpuścić po drugiej takiej stronie.
+          if (result.status === 'nomatch' && (result.wordCount || 0) < 30) {
+            entry.bsStatus = 'fail';
+          } else {
+            _newsApplyScanResult(entry, result, _newsProjectCountry());
+            if (entry.status !== 'blocked') {
+              entry.scannedViaBrowser = true;
+              if (entry.status === 'mention' || entry.status === 'contentmatch' || entry.status === 'keytopic') {
+                try { _newsAiAnalyze(entry); } catch(e) {}
+              }
             }
           }
         } catch(e) {
@@ -13011,6 +13053,10 @@ function showOnboarding(onComplete) {
         }
       } else {
         entry.bsStatus = 'fail';
+      }
+      if (entry.bsStatus === 'fail') {
+        var _h = _bsHost(entry);
+        if (_h) _bsHostFails[_h] = (_bsHostFails[_h] || 0) + 1;
       }
 
       if (_bsBatch) {
@@ -13028,6 +13074,7 @@ function showOnboarding(onComplete) {
       if (_bsArm) { clearTimeout(_bsArm); _bsArm = null; }
       _bsQueue.length = 0;
       _bsBatch = null;
+      _bsHostFails = {};   // nowy przelot zaczyna z czystym kontem
       if (_bsPending) {
         clearTimeout(_bsPending.timer);
         _bsPending.entry.bsStatus = null;
@@ -13040,6 +13087,7 @@ function showOnboarding(onComplete) {
       if (_bsBatch) { _newsBrowserScanCancel(); return; }
       var targets = newsState.urls.filter(_newsBrowserScannable);
       if (targets.length === 0) return;
+      _bsHostFails = {};
       _bsBatch = { total: targets.length, done: 0 };
       targets.forEach(function(e) { if (_bsQueue.indexOf(e) === -1) _bsQueue.push(e); });
       _bsPump();
@@ -13571,7 +13619,12 @@ function showOnboarding(onComplete) {
       var counts = _newsUrlCounts();
 
       // Pasek postępu: tryb skanowania vs tryb sesji
-      if (newsState.scanning) {
+      if (_bsBatch) {
+        // Przelot przez okno ma własny licznik — bez niego pasek stoi i nie widać, czy coś
+        // się dzieje, a jedna strona potrafi zająć kilka sekund.
+        if (progressLbl) progressLbl.textContent = '🌐 Skan przez okno: ' + _bsBatch.done + ' / ' + _bsBatch.total;
+        _getBarNews().set(_bsBatch.total > 0 ? Math.round(_bsBatch.done / _bsBatch.total * 100) : 0);
+      } else if (newsState.scanning) {
         var total = newsState.scanTotal || 1;
         var done  = newsState.scanDone  || 0;
         var _etaStr = '';
@@ -14226,6 +14279,8 @@ function showOnboarding(onComplete) {
       // ── Skan przez okno przeglądarki ──
       if (entry.bsStatus === 'pending') {
         parts.push('<div style="font-size:11px;line-height:1.6;color:#22c55e;border-radius:9px;padding:9px 11px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.28);">🌐 Otwieram tę stronę w oknie przeglądarki i skanuję stamtąd — z Twoją sesją i wykonanym JS-em. Chwila.</div>');
+      } else if (entry.bsStatus === 'hostdead') {
+        parts.push('<div style="font-size:11px;line-height:1.6;color:' + t.textMuted + ';border-radius:9px;padding:9px 11px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';">🌐 Pominięte: dwie wcześniejsze strony z tego serwisu nie oddały treści, więc przelot go odpuścił. Otwórz ręcznie, jeśli chcesz sprawdzić akurat tę.</div>');
       } else if (entry.bsStatus === 'popup') {
         parts.push('<div style="font-size:11px;line-height:1.6;color:#d97706;border-radius:9px;padding:9px 11px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.28);">🌐 Przeglądarka zablokowała wyskakujące okno, więc nie da się pobrać tej strony z Twojej sesji. Zezwól na wyskakujące okna dla Brand24 i kliknij wiersz ponownie.</div>');
       } else if (entry.bsStatus === 'fail') {
@@ -15215,6 +15270,18 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.31.1",
+      "date": "2026-09-14",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "fix", "text": "**Skan przez okno przestał się gubić po pierwszej stronie.** Okno rozpoznawało siebie po nazwie, a Chrome kasuje nazwę okna przy przejściu na inną witrynę — więc po pierwszym przeskoku wtyczka przestawała dostawać treść (strona „nie odpowiadała\" aż do końca limitu czasu), a kolejne otwarcie robiło DRUGIE okno zamiast wejść w istniejące. Teraz okno rozpoznaje się po znaczniku w adresie, który przeżywa nawigację"},
+        {"type": "fix", "text": "**Przelot przez okno jest wielokrotnie szybszy.** Treść leci do panelu, gdy tylko artykuł jest w drzewie strony, a nie po doładowaniu reklam i trackerów — to na serwisie informacyjnym kilkanaście sekund różnicy na każdej stronie. Limit czasu zjechał z 20 na 12 sekund, a przelot odpuszcza cały serwis po dwóch stronach bez treści: 33 adresy jednej martwej domeny to było wcześniej ponad sześć minut czekania na pewną porażkę"},
+        {"type": "fix", "text": "**Postęp przelotu widać w pasku sesji** — „Skan przez okno: 3 / 54\". Wcześniej licznik był tylko na przycisku, więc przy dłuższym przelocie nie było wiadomo, czy cokolwiek się dzieje"},
+        {"type": "fix", "text": "**Strona błędu nie udaje pustego artykułu.** Strona z błędem serwera też się ładuje i też ma treść HTML; wpisanie jej do wiersza jako „brak keyword\" byłoby cichym stwierdzeniem, że stronę przeczytano. Poniżej progu artykułu wiersz zostaje nieprzeskanowany, a serwis dostaje punkt karny w przelocie"}
+      ]
+    },
+    {
       "version": "0.31.0",
       "date": "2026-09-14",
       "label": "feat",
@@ -15317,21 +15384,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "Rozgrzewka jest teraz warunkiem: bez potwierdzenia, że strona projektu faktycznie się otworzyła, wtyczka **nie pyta o tagi w ogóle** i mówi wprost, czego brakuje"},
         {"type": "fix", "text": "Przycisk „Sprawdź ponownie” idzie tą samą drogą na panelu Brand24 i na stronach zewnętrznych. Wcześniej na panelu pytał o tagi wprost — a to zapytanie też bierze projekt z sesji, którą wtyczka sama przestawia przy sprawdzaniu dostępu do innych projektów"},
         {"type": "feat", "text": "Komunikat przy braku tagów podaje **konkretną domenę**, na której trzeba się zalogować, zamiast ogólnego „nie udało się pobrać tagów”"}
-      ]
-    },
-    {
-      "version": "0.26.23",
-      "date": "2026-09-11",
-      "label": "fix",
-      "labelColor": "#f59e0b",
-      "changes": [
-        {"type": "fix", "text": "Kropka obok przycisku dodawania odpowiada teraz na pytanie „**czy mogę dodać wzmiankę do tego projektu**\", a nie „czy CMS działa\". Poprzednio wystarczało, że projekt ma w pamięci tag „dodane\", żeby kropka zrobiła się zielona i odblokowała wysyłkę — bez ani jednego zapytania do Brand24. Obecność tagu nie mówi nic o tym, czy sesja żyje"},
-        {"type": "fix", "text": "Wynik dotyczy konkretnej pary projekt + panel. Pytanie idzie pod adres panelu, na którym projekt żyje, więc projekt z panel.brand24.pl nie ma jak zostać sprawdzony sesją z app.brand24.com — zła kombinacja nie jest wykrywana, ona po prostu nie może powstać"},
-        {"type": "feat", "text": "Komunikat przy braku dostępu podaje **konkretną domenę** do zalogowania, zamiast ogólnego „zaloguj się do CMS\". Doszedł też stan „nie wiem\" na błąd sieci — wcześniej błąd sprawdzania był pokazywany tak samo jak brak logowania"},
-        {"type": "feat", "text": "Kropka mówi, ile ma lat („sprawdzone przed chwilą\" / „sprawdzone 8 minut temu\") i można ją kliknąć, żeby sprawdzić od nowa — po zalogowaniu w innej karcie to jedno kliknięcie zamiast zamykania i otwierania okna"},
-        {"type": "feat", "text": "Sprawdzanie odnawia się samo po powrocie do karty i wtedy, gdy inna karta Brand24 przechwyci świeży token — to drugie nie kosztuje żadnego zapytania"},
-        {"type": "fix", "text": "Gdy wysyłka nie dostanie tokenu, kropka natychmiast robi się czerwona, a komunikat mówi wprost, że **formularz zostaje wypełniony** — wystarczy się zalogować i kliknąć drugi raz"},
-        {"type": "fix", "text": "Blokada wysyłki z trybu Niestandardowego nie zostaje już na przycisku po przełączeniu na News — przycisk jest wspólny dla obu trybów, a zdejmować blokadę nie miał kto"}
       ]
     }
   ];

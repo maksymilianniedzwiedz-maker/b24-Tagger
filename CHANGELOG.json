@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.32.1",
+    "date": "2026-09-15",
+    "label": "fix",
+    "changes": [
+      "fix: **Nowy film z YouTube przestaje wychodzić duplikatem.** Sprawdzanie „czy ten URL już jest w projekcie” porównywało też adresy po obcięciu wszystkiego za znakiem zapytania. Zmierzone na H&M_TR za wrzesień: 21 wzmianek z YouTube, każda z innym `?v=`, po obcięciu zostaje jeden adres — więc pierwszy film w projekcie zamieniał każdy następny w „duplikat” i blokował wysyłkę. To samo dotyczyło każdego adresu, w którym tożsamość strony siedzi w query (`?p=`, `permalink.php?...`). Sklejanie wersji AMP i parametrów śledzących, dla którego to powstało, działa dalej",
+      "fix: **Zielone „URL nowy w projekcie” znaczy teraz, że naprawdę sprawdzono.** Wcześniej sprawdzanie kończyło się po 600 wzmiankach i mimo to wypisywało werdykt na zielono. Zmierzone pełne miesiące H&M_TR: 1233, 1121, 1060, 791 i 879 wzmianek — czyli **każdy** przekraczał ten limit, a ponieważ Brand24 oddaje wzmianki od najnowszych, niesprawdzona zostawała starsza połowa miesiąca. Teraz pytanie jest zawężane do domeny adresu, dzięki czemu mieści się w jednym zapytaniu i obejmuje trzy miesiące zamiast jednego; gdy mimo to nie da się doczytać do końca, wtyczka mówi to wprost zamiast zapewniać, że jest czysto",
+      "fix: **Sprawdzanie jest też szybsze.** Zamiast dziewięciu zapytań po całym miesiącu — jedno, zawężone do domeny. Zmierzone: ~0,4 s zamiast ~4 s",
+      "fix: **Zmiana projektu nie zostawia werdyktu z poprzedniego.** Przy pustym polu adresu na ekranie zostawało „URL nowy w projekcie” dotyczące projektu, który właśnie przestał być wybrany",
+      "fix: **Ta sama strona idzie teraz do dwóch projektów pod rząd.** Wtyczka pamiętała każdy adres, który kiedykolwiek wysłała — bez zapisu, do którego projektu — i przy drugim podejściu odmawiała: „Ten URL był już wcześniej dodany do Brand24 (w tej lub poprzedniej sesji)”. Dodanie tej samej wzmianki do projektu PL i zaraz potem do CZ było przez to niemożliwe. Lista rosła bez końca (u właściciela 224 adresy) i nigdy się nie czyściła. Została zdjęta — rolę strażnika pełni sprawdzanie adresu w konkretnym projekcie, a prawdziwy duplikat odrzuca sam Brand24 przy wysyłce",
+      "fix: **Po dodaniu wzmianki formularz zostaje wypełniony (tryb „Niestandardowe”).** Wcześniej kasował tytuł, treść i datę — zachowanie z trybu listy, gdzie panel przechodzi na kolejny wiersz i wypełnia je od nowa. Tutaj wypełniać nie miał kto, bo strona się nie zmieniła: zostawał pusty formularz, którego nie dało się wysłać do drugiego projektu (a pusta data zatrzymywała też sprawdzanie duplikatu). Wystarczy teraz zmienić projekt i kliknąć drugi raz"
+    ]
+  },
+  {
     "version": "0.32.0",
     "date": "2026-09-15",
     "label": "feat",

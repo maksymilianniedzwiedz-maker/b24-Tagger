@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.32.0
+// @version      0.32.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -171,7 +171,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.32.0';
+  const VERSION = '0.32.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -192,7 +192,6 @@
     STATS_CFG:        'b24tagger_stats_config',
     PROJECT_NAMES:    'b24tagger_project_names',
     NEWS_KEYWORDS:    'b24tagger_news_keywords',
-    NEWS_SESSION_URLS:'b24tagger_news_session_urls',
     NEWS_LANG_MAP:    'b24tagger_news_lang_map',
     NEWS_WIN_SIZE:    'b24tagger_news_win_size',
     WELCOME_SHOWN:    'b24tagger_welcome_shown_v0210',
@@ -990,6 +989,11 @@
     if (_patch.token) B24Bridge.token.save(_patch.token.headers, _patch.token.base);
     if (_patch.projects && Object.keys(_patch.projects).length > 0) B24Bridge.projects.setAll(_patch.projects);
   })();
+
+  // Sprzątanie po blokadzie „ten URL był już dodany w tej sesji" (zdjęta w v0.32.1). Klucz rósł
+  // bez ograniczeń i nie miał w sobie projektu — u właściciela 224 adresy, 28 kB martwych danych.
+  // Do usunięcia razem z tymi dwiema linijkami, gdy wszyscy annotatorzy przejdą przez 0.32.1.
+  try { localStorage.removeItem('b24tagger_news_session_urls'); } catch(e) {}
 
   // ───────────────────────────────────────────
   // URL NORMALIZATION
@@ -8120,7 +8124,6 @@ function showOnboarding(onComplete) {
   var newsState = {
     urls: [],
     activeIdx: -1,
-    sessionUrls: {},
     detectedCountry: null,
     panelsOpen: false,
     wired: false,
@@ -8280,10 +8283,6 @@ function showOnboarding(onComplete) {
   }
   function _newsGetLangMap() { return lsGet(LS.NEWS_LANG_MAP, {}); }
   function _newsSaveLangMap(map) { lsSet(LS.NEWS_LANG_MAP, map); }
-  function _newsGetSessionUrls() { return lsGet(LS.NEWS_SESSION_URLS, {}); }
-  function _newsMarkSessionUrl(url) {
-    var s = _newsGetSessionUrls(); s[url] = true; lsSet(LS.NEWS_SESSION_URLS, s);
-  }
 
   // Country path segments and subdomains to detect in URLs
   // Maps country indicators (path segments, subdomains) → country code
@@ -13260,7 +13259,7 @@ function showOnboarding(onComplete) {
       if (s === 'checked')      return { dot: '✓', color: '#64748b', label: 'Sprawdzony — obejrzany, bez dodania wzmianki' };
       if (s === 'added')        return { dot: '✓', color: '#15803d', label: 'Dodany do Brand24' };
       if (s === 'error')        return { dot: '✗', color: '#ef4444', label: 'Błąd / duplikat w projekcie' };
-      if (s === 'inproject')    return { dot: '●', color: '#64748b', label: 'Już w projekcie (ten miesiąc)' };
+      if (s === 'inproject')    return { dot: '●', color: '#64748b', label: 'Już w projekcie (ostatnie 3 mies.)' };
       if (s === 'scanning')     return { dot: '◌', color: '#818cf8', label: 'Skanowanie treści...' };
       if (s === 'blocked') {
         var _bi = _newsBlockInfo(entry);
@@ -13805,25 +13804,23 @@ function showOnboarding(onComplete) {
         var dateFrom = _localDateStr(new Date(now.getFullYear(), now.getMonth() - 2, 1));
         var dateTo   = _localDateStr(now);
         var projectUrls = new Set();        // znormalizowane URLe — szybki exact lookup
-        var projectUrlsBase = new Set();    // bez query/hash — fallback na utm_*, fbclid itp.
+        var projectUrlsCanon = new Set();   // po kanonizacji — AMP, utm_*, fbclid
         var projectUrlsArr = [];            // do urlsMatch (tolerancja obcięcia ID)
         var total = 0;
-        var _rxQueryHash = /[?#].*$/;
         var _addProjectUrl = function(raw) {
           var n = normalizeUrl(raw);
           if (!n || projectUrls.has(n)) return;
           projectUrls.add(n);
           projectUrlsArr.push(n);
-          projectUrlsBase.add(n.replace(_rxQueryHash, ''));
+          var c = _newsCanonicalUrl(raw);
+          if (c) projectUrlsCanon.add(c);
         };
         var _processPage = function(results) {
-          (results || []).forEach(function(m) {
-            if (!m.url && !m.openUrl) return;
-            _addProjectUrl(m.url || m.openUrl);
-            // Dodaj też openUrl osobno jeśli różni się od url — Brand24 może przechowywać
-            // canonical URL w m.url i oryginalny URL użytkownika w m.openUrl
-            if (m.openUrl && m.url && m.openUrl !== m.url) _addProjectUrl(m.openUrl);
-          });
+          // Świadomie TYLKO `url`. Zmierzone 2026-09-15: dla 60/60 wzmianek `openUrl` ma kształt
+          // app.brand24.com/*/*/ — to przekierowanie Brand24, nigdy adres artykułu. Wcześniejszy
+          // komentarz („Brand24 może trzymać oryginalny URL w openUrl") był nieprawdziwy i kosztował
+          // podwojenie zbioru porównań.
+          (results || []).forEach(function(m) { if (m.url) _addProjectUrl(m.url); });
         };
         var first = await getMentions(state.projectId, dateFrom, dateTo, [], 1);
         if (first) {
@@ -13860,12 +13857,17 @@ function showOnboarding(onComplete) {
           if (!en) return;
           var hit = projectUrls.has(en);
           if (!hit) {
-            // Fallback 1: dopasowanie bez query/hash (utm_*, fbclid itp.)
-            var enBase = en.replace(_rxQueryHash, '');
-            if (projectUrlsBase.has(enBase)) hit = true;
+            // Fallback 1: dopasowanie po adresie kanonicznym — zdejmuje AMP i parametry śledzące
+            // (utm_*, fbclid). ŚWIADOMIE nie porównujemy adresów z obciętym `?…`: zmierzone na
+            // H&M_TR/wrzesień — 21 wzmianek z YouTube, wszystkie z query, po obcięciu zostaje
+            // JEDNA baza `youtube.com/watch`, czyli każdy nowy film wychodziłby „już w projekcie".
+            var ec = _newsCanonicalUrl(entry.url);
+            if (ec && projectUrlsCanon.has(ec)) hit = true;
           }
           if (!hit && en.length >= 15) {
-            // Fallback 2: tolerancja obcięcia ID — O(1) lookup przez prefix index
+            // Fallback 2: tolerancja obcięcia ID — O(1) lookup przez prefix index.
+            // Tu zostaje (inaczej niż w `_customDupCheck`), bo adresy w tym trybie pochodzą
+            // z wklejki/pliku i Excel potrafi uciąć końcówkę ID.
             var candidates = _prefixIdx.get(en.substring(0, 15)) || [];
             for (var i = 0; i < candidates.length; i++) {
               if (urlsMatch(en, candidates[i])) { hit = true; break; }
@@ -13877,7 +13879,7 @@ function showOnboarding(onComplete) {
           }
         });
 
-        var infoMsg = '✓ Projekt: ' + (total || projectUrls.size) + ' wzmianek w tym mies.';
+        var infoMsg = '✓ Projekt: ' + (total || projectUrls.size) + ' wzmianek z ostatnich 3 mies.';
         if (matchedCount > 0) infoMsg += ' — ' + matchedCount + ' URL' + (matchedCount === 1 ? '' : 'i') + ' już w projekcie';
         else infoMsg += ' — żadna nie pokrywa się z listą';
         if (projectInfo) { projectInfo.textContent = infoMsg; projectInfo.style.color = matchedCount > 0 ? '#f59e0b' : '#22c55e'; }
@@ -15114,8 +15116,7 @@ function showOnboarding(onComplete) {
             matchedChips: urlChips,
           };
         });
-        var _suSimple = _newsGetSessionUrls();
-        newsState.urls.forEach(function(e, i) { e._ord = i; if (_suSimple[e.url]) { e.status = 'inproject'; e.scanStatus = 'inproject'; } });
+        newsState.urls.forEach(function(e, i) { e._ord = i; });
 
         renderChips();
         renderUrlList();
@@ -15132,8 +15133,7 @@ function showOnboarding(onComplete) {
       newsState.urls = deduped.map(function(u) {
         return { url: u, status: 'scanning', opened: false, score: 0, snippet: '', matchedChips: [] };
       });
-      var _suScan = _newsGetSessionUrls();
-      newsState.urls.forEach(function(e, i) { e._ord = i; if (_suScan[e.url]) { e.status = 'inproject'; e.scanStatus = 'inproject'; } });
+      newsState.urls.forEach(function(e, i) { e._ord = i; });
 
       renderChips();
       renderUrlList();
@@ -15387,10 +15387,18 @@ function showOnboarding(onComplete) {
     var _dupProjSel = document.getElementById('b24t-news-f-project-sel');
     if (_dupProjSel) {
       _dupProjSel.addEventListener('change', function() {
-        if (newsState.mode === 'custom' && this.value) {
-          var _urlVal = (document.getElementById('b24t-news-f-url') || {}).value || '';
-          if (_urlVal) _customDupCheck(_urlVal, this.value);
+        if (newsState.mode !== 'custom') return;
+        var _urlVal = (document.getElementById('b24t-news-f-url') || {}).value || '';
+        // Werdykt dup-checku dotyczy PARY (adres, projekt). Po zmianie projektu stary werdykt
+        // mówi o cudzym projekcie, więc przy pustym adresie kasujemy go razem z blokadą zamiast
+        // zostawiać na ekranie „✓ URL nowy w projekcie" z poprzedniego wyboru.
+        if (!this.value || !_urlVal) {
+          var _d = document.getElementById('b24t-news-dup-status');
+          if (_d) _d.style.display = 'none';
+          _customSubmitGate('dup', false);
+          return;
         }
+        _customDupCheck(_urlVal, this.value);
       });
     }
 
@@ -15445,15 +15453,6 @@ function showOnboarding(onComplete) {
         if (!fTitle.trim())   { showErr('⚠ Tytuł jest wymagany.'); return; }
         if (!fContent.trim()) { showErr('⚠ Treść jest wymagana.'); return; }
         if (!RX_ISO_DATE.test(fDate)) { showErr('⚠ Nieprawidłowy format daty — wymagany: YYYY-MM-DD'); return; }
-        if (_newsGetSessionUrls()[fUrl]) {
-          var _ipEntry = newsState.urls.find(function(e) { return e.url === fUrl || normalizeUrl(e.url) === normalizeUrl(fUrl); });
-          if (_ipEntry && _ipEntry.status === 'inproject') {
-            showErr('⚠ Ten URL jest już w projekcie Brand24.');
-          } else {
-            showErr('⚠ Ten URL był już wcześniej dodany do Brand24 (w tej lub poprzedniej sesji).');
-          }
-          return;
-        }
         // W trybie Niestandardowe — pomijamy walidację zgodności kraju (użytkownik może nadpisać)
         if (newsState.mode !== 'custom') {
           var pc = _newsProjectCountry();
@@ -15543,23 +15542,28 @@ function showOnboarding(onComplete) {
             submitBtn.disabled = false;
             submitBtn.style.opacity = '';
             submitBtn.textContent = '✚ Dodaj wzmiankę do Brand24';
+            // Czyszczenie pól po odpowiedzi ma sens TYLKO w trybie listy: tam panel zaraz
+            // przechodzi na kolejny wiersz i wypełnia je od nowa. W trybie Niestandardowe nie ma
+            // czego wypełniać — strona się nie zmieniła — a puste pola uniemożliwiały dodanie tej samej
+            // strony do drugiego projektu: brakowało tytułu i treści, a pusta data zatrzymywała
+            // też dup-check na „czekam na datę posta”.
+            var _clearAfterSend = function() {
+              if (newsState.mode === 'custom') return;
+              ['b24t-news-f-content', 'b24t-news-f-title', 'b24t-news-f-date'].forEach(function(id) {
+                var el = document.getElementById(id);
+                if (el) el.value = '';
+              });
+              var _di = document.getElementById('b24t-news-date-detect-icon');
+              if (_di) _di.style.display = 'none';
+            };
             var isDuplicate = resp.responseText && resp.responseText.indexOf('There is the entry with this address') !== -1;
             var isOk = resp.status >= 200 && resp.status < 400 && !isDuplicate;
             if (isDuplicate) {
-              _newsMarkSessionUrl(fUrl);
               _naTagOutcome(newsState.urls.find(function(e) { return e.url === fUrl; }), 'duplicate');
               if (subStatus) { subStatus.textContent = '⚠ Brand24: taka wzmianka już istnieje.'; subStatus.style.color = '#f59e0b'; }
               if (newsState.activeIdx >= 0) newsState.urls[newsState.activeIdx].status = 'error';
-              var tcD = document.getElementById('b24t-news-f-content');
-              var ttD = document.getElementById('b24t-news-f-title');
-              var tdD = document.getElementById('b24t-news-f-date');
-              if (tcD) tcD.value = '';
-              if (ttD) ttD.value = '';
-              if (tdD) tdD.value = '';
-              var diD = document.getElementById('b24t-news-date-detect-icon');
-              if (diD) diD.style.display = 'none';
+              _clearAfterSend();
             } else if (isOk) {
-              _newsMarkSessionUrl(fUrl);
               var _naE = newsState.urls.find(function(e) { return e.url === fUrl; });
               if (_naE) {
                 _naTagOutcome(_naE, 'added');
@@ -15569,18 +15573,20 @@ function showOnboarding(onComplete) {
               }
               if (subStatus) { subStatus.textContent = '✓ Dodano do Brand24!'; subStatus.style.color = '#22c55e'; }
               if (newsState.activeIdx >= 0) newsState.urls[newsState.activeIdx].status = 'added';
-              var tc = document.getElementById('b24t-news-f-content');
-              var tt = document.getElementById('b24t-news-f-title');
-              var td = document.getElementById('b24t-news-f-date');
-              if (tc) tc.value = '';
-              if (tt) tt.value = '';
-              if (td) td.value = '';
-              var di = document.getElementById('b24t-news-date-detect-icon');
-              if (di) di.style.display = 'none';
+              _clearAfterSend();
             } else {
               if (subStatus) { subStatus.textContent = '✗ Błąd HTTP ' + resp.status; subStatus.style.color = '#ef4444'; }
               if (newsState.activeIdx >= 0) newsState.urls[newsState.activeIdx].status = 'error';
               _naTagOutcome(newsState.urls.find(function(e) { return e.url === fUrl; }), 'error');
+            }
+            // Werdykt dup-checku mówił o stanie SPRZED wysłania, więc po odpowiedzi przestaje
+            // cokolwiek znaczyć. Świadomie go NIE odtwarzamy: świeżo dodana wzmianka nie musi być
+            // jeszcze widoczna w `getMentions`, a zielone „URL nowy” tuż po dodaniu byłoby kłamstwem.
+            // Zdejmujemy go razem z blokadą — następne pytanie zada wybór projektu albo zmiana adresu.
+            if (newsState.mode === 'custom') {
+              var _dupEl2 = document.getElementById('b24t-news-dup-status');
+              if (_dupEl2) _dupEl2.style.display = 'none';
+              _customSubmitGate('dup', false);
             }
             renderUrlList();
             // Po udanym dodaniu przeskakujemy na kolejny nieobsłużony wiersz — ten ruch
@@ -15736,6 +15742,20 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.32.1",
+      "date": "2026-09-15",
+      "label": "fix",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "fix", "text": "**Nowy film z YouTube przestaje wychodzić duplikatem.** Sprawdzanie „czy ten URL już jest w projekcie” porównywało też adresy po obcięciu wszystkiego za znakiem zapytania. Zmierzone na H&M_TR za wrzesień: 21 wzmianek z YouTube, każda z innym `?v=`, po obcięciu zostaje jeden adres — więc pierwszy film w projekcie zamieniał każdy następny w „duplikat” i blokował wysyłkę. To samo dotyczyło każdego adresu, w którym tożsamość strony siedzi w query (`?p=`, `permalink.php?...`). Sklejanie wersji AMP i parametrów śledzących, dla którego to powstało, działa dalej"},
+        {"type": "fix", "text": "**Zielone „URL nowy w projekcie” znaczy teraz, że naprawdę sprawdzono.** Wcześniej sprawdzanie kończyło się po 600 wzmiankach i mimo to wypisywało werdykt na zielono. Zmierzone pełne miesiące H&M_TR: 1233, 1121, 1060, 791 i 879 wzmianek — czyli **każdy** przekraczał ten limit, a ponieważ Brand24 oddaje wzmianki od najnowszych, niesprawdzona zostawała starsza połowa miesiąca. Teraz pytanie jest zawężane do domeny adresu, dzięki czemu mieści się w jednym zapytaniu i obejmuje trzy miesiące zamiast jednego; gdy mimo to nie da się doczytać do końca, wtyczka mówi to wprost zamiast zapewniać, że jest czysto"},
+        {"type": "fix", "text": "**Sprawdzanie jest też szybsze.** Zamiast dziewięciu zapytań po całym miesiącu — jedno, zawężone do domeny. Zmierzone: ~0,4 s zamiast ~4 s"},
+        {"type": "fix", "text": "**Zmiana projektu nie zostawia werdyktu z poprzedniego.** Przy pustym polu adresu na ekranie zostawało „URL nowy w projekcie” dotyczące projektu, który właśnie przestał być wybrany"},
+        {"type": "fix", "text": "**Ta sama strona idzie teraz do dwóch projektów pod rząd.** Wtyczka pamiętała każdy adres, który kiedykolwiek wysłała — bez zapisu, do którego projektu — i przy drugim podejściu odmawiała: „Ten URL był już wcześniej dodany do Brand24 (w tej lub poprzedniej sesji)”. Dodanie tej samej wzmianki do projektu PL i zaraz potem do CZ było przez to niemożliwe. Lista rosła bez końca (u właściciela 224 adresy) i nigdy się nie czyściła. Została zdjęta — rolę strażnika pełni sprawdzanie adresu w konkretnym projekcie, a prawdziwy duplikat odrzuca sam Brand24 przy wysyłce"},
+        {"type": "fix", "text": "**Po dodaniu wzmianki formularz zostaje wypełniony (tryb „Niestandardowe”).** Wcześniej kasował tytuł, treść i datę — zachowanie z trybu listy, gdzie panel przechodzi na kolejny wiersz i wypełnia je od nowa. Tutaj wypełniać nie miał kto, bo strona się nie zmieniła: zostawał pusty formularz, którego nie dało się wysłać do drugiego projektu (a pusta data zatrzymywała też sprawdzanie duplikatu). Wystarczy teraz zmienić projekt i kliknąć drugi raz"}
+      ]
+    },
+    {
       "version": "0.32.0",
       "date": "2026-09-15",
       "label": "feat",
@@ -15833,18 +15853,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "**Wiersz mówi wreszcie, DLACZEGO nie został przeskanowany.** Skaner rozróżnia sześć przyczyn, a panel podał do tej pory cztery — ściana antybotowa i odcięcie domeny pokazywały się jako gołe „Zablokowana\". Każda ma teraz własną etykietę i podpowiedź, która mówi też, czy ponawianie ma sens: przy 404 nie ma, przy 403 i błędzie serwera owszem"},
         {"type": "fix", "text": "**„Domena odcięta\" przestała udawać blokadę.** Po dwóch timeoutach z jednego serwisu skaner pomija resztę jego adresów — przy liście z jednego dużego wydawcy potrafi to oznaczyć dziesiątki stron, których **w ogóle nie spróbował pobrać**. Wyglądało to identycznie jak prawdziwa blokada. Teraz podpowiedź mówi to wprost i kieruje do ponowienia"},
         {"type": "feat", "text": "**„Diagnostyka\" kopiuje do schowka rozkład nieprzeskanowanych** — ile którego powodu, na jakich domenach, plus listę adresów. Do wklejenia przy zgłaszaniu problemu, żeby rozmowa zaczynała się od liczb, a nie od „dużo stron się nie skanuje\""}
-      ]
-    },
-    {
-      "version": "0.29.0",
-      "date": "2026-09-14",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "**Karta decyzyjna zastąpiła ramkę jako domyślny podgląd.** Wcześniej po kliknięciu wiersza panel próbował wczytać stronę w ramce, a kartę trzeba było włączać ręcznie — mimo że większość serwisów i tak zabrania się osadzać, a te które pozwalają, pokazują surową stronę w obcym języku. Teraz jest odwrotnie: karta od razu, a strona w ramce na żądanie przyciskiem „▣ Strona\", który pojawia się tylko tam, gdzie serwis na to pozwala"},
-        {"type": "feat", "text": "**Fragmenty w obcym języku tłumaczą się na polski.** Karta otwiera się i jeśli strona nie jest po polsku ani po angielsku, wszystkie fragmenty z „Gdzie stoi marka\", tytuł i fragment z pola Treść idą do modelu i wracają po polsku. Raz na wiersz, wynik zapamiętany. Przycisk „🌐 oryginał / po polsku\" przełącza. **Do Brand24 leci oryginał** — tłumaczenie jest wyłącznie do czytania. Wymaga wskazania promptu tłumaczenia w ustawieniach importu (⚙ → „Tłumacz\"); bez tego nic się nie wywołuje"},
-        {"type": "feat", "text": "**Lista układa się od najpewniejszych.** Kolejność: werdykt AI, potem punktacja, potem kolejność wklejenia; załatwione i odrzucone przez skaner spadają na dół. Układa się sama dopóki nie otworzysz pierwszego wiersza — potem kolejność zamarza, bo wiersze przestawiające się pod kursorem są gorsze niż zła kolejność. Przycisk „⇅\" w pasku filtrów przestawia ręcznie i wraca do kolejności wklejenia"},
-        {"type": "fix", "text": "**Plakietki stref mówią, co znaczą — i dwie z nich mówiły źle.** Każda z 21 stref ma teraz opis „gdzie to jest na stronie\" w dymku i w legendzie („Słownik stref\"). Poziomy są trzy zamiast dwóch, bo podział na „treść / nie-treść\" mylił się w obie strony: podpis zdjęcia i lista produktów to treść artykułu (marka obok ceny w zestawieniu zakupowym jest wzmianką), a „tekst poboczny\" to wcale nie strefa poboczna, tylko kubeł „skaner nie rozpoznał strefy\" — i akurat tej etykiecie nie wolno ufać na słowo"}
       ]
     }
   ];
@@ -21662,11 +21670,32 @@ Tej operacji nie można cofnąć.`)) {
     sel.innerHTML = emptyOpt + _tagOptionsWithId(cur);
   }
 
+  // Domena adresu w postaci, której oczekuje filtr `do` w getMentions.
+  // Zmierzone na żywo 2026-09-15 (app.brand24.com, H&M_TR, wrzesień), patrz
+  // BRAND24_NETWORK.md §11a:
+  //   do:'tr.fashionnetwork.com'  → 2 wzmianki  (host dosłownie)
+  //   do:'fashionnetwork.com'     → 2 wzmianki  (domena nadrzędna też trafia w subdomenę)
+  //   do:'www.fashionnetwork.com' → 0 wzmianek  (`www.` nie jest częścią hosta u Brand24)
+  //   do:'fashionnetwork'         → 0 wzmianek  (to nie jest dopasowanie po fragmencie)
+  // Stąd: zdejmujemy `www.`, reszty hosta nie ruszamy.
+  function _dupDomain(url) {
+    if (!url) return '';
+    try {
+      var u = new URL(/^https?:\/\//i.test(url) ? url : 'https://' + url);
+      return u.hostname.replace(/^www\./i, '').toLowerCase();
+    } catch (e) { return ''; }
+  }
+
   var _dupCheckSeq = 0; // sequence counter — anuluje stare requesty gdy nowe wywołanie przychodzi
 
   function _customDupCheck(url, pid) {
-    // Sprawdza czy podany URL już istnieje w projekcie (cross-domain przez GM_xmlhttpRequest + B24Bridge)
-    // Skanuje tylko miesiąc daty artykułu — duplikat musiałby mieć tę samą datę
+    // Sprawdza, czy podany URL już istnieje w projekcie (cross-domain przez GM_xmlhttpRequest + B24Bridge).
+    //
+    // Pytanie zawężamy DOMENĄ adresu (filtr `do`), nie samą datą — wtedy komplet wzmianek z tego
+    // serwisu mieści się w jednym zapytaniu i można czytać wynik DO KOŃCA, zamiast urywać po
+    // dziesiątej stronie i mimo to wypisywać zielone „URL nowy". Gdy domena jest zbyt liczna
+    // (`instagram.com` w dużym projekcie), dopiero wtedy zawężamy datą. Pomiary stojące za tym
+    // wyborem: BRAND24_NETWORK.md §11 (porządek stron) i §11a (zachowanie filtra `do`).
     var _mySeq = ++_dupCheckSeq;
     var dupEl = document.getElementById('b24t-news-dup-status');
     if (!dupEl) return;
@@ -21694,28 +21723,38 @@ Tej operacji nie można cofnąć.`)) {
       dupEl.appendChild(force);
     }
 
+    // Adres w dwóch postaciach: znormalizowanej (tak porównuje cała wtyczka) i kanonicznej
+    // (bez AMP i parametrów śledzących). Kanoniczna daje też domenę, dzięki czemu lustro
+    // `amp.serwis.pl` pyta o `serwis.pl` — host, pod którym Brand24 trzyma oryginał.
     var normUrl = normalizeUrl(url || '');
     if (!normUrl) { _dupVerdict('hidden'); return; }
+    var canonUrl = _newsCanonicalUrl(url || '');
     var _pidInt = parseInt(pid, 10);
     if (!pid || isNaN(_pidInt)) { _dupVerdict('hidden'); return; }
+    var _domain = _dupDomain(canonUrl || normUrl);
 
-    // Zakres dat = miesiąc artykułu + 1 dzień buforu (na opóźnienie crawlera)
-    var dateFld  = document.getElementById('b24t-news-f-date');
-    var dateVal  = (dateFld && dateFld.value) || '';
+    var dateFld = document.getElementById('b24t-news-f-date');
+    var dateVal = (dateFld && dateFld.value) || '';
     // Puste pole daty zdarza się tylko wtedy, gdy czekamy na datę posta z sieci. Zapytanie
     // o „bieżący miesiąc" dałoby wtedy fałszywe „URL nowy" — lepiej poczekać na ponowienie.
     if (!dateVal) { _dupVerdict('info', '⏳ czekam na datę posta — dup-check ruszy zaraz potem'); return; }
-    var dateFrom, dateTo;
-    if (RX_ISO_DATE.test(dateVal)) {
-      var _y = parseInt(dateVal.substring(0, 4), 10);
-      var _m = parseInt(dateVal.substring(5, 7), 10) - 1; // 0-based
-      dateFrom = _localDateStr(new Date(_y, _m, 1));
-      dateTo   = _localDateStr(new Date(_y, _m + 1, 1)); // pierwszy dzień nast. mies. = bufor
-    } else {
-      var _now2 = new Date();
-      dateFrom = _localDateStr(new Date(_now2.getFullYear(), _now2.getMonth(), 1));
-      dateTo   = _localDateStr(_now2);
-    }
+    var _anchor = RX_ISO_DATE.test(dateVal)
+      ? new Date(parseInt(dateVal.substring(0, 4), 10), parseInt(dateVal.substring(5, 7), 10) - 1, parseInt(dateVal.substring(8, 10), 10))
+      : new Date();
+    // Okno szerokie: miesiąc artykułu plus miesiąc z każdej strony. Brand24 trzyma wzmiankę pod
+    // datą publikacji, ale przy ręcznym dodaniu i przy crawlerze ta data potrafi się rozjechać
+    // o kilka dni — a przy filtrze domeny szersze okno nic nie kosztuje (zmierzone: trzy miesiące
+    // z `do` = 446 ms i 3 wyniki; sam miesiąc bez `do` = 9 stron po ~430 ms).
+    var _wideRange = {
+      from: _localDateStr(new Date(_anchor.getFullYear(), _anchor.getMonth() - 1, 1)),
+      to:   _localDateStr(new Date(_anchor.getFullYear(), _anchor.getMonth() + 2, 1)),
+    };
+    // Okno wąskie: dzień publikacji plus doba z każdej strony. Wchodzi tam, gdzie sama domena
+    // jest zbyt liczna — instagram.com to w H&M_TR ponad 300 wzmianek na miesiąc.
+    var _narrowRange = {
+      from: _localDateStr(new Date(_anchor.getFullYear(), _anchor.getMonth(), _anchor.getDate() - 1)),
+      to:   _localDateStr(new Date(_anchor.getFullYear(), _anchor.getMonth(), _anchor.getDate() + 1)),
+    };
 
     // Baza panelu projektu (.pl/.com) — NIE ostatnio używany panel
     var _base = _b24PanelBase(_pidInt);
@@ -21729,48 +21768,48 @@ Tej operacji nie można cofnąć.`)) {
     _dupVerdict('info', '⏳ sprawdzanie duplikatów (' + _baseLabel(_base) + ')...');
 
     var _authHeaders = B24Bridge.token.headers(_base);
-
-    var _rxQH  = /[?#].*$/;
-    var _normBase = normUrl.replace(_rxQH, '');
-    var _urls  = new Set();
-    var _bases = new Set();
-    var _arr   = [];
+    var _urls  = new Set();   // znormalizowane adresy wzmianek z projektu
+    var _canon = new Set();   // te same adresy po kanonizacji (AMP, utm_*, fbclid)
 
     function _add(raw) {
       var n = normalizeUrl(raw);
-      if (!n || _urls.has(n)) return;
+      if (!n) return;
       _urls.add(n);
-      _bases.add(n.replace(_rxQH, ''));
-      _arr.push(n);
+      var c = _newsCanonicalUrl(raw);
+      if (c) _canon.add(c);
     }
 
+    // Dwa porównania i ani jednego więcej. Wcześniej były jeszcze dwa i oba kłamały:
+    //   • dopasowanie po adresie z obciętym `?…` — zmierzone na H&M_TR/wrzesień: 21 wzmianek
+    //     z YouTube, wszystkie z query, po obcięciu ZOSTAJE JEDNA baza `youtube.com/watch`,
+    //     więc każdy nowy film wychodził duplikatem. Parametry śledzące, dla których to
+    //     powstało, zdejmuje `_newsCanonicalUrl` — bez sklejania stron różniących się `?v=`.
+    //   • `urlsMatch` (tolerancja obciętego ID) — jest od adresów przyciętych przez Excela,
+    //     a tutaj adres pochodzi z żywej strony. Na 1044 adresach z miesiąca skleiła jedną
+    //     parę różnych artykułów i nie złapała niczego ponad porównanie wprost.
     function _hit() {
-      if (_urls.has(normUrl))   return true;
-      if (_bases.has(_normBase)) return true;
-      if (normUrl.length >= 15) {
-        for (var i = 0; i < _arr.length; i++) {
-          if (urlsMatch(normUrl, _arr[i])) return true;
-        }
-      }
-      return false;
+      if (_urls.has(normUrl)) return true;
+      return !!canonUrl && _canon.has(canonUrl);
     }
 
     function _page(results) {
-      (results || []).forEach(function(m) {
-        if (m.url) _add(m.url);
-        if (m.openUrl && m.openUrl !== m.url) _add(m.openUrl);
-      });
+      // Świadomie TYLKO `url`. Zmierzone 2026-09-15: dla 60/60 wzmianek `openUrl` ma kształt
+      // app.brand24.com/*/*/ — to przekierowanie Brand24, nigdy adres artykułu.
+      (results || []).forEach(function(m) { if (m.url) _add(m.url); });
     }
 
-    var _GQL = 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count results{url openUrl}}}';
-    var _fil = { va: 1, rt: [], se: [], vi: null, gr: [], sq: '', lem: false, ctr: [], nctr: false, is: null, tp: null, anom: '', lang: [], nlang: false, aue: null, htg: null, mt: false, mtri: null, cxs: [] };
+    var _GQL = 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count results{url}}}';
+    function _filters(domain) {
+      return { va: 1, rt: [], se: [], vi: null, gr: [], sq: '', do: domain || '', lem: false, ctr: [], nctr: false,
+               is: null, tp: null, anom: '', lang: [], nlang: false, aue: null, htg: null, mt: false, mtri: null, cxs: [] };
+    }
 
-    function _fetch(pg, cb) {
+    function _fetch(range, domain, pg, cb) {
       GM_xmlhttpRequest({
         method: 'POST',
         url: _base + '/api/graphql',
         headers: _authHeaders,
-        data: JSON.stringify({ operationName: 'getMentions', variables: { projectId: _pidInt, dateRange: { from: dateFrom, to: dateTo }, filters: _fil, page: pg, order: 0 }, query: _GQL }),
+        data: JSON.stringify({ operationName: 'getMentions', variables: { projectId: _pidInt, dateRange: range, filters: _filters(domain), page: pg, order: 0 }, query: _GQL }),
         timeout: 10000,
         onload: function(resp) {
           if (_mySeq !== _dupCheckSeq) return; // stale — nowsze wywołanie już przejęło
@@ -21783,40 +21822,101 @@ Tej operacji nie można cofnąć.`)) {
             }
             var r = d && d.data && d.data.getMentions;
             cb(r ? (r.count || 0) : 0, r ? (r.results || []) : []);
-          } catch(e) { cb(0, []); }
+          } catch(e) {
+            // Nieczytelna odpowiedź to NIE jest dowód, że URL-a nie ma. Wcześniej było tu
+            // `cb(0, [])`, czyli awaria parsowania kończyła się zielonym „URL nowy".
+            _dupVerdict('warn', '⚠ dup-check: nieczytelna odpowiedź Brand24');
+            cb(-1, []);
+          }
         },
         onerror:   function() { if (_mySeq !== _dupCheckSeq) return; _dupVerdict('warn', '⚠ dup-check: błąd sieci'); cb(-1, []); },
         ontimeout: function() { if (_mySeq !== _dupCheckSeq) return; _dupVerdict('warn', '⚠ dup-check: timeout'); cb(-1, []); }
       });
     }
 
-    function _show() {
-      if (_mySeq !== _dupCheckSeq) return;
-      if (_hit()) _dupVerdict('dup');
-      else        _dupVerdict('new', '✓ URL nowy w projekcie');
+    // Próg, powyżej którego zamiast czytać dalej ZAWĘŻAMY pytanie. Wcześniej stało tu
+    // `Math.min(…, 10)` i po dziesiątej stronie padał zielony werdykt „URL nowy" — mimo że
+    // reszty nikt nie oglądał. Zmierzone pełne miesiące H&M_TR: 1233 / 1121 / 1060 / 791 / 879
+    // wzmianek, czyli KAŻDY przekraczał ten limit, a `order:0` idzie od najnowszych — więc
+    // niesprawdzona zostawała starsza połowa miesiąca.
+    var _CAP_PAGES = 10;
+
+    // Czyta wszystkie strony jednego zapytania. Woła cb(stan, count):
+    //   'dup'    — adres znaleziony
+    //   'clean'  — przeczytane do końca, nie ma
+    //   'empty'  — zapytanie nie zwróciło ani jednej wzmianki
+    //   'toobig' — wynik nie mieści się w limicie stron, trzeba zawęzić
+    //   'error'  — zapytanie padło (komunikat jest już na ekranie)
+    function _scan(range, domain, cb) {
+      _fetch(range, domain, 1, function(count, results) {
+        if (_mySeq !== _dupCheckSeq) return;
+        if (count === -1) { cb('error'); return; }
+        _page(results);
+        if (_hit()) { cb('dup'); return; }
+        if (count === 0 || !results.length) { cb('empty', 0); return; }
+        var totalPages = Math.ceil(count / results.length);
+        if (totalPages > _CAP_PAGES) { cb('toobig', count); return; }
+        var pg = 2;
+        (function _next() {
+          if (_mySeq !== _dupCheckSeq) return;
+          if (pg > totalPages) { cb('clean', count); return; }
+          _fetch(range, domain, pg++, function(c, r) {
+            if (_mySeq !== _dupCheckSeq) return;
+            if (c === -1) { cb('error'); return; }
+            _page(r);
+            if (_hit()) { cb('dup'); return; }
+            _next();
+          });
+        })();
+      });
     }
 
-    _fetch(1, function(count, results) {
-      if (_mySeq !== _dupCheckSeq || count === -1) return;
-      _page(results);
-      if (_hit()) { _dupVerdict('dup'); return; }
-      var pageSize   = results.length || 60;
-      var totalPages = count > 0 ? Math.min(Math.ceil(count / pageSize), 10) : 1;
-      if (totalPages <= 1) { _show(); return; }
-      var remaining = [];
-      for (var pg = 2; pg <= totalPages; pg++) remaining.push(pg);
-      var idx = 0;
-      function _next() {
-        if (_mySeq !== _dupCheckSeq) return;
-        if (idx >= remaining.length) { _show(); return; }
-        _fetch(remaining[idx++], function(c, r) {
-          if (_mySeq !== _dupCheckSeq || c === -1) return;
-          _page(r);
-          if (_hit()) { _dupVerdict('dup'); return; }
-          _next();
+    function _tooMany(count, what) {
+      _dupVerdict('partial', '⚠ nie sprawdzone do końca — ' + count + ' wzmianek ' + what +
+                  ' (limit ' + (_CAP_PAGES * 60) + '). Możesz wysłać: prawdziwy duplikat odrzuci Brand24.');
+    }
+
+    // Adres bez rozpoznawalnego hosta — zostaje samo okno czasowe wokół daty publikacji.
+    if (!_domain) {
+      _scan(_narrowRange, '', function(st, count) {
+        if (st === 'dup')    { _dupVerdict('dup'); return; }
+        if (st === 'error')  return;                       // komunikat wypisał _fetch
+        if (st === 'toobig') { _tooMany(count, 'w dniu publikacji ±1'); return; }
+        _dupVerdict('new', '✓ URL nowy w projekcie (dzień publikacji ±1)');
+      });
+      return;
+    }
+
+    _scan(_wideRange, _domain, function(st, count) {
+      if (st === 'dup')   { _dupVerdict('dup'); return; }
+      if (st === 'error') return;
+
+      if (st === 'empty') {
+        // Domena nieznana w projekcie — albo to prawda, albo `do` nie trafiło w host, pod którym
+        // Brand24 zapisało ten artykuł (przekierowanie, subdomena). Drugie pytanie, już BEZ
+        // filtra domeny, rozstrzyga to niezależnie od zachowania `do`.
+        _scan(_narrowRange, '', function(st2, c2) {
+          if (st2 === 'dup')    { _dupVerdict('dup'); return; }
+          if (st2 === 'error')  return;
+          if (st2 === 'toobig') { _tooMany(c2, 'w dniu publikacji ±1'); return; }
+          _dupVerdict('new', '✓ URL nowy w projekcie (3 mies. + dzień publikacji)');
         });
+        return;
       }
-      _next();
+
+      if (st === 'toobig') {
+        // Domena zbyt liczna na przelot przez trzy miesiące. Data postu w tym trybie jest
+        // dokładna (adaptery social biorą ją z API serwisu), więc zawężamy do dnia publikacji.
+        _scan(_narrowRange, _domain, function(st2, c2) {
+          if (st2 === 'dup')    { _dupVerdict('dup'); return; }
+          if (st2 === 'error')  return;
+          if (st2 === 'toobig') { _tooMany(c2, 'z ' + _domain + ' w dniu publikacji ±1'); return; }
+          _dupVerdict('new', '✓ URL nowy w projekcie (' + _domain + ', dzień publikacji ±1)');
+        });
+        return;
+      }
+
+      _dupVerdict('new', '✓ URL nowy w projekcie (' + _domain + ', 3 mies.)');
     });
   }
 

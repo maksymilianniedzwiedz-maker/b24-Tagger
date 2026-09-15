@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.32.5",
+    "date": "2026-09-15",
+    "label": "feat",
+    "changes": [
+      "feat: **Formularz zbiera też autora wpisu — na serwisach, z których da się go wziąć.** Brand24 ma pole „Adres autora SM” (widoczne tylko dla adminów), którego wtyczka dotąd w ogóle nie wypełniała. Teraz nad tagami pojawia się wiersz „Autor wpisu” z gotowym adresem i zaznaczonym kwadracikiem — odznacz, jeśli przy tej wzmiance autora nie chcesz. **Wiersz pokazuje się wyłącznie tam, gdzie adres faktycznie da się ustalić**: Instagram, TikTok, YouTube i X. Na stronie z newsami nie ma go wcale. Adresy Instagrama i TikToka sprawdzone na prawdziwych wzmiankach w CMS, żeby poszło dokładnie to, co Brand24 tam trzyma. **Facebook świadomie pominięty** — wymaga numerycznego ID strony, którego w adresie posta nie ma; lepiej nie pokazać wiersza, niż wysłać adres, którego Brand24 nie zrozumie"
+    ]
+  },
+  {
     "version": "0.32.4",
     "date": "2026-09-15",
     "label": "fix",

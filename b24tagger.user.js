@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.32.4
+// @version      0.32.5
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -171,7 +171,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.32.4';
+  const VERSION = '0.32.5';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -11532,6 +11532,13 @@ function showOnboarding(onComplete) {
     var customRows = document.getElementById('b24t-news-f-custom-fields');
     if (customRows) customRows.style.display = isCustom ? 'flex' : 'none';
 
+    // Wiersz autora należy do Niestandardowego i pokazuje go dopiero `_customApplyAuthor`,
+    // gdy faktycznie jest adres. Przy powrocie do News gasimy go bezwarunkowo.
+    if (!isCustom) {
+      var authorRow = document.getElementById('b24t-news-f-author-row');
+      if (authorRow) authorRow.style.display = 'none';
+    }
+
     // Kategoria — w News readonly "7 — News", w Niestandardowe wybór z listy
     var catReadonly = document.getElementById('b24t-news-f-category-readonly');
     var catSelect   = document.getElementById('b24t-news-f-category-select');
@@ -12331,6 +12338,14 @@ function showOnboarding(onComplete) {
           '</div>',
         '</div>',
       '</div>',
+      // ── ADRES AUTORA — wiersz pojawia się tylko tam, gdzie da się go wziąć (patrz _socialAuthorUrl)
+      '<div id="b24t-news-f-author-row" style="display:none;flex-direction:column;gap:4px;flex-shrink:0;">',
+        '<label style="display:flex;align-items:center;gap:6px;font-size:10px;color:' + t.textMuted + ';cursor:pointer;" title="Pole \u201eAdres autora SM\u201d w Brand24 \u2014 widoczne tylko dla admin\u00f3w">',
+          '<input id="b24t-news-f-author-on" type="checkbox" checked style="margin:0;">',
+          '<span>Dodaj autora wpisu</span>',
+        '</label>',
+        '<input id="b24t-news-f-author-url" type="text" placeholder="https://..." style="' + _newsInputCss(t) + '">',
+      '</div>',
       '<div style="display:flex;gap:8px;flex-shrink:0;">',
         '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
           '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">KRAJ</label>',
@@ -12766,6 +12781,15 @@ function showOnboarding(onComplete) {
           _i24wField('Udost.', '<input id="b24t-news-f-shares" class="b24t-i24w-input" type="number" min="0" placeholder="0" style="padding:6px 4px;text-align:center;">') +
           _i24wField('Komen.', '<input id="b24t-news-f-comments" class="b24t-i24w-input" type="number" min="0" placeholder="0" style="padding:6px 4px;text-align:center;">') +
         '</div>' +
+      '</div>' +
+
+      // Adres autora — wiersz pojawia się tylko na serwisach, z których da się go wziąć.
+      '<div id="b24t-news-f-author-row" class="b24t-i24w-box" style="display:none;padding:7px 9px;gap:6px;">' +
+        '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;" title="Pole \u201eAdres autora SM\u201d w Brand24 \u2014 widoczne tylko dla admin\u00f3w">' +
+          '<input id="b24t-news-f-author-on" type="checkbox" checked style="margin:0;">' +
+          '<span class="b24t-i24w-label" style="margin:0;">Autor wpisu</span>' +
+        '</label>' +
+        '<input id="b24t-news-f-author-url" class="b24t-i24w-input" type="text" placeholder="https://...">' +
       '</div>' +
 
       '<div id="b24t-news-tag-row" class="b24t-i24w-box" style="padding:0;gap:0;">' +
@@ -15531,6 +15555,8 @@ function showOnboarding(onComplete) {
             var fld = document.getElementById(id);
             if (fld) fld.value = '';
           });
+          var authFld = document.getElementById('b24t-news-f-author-url');
+          if (authFld) { authFld.value = ''; delete authFld.dataset.b24tAuto; }
           var catSel = document.getElementById('b24t-news-f-category-select');
           // Reset do auto-detected (jeśli było) lub fallback do '8' (Web). 'auto' nie jest opcją selectu — zostawiało pustą wartość.
           if (catSel) catSel.value = catSel.dataset.autoDetected || '8';
@@ -15639,6 +15665,11 @@ function showOnboarding(onComplete) {
           _customMetric('b24t-news-f-pageviews', 'mention_pageviews');
           _customMetric('b24t-news-f-shares',    'mention_shares');
           _customMetric('b24t-news-f-comments',  'mention_comments');
+          // Adres autora — tylko gdy wiersz jest widoczny, zaznaczony i coś w nim stoi.
+          var _aCb  = document.getElementById('b24t-news-f-author-on');
+          var _aFld = document.getElementById('b24t-news-f-author-url');
+          var _aVal = _aFld ? String(_aFld.value || '').trim() : '';
+          if (_aCb && _aCb.checked && _aVal) bodyParts.push('author_url=' + encodeURIComponent(_aVal));
         }
 
         selectedTagIds.forEach(function(tid) { bodyParts.push('tag[]=' + encodeURIComponent(tid)); });
@@ -15857,6 +15888,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.32.5",
+      "date": "2026-09-15",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "**Formularz zbiera też autora wpisu — na serwisach, z których da się go wziąć.** Brand24 ma pole „Adres autora SM” (widoczne tylko dla adminów), którego wtyczka dotąd w ogóle nie wypełniała. Teraz nad tagami pojawia się wiersz „Autor wpisu” z gotowym adresem i zaznaczonym kwadracikiem — odznacz, jeśli przy tej wzmiance autora nie chcesz. **Wiersz pokazuje się wyłącznie tam, gdzie adres faktycznie da się ustalić**: Instagram, TikTok, YouTube i X. Na stronie z newsami nie ma go wcale. Adresy Instagrama i TikToka sprawdzone na prawdziwych wzmiankach w CMS, żeby poszło dokładnie to, co Brand24 tam trzyma. **Facebook świadomie pominięty** — wymaga numerycznego ID strony, którego w adresie posta nie ma; lepiej nie pokazać wiersza, niż wysłać adres, którego Brand24 nie zrozumie"}
+      ]
+    },
+    {
       "version": "0.32.4",
       "date": "2026-09-15",
       "label": "fix",
@@ -15950,16 +15990,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "**Tłumaczenie czeka gotowe, zamiast zaczynać się po wejściu w wiersz.** Wcześniej każdy kafelek oznaczał kilka, czasem kilkanaście sekund czekania, zanim dalo się cokolwiek przeczytać. Teraz wtyczka tłumaczy z wyprzedzeniem dwa kolejne wiersze w tej samej kolejności, którą widzisz na liście — więc po J tekst jest już po polsku. Pierwszy wiersz po skończonym skanie też jest grzany z góry. Świadomie dwa, a nie cała lista: jedno wywołanie modelu na wiersz znaczyłoby płacenie także za wiersze, które odrzucisz bez otwierania"},
         {"type": "fix", "text": "**Do tłumaczenia idzie tyle fragmentów, ile karta naprawdę pokazuje.** Wcześniej szły wszystkie zebrane przez skaner, część z nich nigdy nie trafiała na ekran — czyli dłuższe czekanie i wyższy rachunek za nic. Limit jest teraz jedną wartością dla karty i dla tłumaczenia, bo tłumaczenia są dopasowywane po pozycji i dwa różne limity oznaczałyby fragment podpisany cudzym tekstem"}
-      ]
-    },
-    {
-      "version": "0.31.2",
-      "date": "2026-09-14",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "fix", "text": "**Strona, która w ogóle się nie wczytuje, nie blokuje już przelotu na kilkanaście sekund.** Wtyczka odzywa się ze strony w chwili, gdy przeglądarka zaczyna ją parsować — więc brak tego sygnału znaczy coś innego niż wolne ładowanie: dokument nie doszedł (DNS, odrzucone połączenie, własna strona błędu przeglądarki). Taki adres jest odpuszczany po 5 sekundach zamiast po pełnym limicie; strona, która faktycznie się ładuje, dostaje tyle czasu, co wcześniej"},
-        {"type": "fix", "text": "**W pasku postępu widać, na którym serwisie stoi przelot** — bez nazwy dłuższa strona wyglądała jak zawieszenie"}
       ]
     }
   ];
@@ -22053,7 +22083,8 @@ Tej operacji nie można cofnąć.`)) {
   var _CUSTOM_AUTO_FIELDS = [
     'b24t-news-f-url', 'b24t-news-f-title', 'b24t-news-f-content', 'b24t-news-f-date',
     'b24t-news-f-hour', 'b24t-news-f-minute',
-    'b24t-news-f-likes', 'b24t-news-f-shares', 'b24t-news-f-comments', 'b24t-news-f-pageviews'
+    'b24t-news-f-likes', 'b24t-news-f-shares', 'b24t-news-f-comments', 'b24t-news-f-pageviews',
+    'b24t-news-f-author-url'
   ];
 
   // Komunikat „✓ Dodano do Brand24!" dotyczy JEDNEJ wysyłki i nie może przeżyć zamknięcia
@@ -22327,6 +22358,8 @@ Tej operacji nie można cofnąć.`)) {
       var _hasSocialMetric = _social && (_social.likes != null || _social.comments != null || _social.shares != null || _social.pageviews != null);
       var _metrics = _hasSocialMetric ? _social : _scrapeSocialMetrics();
       _customFillMetrics(_metrics);
+      // Autor z adresu strony (TikTok, X, YouTube). Instagram dochodzi niżej, razem z metrykami.
+      _customApplyAuthor(_socialAuthorUrl());
 
       // Platformy, które potrafią oddać komplet dokładnych liczb jednym żądaniem. W samym DOM-ie
       // tych danych nie ma (sumy komentarzy i repostów na IG, wyświetlenia i udostępnienia na
@@ -22387,12 +22420,73 @@ Tej operacji nie można cofnąć.`)) {
     el.style.display = '';
   }
 
+  // Adres autora wpisu w postaci, w jakiej Brand24 trzyma go w polu `author_url`.
+  //
+  // Formaty **potwierdzone na żywych wzmiankach** (właściciel sprawdził w CMS 2026-09-15):
+  //   Instagram  https://www.instagram.com/<user>
+  //   TikTok     https://www.tiktok.com/@<user>
+  // Formaty z podpowiedzi przy samym polu w Brand24:
+  //   YouTube    youtube.com/channel/<ID>
+  //   Twitter/X  twitter.com/<handle>
+  //   Facebook   facebook.com/profile.php?id=<ID>
+  //
+  // **Facebooka tu nie ma i to jest decyzja, nie przeoczenie.** Potrzebne numeryczne ID strony,
+  // którego w adresie posta (`facebook.com/<nazwa>/posts/<id>`) po prostu nie ma — trzeba by je
+  // wyłuskiwać z kodu strony, a to osobna robota na własnym rozpoznaniu. Lepiej nie pokazać
+  // wiersza, niż wysłać adres, którego Brand24 nie zrozumie.
+  //
+  // Instagrama tu też nie ma, ale z innego powodu: nazwy autora nie da się odczytać z adresu
+  // posta (`/p/<shortcode>`), przychodzi dopiero z `_igFetchMediaInfo`.
+  function _socialAuthorUrl() {
+    var h = window.location.hostname.replace(/^www\./, '').toLowerCase();
+    var path = window.location.pathname;
+    if (h === 'tiktok.com') {
+      var tt = path.match(/^\/@([^\/?#]+)/);
+      return tt ? 'https://www.tiktok.com/@' + tt[1] : '';
+    }
+    if (h === 'twitter.com' || h === 'x.com') {
+      // Autor ma sens wyłącznie na stronie POJEDYNCZEGO wpisu — na osi czasu autorów jest wielu,
+      // a pierwszy segment adresu bywa wtedy sekcją serwisu, nie kontą.
+      var tw = path.match(/^\/([^\/?#]+)\/status\/\d+/);
+      if (!tw || /^(i|home|explore|search|notifications|messages|settings)$/i.test(tw[1])) return '';
+      return 'https://twitter.com/' + tw[1];
+    }
+    if (h === 'youtube.com' || h === 'youtu.be') {
+      var ch = '';
+      try { ch = ((_win.ytInitialPlayerResponse || {}).videoDetails || {}).channelId || ''; } catch(e) {}
+      return ch ? 'https://www.youtube.com/channel/' + ch : '';
+    }
+    return '';
+  }
+
+  // Wiersz autora pokazuje się WYŁĄCZNIE wtedy, gdy mamy skąd wziąć adres. Na stronie z newsami
+  // nie ma go po czym poznać, więc pole nie ma prawa się tam pojawić i mylić.
+  function _customApplyAuthor(url) {
+    var row = document.getElementById('b24t-news-f-author-row');
+    var fld = document.getElementById('b24t-news-f-author-url');
+    var cb  = document.getElementById('b24t-news-f-author-on');
+    if (!row || !fld || !cb) return;
+    if (!url) {
+      row.style.display = 'none';
+      // Czyścimy tylko WPIS WTYCZKI — ręczna poprawka przechodzi do kolejnego posta tak samo
+      // jak w pozostałych polach formularza (ten sam kontrakt co `_customSetAuto`).
+      if (!fld.value || fld.value === fld.dataset.b24tAuto) { fld.value = ''; delete fld.dataset.b24tAuto; }
+      return;
+    }
+    row.style.display = 'flex';
+    // Nowy autor = nowy wpis, więc zaznaczenie wraca. Inaczej odznaczenie przy jednym poście
+    // po cichu wyciszałoby autora przy wszystkich następnych.
+    if (_customSetAuto(fld, url)) cb.checked = true;
+  }
+
   function _customFillMetrics(m) {
     if (!m) return;
     _customSetAuto(document.getElementById('b24t-news-f-likes'),     m.likes);
     _customSetAuto(document.getElementById('b24t-news-f-shares'),    m.shares);
     _customSetAuto(document.getElementById('b24t-news-f-comments'),  m.comments);
     _customSetAuto(document.getElementById('b24t-news-f-pageviews'), m.pageviews);
+    // Instagram oddaje autora w tej samej odpowiedzi co liczby — stąd tutaj, a nie w `_socialAuthorUrl`.
+    if (m.authorUrl !== undefined) _customApplyAuthor(m.authorUrl);
   }
 
   // ── ODŚWIEŻENIE PO NAWIGACJI SPA ────────────────────────────────────────────
@@ -23022,6 +23116,9 @@ Tej operacji nie można cofnąć.`)) {
           // dwóch rolkach (4240 = 4240, 730 = 730). Przy zdjęciach klucza nie ma.
           pageviews: it.play_count != null ? it.play_count : null,
           caption:   (it.caption && it.caption.text) ? it.caption.text : '',
+          // Nazwa autora wprost z API Instagrama — pewniejsza niż cokolwiek wyłuskane z drzewa,
+          // a adresu posta (`/p/<shortcode>`) nie da się o nią zapytać.
+          authorUrl: (it.user && it.user.username) ? 'https://www.instagram.com/' + it.user.username : '',
           date: '', hour: '', minute: ''
         };
         if (it.taken_at) {

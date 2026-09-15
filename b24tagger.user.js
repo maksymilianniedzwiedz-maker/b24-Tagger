@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.32.6
+// @version      0.32.7
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -171,7 +171,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.32.6';
+  const VERSION = '0.32.7';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -11686,7 +11686,11 @@ function showOnboarding(onComplete) {
         // i blokowała submit do czasu, aż użytkownik KLIKNĄŁ kropkę. Ma się sprawdzać sama.
         // `force = false` — wynik żyje w cache przez ACCESS_TTL_MS, więc kolejne otwarcia panelu
         // nie kosztują nowego zapytania.
-        if (state.projectId) _accessRefresh(state.projectId, false);
+        // BEZ warunku na `state.projectId`. `_accessRefresh` sam obsługuje pusty projekt: stawia
+        // kropkę na „nie wiem" i BLOKUJE przycisk dodawania. Warunek sprawiał, że przy braku projektu
+        // kropka zostawała na startowym „● CMS", a bramka trzymała starą wartość — więc przycisk mógł
+        // być aktywny mimo że nie ma do czego wysłać.
+        _accessRefresh(state.projectId, false);
       }
     }
   }
@@ -15891,6 +15895,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.32.7",
+      "date": "2026-09-15",
+      "label": "fix",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "fix", "text": "**Kropka dostępu mówi teraz prawdę także wtedy, gdy żaden projekt nie jest wybrany.** W 0.32.4 sprawdzanie zaczęło odpalać się samo przy otwarciu panelu, ale przy braku projektu nie odpalało się wcale — kropka zostawała na startowym „● CMS”, a przycisk dodawania mógł zostać aktywny, choć nie było do czego wysłać. Teraz w takiej sytuacji wraca „● Nie wiem” i przycisk jest zablokowany, jak być powinno"}
+      ]
+    },
+    {
       "version": "0.32.6",
       "date": "2026-09-15",
       "label": "fix",
@@ -15984,16 +15997,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "**Pole Treść przestaje łapać ścieżkę nawigacyjną zamiast pierwszego akapitu.** Na części serwisów (zgłoszone na olanea.gr) okruszki „Główna › Gospodarka › «tytuł tej strony»” stoją wewnątrz artykułu, a że ostatni okruszek to ucięty tytuł, zawierały markę — więc skaner liczył je jako akapit zerowy i to one trafiały do formularza, sklejone bez spacji. Teraz okruszki nie są akapitem, a do pola Treść idzie pierwszy prawdziwy akapit z marką. Kontener, który mimo nazwy klasy niesie prawdziwą treść, zostaje nietknięty"},
         {"type": "fix", "text": "**Tłumaczenie linijka po linijce działa niezależnie od tego, jak menedżer skryptów oddaje odpowiedź.** Poprzednia wersja zakładała, że Tampermonkey podaje za każdym razem całość od początku. Gdyby podawał same przyrosty, część odpowiedzi byłaby obcinana i zamiast tłumaczenia pojawiałby się błąd „odpowiedź nie jest JSON-em” na każdym wierszu. Do tego: gdy model złamie kontrakt i wstawi element, który nie jest tekstem, tłumaczenie zatrzymuje się w tym miejscu zamiast przesuwać pozostałe fragmenty pod cudze etykiety"}
-      ]
-    },
-    {
-      "version": "0.31.4",
-      "date": "2026-09-14",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "**Tłumaczenie wchodzi linijka po linijce, zamiast całą kartą naraz.** Wcześniej karta stała w obcym języku, aż wróci komplet — potem wszystko podmieniało się w jednej chwili. Teraz każdy fragment pojawia się po polsku osobno, w swoim miejscu, a to co jeszcze czeka pulsuje. W rogu widać licznik „tłumaczę 4/14”, więc wiadomo, czy warto poczekać, czy czytać oryginał. Koszt i liczba wywołań bez zmian — to ta sama jedna odpowiedź, tylko czytana w trakcie pisania"},
-        {"type": "fix", "text": "**Karta nie przebudowuje się przy każdym fragmencie.** Podmienia się dokładnie ta jedna linijka, która wróciła — dzięki temu nie ucieka pozycja przewinięcia i nie miga cała kolumna. Gdy model zgubi fragment, tłumaczenie cofa się w całości do oryginałów: pozostałe fragmenty przesunęłyby się o jedną pozycję i każdy stałby podpisany cudzą strefą"}
       ]
     }
   ];

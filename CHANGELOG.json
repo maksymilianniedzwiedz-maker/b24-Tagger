@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.32.7",
+    "date": "2026-09-15",
+    "label": "fix",
+    "changes": [
+      "fix: **Kropka dostępu mówi teraz prawdę także wtedy, gdy żaden projekt nie jest wybrany.** W 0.32.4 sprawdzanie zaczęło odpalać się samo przy otwarciu panelu, ale przy braku projektu nie odpalało się wcale — kropka zostawała na startowym „● CMS”, a przycisk dodawania mógł zostać aktywny, choć nie było do czego wysłać. Teraz w takiej sytuacji wraca „● Nie wiem” i przycisk jest zablokowany, jak być powinno"
+    ]
+  },
+  {
     "version": "0.32.6",
     "date": "2026-09-15",
     "label": "fix",

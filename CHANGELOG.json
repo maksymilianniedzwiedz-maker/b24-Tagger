@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.32.3",
+    "date": "2026-09-15",
+    "label": "fix",
+    "changes": [
+      "fix: **Projekt otwarty na panelu `.pl` trafiał na inne strony bez nazwy — i przez to wyglądał na nieobecny.** Wtyczka brała nazwę projektu **wyłącznie z tytułu karty przeglądarki**. Zmierzone na `panel.brand24.pl/panel/results/<id>`: tytuł stoi na gołym „Brand24” i nie zmienia się przez cały czas, więc nazwa nie zapisywała się nigdzie — ani lokalnie, ani tam, skąd czytają ją Instagram i reszta. Projekt był w dropdownie modalu, ale jako „Projekt 294001552”, więc wpisanie jego nazwy nie znajdowało nic i wyglądało to na brak projektu. Wracał dopiero po otwarciu modalu na panelu (to sprawdzenie dostępu dociagało nazwę przy okazji) i przeładowaniu strony. Teraz, gdy tytuł nie daje nazwy, wtyczka pyta o nią Brand24 jednym lekkim zapytaniem i zapamiętuje jako potwierdzoną"
+    ]
+  },
+  {
     "version": "0.32.2",
     "date": "2026-09-15",
     "label": "fix",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.32.2
+// @version      0.32.3
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -171,7 +171,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.32.2';
+  const VERSION = '0.32.3';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6635,8 +6635,25 @@
     const isFallbackTitle = _isFallbackProjectName(rawTitle);
     state.projectName = isFallbackTitle ? `Project ${projectId}` : rawTitle;
 
-    // Jeśli tytuł był fallbackiem — obserwuj zmiany tytułu przez MutationObserver
+    // Jeśli tytuł był fallbackiem — zapytaj Brand24 wprost i równolegle obserwuj tytuł.
     if (isFallbackTitle) {
+      // Tytuł karty był JEDYNYM źródłem nazwy projektu, a potrafi nie dać jej nigdy — zmierzone
+      // 2026-09-15 na `panel.brand24.pl/panel/results/<pid>`: przez 10 s tytuł stoi na gołym
+      // „Brand24", więc `state.projectName` zostaje „Project <pid>". `_pnSet` słusznie odrzuca
+      // fallback, przez co nazwa nie trafiała ANI do `LS.PROJECT_NAMES`, ANI do bridge'a —
+      // i na stronach zewnętrznych projekt widniał jako „Projekt <pid>", czyli nie do znalezienia
+      // po nazwie w dropdownie modalu. `getProject` oddaje nazwę jednym lekkim zapytaniem
+      // (zmierzone: `294001552` → „Lidl"), a zapis jako zweryfikowany chroni ją przed późniejszym
+      // nadpisaniem tytułem (§5.9). Patrz PANEL_STATE.md §5.12.
+      _pnFetchNameGql(projectId).then(function(apiName) {
+        if (!apiName || state.projectId !== projectId) return;
+        if (!_isFallbackProjectName(state.projectName)) return;   // tytuł zdążył pierwszy
+        state.projectName = apiName;
+        _pnSetVerified(projectId, apiName, PN_SRC_GQL, _b24HostBase());
+        var elN = document.getElementById('b24t-project-name');
+        if (elN) elN.textContent = apiName;
+      });
+
       let retryCount = 0;
       const updateName = function() {
         const t = document.title.split(' - ')[0].trim();
@@ -15828,6 +15845,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.32.3",
+      "date": "2026-09-15",
+      "label": "fix",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "fix", "text": "**Projekt otwarty na panelu `.pl` trafiał na inne strony bez nazwy — i przez to wyglądał na nieobecny.** Wtyczka brała nazwę projektu **wyłącznie z tytułu karty przeglądarki**. Zmierzone na `panel.brand24.pl/panel/results/<id>`: tytuł stoi na gołym „Brand24” i nie zmienia się przez cały czas, więc nazwa nie zapisywała się nigdzie — ani lokalnie, ani tam, skąd czytają ją Instagram i reszta. Projekt był w dropdownie modalu, ale jako „Projekt 294001552”, więc wpisanie jego nazwy nie znajdowało nic i wyglądało to na brak projektu. Wracał dopiero po otwarciu modalu na panelu (to sprawdzenie dostępu dociagało nazwę przy okazji) i przeładowaniu strony. Teraz, gdy tytuł nie daje nazwy, wtyczka pyta o nią Brand24 jednym lekkim zapytaniem i zapamiętuje jako potwierdzoną"}
+      ]
+    },
+    {
       "version": "0.32.2",
       "date": "2026-09-15",
       "label": "fix",
@@ -15924,19 +15950,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "**Przelot przez okno jest wielokrotnie szybszy.** Treść leci do panelu, gdy tylko artykuł jest w drzewie strony, a nie po doładowaniu reklam i trackerów — to na serwisie informacyjnym kilkanaście sekund różnicy na każdej stronie. Limit czasu zjechał z 20 na 12 sekund, a przelot odpuszcza cały serwis po dwóch stronach bez treści: 33 adresy jednej martwej domeny to było wcześniej ponad sześć minut czekania na pewną porażkę"},
         {"type": "fix", "text": "**Postęp przelotu widać w pasku sesji** — „Skan przez okno: 3 / 54\". Wcześniej licznik był tylko na przycisku, więc przy dłuższym przelocie nie było wiadomo, czy cokolwiek się dzieje"},
         {"type": "fix", "text": "**Strona błędu nie udaje pustego artykułu.** Strona z błędem serwera też się ładuje i też ma treść HTML; wpisanie jej do wiersza jako „brak keyword\" byłoby cichym stwierdzeniem, że stronę przeczytano. Poniżej progu artykułu wiersz zostaje nieprzeskanowany, a serwis dostaje punkt karny w przelocie"}
-      ]
-    },
-    {
-      "version": "0.31.0",
-      "date": "2026-09-14",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "**Nieprzeskanowana strona skanuje się sama, przez okno przeglądarki.** Wtyczka od dawna wstrzykuje się w każdą stronę otwartą w swoim oknie, ale odsyłała stamtąd jedną rzecz: datę publikacji. Teraz odsyła całą treść, więc otwarcie strony JEST skanem — wiersz dostaje tytuł, fragmenty, „Gdzie stoi marka\", punktację i ocenę AI, zamiast kazać Ci ją przeczytać i ocenić samemu. Działa tam, gdzie zapytanie w tle przegrywa: 403 dla bota, treść budowana JS-em, ciasteczka, ściana antybotowa, zalogowany paywall"},
-        {"type": "feat", "text": "**Przelot wsadowy „Skanuj przez okno\".** Bierze po kolei wszystkie nieprzeskanowane strony, z licznikiem i przyciskiem przerwania. Okna się nie gryzą: jedno okno i jedna strona naraz, nawigacja NIE zabiera fokusu panelowi (inaczej klawiatura przestawałaby działać po pierwszym skanie), a wiersz, przez który tylko przelatujesz klawiszami, nie uruchamia niczego — skan rusza dopiero po chwili postoju. Zduszony przez przeglądarkę popup jest rozpoznawany od razu i mówi, co zrobić, zamiast udawać przez 20 sekund, że strona nie odpowiada"},
-        {"type": "feat", "text": "**Druga próba leci sama po skanie** i celuje tylko w to, co ma szanse: timeout, odciętą domenę, ścianę antybotową, 403/429 i błędy serwera. Zmierzone na 440 adresach greckich: ponowienie odzyskało 9 z 9 wierszy z serwisów prasowych i 0 z 45 z błędami sieci i 404 — dlatego te drugie są pomijane, zamiast zjadać minuty na pewną porażkę"},
-        {"type": "feat", "text": "**„Domeny bez odpowiedzi\" jednym kliknięciem.** Serwis, z którego przy co najmniej trzech próbach nie otworzyła się ani jedna strona, można wyrzucić hurtem. Na zmierzonej liście GR były to dwie domeny i 43 wiersze do usunięcia po jednym"},
-        {"type": "fix", "text": "**Błąd połączenia dostaje drugą szansę po przestawieniu „www\".** Zmierzone: jeden z greckich serwisów ma certyfikat wystawiony wyłącznie na domenę bez „www\", więc wszystkie 33 adresy z przedrostkiem padały na uścisku TLS i wyglądały na awarię sieci. Jedna próba po przestawieniu przedrostka odróżnia zepsuty certyfikat od serwisu, którego naprawdę nie ma"}
       ]
     }
   ];

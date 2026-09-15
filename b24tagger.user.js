@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.32.7
+// @version      0.32.8
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -171,7 +171,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.32.7';
+  const VERSION = '0.32.8';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -12359,9 +12359,13 @@ function showOnboarding(onComplete) {
         '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">',
           '<label style="font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">SENTYMENT</label>',
           '<select id="b24t-news-f-sentiment" style="' + _newsInputCss(t) + '">',
+            // Wartości MUSZĄ być takie, jakie ma <select name="mention_sentiment"> w formularzu
+            // Brand24: 0=Neutralny, 1=Pozytywny, 2=Negatywny (odczytane z formularza 2026-09-15).
+            // Filtr GQL `se` używa INNEJ konwencji (`[1]` / `[-1]`) i to stąd wzięło się `-1` —
+            // wartości, której ten formularz nie zna. Dwa API, dwie konwencje, jedna pomyłka.
             '<option value="0">0 Neutral</option>',
             '<option value="1">+1 Poz.</option>',
-            '<option value="-1">-1 Neg.</option>',
+            '<option value="2">-1 Neg.</option>',
           '</select>',
         '</div>',
       '</div>',
@@ -12770,7 +12774,8 @@ function showOnboarding(onComplete) {
           '<span id="b24t-news-proj-lang-hint" style="display:none;font-size:9px;color:var(--w-dim);text-align:center;"></span>') +
         _i24wField('Sentyment',
           '<select id="b24t-news-f-sentiment" class="b24t-i24w-select">' +
-            '<option value="0">0 Neutral</option><option value="1">+1 Poz.</option><option value="-1">-1 Neg.</option>' +
+            // 0/1/2 jak w formularzu Brand24 — NIE `-1` z filtra GQL (patrz wariant klasyczny wyżej)
+            '<option value="0">0 Neutral</option><option value="1">+1 Poz.</option><option value="2">-1 Neg.</option>' +
           '</select>') +
       '</div>' +
 
@@ -15895,6 +15900,15 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.32.8",
+      "date": "2026-09-15",
+      "label": "fix",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "fix", "text": "**Sentyment negatywny wysyłany był wartością, której formularz Brand24 nie zna.** Lista sentymentów w formularzu to `0` neutralny, `1` pozytywny, **`2` negatywny** — a wtyczka wysyłała przy negatywnym `-1`. Ta wartość pochodzi z filtra wyszukiwania w API, gdzie negatywny **faktycznie** jest `-1`; dwa różne API Brand24 liczą sentyment inaczej i wtyczka miała wpisaną konwencję nie tego, do którego wysyła. Dotyczyło wyłącznie wzmianek dodawanych ręcznie z oceną negatywną — warto sprawdzić w Brand24, czy takie wzmianki mają sentyment, który im nadano"}
+      ]
+    },
+    {
       "version": "0.32.7",
       "date": "2026-09-15",
       "label": "fix",
@@ -15987,16 +16001,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "**Tłumaczenie naprawdę wchodzi linijka po linijce.** W 0.31.4 licznik stał na „tłumaczę 0/8” do samego końca i wszystko podmieniało się naraz — wtyczka prosiła menedżera skryptów o odpowiedź po kawałku, a ten oddaje ją dopiero w całości. Teraz odpowiedź czytana jest strumieniem bezpośrednio z API, więc fragmenty pojawiają się pojedynczo, w miarę jak model je pisze. Gdyby ta droga była gdzieś zablokowana, wtyczka po cichu wraca na starą — tłumaczenie wtedy wchodzi jednym skokiem, ale nie ginie i nie ma błędu"},
         {"type": "fix", "text": "**Wracają migające podświetlenia, które wcześniej nie miały prawa się pokazać.** Fragment czekający na tłumaczenie pulsuje, a po wejściu polskiego tekstu błyska. Poprzednia wersja wyłączała oba efekty, gdy w systemie wyłączone są animacje interfejsu — a wtedy właśnie cała funkcja wyglądała na martwą. Te dwa efekty zmieniają wyłącznie przezroczystość i kolor, nic nie przesuwa się po ekranie"},
         {"type": "fix", "text": "**Strona, która nie deklaruje swojego języka, też tłumaczy się sama.** Dotąd wtyczka czytała język wyłącznie z jednego atrybutu na początku strony; gdy go brakowało, wiersz trzeba było tłumaczyć ręcznie przyciskiem. Teraz sprawdzane są jeszcze dwa miejsca w nagłówku strony, a gdy i tam nic nie ma — brany jest język rynku projektu"}
-      ]
-    },
-    {
-      "version": "0.31.5",
-      "date": "2026-09-14",
-      "label": "fix",
-      "labelColor": "#f59e0b",
-      "changes": [
-        {"type": "fix", "text": "**Pole Treść przestaje łapać ścieżkę nawigacyjną zamiast pierwszego akapitu.** Na części serwisów (zgłoszone na olanea.gr) okruszki „Główna › Gospodarka › «tytuł tej strony»” stoją wewnątrz artykułu, a że ostatni okruszek to ucięty tytuł, zawierały markę — więc skaner liczył je jako akapit zerowy i to one trafiały do formularza, sklejone bez spacji. Teraz okruszki nie są akapitem, a do pola Treść idzie pierwszy prawdziwy akapit z marką. Kontener, który mimo nazwy klasy niesie prawdziwą treść, zostaje nietknięty"},
-        {"type": "fix", "text": "**Tłumaczenie linijka po linijce działa niezależnie od tego, jak menedżer skryptów oddaje odpowiedź.** Poprzednia wersja zakładała, że Tampermonkey podaje za każdym razem całość od początku. Gdyby podawał same przyrosty, część odpowiedzi byłaby obcinana i zamiast tłumaczenia pojawiałby się błąd „odpowiedź nie jest JSON-em” na każdym wierszu. Do tego: gdy model złamie kontrakt i wstawi element, który nie jest tekstem, tłumaczenie zatrzymuje się w tym miejscu zamiast przesuwać pozostałe fragmenty pod cudze etykiety"}
       ]
     }
   ];

@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.32.8",
+    "date": "2026-09-15",
+    "label": "fix",
+    "changes": [
+      "fix: **Sentyment negatywny wysyłany był wartością, której formularz Brand24 nie zna.** Lista sentymentów w formularzu to `0` neutralny, `1` pozytywny, **`2` negatywny** — a wtyczka wysyłała przy negatywnym `-1`. Ta wartość pochodzi z filtra wyszukiwania w API, gdzie negatywny **faktycznie** jest `-1`; dwa różne API Brand24 liczą sentyment inaczej i wtyczka miała wpisaną konwencję nie tego, do którego wysyła. Dotyczyło wyłącznie wzmianek dodawanych ręcznie z oceną negatywną — warto sprawdzić w Brand24, czy takie wzmianki mają sentyment, który im nadano"
+    ]
+  },
+  {
     "version": "0.32.7",
     "date": "2026-09-15",
     "label": "fix",

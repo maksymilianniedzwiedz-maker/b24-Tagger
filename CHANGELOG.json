@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.32.6",
+    "date": "2026-09-15",
+    "label": "fix",
+    "changes": [
+      "fix: **Liczba odsłon wracała do Brand24 w próżnię — od teraz dochodzi.** Wtyczka wysyłała ją pod nazwą `mention_pageviews`, a w formularzu Brand24 pola o takiej nazwie **nie ma**: jest `mention_views` z etykietą „Odsłon”. To jedna i ta sama metryka, tylko wpisywana parametrem, którego nikt nie odbierał, więc wartość przepadała po cichu przy każdej wysyłce z trybu Niestandardowe. Polubienia, udostępnienia i komentarze szły poprawnie",
+      "fix: **Kwadracik przy autorze zaczyna odznaczony.** Adres autora wtyczka nadal rozpoznaje i wpisuje w pole, żeby było widać, kogo znalazła, ale nic nie poleci do Brand24, dopóki sam nie zaznaczysz. Zaznaczenie **trzyma się przy przechodzeniu między postami** — tak samo jak wartość wpisana ręcznie w dowolne inne pole formularza, więc nie trzeba klikać przy każdej wzmiance",
+      "fix: **Adres autora z YouTube w formacie, który Brand24 faktycznie trzyma** — `http://www.youtube.com/channel/<ID>`. Podpowiedź przy polu sugeruje inny zapis (bez `www`, z literówką `channe`), ale prawdziwe wzmianki w CMS wyglądają tak, jak wysyłamy teraz"
+    ]
+  },
+  {
     "version": "0.32.5",
     "date": "2026-09-15",
     "label": "feat",

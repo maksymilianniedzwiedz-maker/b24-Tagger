@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.32.5
+// @version      0.32.6
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -171,7 +171,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.32.5';
+  const VERSION = '0.32.6';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -12341,7 +12341,7 @@ function showOnboarding(onComplete) {
       // ── ADRES AUTORA — wiersz pojawia się tylko tam, gdzie da się go wziąć (patrz _socialAuthorUrl)
       '<div id="b24t-news-f-author-row" style="display:none;flex-direction:column;gap:4px;flex-shrink:0;">',
         '<label style="display:flex;align-items:center;gap:6px;font-size:10px;color:' + t.textMuted + ';cursor:pointer;" title="Pole \u201eAdres autora SM\u201d w Brand24 \u2014 widoczne tylko dla admin\u00f3w">',
-          '<input id="b24t-news-f-author-on" type="checkbox" checked style="margin:0;">',
+          '<input id="b24t-news-f-author-on" type="checkbox" style="margin:0;">',
           '<span>Dodaj autora wpisu</span>',
         '</label>',
         '<input id="b24t-news-f-author-url" type="text" placeholder="https://..." style="' + _newsInputCss(t) + '">',
@@ -12786,7 +12786,7 @@ function showOnboarding(onComplete) {
       // Adres autora — wiersz pojawia się tylko na serwisach, z których da się go wziąć.
       '<div id="b24t-news-f-author-row" class="b24t-i24w-box" style="display:none;padding:7px 9px;gap:6px;">' +
         '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;" title="Pole \u201eAdres autora SM\u201d w Brand24 \u2014 widoczne tylko dla admin\u00f3w">' +
-          '<input id="b24t-news-f-author-on" type="checkbox" checked style="margin:0;">' +
+          '<input id="b24t-news-f-author-on" type="checkbox" style="margin:0;">' +
           '<span class="b24t-i24w-label" style="margin:0;">Autor wpisu</span>' +
         '</label>' +
         '<input id="b24t-news-f-author-url" class="b24t-i24w-input" type="text" placeholder="https://...">' +
@@ -15662,7 +15662,10 @@ function showOnboarding(onComplete) {
             }
           };
           _customMetric('b24t-news-f-likes',     'mention_likes');
-          _customMetric('b24t-news-f-pageviews', 'mention_pageviews');
+          // `mention_views`, nie `mention_pageviews`. Zmierzone na formularzu 2026-09-15: pola
+          // o nazwie `mention_pageviews` tam NIE MA — jest `mention_views` z etykietą „Odsłon:".
+          // Wcześniejsza nazwa leciała w próżnię, więc liczba odsłon przepadała przy każdej wysyłce.
+          _customMetric('b24t-news-f-pageviews', 'mention_views');
           _customMetric('b24t-news-f-shares',    'mention_shares');
           _customMetric('b24t-news-f-comments',  'mention_comments');
           // Adres autora — tylko gdy wiersz jest widoczny, zaznaczony i coś w nim stoi.
@@ -15888,6 +15891,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.32.6",
+      "date": "2026-09-15",
+      "label": "fix",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "fix", "text": "**Liczba odsłon wracała do Brand24 w próżnię — od teraz dochodzi.** Wtyczka wysyłała ją pod nazwą `mention_pageviews`, a w formularzu Brand24 pola o takiej nazwie **nie ma**: jest `mention_views` z etykietą „Odsłon”. To jedna i ta sama metryka, tylko wpisywana parametrem, którego nikt nie odbierał, więc wartość przepadała po cichu przy każdej wysyłce z trybu Niestandardowe. Polubienia, udostępnienia i komentarze szły poprawnie"},
+        {"type": "fix", "text": "**Kwadracik przy autorze zaczyna odznaczony.** Adres autora wtyczka nadal rozpoznaje i wpisuje w pole, żeby było widać, kogo znalazła, ale nic nie poleci do Brand24, dopóki sam nie zaznaczysz. Zaznaczenie **trzyma się przy przechodzeniu między postami** — tak samo jak wartość wpisana ręcznie w dowolne inne pole formularza, więc nie trzeba klikać przy każdej wzmiance"},
+        {"type": "fix", "text": "**Adres autora z YouTube w formacie, który Brand24 faktycznie trzyma** — `http://www.youtube.com/channel/<ID>`. Podpowiedź przy polu sugeruje inny zapis (bez `www`, z literówką `channe`), ale prawdziwe wzmianki w CMS wyglądają tak, jak wysyłamy teraz"}
+      ]
+    },
+    {
       "version": "0.32.5",
       "date": "2026-09-15",
       "label": "feat",
@@ -15980,16 +15994,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "feat", "text": "**Tłumaczenie wchodzi linijka po linijce, zamiast całą kartą naraz.** Wcześniej karta stała w obcym języku, aż wróci komplet — potem wszystko podmieniało się w jednej chwili. Teraz każdy fragment pojawia się po polsku osobno, w swoim miejscu, a to co jeszcze czeka pulsuje. W rogu widać licznik „tłumaczę 4/14”, więc wiadomo, czy warto poczekać, czy czytać oryginał. Koszt i liczba wywołań bez zmian — to ta sama jedna odpowiedź, tylko czytana w trakcie pisania"},
         {"type": "fix", "text": "**Karta nie przebudowuje się przy każdym fragmencie.** Podmienia się dokładnie ta jedna linijka, która wróciła — dzięki temu nie ucieka pozycja przewinięcia i nie miga cała kolumna. Gdy model zgubi fragment, tłumaczenie cofa się w całości do oryginałów: pozostałe fragmenty przesunęłyby się o jedną pozycję i każdy stałby podpisany cudzą strefą"}
-      ]
-    },
-    {
-      "version": "0.31.3",
-      "date": "2026-09-14",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "fix", "text": "**Tłumaczenie czeka gotowe, zamiast zaczynać się po wejściu w wiersz.** Wcześniej każdy kafelek oznaczał kilka, czasem kilkanaście sekund czekania, zanim dalo się cokolwiek przeczytać. Teraz wtyczka tłumaczy z wyprzedzeniem dwa kolejne wiersze w tej samej kolejności, którą widzisz na liście — więc po J tekst jest już po polsku. Pierwszy wiersz po skończonym skanie też jest grzany z góry. Świadomie dwa, a nie cała lista: jedno wywołanie modelu na wiersz znaczyłoby płacenie także za wiersze, które odrzucisz bez otwierania"},
-        {"type": "fix", "text": "**Do tłumaczenia idzie tyle fragmentów, ile karta naprawdę pokazuje.** Wcześniej szły wszystkie zebrane przez skaner, część z nich nigdy nie trafiała na ekran — czyli dłuższe czekanie i wyższy rachunek za nic. Limit jest teraz jedną wartością dla karty i dla tłumaczenia, bo tłumaczenia są dopasowywane po pozycji i dwa różne limity oznaczałyby fragment podpisany cudzym tekstem"}
       ]
     }
   ];
@@ -22426,8 +22430,9 @@ Tej operacji nie można cofnąć.`)) {
   //   Instagram  https://www.instagram.com/<user>
   //   TikTok     https://www.tiktok.com/@<user>
   // Formaty z podpowiedzi przy samym polu w Brand24:
-  //   YouTube    youtube.com/channel/<ID>
-  //   Twitter/X  twitter.com/<handle>
+  //   Twitter/X  twitter.com/<handle>   — JEDYNY format tu NIEPOTWIERDZONY na żywej wzmiance
+  // YouTube też został sprawdzony w CMS: `http://www.youtube.com/channel/<ID>` — z `www`
+  // i po `http`, inaczej niż podpowiedź przy polu. Wysyłamy dokładnie to, co Brand24 trzyma.
   //   Facebook   facebook.com/profile.php?id=<ID>
   //
   // **Facebooka tu nie ma i to jest decyzja, nie przeoczenie.** Potrzebne numeryczne ID strony,
@@ -22454,7 +22459,7 @@ Tej operacji nie można cofnąć.`)) {
     if (h === 'youtube.com' || h === 'youtu.be') {
       var ch = '';
       try { ch = ((_win.ytInitialPlayerResponse || {}).videoDetails || {}).channelId || ''; } catch(e) {}
-      return ch ? 'https://www.youtube.com/channel/' + ch : '';
+      return ch ? 'http://www.youtube.com/channel/' + ch : '';
     }
     return '';
   }
@@ -22464,8 +22469,7 @@ Tej operacji nie można cofnąć.`)) {
   function _customApplyAuthor(url) {
     var row = document.getElementById('b24t-news-f-author-row');
     var fld = document.getElementById('b24t-news-f-author-url');
-    var cb  = document.getElementById('b24t-news-f-author-on');
-    if (!row || !fld || !cb) return;
+    if (!row || !fld) return;
     if (!url) {
       row.style.display = 'none';
       // Czyścimy tylko WPIS WTYCZKI — ręczna poprawka przechodzi do kolejnego posta tak samo
@@ -22474,9 +22478,12 @@ Tej operacji nie można cofnąć.`)) {
       return;
     }
     row.style.display = 'flex';
-    // Nowy autor = nowy wpis, więc zaznaczenie wraca. Inaczej odznaczenie przy jednym poście
-    // po cichu wyciszałoby autora przy wszystkich następnych.
-    if (_customSetAuto(fld, url)) cb.checked = true;
+    // Adres wpisujemy zawsze, żeby było widać, kogo wtyczka rozpoznała — ale kwadracika NIE ruszamy.
+    // Zaczyna odznaczony i trzyma swój stan przy przechodzeniu między postami, dokładnie tak jak
+    // wartość wpisana ręcznie w dowolne inne pole formularza. Raz zaznaczony zostaje zaznaczony,
+    // dopóki panel żyje. Decyzja właściciela: dopóki nie wiadomo, czy wolno mu korzystać z tej
+    // linijki formularza, nic nie ma prawa pojechać do Brand24 bez świadomego kliknięcia.
+    _customSetAuto(fld, url);
   }
 
   function _customFillMetrics(m) {

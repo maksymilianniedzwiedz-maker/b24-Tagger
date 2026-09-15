@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.32.1
+// @version      0.32.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -171,7 +171,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.32.1';
+  const VERSION = '0.32.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6518,6 +6518,93 @@
   // PROJECT DETECTION
   // ───────────────────────────────────────────
 
+  // ── REJESTRACJA PROJEKTU (tożsamość, bez tagów) ──
+  //
+  // Zapisuje „ten projekt istnieje i leży na tym panelu" do WSZYSTKICH trzech magazynów naraz:
+  // bridge'a (GM, jedyny wspólny dla domen), localStorage panelu i trwałego resolvera nazw.
+  //
+  // Wcześniej robiła to wyłącznie `detectProject()`, przy okazji ładowania tagów — a ona woła się
+  // RAZ, przy pełnym przeładowaniu strony. Panel Brand24 jest SPA, więc przełączenie projektu
+  // (przełącznik projektów, wejście z CMS-a, wstecz/dalej) zmienia adres bez przeładowania
+  // i projekt nie trafiał nigdzie poza ekran. Na stronach zewnętrznych localStorage wtyczki jest
+  // pusty, więc bridge jest tam JEDYNYM źródłem listy (PANEL_STATE.md §3.1) — i projekt, którego
+  // w nim nie ma, po prostu nie istnieje w dropdownie modalu.
+  //
+  // ŚWIADOMIE bez tagów. `getTags` nie przyjmuje projectId — oddaje tagi projektu, na którym stoi
+  // sesja Django (PANEL_STATE.md §4.6) — więc wołanie go po nawigacji SPA zapisałoby pod tym
+  // projektem CUDZE identyfikatory tagów. Tagi dociąga na żądanie `_tagsEnsureFresh`, która ma
+  // bramkę dostępu. Z tego samego powodu ta funkcja nie rusza `state.tags` ani `state.projectId`.
+  function _registerProjectIdentity(pid, name) {
+    if (!pid) return;
+    var base = _b24HostBase();
+    if (!base) return;   // przynależność projektu do panelu dowodzi WYŁĄCZNIE bycie na tym panelu
+    var good = name && !_isFallbackProjectName(name);
+
+    try { B24Bridge.projects.update(pid, { base: base }); } catch(e) {}
+
+    // localStorage jest per origin, a `_gmGetProjects()` na panelu czyta wyłącznie jego i ignoruje
+    // bridge, gdy tylko LS jest niepusty (§3.1) — bez tego wpisu projekt nie pojawiłby się
+    // w dropdownie także tutaj, na panelu, na którym właśnie stoimy.
+    try {
+      var projs = lsGet(LS.PROJECTS, {});
+      var cur = projs[pid] || {};
+      if (good) cur.name = name;
+      cur.updatedAt = new Date().toISOString();
+      projs[pid] = cur;
+      lsSet(LS.PROJECTS, projs);
+    } catch(e) {}
+
+    if (good) _pnSet(pid, name);   // sam odrzuca fallbacki i nazwy potwierdzone przez API
+
+    // Decyzja użytkownika (PANEL_STATE.md §0 pkt 3): ostatnio oglądany projekt w panelu wygrywa,
+    // żeby modal otwarty potem na Instagramie zastał go WYBRANYM, a nie tylko dostępnym na liście.
+    try { B24Bridge.lastProject.set(pid); } catch(e) {}
+    try { lsSet('b24tagger_mini_last_project', String(pid)); } catch(e) {}
+  }
+
+  // Tytuł karty zmienia się PO adresie, więc zapytany od razu po przełączeniu projektu oddaje
+  // nazwę POPRZEDNIEGO. Czekamy, aż przestanie ją powtarzać — przez 5 s, bo gdy się nie ustabilizuje,
+  // mamy pewniejsze źródło niż dalsze czekanie (patrz `_watchPanelProject`).
+  function _panelNameWhenReady(prevName, cb) {
+    var tries = 0;
+    (function look() {
+      var raw = (document.title.split(' - ')[0] || '').trim();
+      if (raw && !_isFallbackProjectName(raw) && raw !== prevName) { cb(raw); return; }
+      if (++tries >= 10) { cb(null); return; }
+      setTimeout(look, 500);
+    })();
+  }
+
+  // Pilnuje zmiany projektu w adresie panelu. Pytamy o adres w pętli, zamiast podmieniać
+  // `history.pushState` — skrypt żyje w sandboxie menedżera i podmiana potrafi nie objąć wywołań
+  // ze strony, a awaria byłaby CICHA (ten sam powód co w `_wireCustomSpaRefresh`).
+  var _panelWatchWired = false;
+  function _watchPanelProject() {
+    if (_panelWatchWired || !_b24HostBase()) return;
+    _panelWatchWired = true;
+    var lastPid = getProjectId();
+    setInterval(function() {
+      var pid = getProjectId();
+      if (!pid || String(pid) === String(lastPid)) return;
+      var prevName = lastPid ? _pnResolve(lastPid) : null;
+      lastPid = pid;
+      // Tożsamość zapisujemy NATYCHMIAST, bez nazwy — projekt ma istnieć cross-domain nawet wtedy,
+      // gdy tytuł karty nigdy się nie ustabilizuje.
+      _registerProjectIdentity(pid, null);
+      if (_pnGet(pid)) return;   // nazwę tego projektu już znamy — nie ma czego szukać
+      _panelNameWhenReady(prevName, function(name) {
+        if (String(getProjectId()) !== String(pid)) return;   // poszedł dalej — nie nadpisuj
+        if (name) { _registerProjectIdentity(pid, name); return; }
+        // Tytuł się nie ustabilizował. Zamiast zostawiać „Projekt <id>" pytamy Brand24 wprost:
+        // jedno lekkie zapytanie GQL, raz na projekt, a wynik jest oznaczony jako zweryfikowany,
+        // więc żaden późniejszy tytuł karty go już nie nadpisze (§5.9).
+        _pnFetchNameGql(pid).then(function(n) {
+          if (n && String(getProjectId()) === String(pid)) _pnSetVerified(pid, n, PN_SRC_GQL, _b24HostBase());
+        });
+      });
+    }, 1000);
+  }
+
   async function detectProject() {
     const projectId = getProjectId();
     if (!projectId) return;
@@ -6525,11 +6612,9 @@
     state.projectId = projectId;
 
     // Znacznik panelu projektu (.com/.pl) — na stronach zewnętrznych to jedyny sposób, by dup-check,
-    // tagi, CSRF i submit trafiły w panel, na którym projekt faktycznie istnieje.
-    try {
-      var _hostBase = _b24HostBase();
-      if (_hostBase) B24Bridge.projects.update(projectId, { base: _hostBase });
-    } catch(e) {}
+    // tagi, CSRF i submit trafiły w panel, na którym projekt faktycznie istnieje. Nazwa dochodzi
+    // niżej, gdy już wiemy, że tytuł karty jej nie zmyśla.
+    _registerProjectIdentity(projectId, null);
 
     // Capture tknB24 CSRF token — try immediately, then watch DOM for React injection
     (function captureTkn() {
@@ -6573,6 +6658,7 @@
 
     document.getElementById('b24t-project-name').textContent = state.projectName;
     document.getElementById('b24t-project-meta').textContent = `ID: ${projectId}`;
+    _registerProjectIdentity(projectId, state.projectName);
 
     // Load tags
     try {
@@ -15742,6 +15828,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.32.2",
+      "date": "2026-09-15",
+      "label": "fix",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "fix", "text": "**Projekt otwarty w panelu jest od razu dostępny na innych stronach.** Wtyczka zapisywała projekt tam, skąd widzą go Instagram, TikTok i reszta, **wyłącznie przy pełnym przeładowaniu strony panelu**. Panel Brand24 przełącza projekty bez przeładowania, więc projekt otwarty w trakcie pracy — świeżo założony albo wzięty z CMS-a — nie istniał w dropdownie modalu i trzeba było wrócić na panel i przeładować stronę, żeby się pojawił. Teraz wtyczka pilnuje adresu panelu i zapisuje projekt w chwili, gdy go otworzysz. Nazwę bierze z tytułu karty, a gdy ten nie zdąży się przestawić — pyta o nią Brand24"},
+        {"type": "fix", "text": "**Modal na obcej stronie zastaje ostatnio oglądany projekt już wybrany.** Wchodzisz na projekt w panelu, otwierasz post na Instagramie — i on tam jest, bez szukania na liście. Do tej pory wtyczka zapamiętywała wyłącznie to, co sam wybrałeś w dropdownie modalu"}
+      ]
+    },
+    {
       "version": "0.32.1",
       "date": "2026-09-15",
       "label": "fix",
@@ -15841,18 +15937,6 @@ function showOnboarding(onComplete) {
         {"type": "feat", "text": "**Druga próba leci sama po skanie** i celuje tylko w to, co ma szanse: timeout, odciętą domenę, ścianę antybotową, 403/429 i błędy serwera. Zmierzone na 440 adresach greckich: ponowienie odzyskało 9 z 9 wierszy z serwisów prasowych i 0 z 45 z błędami sieci i 404 — dlatego te drugie są pomijane, zamiast zjadać minuty na pewną porażkę"},
         {"type": "feat", "text": "**„Domeny bez odpowiedzi\" jednym kliknięciem.** Serwis, z którego przy co najmniej trzech próbach nie otworzyła się ani jedna strona, można wyrzucić hurtem. Na zmierzonej liście GR były to dwie domeny i 43 wiersze do usunięcia po jednym"},
         {"type": "fix", "text": "**Błąd połączenia dostaje drugą szansę po przestawieniu „www\".** Zmierzone: jeden z greckich serwisów ma certyfikat wystawiony wyłącznie na domenę bez „www\", więc wszystkie 33 adresy z przedrostkiem padały na uścisku TLS i wyglądały na awarię sieci. Jedna próba po przestawieniu przedrostka odróżnia zepsuty certyfikat od serwisu, którego naprawdę nie ma"}
-      ]
-    },
-    {
-      "version": "0.30.0",
-      "date": "2026-09-14",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "**„Ponów nieprzeskanowane\" — drugie podejście do stron, których skaner nie umiał pobrać.** Przycisk w pasku akcji bierze wszystkie wiersze ze statusem „nieprzeskanowana\" i skanuje je jeszcze raz, ale odwrotnie niż przy imporcie: pojedynczo, z przerwą między żądaniami i z limitem czasu podwojonym do 20–45 sekund. Nie obowiązują też liczniki timeoutów per domena, więc strony pominięte wcześniej jako „domena odcięta\" dostają wreszcie swój pierwszy strzał. Po przebiegu wtyczka pisze wprost, ile udało się odzyskać"},
-        {"type": "fix", "text": "**Wiersz mówi wreszcie, DLACZEGO nie został przeskanowany.** Skaner rozróżnia sześć przyczyn, a panel podał do tej pory cztery — ściana antybotowa i odcięcie domeny pokazywały się jako gołe „Zablokowana\". Każda ma teraz własną etykietę i podpowiedź, która mówi też, czy ponawianie ma sens: przy 404 nie ma, przy 403 i błędzie serwera owszem"},
-        {"type": "fix", "text": "**„Domena odcięta\" przestała udawać blokadę.** Po dwóch timeoutach z jednego serwisu skaner pomija resztę jego adresów — przy liście z jednego dużego wydawcy potrafi to oznaczyć dziesiątki stron, których **w ogóle nie spróbował pobrać**. Wyglądało to identycznie jak prawdziwa blokada. Teraz podpowiedź mówi to wprost i kieruje do ponowienia"},
-        {"type": "feat", "text": "**„Diagnostyka\" kopiuje do schowka rozkład nieprzeskanowanych** — ile którego powodu, na jakich domenach, plus listę adresów. Do wklejenia przy zgłaszaniu problemu, żeby rozmowa zaczynała się od liczb, a nie od „dużo stron się nie skanuje\""}
       ]
     }
   ];
@@ -23194,6 +23278,10 @@ Tej operacji nie można cofnąć.`)) {
         if (activeEl) { activeEl.style.animation = 'none'; void activeEl.offsetHeight; activeEl.style.animation = 'b24t-tab-enter 0.18s ease'; }
       });
     });
+
+    // Projekt z adresu — raz przy starcie, a potem na bieżąco, bo panel jest SPA
+    // i przełączenie projektu nie przeładowuje strony.
+    _watchPanelProject();
 
     // Detect project once page loads
     const tryDetect = setInterval(async () => {

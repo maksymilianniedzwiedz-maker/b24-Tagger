@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.32.2",
+    "date": "2026-09-15",
+    "label": "fix",
+    "changes": [
+      "fix: **Projekt otwarty w panelu jest od razu dostępny na innych stronach.** Wtyczka zapisywała projekt tam, skąd widzą go Instagram, TikTok i reszta, **wyłącznie przy pełnym przeładowaniu strony panelu**. Panel Brand24 przełącza projekty bez przeładowania, więc projekt otwarty w trakcie pracy — świeżo założony albo wzięty z CMS-a — nie istniał w dropdownie modalu i trzeba było wrócić na panel i przeładować stronę, żeby się pojawił. Teraz wtyczka pilnuje adresu panelu i zapisuje projekt w chwili, gdy go otworzysz. Nazwę bierze z tytułu karty, a gdy ten nie zdąży się przestawić — pyta o nią Brand24",
+      "fix: **Modal na obcej stronie zastaje ostatnio oglądany projekt już wybrany.** Wchodzisz na projekt w panelu, otwierasz post na Instagramie — i on tam jest, bez szukania na liście. Do tej pory wtyczka zapamiętywała wyłącznie to, co sam wybrałeś w dropdownie modalu"
+    ]
+  },
+  {
     "version": "0.32.1",
     "date": "2026-09-15",
     "label": "fix",

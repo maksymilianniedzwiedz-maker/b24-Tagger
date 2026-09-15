@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.32.4",
+    "date": "2026-09-15",
+    "label": "fix",
+    "changes": [
+      "fix: **Pole projektu pokazuje wybrany projekt od razu, a nie dopiero po kliknięciu.** Na stronach zewnętrznych modal otwierał się z szarym „szukaj lub wybierz projekt…” i nazwa wskakiwała dopiero, gdy kliknąłeś w pole — nie było widać, do czego właściwie dodajesz. Panel rysował to pole, **zanim** ustalił, który projekt jest wybrany; kliknięcie odpalało ten sam render drugi raz, już po ustaleniu. Teraz kolejność jest odwrotna, a w polu stoi dokładnie ten projekt, do którego poleci wzmianka — to ta sama wartość, którą czyta wysyłka",
+      "fix: **Kropka „CMS” sprawdza się sama przy otwarciu panelu.** Do tej pory pytanie o dostęp szło z pustym projektem (panel pytał o to, zanim wybrał projekt), więc kropka zawsze siadała na „nie wiem” i trzymała zablokowany przycisk dodawania, dopóki jej nie kliknąłeś. Teraz pyta sama, gdy projekt jest już znany; wynik żyje w pamięci pół godziny, więc kolejne otwarcia panelu nic nie kosztują. Kliknięcie kropki dalej wymusza sprawdzenie od nowa — po zalogowaniu się w innej karcie"
+    ]
+  },
+  {
     "version": "0.32.3",
     "date": "2026-09-15",
     "label": "fix",

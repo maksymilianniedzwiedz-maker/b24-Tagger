@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.32.3
+// @version      0.32.4
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -171,7 +171,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.32.3';
+  const VERSION = '0.32.4';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -11651,25 +11651,35 @@ function showOnboarding(onComplete) {
     if (projRow) {
       projRow.style.display = isCustom ? 'flex' : 'none';
       if (isCustom) {
-        _newsRefillProjectSelect();
-        // Pre-select ostatnio wybranego projektu (cross-domain przez GM)
-        var _lastPid = '';
-        _lastPid = B24Bridge.lastProject.get() || lsGet('b24tagger_mini_last_project', '') || '';
-        var _pSel = document.getElementById('b24t-news-f-project-sel');
-        if (_pSel && _lastPid) {
-          _pSel.value = _lastPid;
-          if (_pSel.value === _lastPid) {
-            var _pProjects = _gmGetProjects();
-            var _pData = _pProjects[_lastPid] || {};
-            state.projectId = parseInt(_lastPid);
-            state.tags = _pData.tagIds || {};
-            var _ctry = document.getElementById('b24t-news-f-country');
-            if (_ctry && !_ctry.value) {
-              var _cm = (_pData.name || '').toUpperCase().match(RX_PROJECT_COUNTRY);
-              if (_cm) _ctry.value = _cm[1];
-            }
+        // NAJPIERW ustalamy, który projekt jest wybrany, DOPIERO POTEM rysujemy pole.
+        // Odwrotna kolejność (tak było do v0.32.3) rysowała pole z `state.projectId` sprzed
+        // przypisania, czyli na stronie zewnętrznej z pustego — stąd szary „szukaj lub wybierz
+        // projekt…" zamiast nazwy. Nazwa wskakiwała dopiero przy kliknięciu, bo `focus` woła
+        // ten sam render, już po przypisaniu.
+        //
+        // Istnienie projektu sprawdzamy wprost w pamięci, a nie przez `sel.value = pid`
+        // i porównanie. Tamta sztuczka przy nieznanym pid CZYŚCIŁA wybór ustawiony wcześniej
+        // przez `_newsRefillProjectSelect` — patrz PANEL_STATE.md §5.8.
+        var _lastPid = B24Bridge.lastProject.get() || lsGet('b24tagger_mini_last_project', '') || '';
+        var _pProjects = _gmGetProjects();
+        if (_lastPid && _pProjects[_lastPid]) {
+          var _pData = _pProjects[_lastPid] || {};
+          state.projectId = parseInt(_lastPid);
+          state.tags = _pData.tagIds || {};
+          var _ctry = document.getElementById('b24t-news-f-country');
+          if (_ctry && !_ctry.value) {
+            var _cm = (_pData.name || '').toUpperCase().match(RX_PROJECT_COUNTRY);
+            if (_cm) _ctry.value = _cm[1];
           }
         }
+        _newsRefillProjectSelect();
+
+        // Kropka dostępu pyta O PROJEKT, a ten jest znany dopiero tutaj. `_wireNewsPanels`
+        // wołało ją wcześniej, więc przy otwarciu panelu dostawała `null`, lądowała na „nie wiem"
+        // i blokowała submit do czasu, aż użytkownik KLIKNĄŁ kropkę. Ma się sprawdzać sama.
+        // `force = false` — wynik żyje w cache przez ACCESS_TTL_MS, więc kolejne otwarcia panelu
+        // nie kosztują nowego zapytania.
+        if (state.projectId) _accessRefresh(state.projectId, false);
       }
     }
   }
@@ -12967,7 +12977,9 @@ function showOnboarding(onComplete) {
 
     // ─── PANEL LOGIN CHECK ───
     _newsPanelDotCheck();
-    if (newsState.mode === 'custom') _accessRefresh(state.projectId, false);
+    // Kropka dostępu — NIE tutaj. `_wireNewsPanels` biegnie przed `_applyNewsMode`, czyli zanim
+    // projekt zostanie ustalony, więc pytanie szło z `null` i zawsze kończyło się „nie wiem".
+    // Teraz woła ją `_applyNewsMode`, gdy zna już projekt.
 
     // ─── FILTR PROJEKTÓW ───
     // Natywny <select> nie umie filtrować pisaniem (przeskakuje tylko po pierwszej literze),
@@ -15845,6 +15857,16 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.32.4",
+      "date": "2026-09-15",
+      "label": "fix",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "fix", "text": "**Pole projektu pokazuje wybrany projekt od razu, a nie dopiero po kliknięciu.** Na stronach zewnętrznych modal otwierał się z szarym „szukaj lub wybierz projekt…” i nazwa wskakiwała dopiero, gdy kliknąłeś w pole — nie było widać, do czego właściwie dodajesz. Panel rysował to pole, **zanim** ustalił, który projekt jest wybrany; kliknięcie odpalało ten sam render drugi raz, już po ustaleniu. Teraz kolejność jest odwrotna, a w polu stoi dokładnie ten projekt, do którego poleci wzmianka — to ta sama wartość, którą czyta wysyłka"},
+        {"type": "fix", "text": "**Kropka „CMS” sprawdza się sama przy otwarciu panelu.** Do tej pory pytanie o dostęp szło z pustym projektem (panel pytał o to, zanim wybrał projekt), więc kropka zawsze siadała na „nie wiem” i trzymała zablokowany przycisk dodawania, dopóki jej nie kliknąłeś. Teraz pyta sama, gdy projekt jest już znany; wynik żyje w pamięci pół godziny, więc kolejne otwarcia panelu nic nie kosztują. Kliknięcie kropki dalej wymusza sprawdzenie od nowa — po zalogowaniu się w innej karcie"}
+      ]
+    },
+    {
       "version": "0.32.3",
       "date": "2026-09-15",
       "label": "fix",
@@ -15938,18 +15960,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "**Strona, która w ogóle się nie wczytuje, nie blokuje już przelotu na kilkanaście sekund.** Wtyczka odzywa się ze strony w chwili, gdy przeglądarka zaczyna ją parsować — więc brak tego sygnału znaczy coś innego niż wolne ładowanie: dokument nie doszedł (DNS, odrzucone połączenie, własna strona błędu przeglądarki). Taki adres jest odpuszczany po 5 sekundach zamiast po pełnym limicie; strona, która faktycznie się ładuje, dostaje tyle czasu, co wcześniej"},
         {"type": "fix", "text": "**W pasku postępu widać, na którym serwisie stoi przelot** — bez nazwy dłuższa strona wyglądała jak zawieszenie"}
-      ]
-    },
-    {
-      "version": "0.31.1",
-      "date": "2026-09-14",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "fix", "text": "**Skan przez okno przestał się gubić po pierwszej stronie.** Okno rozpoznawało siebie po nazwie, a Chrome kasuje nazwę okna przy przejściu na inną witrynę — więc po pierwszym przeskoku wtyczka przestawała dostawać treść (strona „nie odpowiadała\" aż do końca limitu czasu), a kolejne otwarcie robiło DRUGIE okno zamiast wejść w istniejące. Teraz okno rozpoznaje się po znaczniku w adresie, który przeżywa nawigację"},
-        {"type": "fix", "text": "**Przelot przez okno jest wielokrotnie szybszy.** Treść leci do panelu, gdy tylko artykuł jest w drzewie strony, a nie po doładowaniu reklam i trackerów — to na serwisie informacyjnym kilkanaście sekund różnicy na każdej stronie. Limit czasu zjechał z 20 na 12 sekund, a przelot odpuszcza cały serwis po dwóch stronach bez treści: 33 adresy jednej martwej domeny to było wcześniej ponad sześć minut czekania na pewną porażkę"},
-        {"type": "fix", "text": "**Postęp przelotu widać w pasku sesji** — „Skan przez okno: 3 / 54\". Wcześniej licznik był tylko na przycisku, więc przy dłuższym przelocie nie było wiadomo, czy cokolwiek się dzieje"},
-        {"type": "fix", "text": "**Strona błędu nie udaje pustego artykułu.** Strona z błędem serwera też się ładuje i też ma treść HTML; wpisanie jej do wiersza jako „brak keyword\" byłoby cichym stwierdzeniem, że stronę przeczytano. Poniżej progu artykułu wiersz zostaje nieprzeskanowany, a serwis dostaje punkt karny w przelocie"}
       ]
     }
   ];

@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.32.11",
+    "date": "2026-09-17",
+    "label": "feat",
+    "changes": [
+      "feat: **Google News jako drugi kanał zbierania.** Przycisk w modalu kampanii: jedno zapytanie na rynek zamiast serii do wyszukiwarki, czyli bez ryzyka captchy — i bez otwierania jakiejkolwiek karty. Zmierzone na rynku greckim: 57 pozycji z jednego zapytania, same serwisy informacyjne (marieclaire.gr, elle.gr, lifo.gr, protothema.gr), bez sklepu marki i marketplace’ów. Nie zastępuje przebiegu po wynikach Google, bo gubi blogi modowe i strony produktowe — jest uzupełnieniem",
+      "feat: **Adresy z Google News są rozwijane do prawdziwych artykułów.** Kanał RSS podaje wyłącznie przekierowania `news.google.com/rss/articles/…`, a nazwa wydawcy przychodzi bez ścieżki. Wtyczka podąża za przekierowaniem i zapisuje faktyczny adres. Rozwijane są tylko pozycje, które przeszły filtr domeny i zakresu dat — każde rozwinięcie to osobne zapytanie, więc robienie tego dla wszystkiego byłoby marnotrawstwem",
+      "feat: **Zakres dat odsiewany po stronie wtyczki dla Google News.** Kanał RSS, inaczej niż wyszukiwarka, nie zna filtra dat — bez tego lecą artykuły sprzed roku (w zmierzonej próbce pierwsza pozycja miała datę z marca przy kampanii sierpień–wrzesień)",
+      "perf: **Sprawdzanie „czy już w projekcie” idzie teraz PRZED skanem, nie po nim.** Wcześniej strona obecna już w Brand24 była otwierana, skanowana i oceniana przez model, zanim wyszło, że była zbędna — skanowanie i tokeny szły w kosz. Dotyczy wyłącznie trybu kampanii; w zwykłym News zostaje po staremu, bo tam lista bywa wklejana bez zakresu dat i odpytanie projektu opóźniałoby start bez pewnego zysku",
+      "fix: **Duplikaty szukane w okresie kampanii, nie w sztywnych ostatnich trzech miesiącach.** Kampania sprzed pół roku w ogóle nie mieściła się w tym oknie i duplikaty przechodziły niezauważone, a kampania krótka kazała pobierać wielokrotnie więcej wzmianek, niż trzeba. Teraz okno to zakres kampanii z miesięcznym marginesem z każdej strony — bo data wzmianki w Brand24 bywa datą zebrania, nie publikacji. Komunikat pokazuje faktyczny zakres zamiast zawsze mówić „z ostatnich 3 mies.”"
+    ]
+  },
+  {
     "version": "0.32.10",
     "date": "2026-09-17",
     "label": "fix",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.32.10
+// @version      0.32.11
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -172,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.32.10';
+  const VERSION = '0.32.11';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8679,6 +8679,115 @@ function showOnboarding(onComplete) {
     });
   }
 
+  // ── GOOGLE NEWS RSS — drugi kanał zbierania ──
+  // Jedno zapytanie na rynek zamiast serii zapytań do wyszukiwarki, więc ZERO ryzyka captchy.
+  // Zwraca same serwisy informacyjne z datami — marketplace'ów i sklepu marki tam nie ma,
+  // czyli największy szum znika bez żadnego filtrowania.
+  //
+  // Nie zastępuje przebiegu po wynikach Google: RSS gubi blogi modowe i strony produktowe,
+  // które według NEWS_SCANNER.md §10 są relevantne. To kanał uzupełniający.
+  //
+  // [ZW 2026-09-17] Zmierzone na `H&M STUDIO` / rynek GR: 57 pozycji z jednego zapytania,
+  // domeny trafione w punkt (marieclaire.gr, elle.gr, lifo.gr, protothema.gr, athensvoice.gr).
+
+  function _gsRssUrl(phrase, cc, lang) {
+    var q = encodeURIComponent(phrase || '');
+    return 'https://news.google.com/rss/search?q=' + q +
+           '&hl=' + encodeURIComponent(lang || 'en') +
+           '&gl=' + encodeURIComponent((cc || 'US').toUpperCase()) +
+           '&ceid=' + encodeURIComponent((cc || 'US').toUpperCase() + ':' + (lang || 'en'));
+  }
+
+  function _gsHttpGet(url, opts) {
+    return new Promise(function(resolve, reject) {
+      GM_xmlhttpRequest(Object.assign({
+        method: 'GET',
+        url: url,
+        onload: function(r) { resolve(r); },
+        onerror: function(e) { reject(new Error('błąd sieci')); },
+        ontimeout: function() { reject(new Error('przekroczony czas')); },
+        timeout: 25000,
+      }, opts || {}));
+    });
+  }
+
+  // Pozycje RSS-a: tytuł, data, domena wydawcy i adres PRZEKIEROWANIA (nie artykułu — §RSS.2).
+  function _gsRssParse(xml) {
+    var doc;
+    try { doc = new DOMParser().parseFromString(xml, 'text/xml'); } catch(e) { return []; }
+    if (!doc || doc.querySelector('parsererror')) return [];
+    var out = [];
+    doc.querySelectorAll('item').forEach(function(it) {
+      function tekst(sel) { var el = it.querySelector(sel); return el ? (el.textContent || '').trim() : ''; }
+      var srcEl = it.querySelector('source');
+      var srcUrl = srcEl ? (srcEl.getAttribute('url') || '') : '';
+      var host = '';
+      try { host = new URL(srcUrl).hostname.replace(/^www\./, ''); } catch(e) {}
+      var pub = tekst('pubDate');
+      var iso = '';
+      if (pub) {
+        var d = new Date(pub);
+        if (!isNaN(d.getTime())) iso = d.toISOString().slice(0, 10);
+      }
+      var link = tekst('link');
+      if (link) out.push({ link: link, title: tekst('title'), date: iso, host: host });
+    });
+    return out;
+  }
+
+  // Adres z RSS-a to przekierowanie `news.google.com/rss/articles/…`; prawdziwy adres poznajemy
+  // dopiero podążając za nim. [ZW] W przeglądarce działa, bo leci z ciasteczkami zgody —
+  // to samo zapytanie bez nich kończy na `consent.google.com`.
+  //
+  // Rozwijamy WYŁĄCZNIE pozycje, które przeszły filtry (§RSS.3): każde rozwinięcie to osobne
+  // zapytanie i pobranie całej strony, więc robienie tego dla wszystkiego byłoby marnotrawstwem.
+  async function _gsRssResolve(link) {
+    var r = await _gsHttpGet(link);
+    var fin = r && r.finalUrl ? r.finalUrl : '';
+    if (!fin || /(^|\.)google\.com$/.test((function() {
+      try { return new URL(fin).hostname; } catch(e) { return 'google.com'; }
+    })())) return null;
+    return fin;
+  }
+
+  // Pełny przebieg kanału RSS dla jednej frazy. `onProgress(tekst)` melduje stan do UI.
+  async function _gsRssCollect(cfg, onProgress) {
+    var wynik = { znalezione: 0, poFiltrach: 0, dodane: 0, bledy: 0, pominieteData: 0, pominieteDomena: 0 };
+    var say = onProgress || function() {};
+
+    say('Pobieram Google News…');
+    var r = await _gsHttpGet(_gsRssUrl(cfg.phrase, cfg.cc, cfg.lang));
+    var pozycje = _gsRssParse(r && r.responseText ? r.responseText : '');
+    wynik.znalezione = pozycje.length;
+    if (!pozycje.length) return wynik;
+
+    // Filtry PRZED rozwijaniem — to one decydują, ile zapytań w ogóle poleci.
+    var kandydaci = pozycje.filter(function(p) {
+      if (p.host && _gsIsBlacklisted('https://' + p.host, cfg.blacklist)) { wynik.pominieteDomena++; return false; }
+      // RSS nie zna filtra dat (inaczej niż wyszukiwarka), więc zakres odsiewamy sami.
+      // Bez tego lecą artykuły sprzed roku — zmierzone: pierwsza pozycja z marca.
+      if (cfg.from && cfg.to && p.date && (p.date < cfg.from || p.date > cfg.to)) { wynik.pominieteData++; return false; }
+      return true;
+    });
+    wynik.poFiltrach = kandydaci.length;
+
+    for (var i = 0; i < kandydaci.length; i++) {
+      var p = kandydaci[i];
+      say('Rozwijam adresy… ' + (i + 1) + '/' + kandydaci.length + ' (' + (p.host || '?') + ')');
+      try {
+        var realny = await _gsRssResolve(p.link);
+        if (realny) {
+          wynik.dodane += _gsCartAdd([{ u: realny, t: p.title, q: cfg.phrase, mode: 'rss', ts: Date.now() }]);
+        } else {
+          wynik.bledy++;
+        }
+      } catch(e) { wynik.bledy++; }
+      // Tempo: to nie wyszukiwarka, ale nadal seria zapytań pod rząd do jednego serwisu.
+      if (i < kandydaci.length - 1) await new Promise(function(res) { setTimeout(res, _gsJitter(700, 1800)); });
+    }
+    return wynik;
+  }
+
   // ── ALARM CAPTCHY ──
   // Przebieg staje, dopóki człowiek nie odklika zagadki, a karta bywa na drugim monitorze —
   // sam komunikat w HUD-zie jest wtedy niewidoczny. Alarm ma trzy kanały naraz, bo każdy
@@ -13088,6 +13197,8 @@ function showOnboarding(onComplete) {
         '<button id="b24t-camp-start" style="flex:2;background:var(--b24t-primary);border:none;color:#fff;border-radius:9px;padding:9px 0;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;">▶ Uruchom przebieg</button>',
         '<button id="b24t-camp-manual" style="flex:1;background:transparent;border:1px solid ' + t.border + ';color:' + t.textMuted + ';border-radius:9px;padding:9px 0;cursor:pointer;font-size:11px;font-family:inherit;" title="Otwiera pierwsze wyszukiwanie bez automatu — strony przechodzisz sam, koszyk zbiera w tle">Otwórz ręcznie</button>',
       '</div>',
+      '<button id="b24t-camp-rss" style="width:100%;margin-top:8px;background:transparent;border:1px solid ' + t.border + ';color:' + t.text + ';border-radius:9px;padding:8px 0;cursor:pointer;font-size:11px;font-family:inherit;" title="Jedno zapytanie do Google News zamiast serii do wyszukiwarki — bez ryzyka captchy">📰 Dołóż z Google News</button>',
+      '<div id="b24t-camp-rss-info" style="display:none;margin-top:6px;font-size:10px;color:' + t.textMuted + ';line-height:1.45;"></div>',
       '<div style="margin-top:8px;font-size:9px;color:' + t.textFaint + ';line-height:1.45;">Przebieg działa w nowej karcie i potrzebuje jej NA WIERZCHU. Karta zminimalizowana albo w całości zasłonięta innym oknem jest dla Chrome ukryta — wtedy przebieg sam się wstrzyma i poczeka. Osobny monitor jest w porządku.</div>',
     ].join('');
 
@@ -13230,19 +13341,27 @@ function showOnboarding(onComplete) {
     }
 
     // Komunikat mówi, CO zrobić — brakujące pole samo w sobie nic nie podpowiada.
-    function validate(c) {
+    function validate(c, kanal) {
       if (!c.variants.length) return 'Wpisz nazwę kampanii — z niej powstają warianty frazy.';
-      if (!c.modes.length) return 'Zaznacz przynajmniej jeden filtr: kraju albo języka.';
-      if (c.modes.indexOf('country') !== -1 && !/^[A-Z]{2}$/.test(c.cc)) return 'Filtr kraju wymaga dwuliterowego kodu, np. GR.';
-      if (c.modes.indexOf('lang') !== -1 && !/^[a-z]{2,3}$/.test(c.lang)) return 'Filtr języka wymaga kodu języka, np. el.';
+      if (kanal === 'rss') {
+        if (!/^[A-Z]{2}$/.test(c.cc)) return 'Google News wymaga dwuliterowego kodu kraju, np. GR.';
+        if (!/^[a-z]{2,3}$/.test(c.lang)) return 'Google News wymaga kodu języka, np. el.';
+      } else {
+        if (!c.modes.length) return 'Zaznacz przynajmniej jeden filtr: kraju albo języka.';
+        if (c.modes.indexOf('country') !== -1 && !/^[A-Z]{2}$/.test(c.cc)) return 'Filtr kraju wymaga dwuliterowego kodu, np. GR.';
+        if (c.modes.indexOf('lang') !== -1 && !/^[a-z]{2,3}$/.test(c.lang)) return 'Filtr języka wymaga kodu języka, np. el.';
+      }
       if ((c.from && !c.to) || (!c.from && c.to)) return 'Podaj obie daty zakresu albo żadnej.';
       if (c.from && c.to && c.from > c.to) return 'Data „od" jest późniejsza niż „do".';
       return null;
     }
 
-    function saveAnd(fn) {
+    // `opcje.kanal` mowi, DO CZEGO walidujemy: przebieg po wynikach wymaga trybow filtra,
+    // Google News ich nie zna i wymaga za to jezyka (parametr `hl`), ktory przy samym
+    // trybie kraju bywa pusty.
+    function saveAnd(fn, opcje) {
       var c = readCfg();
-      var err = validate(c);
+      var err = validate(c, opcje && opcje.kanal);
       if (err) {
         var box = inner.querySelector('#b24t-camp-cart');
         box.innerHTML = '<div style="color:#f59e0b;line-height:1.45;">⚠ ' + _escHtml(err) + '</div>';
@@ -13264,6 +13383,39 @@ function showOnboarding(onComplete) {
         var w = window.open(url, '_blank');
         if (w) w.focus();
       });
+    });
+
+    inner.querySelector('#b24t-camp-rss').addEventListener('click', function() {
+      var btn = this;
+      var info = inner.querySelector('#b24t-camp-rss-info');
+      saveAnd(async function(c) {
+        btn.disabled = true;
+        btn.style.opacity = '.6';
+        info.style.display = '';
+        info.style.color = t.textMuted;
+        try {
+          // Google News nie zna wariantów frazy tak jak wyszukiwarka — bierzemy pełną nazwę
+          // kampanii, bo tu szum jest i tak mały (same serwisy informacyjne).
+          var w = await _gsRssCollect({
+            phrase: c.variants[0], cc: c.cc, lang: c.lang,
+            from: c.from, to: c.to, blacklist: c.blacklist,
+          }, function(txt) { info.textContent = txt; });
+          var szczegoly = [];
+          if (w.pominieteData) szczegoly.push(w.pominieteData + ' poza zakresem dat');
+          if (w.pominieteDomena) szczegoly.push(w.pominieteDomena + ' z czarnej listy');
+          if (w.bledy) szczegoly.push(w.bledy + ' bez adresu');
+          info.innerHTML = '✓ Google News: <strong>+' + w.dodane + '</strong> do koszyka '
+            + '(' + w.znalezione + ' pozycji, ' + w.poFiltrach + ' po filtrach)'
+            + (szczegoly.length ? '<br><span style="opacity:.8;">Pominięte: ' + szczegoly.join(', ') + '</span>' : '');
+          info.style.color = w.dodane ? '#22c55e' : t.textMuted;
+          renderCart();
+        } catch(e) {
+          info.textContent = '✗ Google News: ' + (e && e.message ? e.message : 'nie udało się pobrać');
+          info.style.color = '#f59e0b';
+        }
+        btn.disabled = false;
+        btn.style.opacity = '';
+      }, { kanal: 'rss' });
     });
 
     inner.querySelector('#b24t-camp-manual').addEventListener('click', function() {
@@ -15346,6 +15498,20 @@ function showOnboarding(onComplete) {
         var now = new Date();
         var dateFrom = _localDateStr(new Date(now.getFullYear(), now.getMonth() - 2, 1));
         var dateTo   = _localDateStr(now);
+        // W kampanii pytamy o OKRES KAMPANII, nie o ostatnie trzy miesiące. Dwa powody:
+        // kampania sprzed pół roku w ogóle nie zmieściłaby się w sztywnym oknie i duplikaty
+        // przeszłyby niezauważone, a kampania krótka każe pobierać kilka razy więcej wzmianek,
+        // niż trzeba. Margines 30 dni z każdej strony, bo data wzmianki w Brand24 bywa datą
+        // zebrania, nie publikacji.
+        if (newsState.campaign) {
+          var _cc = lsGet(LS.CAMPAIGN_CFG, {}) || {};
+          if (_cc.from && _cc.to) {
+            var _mf = new Date(_cc.from + 'T00:00:00'); _mf.setDate(_mf.getDate() - 30);
+            var _mt = new Date(_cc.to   + 'T00:00:00'); _mt.setDate(_mt.getDate() + 30);
+            dateFrom = _localDateStr(_mf);
+            dateTo   = _localDateStr(_mt > now ? now : _mt);
+          }
+        }
         var projectUrls = new Set();        // znormalizowane URLe — szybki exact lookup
         var projectUrlsCanon = new Set();   // po kanonizacji — AMP, utm_*, fbclid
         var projectUrlsArr = [];            // do urlsMatch (tolerancja obcięcia ID)
@@ -15422,7 +15588,8 @@ function showOnboarding(onComplete) {
           }
         });
 
-        var infoMsg = '✓ Projekt: ' + (total || projectUrls.size) + ' wzmianek z ostatnich 3 mies.';
+        var infoMsg = '✓ Projekt: ' + (total || projectUrls.size) + ' wzmianek ('
+                    + dateFrom + ' – ' + dateTo + ')';
         if (matchedCount > 0) infoMsg += ' — ' + matchedCount + ' URL' + (matchedCount === 1 ? '' : 'i') + ' już w projekcie';
         else infoMsg += ' — żadna nie pokrywa się z listą';
         if (projectInfo) { projectInfo.textContent = infoMsg; projectInfo.style.color = matchedCount > 0 ? '#f59e0b' : '#22c55e'; }
@@ -16709,6 +16876,15 @@ function showOnboarding(onComplete) {
       renderUrlList();
       if (pasteArea) pasteArea.value = '';
 
+      // Sprawdzenie „czy juz w projekcie" PRZED skanem — tylko w kampanii. W News zostaje
+      // po skanie, bo tam lista bywa wklejana bez ustawionego zakresu dat i odpytanie
+      // projektu opoznialoby start bez pewnego zysku. Tu zakres jest zawsze znany
+      // (pochodzi z modalu zbierania), a kazda odsiana strona to jedno otwarcie strony
+      // i jedno wywolanie modelu mniej.
+      if (newsState.campaign) {
+        try { await _newsRunProjectCheck(); } catch(e) {}
+      }
+
       var toScan = newsState.urls.filter(function(e) { return e.status === 'scanning'; });
 
       // Skanowanie treści — zablokuj przycisk
@@ -17323,6 +17499,19 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.32.11",
+      "date": "2026-09-17",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "**Google News jako drugi kanał zbierania.** Przycisk w modalu kampanii: jedno zapytanie na rynek zamiast serii do wyszukiwarki, czyli bez ryzyka captchy — i bez otwierania jakiejkolwiek karty. Zmierzone na rynku greckim: 57 pozycji z jednego zapytania, same serwisy informacyjne (marieclaire.gr, elle.gr, lifo.gr, protothema.gr), bez sklepu marki i marketplace’ów. Nie zastępuje przebiegu po wynikach Google, bo gubi blogi modowe i strony produktowe — jest uzupełnieniem"},
+        {"type": "feat", "text": "**Adresy z Google News są rozwijane do prawdziwych artykułów.** Kanał RSS podaje wyłącznie przekierowania `news.google.com/rss/articles/…`, a nazwa wydawcy przychodzi bez ścieżki. Wtyczka podąża za przekierowaniem i zapisuje faktyczny adres. Rozwijane są tylko pozycje, które przeszły filtr domeny i zakresu dat — każde rozwinięcie to osobne zapytanie, więc robienie tego dla wszystkiego byłoby marnotrawstwem"},
+        {"type": "feat", "text": "**Zakres dat odsiewany po stronie wtyczki dla Google News.** Kanał RSS, inaczej niż wyszukiwarka, nie zna filtra dat — bez tego lecą artykuły sprzed roku (w zmierzonej próbce pierwsza pozycja miała datę z marca przy kampanii sierpień–wrzesień)"},
+        {"type": "perf", "text": "**Sprawdzanie „czy już w projekcie” idzie teraz PRZED skanem, nie po nim.** Wcześniej strona obecna już w Brand24 była otwierana, skanowana i oceniana przez model, zanim wyszło, że była zbędna — skanowanie i tokeny szły w kosz. Dotyczy wyłącznie trybu kampanii; w zwykłym News zostaje po staremu, bo tam lista bywa wklejana bez zakresu dat i odpytanie projektu opóźniałoby start bez pewnego zysku"},
+        {"type": "fix", "text": "**Duplikaty szukane w okresie kampanii, nie w sztywnych ostatnich trzech miesiącach.** Kampania sprzed pół roku w ogóle nie mieściła się w tym oknie i duplikaty przechodziły niezauważone, a kampania krótka kazała pobierać wielokrotnie więcej wzmianek, niż trzeba. Teraz okno to zakres kampanii z miesięcznym marginesem z każdej strony — bo data wzmianki w Brand24 bywa datą zebrania, nie publikacji. Komunikat pokazuje faktyczny zakres zamiast zawsze mówić „z ostatnich 3 mies.”"}
+      ]
+    },
+    {
       "version": "0.32.10",
       "date": "2026-09-17",
       "label": "fix",
@@ -17416,20 +17605,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "**Projekt otwarty w panelu jest od razu dostępny na innych stronach.** Wtyczka zapisywała projekt tam, skąd widzą go Instagram, TikTok i reszta, **wyłącznie przy pełnym przeładowaniu strony panelu**. Panel Brand24 przełącza projekty bez przeładowania, więc projekt otwarty w trakcie pracy — świeżo założony albo wzięty z CMS-a — nie istniał w dropdownie modalu i trzeba było wrócić na panel i przeładować stronę, żeby się pojawił. Teraz wtyczka pilnuje adresu panelu i zapisuje projekt w chwili, gdy go otworzysz. Nazwę bierze z tytułu karty, a gdy ten nie zdąży się przestawić — pyta o nią Brand24"},
         {"type": "fix", "text": "**Modal na obcej stronie zastaje ostatnio oglądany projekt już wybrany.** Wchodzisz na projekt w panelu, otwierasz post na Instagramie — i on tam jest, bez szukania na liście. Do tej pory wtyczka zapamiętywała wyłącznie to, co sam wybrałeś w dropdownie modalu"}
-      ]
-    },
-    {
-      "version": "0.32.1",
-      "date": "2026-09-15",
-      "label": "fix",
-      "labelColor": "#f59e0b",
-      "changes": [
-        {"type": "fix", "text": "**Nowy film z YouTube przestaje wychodzić duplikatem.** Sprawdzanie „czy ten URL już jest w projekcie” porównywało też adresy po obcięciu wszystkiego za znakiem zapytania. Zmierzone na H&M_TR za wrzesień: 21 wzmianek z YouTube, każda z innym `?v=`, po obcięciu zostaje jeden adres — więc pierwszy film w projekcie zamieniał każdy następny w „duplikat” i blokował wysyłkę. To samo dotyczyło każdego adresu, w którym tożsamość strony siedzi w query (`?p=`, `permalink.php?...`). Sklejanie wersji AMP i parametrów śledzących, dla którego to powstało, działa dalej"},
-        {"type": "fix", "text": "**Zielone „URL nowy w projekcie” znaczy teraz, że naprawdę sprawdzono.** Wcześniej sprawdzanie kończyło się po 600 wzmiankach i mimo to wypisywało werdykt na zielono. Zmierzone pełne miesiące H&M_TR: 1233, 1121, 1060, 791 i 879 wzmianek — czyli **każdy** przekraczał ten limit, a ponieważ Brand24 oddaje wzmianki od najnowszych, niesprawdzona zostawała starsza połowa miesiąca. Teraz pytanie jest zawężane do domeny adresu, dzięki czemu mieści się w jednym zapytaniu i obejmuje trzy miesiące zamiast jednego; gdy mimo to nie da się doczytać do końca, wtyczka mówi to wprost zamiast zapewniać, że jest czysto"},
-        {"type": "fix", "text": "**Sprawdzanie jest też szybsze.** Zamiast dziewięciu zapytań po całym miesiącu — jedno, zawężone do domeny. Zmierzone: ~0,4 s zamiast ~4 s"},
-        {"type": "fix", "text": "**Zmiana projektu nie zostawia werdyktu z poprzedniego.** Przy pustym polu adresu na ekranie zostawało „URL nowy w projekcie” dotyczące projektu, który właśnie przestał być wybrany"},
-        {"type": "fix", "text": "**Ta sama strona idzie teraz do dwóch projektów pod rząd.** Wtyczka pamiętała każdy adres, który kiedykolwiek wysłała — bez zapisu, do którego projektu — i przy drugim podejściu odmawiała: „Ten URL był już wcześniej dodany do Brand24 (w tej lub poprzedniej sesji)”. Dodanie tej samej wzmianki do projektu PL i zaraz potem do CZ było przez to niemożliwe. Lista rosła bez końca (u właściciela 224 adresy) i nigdy się nie czyściła. Została zdjęta — rolę strażnika pełni sprawdzanie adresu w konkretnym projekcie, a prawdziwy duplikat odrzuca sam Brand24 przy wysyłce"},
-        {"type": "fix", "text": "**Po dodaniu wzmianki formularz zostaje wypełniony (tryb „Niestandardowe”).** Wcześniej kasował tytuł, treść i datę — zachowanie z trybu listy, gdzie panel przechodzi na kolejny wiersz i wypełnia je od nowa. Tutaj wypełniać nie miał kto, bo strona się nie zmieniła: zostawał pusty formularz, którego nie dało się wysłać do drugiego projektu (a pusta data zatrzymywała też sprawdzanie duplikatu). Wystarczy teraz zmienić projekt i kliknąć drugi raz"}
       ]
     },
   ];

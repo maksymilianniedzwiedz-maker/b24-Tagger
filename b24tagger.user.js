@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.32.8
+// @version      0.32.9
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -14,6 +14,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addValueChangeListener
+// @grant        GM_removeValueChangeListener
 // @connect       hooks.slack.com
 // @connect       raw.githubusercontent.com
 // @connect       cdn.jsdelivr.net
@@ -171,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.32.8';
+  const VERSION = '0.32.9';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -194,6 +195,8 @@
     NEWS_KEYWORDS:    'b24tagger_news_keywords',
     NEWS_LANG_MAP:    'b24tagger_news_lang_map',
     NEWS_WIN_SIZE:    'b24tagger_news_win_size',
+    CAMPAIGN_CFG:     'b24tagger_campaign_cfg',
+    CAMPAIGN_CHIPS:   'b24tagger_campaign_chips',
     WELCOME_SHOWN:    'b24tagger_welcome_shown_v0210',
     UPDATE_CHANNEL:   'b24tagger_update_channel',
     MONTH_CLOSE_DONE: 'b24tagger_month_close_done',
@@ -379,6 +382,8 @@
     if (!s.news) s.news = {};
     if (!s.tagging) s.tagging = {};
     if (!s.custom) s.custom = {};
+    if (!s.campaign) s.campaign = {};
+    if (!s.campaign.model) s.campaign.model = s.model || 'claude-haiku-4-5';
     if (!s.news.model) s.news.model = s.model || 'claude-haiku-4-5';
     if (!s.tagging.model) s.tagging.model = s.model || 'claude-haiku-4-5';
     if (!s.custom.model) s.custom.model = s.model || 'claude-haiku-4-5';
@@ -3570,6 +3575,19 @@
       clearCheckpoint: () => { clearCheckpoint(); addLog('🗑 Checkpoint wyczyszczony.', 'info'); },
       getToken: () => state.tokenHeaders,
       checkForUpdate: (manual) => checkForUpdate(manual),
+      // ── Kolektor Google (GOOGLE_COLLECTOR.md) ──
+      // Start przez to wejście, a nie przez modal, ma jedną konkretną zaletę: modal otwiera
+      // przebieg przez `window.open`, czyli w karcie, której nie widzi żadne narzędzie
+      // automatyzacji. Tutaj dostajesz sam adres i nawigujesz nim kartą, którą już masz —
+      // przebieg przejmuje ją po znaczniku `#b24tgs` i da się go obserwować z zewnątrz.
+      gsRunStart: (cfg) => _gsRunStart(cfg),
+      gsRunState: () => _gsRunGet(),
+      gsCart: () => _gsCartGet(),
+      gsCartUrls: () => _gsCartGet().items.map((it) => it.u),
+      gsStop: () => { _gsRunStop('user'); return _gsRunGet(); },
+      gsClearCart: () => { _gsCartClear(); return _gsCartGet(); },
+      gsBuildUrl: (o) => _gsBuildUrl(o),
+      gsVariants: (phrase) => _gsVariants(phrase),
       stressTestBulk: async function(tagId, dateFrom, dateTo) {
         // Stress test batch size: [300, 500, 1000, 1500, 2000] z sleep=500ms między parami tag/untag
         if (!tagId) { addLog('[STRESS/BULK] Użycie: stressTestBulk(tagId, dateFrom?, dateTo?)', 'warn'); return; }
@@ -8220,6 +8238,603 @@ function showOnboarding(onComplete) {
 
 
   // ───────────────────────────────────────────
+  // GOOGLE SEARCH COLLECTOR — automatyczne zbieranie adresów z wyników wyszukiwania
+  //
+  // Przebieg odwiedza wyniki Google dla wariantów frazy kampanii × dwa tryby filtra
+  // (region / język) i zbiera organiczne adresy do koszyka, który panel Brand24 wkleja
+  // potem do „Dodaj z listy URL-i". Ocena przydatności strony należy do skanera treści
+  // i AI (NEWS_SCANNER.md §10), nie do oka — człowiek nie czyta wyników wcale.
+  //
+  // ⚠ Koszyk i stan przebiegu MUSZĄ siedzieć w GM_setValue, nie w localStorage. Google
+  // i Brand24 to osobne witryny, więc mają osobne `localStorage` — koszyk zapisany na
+  // google.com byłby w panelu niewidoczny. GM_* jest wspólne dla całego skryptu.
+  //
+  // Szablon adresu odtworzony z adresów WYGENEROWANYCH PRZEZ UI Google (2026-09-17), nie
+  // z dokumentacji — dwóch rzeczy nie dało się zgadnąć:
+  //   1. filtr występuje DWA razy: jako parametr (`lr=` / `cr=`) i w `tbs` (`lr:` / `ctr:`),
+  //   2. w `tbs` język ma wtrąconą jedynkę: `lr=lang_el`, ale `tbs=lr:lang_1el`.
+  // `sca_esv` i `sxsrf` z tamtych adresów są świadomie pominięte — to tokeny sesji ze
+  // znacznikiem czasu, wygasają. `source=lnt` zostaje, bo dzięki niemu Google pokazuje
+  // ustawione filtry w panelu Narzędzia i można je poprawić ręcznie w trakcie.
+  // ───────────────────────────────────────────
+
+  var GS_CART_KEY = 'b24t_gs_cart';
+  var GS_RUN_KEY  = 'b24t_gs_run';
+
+  // Strony marki, social i marketplace'y. Lista ma DWIE role:
+  //   1. wpisy wyglądające jak pełna domena idą do zapytania jako `-site:` (§1.6) — Google ich
+  //      w ogóle nie pokazuje, więc nie ma czego przewijać,
+  //   2. cała lista filtruje koszyk, łapiąc to, co mimo wykluczeń weszło (lokalne domeny sklepu).
+  // Skład zmierzony na żywo 2026-09-17 na GR i TR: bez wykluczeń pierwsze dwie strony wyników
+  // to był wyłącznie sklep H&M, Instagram, TikTok i lokalne marketplace'y.
+  var GS_BLACKLIST_DEFAULT = [
+    'hm.com', 'facebook.com', 'instagram.com', 'tiktok.com', 'x.com', 'linkedin.com',
+    'pinterest.com', 'youtube.com', 'vinted.com', 'shein.com', 'temu.com', 'zalando.com',
+    'aboutyou.com', 'trendyol.com', 'hepsiburada.com', 'allegro.pl', 'booking.com',
+    'klarna.com',
+    // Bez kropki — nie nadają się na `-site:`, ale filtrują koszyk (domeny krajowe).
+    'vinted', 'olx.', 'ebay.', 'amazon.', 'aliexpress', 'wallapop.', 'dolap.', 'vendora.',
+  ];
+
+  // [ZW 2026-09-17] Google przyjął 10 operatorów `-site:` w jednym zapytaniu (181 znaków) —
+  // sprawdzone odczytem pola wyszukiwania, nie założone. Górnej granicy nie znamy, a przepełnione
+  // zapytanie Google przycina PO CICHU, więc limit stoi dokładnie na tym, co potwierdzone:
+  // zgadywanie kosztowałoby wyniki bez żadnego sygnału. Reszta listy filtruje koszyk.
+  // Patrz GOOGLE_COLLECTOR.md §1.6.
+  var GS_MAX_SITE_EXCLUSIONS = 10;
+
+  // Do `-site:` nadaje się tylko wpis wyglądający jak domena — `olx.` czy `vinted` bez TLD
+  // nic by nie wykluczyły, a zajęłyby miejsce w limicie.
+  function _gsSiteExclusions(list) {
+    return (list || GS_BLACKLIST_DEFAULT)
+      .filter(function(b) { return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(String(b).trim()); })
+      .slice(0, GS_MAX_SITE_EXCLUSIONS);
+  }
+
+  // Hosty Google mają setki domen krajowych (google.pl, google.com.tr, google.co.uk).
+  function _gsIsGoogleSearch() {
+    return /^(www\.)?google\.[a-z]{2,3}(\.[a-z]{2})?$/.test(location.hostname)
+        && location.pathname === '/search';
+  }
+
+  function _gsGet(key, fallback) {
+    try {
+      var raw = GM_getValue(key, null);
+      var v = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (v && typeof v === 'object') return v;
+    } catch(e) {}
+    return fallback;
+  }
+  function _gsSet(key, val) {
+    try { GM_setValue(key, JSON.stringify(val)); } catch(e) {}
+  }
+
+  function _gsCartGet() { return _gsGet(GS_CART_KEY, { items: [] }); }
+  function _gsRunGet()  { return _gsGet(GS_RUN_KEY, null); }
+  function _gsRunSet(r) { _gsSet(GS_RUN_KEY, r); }
+
+  function _gsCartAdd(entries) {
+    var cart = _gsCartGet();
+    var seen = {};
+    cart.items.forEach(function(it) { seen[_newsCanonicalUrl(it.u)] = true; });
+    var added = 0;
+    entries.forEach(function(e) {
+      var k = _newsCanonicalUrl(e.u);
+      if (!k || seen[k]) return;
+      seen[k] = true;
+      cart.items.push(e);
+      added++;
+    });
+    if (added) { cart.updated = Date.now(); _gsSet(GS_CART_KEY, cart); }
+    return added;
+  }
+
+  function _gsCartClear() { _gsSet(GS_CART_KEY, { items: [] }); }
+
+  function _gsIsBlacklisted(url, list) {
+    var h;
+    try { h = new URL(url).hostname.toLowerCase(); } catch(e) { return false; }
+    return (list || GS_BLACKLIST_DEFAULT).some(function(b) {
+      return h.indexOf(String(b).toLowerCase()) !== -1;
+    });
+  }
+
+  // ── Budowa adresu wyszukiwania ──
+
+  // Google przyjmuje w `tbs` datę amerykańską bez zer wiodących: 8/1/2026 = 1 sierpnia.
+  function _gsFmtDate(iso) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+    if (!m) return '';
+    return parseInt(m[2], 10) + '/' + parseInt(m[3], 10) + '/' + m[1];
+  }
+
+  // `o.mode`: 'lang' albo 'country'. `o.start` — numer pierwszego wyniku (0, 10, 20…).
+  function _gsBuildUrl(o) {
+    // Wykluczenia domen wchodzą do SAMEJ FRAZY, nie do osobnego parametru. Zmierzone na żywo
+    // (GR, 2026-09-17): „H&M STUDIO ESSENTIALS" dawało 917 wyników, z których pierwsze dwie
+    // strony to wyłącznie sklep marki i Facebook; po dodaniu `-site:hm.com -site:facebook.com`
+    // został 1 wynik — i był to poszukiwany artykuł. Odsiewanie dopiero po stronie koszyka
+    // kazałoby przejść kilkanaście stron wyników po to, by wszystko z nich wyrzucić.
+    var q = (o.phrase || '');
+    var excl = o.exclusions === false ? [] : _gsSiteExclusions(o.blacklist);
+    if (excl.length) q += ' ' + excl.map(function(d) { return '-site:' + d; }).join(' ');
+
+    var parts = ['q=' + encodeURIComponent(q).replace(/%20/g, '+')];
+    var tbs = [];
+
+    if (o.mode === 'lang') {
+      parts.push('lr=lang_' + o.lang);
+      tbs.push('lr:lang_1' + o.lang);
+    } else {
+      parts.push('lr=');
+      parts.push('cr=country' + o.cc);
+      tbs.push('ctr:country' + o.cc);
+    }
+
+    var from = _gsFmtDate(o.from), to = _gsFmtDate(o.to);
+    if (from && to) tbs.push('cdr:1', 'cd_min:' + from, 'cd_max:' + to);
+
+    parts.push('source=lnt');
+    parts.push('tbs=' + encodeURIComponent(tbs.join(',')));
+    parts.push('authuser=0');
+    if (o.start) parts.push('start=' + o.start);
+    // Znacznik we fragmencie adresu przechodzi przez nawigację i Google go ignoruje. Po nim
+    // karta poznaje, że to ONA została otwarta do przebiegu — inaczej dowolna inna karta
+    // Google odświeżona w tej samej chwili przejęłaby przebieg i poszła własną ścieżką.
+    return 'https://www.google.com/search?' + parts.join('&') + '#b24tgs';
+  }
+
+  function _gsIsRunTab() { return /(^|[#&])b24tgs\b/.test(location.hash); }
+
+  // Warianty frazy: skracanie od końca, bo nazwa kampanii po angielsku („…AW26") często nie
+  // funkcjonuje na mniejszych rynkach i pełna fraza daje zero wyników. Schodzimy do dwóch
+  // słów — samo „H&M" to już nie kampania, tylko cały monitoring marki.
+  function _gsVariants(phrase) {
+    var words = String(phrase || '').trim().split(/\s+/).filter(Boolean);
+    if (words.length < 2) return words.length ? [words.join(' ')] : [];
+    var out = [];
+    for (var n = words.length; n >= 2; n--) {
+      // Wariant kończący się łącznikiem („H&M x" z „H&M x WARDROBE.NYC", „H&M by") jest gorszy
+      // niż jego brak: nie zawęża niczego, a dokłada stronę wyników do przejrzenia.
+      if (words[n - 1].length < 3) continue;
+      out.push(words.slice(0, n).join(' '));
+    }
+    return out.length ? out : [words.join(' ')];
+  }
+
+  // ── Zbieranie z SERP-a ──
+
+  var _GS_SKIP_HOST = /(^|\.)(google\.[a-z.]+|gstatic\.com|googleusercontent\.com)$/i;
+
+  // Wyniki organiczne rozpoznajemy po nagłówku `h3` wewnątrz odnośnika. Klasy i atrybuty
+  // `data-*` Google zmienia co kilka miesięcy, układ „odnośnik opakowuje h3" trzyma się od lat.
+  function _gsHarvest() {
+    var root = document.getElementById('rso') || document.getElementById('search');
+    if (!root) return [];
+    var out = [], seen = {};
+    var params = new URLSearchParams(location.search);
+    // Operatory wykluczeń są technicznym dodatkiem do frazy — w koszyku zapisujemy samą frazę,
+    // bo to ona mówi, z jakiego wariantu kampanii pochodzi adres.
+    var q = (params.get('q') || '').replace(/\s*-site:\S+/g, '').trim();
+    var mode = params.get('cr') ? 'country' : (params.get('lr') ? 'lang' : '');
+    var heads = root.querySelectorAll('h3');
+    for (var i = 0; i < heads.length; i++) {
+      var a = heads[i].closest('a[href]');
+      if (!a) continue;
+      var href = a.href || '';
+      if (!/^https?:\/\//.test(href)) continue;
+      var host;
+      try { host = new URL(href).hostname; } catch(e) { continue; }
+      if (_GS_SKIP_HOST.test(host)) continue;
+      var k = _newsCanonicalUrl(href);
+      if (!k || seen[k]) continue;
+      seen[k] = true;
+      out.push({ u: href, t: (heads[i].textContent || '').trim(), q: q, mode: mode, ts: Date.now() });
+    }
+    return out;
+  }
+
+  // Google przy braku trafień podmienia frazę („Wyświetlono wyniki dla…"). Zebranie takich
+  // wyników zaśmieciłoby koszyk stronami spoza kampanii — wykrywamy i mówimy o tym wprost.
+  function _gsPhraseSwapped() {
+    var el = document.getElementById('taw') || document.getElementById('topstuff');
+    if (!el) return false;
+    return /wyświetlono wyniki dla|showing results for|did you mean|zamiast tego/i.test(el.textContent || '');
+  }
+
+  // Blokada antybotowa. Rozpoznajemy ją po adresie (/sorry/) i po formularzu captcha — sam
+  // tekst „unusual traffic" bywa tłumaczony na język interfejsu i nie da się na nim polegać.
+  function _gsBlocked() {
+    return /\/sorry\//.test(location.pathname)
+        || !!document.querySelector('form#captcha-form, #recaptcha, iframe[src*="recaptcha"]');
+  }
+
+  // [ZW 2026-09-17] `#pnnext` jest obecny na każdej stronie z kontynuacją, na GR i TR, w obu
+  // trybach filtra. Odnośnika z `aria-label="Dalej"` Google NIE wystawia — sprawdzony fallback
+  // był martwy i został usunięty, żeby nie sugerował zabezpieczenia, którego nie ma.
+  function _gsHasNext() {
+    return !!document.querySelector('#pnnext');
+  }
+
+  // „Około 917 wyników" / „Strona 2 z około 917 wyników". [ZW] Element jest obecny ZAWSZE,
+  // także przy zerowym trafieniu („Około 0 wyników"), więc nadaje się na wskaźnik martwego
+  // wariantu pokazywany od razu, bez czekania na koniec przebiegu.
+  function _gsResultStats() {
+    var el = document.getElementById('result-stats');
+    if (!el) return null;
+    var m = (el.textContent || '').replace(/ /g, ' ').match(/([\d .,]+)\s*wynik|([\d .,]+)\s*result/i);
+    if (!m) return null;
+    var n = parseInt((m[1] || m[2]).replace(/[^\d]/g, ''), 10);
+    return isNaN(n) ? null : n;
+  }
+
+  // ── Tempo ──
+
+  var _gsJitter = function(min, max) { return min + Math.random() * (max - min); };
+
+  // Przerwa wynika z TREŚCI strony, nie z generatora liczb: strona złożona z samych
+  // marketplace'ów to u człowieka przelot wzrokiem, a strona z realnym kandydatem to
+  // otwarcie w drugiej karcie i przeczytanie. Rozkład wychodzi dwumodalny sam z siebie,
+  // czyli bliżej prawdy niż stała przerwa z jitterem (wartości ustalone z właścicielem
+  // narzędzia na podstawie jego własnego tempa pracy, 2026-09-17).
+  function _gsPauseForPage(candidates) {
+    if (candidates <= 0) return _gsJitter(3000, 6000);
+    return Math.random() < 0.15 ? _gsJitter(60000, 75000) : _gsJitter(20000, 40000);
+  }
+  function _gsPauseBetweenVariants() {
+    return Math.random() < 0.20 ? _gsJitter(40000, 50000) : _gsJitter(20000, 30000);
+  }
+
+  // ── Przebieg ──
+
+  // Karta rozpoznaje własną sesję przez `sessionStorage` — jest per KARTA i przeżywa
+  // nawigację w obrębie witryny, więc przebieg nie ruszy w drugiej karcie Google
+  // otwartej ręcznie obok (ten sam problem rozwiązuje `ownerTab` w kolektorze IG).
+  function _gsTabToken() {
+    var t = null;
+    try { t = sessionStorage.getItem('b24t_gs_tab'); } catch(e) { return 'no-session-storage'; }
+    if (!t) {
+      t = String(Date.now()) + '-' + Math.random().toString(36).slice(2, 9);
+      try { sessionStorage.setItem('b24t_gs_tab', t); } catch(e) {}
+    }
+    return t;
+  }
+
+  // Kolejka zadań: warianty × tryby, w losowej kolejności ustalanej RAZ. Powtarzalna
+  // sekwencja między przebiegami to sygnał innego rodzaju niż tempo i jitter na przerwach
+  // go nie maskuje (instagram-dom-facts.md §14).
+  function _gsBuildQueue(variants, modes) {
+    var q = [];
+    variants.forEach(function(v) { modes.forEach(function(m) { q.push({ phrase: v, mode: m }); }); });
+    for (var i = q.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = q[i]; q[i] = q[j]; q[j] = tmp;
+    }
+    return q;
+  }
+
+  // Bezpiecznik przed pętlą, nie ogranicznik roboczy: przy szerokiej frazie bywa 20 stron
+  // i wszystkie mają zostać przejrzane — stop należy do Google, gdy zabraknie „Dalej".
+  var GS_MAX_PAGES = 30;
+
+  function _gsRunStart(cfg) {
+    var run = {
+      active: true,
+      campaign: cfg.campaign,
+      cc: cfg.cc, lang: cfg.lang, from: cfg.from, to: cfg.to,
+      blacklist: cfg.blacklist || GS_BLACKLIST_DEFAULT,
+      queue: _gsBuildQueue(cfg.variants, cfg.modes),
+      qi: 0, page: 0,
+      ownerTab: null,
+      // Karta panelu, do ktorej wroci robota po zakonczeniu (patrz _gsHandoffToPanel).
+      originTab: cfg.originTab || null,
+      originProject: cfg.originProject || null,
+      startedAt: Date.now(),
+      stopped: null,
+    };
+    _gsRunSet(run);
+    return _gsBuildUrl({
+      phrase: run.queue[0].phrase, mode: run.queue[0].mode,
+      cc: run.cc, lang: run.lang, from: run.from, to: run.to, blacklist: run.blacklist,
+    });
+  }
+
+  function _gsRunStop(reason) {
+    var run = _gsRunGet();
+    if (!run) return;
+    run.active = false;
+    run.stopped = reason;
+    _gsRunSet(run);
+  }
+
+  // Jedna iteracja: zbierz z bieżącej strony, odczekaj, przejdź dalej. Wołana raz na
+  // załadowanie strony — nawigacja kończy ten kontekst, więc stan idzie przez GM.
+  async function _gsRunStep(run) {
+    if (_gsBlocked()) {
+      _gsRunStop('blocked');
+      _gsHudSay('⛔ Google zablokował automatyczne zapytania (CAPTCHA). Przebieg zatrzymany — ' +
+                'koszyk zachowany. Rozwiąż zagadkę ręcznie i uruchom ponownie.', true);
+      try { alert('B24: Google pokazał CAPTCHA — przebieg zatrzymany.\n\nKoszyk jest zachowany. ' +
+                  'Rozwiąż zagadkę ręcznie, potem uruchom przebieg jeszcze raz.'); } catch(e) {}
+      return;
+    }
+
+    if (run.ownerTab && run.ownerTab !== _gsTabToken()) return; // przebieg należy do innej karty
+    if (!run.ownerTab) {
+      // Przebieg przejmuje tylko karta otwarta przez modal — poznaje się po znaczniku adresu.
+      if (!_gsIsRunTab()) return;
+      run.ownerTab = _gsTabToken();
+      _gsRunSet(run);
+    }
+
+    var found = _gsHarvest();
+    var fresh = found.filter(function(e) { return !_gsIsBlacklisted(e.u, run.blacklist); });
+    var added = _gsCartAdd(fresh);
+    _gsHudCount();
+    _gsHudProgress(run);
+
+    var task = run.queue[run.qi];
+    var swapped = _gsPhraseSwapped();
+    var total = _gsResultStats();
+    // Fraza pochodzi z pola formularza — do `innerHTML` wchodzi wyłącznie jako tekst.
+    _gsHudSay('„' + _escHtml(task.phrase) + '" · ' + (task.mode === 'lang' ? 'język' : 'kraj') +
+              ' · str. ' + (run.page + 1) + '<br>+' + added + ' do koszyka (' + found.length +
+              ' wyników, ' + (found.length - fresh.length) + ' odsianych)' +
+              (total !== null ? '<br><span style="color:#6b7280;">Google: ' + total.toLocaleString('pl-PL') + '</span>' : '') +
+              (swapped ? '<br><span style="color:#f59e0b;">⚠ Google podmienił frazę</span>' : ''));
+
+    // Google podmienił frazę = wyników dla tej frazy nie ma. Dalsze strony to wyniki dla
+    // CZEGOŚ INNEGO, więc wariant kończymy tu, zamiast zbierać je jako kampanijne.
+    var exhausted = swapped || !_gsHasNext() || found.length === 0 || run.page + 1 >= GS_MAX_PAGES;
+
+    var wait = exhausted ? _gsPauseBetweenVariants() : _gsPauseForPage(fresh.length);
+    var ok = await _gsWait(wait, exhausted ? 'następny wariant' : 'następna strona');
+    if (!ok) return; // stop wciśnięty albo karta zeszła na dobre
+
+    run = _gsRunGet();
+    if (!run || !run.active) return;
+
+    if (!exhausted) {
+      run.page++;
+      _gsRunSet(run);
+      location.href = _gsBuildUrl({
+        phrase: task.phrase, mode: task.mode, cc: run.cc, lang: run.lang,
+        from: run.from, to: run.to, start: run.page * 10, blacklist: run.blacklist,
+      });
+      return;
+    }
+
+    run.qi++;
+    run.page = 0;
+    if (run.qi >= run.queue.length) {
+      run.active = false;
+      run.stopped = 'done';
+      _gsRunSet(run);
+      _gsHudProgress(run);
+      _gsHudSay('✓ Przebieg zakończony. W koszyku: ' + _gsCartGet().items.length + ' adresów.', true);
+      _gsHudHandoffBtn();
+      return;
+    }
+    _gsRunSet(run);
+    _gsHudProgress(run);
+    var next = run.queue[run.qi];
+    location.href = _gsBuildUrl({
+      phrase: next.phrase, mode: next.mode, cc: run.cc, lang: run.lang, from: run.from, to: run.to,
+      blacklist: run.blacklist,
+    });
+  }
+
+  // Odliczanie z pauzą na ukrytej karcie. Chrome w karcie w tle throttluje timery do mniej
+  // więcej jednego odpalenia na minutę — przerwa 20 s zamieniłaby się w minutę, a tempo
+  // przestałoby znaczyć to, co mierzy. Zamiast liczyć nieprawdziwe sekundy, stoimy
+  // i mówimy o tym wprost (to samo zjawisko opisuje reference_page_visibility_occlusion).
+  function _gsWait(ms, what) {
+    return new Promise(function(resolve) {
+      var left = ms;
+      var last = Date.now();
+      var sayBefore = null; // komunikat sprzed wstrzymania — wraca, gdy karta wraca na wierzch
+      var iv = setInterval(function() {
+        var run = _gsRunGet();
+        if (!run || !run.active) { clearInterval(iv); resolve(false); return; }
+
+        var now = Date.now();
+        if (document.hidden) {
+          last = now;
+          if (sayBefore === null) {
+            var el = document.getElementById('b24t-gs-say');
+            sayBefore = el ? el.innerHTML : '';
+            _gsHudSay('⏸ Karta w tle — przebieg wstrzymany.<br>Przełącz się na nią, żeby ruszył dalej.');
+          }
+          return;
+        }
+        // Pierwszy tick po powrocie karty tylko przesuwa punkt odniesienia. Bez tego odliczanie
+        // liczyłoby czas od ostatniego ticku SPRZED odsłonięcia, czyli naliczałoby do jednego
+        // interwału czasu, w którym karta stała w tle — a to dokładnie ta zasada, której
+        // ten mechanizm ma pilnować.
+        if (sayBefore !== null) { _gsHudSay(sayBefore); sayBefore = null; last = now; return; }
+        left -= (now - last);
+        last = now;
+        if (left <= 0) { clearInterval(iv); resolve(true); return; }
+        _gsHudTick('⏳ ' + Math.ceil(left / 1000) + ' s → ' + what);
+      }, 250);
+    });
+  }
+
+  // ── HUD ──
+
+  function _gsBuildHud() {
+    if (document.getElementById('b24t-gs-hud')) return;
+    var hud = document.createElement('div');
+    hud.id = 'b24t-gs-hud';
+    hud.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483646;width:292px;' +
+      'background:#12141a;color:#e6e8ee;border:1px solid #2a2e3a;border-radius:12px;' +
+      'box-shadow:0 10px 30px rgba(0,0,0,.45);font-family:Geist,\'Segoe UI\',system-ui,sans-serif;' +
+      'font-size:12px;overflow:hidden;';
+    hud.innerHTML =
+      '<div style="display:flex;align-items:center;gap:8px;padding:9px 11px;border-bottom:1px solid #2a2e3a;">' +
+        '<span style="font-weight:700;font-size:11px;letter-spacing:.04em;flex:1;">B24 · KOSZYK</span>' +
+        '<span id="b24t-gs-count" style="font-weight:700;font-size:13px;color:#7dd3fc;">0</span>' +
+        '<button id="b24t-gs-min" title="Zwiń" style="background:transparent;border:none;color:#8b91a1;cursor:pointer;font-size:15px;line-height:1;padding:0 3px;">–</button>' +
+      '</div>' +
+      '<div id="b24t-gs-body" style="padding:9px 11px;">' +
+        '<div id="b24t-gs-camp" style="font-size:10px;color:#a8afbd;font-weight:600;margin-bottom:7px;display:none;"></div>' +
+        '<div id="b24t-gs-prog" style="display:none;margin-bottom:8px;"></div>' +
+        '<div id="b24t-gs-say" style="font-size:11px;color:#9aa1b1;line-height:1.5;">Zbieram z tej strony…</div>' +
+        '<div id="b24t-gs-tick" style="font-size:11px;color:#7dd3fc;margin-top:6px;"></div>' +
+        '<div style="display:flex;gap:6px;margin-top:9px;">' +
+          '<button id="b24t-gs-stop" style="flex:1;background:#2a1b1b;border:1px solid #4a2a2a;color:#f0a0a0;border-radius:7px;padding:5px 0;cursor:pointer;font-size:11px;font-family:inherit;">Stop</button>' +
+          '<button id="b24t-gs-copy" style="flex:1;background:#1b1f28;border:1px solid #2a2e3a;color:#e6e8ee;border-radius:7px;padding:5px 0;cursor:pointer;font-size:11px;font-family:inherit;">Kopiuj</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(hud);
+
+    var bodyEl = hud.querySelector('#b24t-gs-body');
+    var minBtn = hud.querySelector('#b24t-gs-min');
+    minBtn.addEventListener('click', function() {
+      var hidden = bodyEl.style.display === 'none';
+      bodyEl.style.display = hidden ? '' : 'none';
+      minBtn.textContent = hidden ? '–' : '+';
+    });
+    hud.querySelector('#b24t-gs-stop').addEventListener('click', function() {
+      _gsRunStop('user');
+      _gsHudSay('⏹ Zatrzymane ręcznie. Koszyk zachowany.', true);
+    });
+    hud.querySelector('#b24t-gs-copy').addEventListener('click', function() {
+      var btn = hud.querySelector('#b24t-gs-copy');
+      var txt = _gsCartGet().items.map(function(it) { return it.u; }).join('\n');
+      navigator.clipboard.writeText(txt).then(function() {
+        btn.textContent = '✓ Skopiowano';
+        setTimeout(function() { btn.textContent = 'Kopiuj'; }, 1400);
+      }).catch(function() { btn.textContent = '✗ Błąd'; });
+    });
+    _gsHudCount();
+  }
+
+  function _gsHudCount() {
+    var el = document.getElementById('b24t-gs-count');
+    if (el) el.textContent = String(_gsCartGet().items.length);
+  }
+  function _gsHudSay(html, final) {
+    var el = document.getElementById('b24t-gs-say');
+    if (el) el.innerHTML = html;
+    if (final) {
+      var tick = document.getElementById('b24t-gs-tick');
+      if (tick) tick.textContent = '';
+      var stop = document.getElementById('b24t-gs-stop');
+      if (stop) stop.style.display = 'none';
+    }
+  }
+  function _gsHudTick(txt) {
+    var el = document.getElementById('b24t-gs-tick');
+    if (el) el.textContent = txt;
+  }
+
+  // Zakończony przebieg nie zostawia użytkownika z instrukcją „wróć i wklej" — jedno kliknięcie
+  // oddaje robotę tej karcie panelu, która przebieg odpaliła, i skan startuje sam.
+  function _gsHudHandoffBtn() {
+    var tick = document.getElementById('b24t-gs-tick');
+    if (!tick || document.getElementById('b24t-gs-handoff')) return;
+    var btn = document.createElement('button');
+    btn.id = 'b24t-gs-handoff';
+    btn.textContent = '→ Przejdź do skanowania';
+    btn.style.cssText = 'display:block;width:100%;margin-top:9px;background:#1e3a5f;border:1px solid #2f5a8f;' +
+      'color:#cfe6ff;border-radius:8px;padding:8px 0;cursor:pointer;font-size:12px;font-weight:700;' +
+      'font-family:inherit;';
+    btn.addEventListener('click', function() {
+      var ok = _gsHandoffToPanel();
+      btn.disabled = true;
+      btn.style.opacity = '.7';
+      btn.style.cursor = 'default';
+      // Gdy `opener` przepadł (panel przeładowany albo zamknięty), sygnał czeka w GM i karta
+      // panelu podniesie go, gdy na nią wrócisz — trzeba to powiedzieć, bo nic się nie stanie
+      // samo i wygląda to jak zawieszenie.
+      btn.textContent = ok ? '✓ Przekazano do panelu' : '✓ Gotowe — wróć na kartę panelu';
+    });
+    tick.parentNode.insertBefore(btn, tick.nextSibling);
+  }
+
+  // Postęp przebiegu: nazwa kampanii, licznik zadań, pasek i lista wariantów ze stanem.
+  // To jest jedyne miejsce, z którego widać, ILE JESZCZE ZOSTAŁO — przebieg trwa minutami
+  // w karcie, na którą się nie patrzy, a sam licznik koszyka nie mówi, czy to już koniec,
+  // czy dopiero pierwszy z sześciu wariantów.
+  function _gsHudProgress(run) {
+    var campEl = document.getElementById('b24t-gs-camp');
+    var progEl = document.getElementById('b24t-gs-prog');
+    if (!campEl || !progEl || !run || !run.queue || !run.queue.length) return;
+
+    if (run.campaign) {
+      campEl.textContent = run.campaign + (run.cc ? ' · ' + run.cc : '');
+      campEl.style.display = '';
+    }
+
+    var total = run.queue.length;
+    var done = Math.min(run.qi, total);
+    var pct = Math.round((done / total) * 100);
+
+    var rows = run.queue.map(function(t, i) {
+      var stan, kolor, znak;
+      if (i < run.qi)       { stan = 'zrobione'; kolor = '#5b6472'; znak = '✓'; }
+      else if (i === run.qi && run.active) { stan = 'w toku'; kolor = '#7dd3fc'; znak = '▸'; }
+      else                  { stan = 'czeka';    kolor = '#a8afbd'; znak = '·'; }
+      return '<div style="display:flex;gap:5px;font-size:10px;color:' + kolor + ';line-height:1.6;' +
+        (stan === 'zrobione' ? 'text-decoration:line-through;opacity:.65;' : '') + '">' +
+        '<span style="width:8px;flex-shrink:0;">' + znak + '</span>' +
+        '<span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
+          _escHtml(t.phrase) + '</span>' +
+        '<span style="flex-shrink:0;opacity:.8;">' + (t.mode === 'lang' ? 'jęz' : 'kraj') + '</span>' +
+      '</div>';
+    }).join('');
+
+    progEl.innerHTML =
+      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px;">' +
+        '<span style="font-size:9px;color:#8b93a3;letter-spacing:.06em;flex:1;">ZADANIE ' +
+          Math.min(run.qi + (run.active ? 1 : 0), total) + '/' + total + '</span>' +
+        '<span style="font-size:9px;color:#8b93a3;">' + pct + '%</span>' +
+      '</div>' +
+      '<div style="height:3px;border-radius:2px;background:#242833;overflow:hidden;margin-bottom:6px;">' +
+        '<div style="height:100%;width:' + pct + '%;background:#7dd3fc;transition:width .3s ease;"></div>' +
+      '</div>' +
+      '<div style="max-height:96px;overflow-y:auto;">' + rows + '</div>';
+    progEl.style.display = '';
+  }
+
+  function _gsInit() {
+    var run = _gsRunGet();
+    var active = run && run.active;
+    var manual = run && run.stopped === 'manual';
+
+    // Bez przebiegu i bez koszyka HUD się nie pokazuje — inaczej wisiałby na każdym
+    // wyszukiwaniu Google, także prywatnym.
+    if (!active && !manual && !_gsCartGet().items.length) return;
+
+    _gsBuildHud();
+
+    if (active) {
+      // Błąd w kroku przebiegu zostawiłby przebieg „aktywny" na zawsze i nikt by się o tym
+      // nie dowiedział — karta stoi, a stan w GM mówi, że trwa. Zatrzymujemy jawnie.
+      _gsRunStep(run).catch(function(e) {
+        _gsRunStop('error');
+        _gsHudSay('⛔ Błąd przebiegu: ' + _escHtml(e && e.message ? e.message : String(e)) +
+                  '<br>Koszyk zachowany — uruchom przebieg ponownie.', true);
+      });
+      return;
+    }
+
+    if (manual) {
+      // Tryb ręczny: strony przechodzi człowiek, kolektor tylko zbiera to, co zobaczy.
+      var found = _gsHarvest();
+      var fresh = found.filter(function(e) { return !_gsIsBlacklisted(e.u, run.blacklist); });
+      var added = _gsCartAdd(fresh);
+      _gsHudCount();
+      _gsHudSay('Tryb ręczny — strony przechodzisz sam.<br>+' + added + ' do koszyka (' +
+                found.length + ' wyników, ' + (found.length - fresh.length) + ' odsianych)', true);
+      return;
+    }
+
+    _gsHudSay('Koszyk czeka na wklejenie w Brand24.', true);
+  }
+
+  // ───────────────────────────────────────────
   // NEWS MODULE — v0.15.1
   // Floating 3-panel system attached to Annotators Tab
   // ───────────────────────────────────────────
@@ -8237,6 +8852,9 @@ function showOnboarding(onComplete) {
     hideNonArticles: false,
     sortMode: 'confidence', // 'confidence' = najpewniejsze u góry | 'paste' = kolejność wklejenia
     mode: 'news', // 'news' | 'custom' — 'custom' = tryb Niestandardowe (bez keyword-filtra, bez wymuszania "dodane")
+    // Kampania jest NADBUDOWĄ nad trybem News, nie trzecią wartością `mode` (patrz komentarz
+    // przy kafelkach launchera). Wpływa na: worek chipów, prompt AI i nagłówek panelu.
+    campaign: false,
     formOnly: false, // tryb tylko-formularz w Niestandardowe (ukrywa listę + podgląd)
     // Przycisk „Dodaj wzmiankę" ma dwóch niezależnych blokujących. Trzymamy je osobno, bo
     // szarpanie .disabled z kilku miejsc kończyło się tym, że odblokowanie po jednym powodzie
@@ -8278,6 +8896,7 @@ function showOnboarding(onComplete) {
     try { localStorage.setItem('b24t_news_import_opts', JSON.stringify(_newsImportOpts)); } catch(e) {}
   }
 
+  var _newsImportRunner = null;  // set by _wireNewsPanels — pozwala odpalic skan spoza panelu
   var _newsChipsRenderer = null; // set by _wireNewsPanels, called on every panel open
   var _newsListRenderer = null;  // set by _wireNewsPanels, called from module-scope (_newsAiAnalyze)
   var _newsCardRenderer = null;  // j.w. — przerysowanie karty po powrocie tłumaczenia
@@ -8374,15 +8993,58 @@ function showOnboarding(onComplete) {
     return m ? m[1] : null;
   }
 
+  // Tryb kampanii ma WŁASNY worek chipów (`CAMPAIGN_CHIPS`), nie ten per kraj z News.
+  // Inaczej chipy z nazwy kampanii zapisywałyby się na stałe dla rynku i zostawały
+  // w zwykłym monitoringu marki, gdzie nie mają czego szukać.
+  function _newsChipsKey() {
+    return newsState.campaign ? LS.CAMPAIGN_CHIPS : LS.NEWS_KEYWORDS;
+  }
   function _newsGetKeywords(cc) {
-    var all = lsGet(LS.NEWS_KEYWORDS, {});
+    var all = lsGet(_newsChipsKey(), {});
     var saved = all[cc];
-    return (Array.isArray(saved) && saved.length > 0) ? saved : NEWS_DEFAULT_KEYWORDS.slice();
+    if (Array.isArray(saved) && saved.length > 0) return saved;
+    var base = NEWS_DEFAULT_KEYWORDS.slice();
+    // Chipy kampanii dochodzą do wariantów marki, a nie zamiast nich: strona opisująca
+    // kolekcję bez użycia jej oficjalnej nazwy ma się dalej liczyć (częste na mniejszych
+    // rynkach), a trafienie w nazwę kampanii tylko podbija punktację i sygnał dla AI.
+    if (newsState.campaign) {
+      _campaignChipsFromPhrase((lsGet(LS.CAMPAIGN_CFG, {}) || {}).phrase).forEach(function(c) {
+        if (base.indexOf(c) === -1) base.push(c);
+      });
+    }
+    return base;
   }
   function _newsSaveKeywords(cc, chips) {
-    var all = lsGet(LS.NEWS_KEYWORDS, {});
+    var all = lsGet(_newsChipsKey(), {});
     all[cc] = chips;
-    lsSet(LS.NEWS_KEYWORDS, all);
+    lsSet(_newsChipsKey(), all);
+  }
+
+  // Z „H&M STUDIO ESSENTIALS AW26" robi ['studio essentials aw26', 'studio essentials'].
+  // Wariant marki na początku jest zbędny — jest już w NEWS_DEFAULT_KEYWORDS, a chip
+  // ma łapać to, co odróżnia TĘ kampanię. Krótszy wariant wchodzi, bo prasa często
+  // pomija oznaczenie sezonu.
+  function _campaignChipsFromPhrase(phrase) {
+    var rest = String(phrase || '').trim().replace(/^(h\s*&\s*m|h-m|hm)\s+/i, '').trim();
+    if (!rest) return [];
+    var words = rest.split(/\s+/).filter(Boolean);
+    var out = [];
+    // Chip krótszy niż trzy znaki trafia w środek dowolnego słowa i zalewa punktację —
+    // „H&M x WARDROBE.NYC" dawało chip „x", który liczyłby każde „x" na stronie.
+    function push(c) { if (c && c.length >= 3 && out.indexOf(c) === -1) out.push(c); }
+    push(words.join(' ').toLowerCase());
+    if (words.length > 1) push(words.slice(0, -1).join(' ').toLowerCase());
+    // Oznaczenie sezonu OSOBNYM chipem (decyzja właściciela projektu, 2026-09-17): „AW26" jest
+    // mocnym wyznacznikiem tej konkretnej kampanii, a wewnątrz dłuższego chipa trafiałoby
+    // dopiero przy pełnej frazie ciągiem — artykuł pisząc „kolekcja H&M Studio na sezon AW26"
+    // nie trafiłby w nic. Wzór jest wąski celowo: sam rocznik („2026") to w tekście zwykła data.
+    // ⚠ Zapis z ukośnikiem albo odstępem („A/W 26", „AW 2026") tego chipa NIE trafi — chipy
+    // dopasowują się jako dosłowny podciąg. Dopisz taki wariant ręcznie, jeśli rynek go używa.
+    words.forEach(function(w) {
+      var token = w.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (/^(aw|ss|fw|sp|hw|pf|cr)\d{2,4}$/.test(token)) push(token);
+    });
+    return out;
   }
   function _newsGetLangMap() { return lsGet(LS.NEWS_LANG_MAP, {}); }
   function _newsSaveLangMap(map) { lsSet(LS.NEWS_LANG_MAP, map); }
@@ -10467,10 +11129,15 @@ function showOnboarding(onComplete) {
 
   function _newsAiBuildSystemPrompt() {
     var s = _aiGetSettings();
-    if (!s.news || !s.news.activePromptId || !s.prompts) return null;
+    // Kampania ma WŁASNY prompt (`s.campaign`), bo ocenia inną rzecz niż News: przynależność
+    // strony do konkretnej kampanii, a nie samą obecność marki. Czytamy go wprost, zamiast
+    // podmieniać `s.news.activePromptId` — podmiana zostawiałaby prompt kampanijny
+    // w zwykłym monitoringu po wyjściu z trybu.
+    var slot = newsState.campaign ? (s.campaign || {}) : (s.news || {});
+    if (!slot.activePromptId || !s.prompts) return null;
     var found = null;
     for (var _pi = 0; _pi < s.prompts.length; _pi++) {
-      if (s.prompts[_pi].id === s.news.activePromptId) { found = s.prompts[_pi]; break; }
+      if (s.prompts[_pi].id === slot.activePromptId) { found = s.prompts[_pi]; break; }
     }
     if (!found || !found.system) return null;
     var projectName = state.projectId ? (_pnResolve(state.projectId) || '') : '';
@@ -10482,9 +11149,16 @@ function showOnboarding(onComplete) {
     var brandCtx = (_newsAiGetBrandCtx(state.projectId) || '').trim() ||
       '(not provided — infer the industry from the contexts, and be strict about same-name ' +
       'companies or products from a different industry)';
+    // Nazwa kampanii z modalu „Kampanie H&M". Prompt kampanijny (prompts/news_ai_campaign.txt)
+    // pyta o nią wprost; prompt bazowy nie zawiera `{CAMPAIGN}`, więc podstawienie jest dla niego
+    // bez znaczenia. Gdy przebiegu jeszcze nie było, mówimy to jawnie — inaczej model dostaje
+    // polecenie oceny kampanii o pustej nazwie i odrzuca wszystko.
+    var campaign = (lsGet(LS.CAMPAIGN_CFG, {}) || {}).phrase ||
+      '(not provided — judge the brand mention only and never return "offcampaign")';
     return found.system
       .replace(/\{PROJECT_NAME\}/g, projectName)
-      .replace(/\{BRAND_CONTEXT\}/g, brandCtx);
+      .replace(/\{BRAND_CONTEXT\}/g, brandCtx)
+      .replace(/\{CAMPAIGN\}/g, campaign);
   }
   // Wyciąga werdykt z odpowiedzi modelu. Najpierw normalne parsowanie JSON-a, a gdy ono padnie —
   // wyłuskanie pól regexem. Powód: przy limicie max_tokens odpowiedź bywa ucięta w środku zdania
@@ -10498,7 +11172,7 @@ function showOnboarding(onComplete) {
       var j = JSON.parse(raw);
       if (j && (j.verdict || typeof j.relevant === 'boolean')) return j;
     } catch(e) {}
-    var mv = raw.match(/"verdict"\s*:\s*"(match|borderline|miss|spam)"/i);
+    var mv = raw.match(/"verdict"\s*:\s*"(match|offcampaign|borderline|miss|spam)"/i);
     if (!mv) return null;
     var mr = raw.match(/"reason"\s*:\s*"((?:[^"\\]|\\.)*)/);
     var reason = mr ? mr[1].replace(/\\"/g, '"').replace(/\\n/g, ' ').trim() : '';
@@ -10607,9 +11281,12 @@ function showOnboarding(onComplete) {
             entry.aiStatus = 'done';
             var _v = parsed.verdict;
             if (!_v) _v = parsed.relevant ? 'match' : 'miss';
-            if (_v !== 'match' && _v !== 'borderline' && _v !== 'miss' && _v !== 'spam') _v = parsed.relevant ? 'match' : 'miss';
+            if (_v !== 'match' && _v !== 'offcampaign' && _v !== 'borderline' && _v !== 'miss' && _v !== 'spam') _v = parsed.relevant ? 'match' : 'miss';
             entry.aiVerdict = _v;
-            entry.aiRelevant = (_v === 'match' || _v === 'borderline');
+            // `offcampaign` liczy się jako relevantne: marka JEST w treści redakcyjnej, więc
+            // wzmianka nadaje się do dodania — po prostu nie należy do szukanej kampanii.
+            // O tym, czy wchodzi, decyduje człowiek, a nie filtr.
+            entry.aiRelevant = (_v === 'match' || _v === 'offcampaign' || _v === 'borderline');
             entry.aiReason = parsed.reason || '';
           } catch(e) {
             entry.aiStatus = 'error';
@@ -11527,7 +12204,7 @@ function showOnboarding(onComplete) {
   function _applyNewsMode() {
     var isCustom = newsState.mode === 'custom';
     var headerTitle = document.getElementById('b24t-news-header-title');
-    if (headerTitle) headerTitle.innerHTML = isCustom ? '✏️ Niestandardowe' : '📰 News';
+    if (headerTitle) headerTitle.innerHTML = isCustom ? '✏️ Niestandardowe' : (newsState.campaign ? '🎯 Kampanie H&amp;M' : '📰 News');
 
     var customRows = document.getElementById('b24t-news-f-custom-fields');
     if (customRows) customRows.style.display = isCustom ? 'flex' : 'none';
@@ -11779,6 +12456,9 @@ function showOnboarding(onComplete) {
   }
 
   function openNewsPanels(mode) {
+    // 'campaign' zachowuje sie jak News (kategoria, tag „dodane", filtr chipow), a rozni sie
+    // workiem chipow, promptem AI i naglowkiem — patrz `newsState.campaign`.
+    newsState.campaign = (mode === 'campaign');
     newsState.mode = (mode === 'custom') ? 'custom' : 'news';
     var _isExternal = !window.location.pathname.includes('/panel/results/');
     var overlay = document.getElementById('b24t-news-overlay');
@@ -11835,7 +12515,12 @@ function showOnboarding(onComplete) {
         '<button id="b24t-launcher-close" style="background:transparent;border:none;color:' + t.textMuted + ';cursor:pointer;font-size:22px;line-height:1;padding:0 4px;">×</button>',
       '</div>',
       '<div style="font-size:11px;color:' + t.textMuted + ';margin-bottom:16px;line-height:1.5;">Wybierz tryb dodawania wzmianek do Brand24.</div>',
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">',
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">',
+        '<div data-launcher-tile="campaign" style="padding:18px 16px;border-radius:12px;border:1px solid ' + t.border + ';background:' + t.bgDeep + ';cursor:pointer;transition:transform 0.15s, border-color 0.15s, background 0.15s;">',
+          '<div style="font-size:24px;margin-bottom:8px;">🎯</div>',
+          '<div style="font-size:13px;font-weight:700;color:' + t.text + ';margin-bottom:6px;">Kampanie H&amp;M</div>',
+          '<div style="font-size:10px;color:' + t.textFaint + ';line-height:1.5;">Tryb News wsparty wyszukiwarką: wtyczka sama przechodzi wyniki Google dla wariantów frazy kampanii i zbiera adresy do koszyka.</div>',
+        '</div>',
         '<div data-launcher-tile="news" style="padding:18px 16px;border-radius:12px;border:1px solid ' + t.border + ';background:' + t.bgDeep + ';cursor:pointer;transition:transform 0.15s, border-color 0.15s, background 0.15s;">',
           '<div style="font-size:24px;margin-bottom:8px;">📰</div>',
           '<div style="font-size:13px;font-weight:700;color:' + t.text + ';margin-bottom:6px;">News</div>',
@@ -11880,9 +12565,583 @@ function showOnboarding(onComplete) {
       tile.addEventListener('click', function() {
         var mode = tile.getAttribute('data-launcher-tile');
         modal.remove();
+        // Kampania ma własny rozjazd: zbieranie adresów albo dodawanie z już zebranych.
+        if (mode === 'campaign') { _openCampaignHub(); return; }
         openNewsPanels(mode);
         var nst = document.getElementById('b24t-news-side-tab');
         if (nst) nst.classList.add('active');
+      });
+    });
+  }
+
+  // Przycisk „z koszyka" w modalu importu — droga dla wejścia przez kafelek „Dodawanie",
+  // czyli gdy adresy zebrano wcześniej i nie ma już karty przebiegu, z której by je przekazać.
+  function _newsRefreshCartBtn() {
+    var btn = document.getElementById('b24t-news-from-cart');
+    var hint = document.getElementById('b24t-news-paste-hint');
+    if (!btn) return;
+    var n = newsState.campaign ? _gsCartGet().items.length : 0;
+    if (!n) { btn.style.display = 'none'; if (hint) hint.style.display = ''; return; }
+    btn.textContent = '📥 Wklej z koszyka (' + n + ')';
+    btn.style.display = '';
+    if (hint) hint.style.display = 'none';
+    if (btn.dataset.wired) return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', function() {
+      var ta = document.getElementById('b24t-news-paste-area');
+      if (!ta) return;
+      ta.value = _gsCartGet().items.map(function(it) { return it.u; }).join('\n');
+      ta.focus();
+    });
+  }
+
+  // ── PRZEKAZANIE PRZEBIEGU DO PANELU ──
+  // Po zakończeniu zbierania karta Google musi oddać robotę TEJ karcie panelu, która przebieg
+  // odpaliła — użytkownik ma otwarte kilka kart z różnymi projektami i wciśnięcie skanu
+  // w cudzą kartę wrzuciłoby adresy do złego projektu.
+  //
+  // Droga główna: `window.opener`. Karta przebiegu jest otwierana przez `window.open` z modalu,
+  // więc `opener` JEST referencją dokładnie do tej karty — nie trzeba jej szukać ani zgadywać.
+  // Serie nawigacji po Google tego nie zrywają, bo wszystkie są w obrębie jednej witryny.
+  //
+  // Fallback: znacznik w GM ze tokenem karty źródłowej. Gdy panel został w międzyczasie
+  // przeładowany (`opener` przepada), podnosi robotę przy powrocie na kartę.
+  //
+  // Adresy NIE jadą w wiadomości — panel czyta je sam z koszyka. Wiadomość jest samym
+  // sygnałem, więc nie ma tu danych z zewnątrz, którym trzeba by ufać.
+
+  var GS_HANDOFF_KEY = 'b24t_gs_handoff';
+
+  // Token karty panelu: per karta, przeżywa nawigację po SPA Brand24.
+  function _b24TabToken() {
+    var t = null;
+    try { t = sessionStorage.getItem('b24t_panel_tab'); } catch(e) { return 'no-session-storage'; }
+    if (!t) {
+      t = String(Date.now()) + '-' + Math.random().toString(36).slice(2, 9);
+      try { sessionStorage.setItem('b24t_panel_tab', t); } catch(e) {}
+    }
+    return t;
+  }
+
+  // Strona wyników: oddaj robotę panelowi.
+  function _gsHandoffToPanel() {
+    var run = _gsRunGet() || {};
+    var payload = {
+      type: 'b24t_campaign_handoff',
+      campaign: run.campaign || '',
+      cc: run.cc || '',
+      count: _gsCartGet().items.length,
+    };
+    // Fallback zapisujemy ZAWSZE, także gdy opener odpowie — panel czyści znacznik po podjęciu,
+    // więc podwójne wykonanie nie grozi, a utrata sygnału owszem.
+    _gsSet(GS_HANDOFF_KEY, { ready: true, tab: run.originTab || null, ts: Date.now(), campaign: payload.campaign });
+
+    var przekazane = false;
+    try {
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage(payload, 'https://panel.brand24.pl');
+        window.opener.postMessage(payload, 'https://app.brand24.com');
+        przekazane = true;
+        // Focus bywa przez Chrome ignorowany — to wygoda, nie fundament. Skanowanie startuje
+        // po stronie panelu niezależnie od tego, czy karta faktycznie wyszła na wierzch.
+        try { window.opener.focus(); } catch(e) {}
+      }
+    } catch(e) {}
+    return przekazane;
+  }
+
+  // Panel: nasłuch sygnału z karty przebiegu + podjęcie zaległego znacznika po powrocie.
+  function _wireCampaignHandoff() {
+    if (window.__b24tCampaignHandoffWired) return;
+    window.__b24tCampaignHandoffWired = true;
+
+    window.addEventListener('message', function(e) {
+      // Nadawcą może być WYŁĄCZNIE strona wyników Google. Bez tego dowolna otwarta witryna
+      // mogłaby wymusić skan na cudzym koszyku.
+      if (!/^https:\/\/(www\.)?google\.[a-z.]+$/.test(e.origin || '')) return;
+      var d = e.data;
+      if (!d || d.type !== 'b24t_campaign_handoff') return;
+      _gsSet(GS_HANDOFF_KEY, { ready: false });
+      _campaignHandoff(d.campaign || '');
+    });
+
+    // Panel przeładowany w trakcie przebiegu → `opener` przepadł. Znacznik czeka w GM
+    // i tylko karta, która przebieg odpaliła, ma prawo go podjąć.
+    function podejmijZalegly() {
+      var h = _gsGet(GS_HANDOFF_KEY, null);
+      if (!h || !h.ready) return;
+      if (h.tab && h.tab !== _b24TabToken()) return;
+      _gsSet(GS_HANDOFF_KEY, { ready: false });
+      _campaignHandoff(h.campaign || '');
+    }
+    document.addEventListener('visibilitychange', function() {
+      if (!document.hidden) podejmijZalegly();
+    });
+    podejmijZalegly();
+  }
+
+  // Wejście w skan kampanii z gotowego koszyka: chipy, adresy, start. Brak promptu zatrzymuje
+  // na modalu wyboru — skan bez oceny AI dałby listę, którą trzeba przejść ręcznie, czyli
+  // dokładnie to, czego to narzędzie ma nie wymagać.
+  function _campaignHandoff(campaign) {
+    var cart = _gsCartGet().items;
+    if (!cart.length) return;
+
+    _campaignOpenAdding();
+
+    // Panel buduje się asynchronicznie (`requestAnimationFrame` w `openNewsPanels`),
+    // więc pola mogą jeszcze nie istnieć — czekamy na textarea, nie na stały czas.
+    var prob = 0;
+    (function czekajNaPanel() {
+      var ta = document.getElementById('b24t-news-paste-area');
+      if (!ta) {
+        if (++prob > 40) return; // ~4 s i tyle; panel się nie zbudował, nie ma czego wypełniać
+        setTimeout(czekajNaPanel, 100);
+        return;
+      }
+      ta.value = cart.map(function(it) { return it.u; }).join('\n');
+
+      var s = _aiGetSettings();
+      var promptId = (s.campaign && s.campaign.activePromptId) || '';
+      var istnieje = promptId && (s.prompts || []).some(function(p) { return p.id === promptId; });
+      if (!istnieje) { _openCampaignPromptPicker(campaign, cart.length); return; }
+
+      _campaignStartScan();
+    })();
+  }
+
+  // Prompt kampanii jest osobny od News (`s.campaign.activePromptId`), bo ocenia inną rzecz:
+  // przynależność strony do kampanii, nie samą obecność marki.
+  function _campaignStartScan() {
+    // Prompt bierze `_newsAiBuildSystemPrompt` wprost z `s.campaign` — tu nie ma czego ustawiać.
+    var im = document.getElementById('b24t-news-import-modal');
+    if (im) im.style.display = 'none';
+    if (_newsImportRunner) _newsImportRunner();
+  }
+
+  function _openCampaignPromptPicker(campaign, count) {
+    var existing = document.getElementById('b24t-campaign-prompt-picker');
+    if (existing) existing.remove();
+
+    var t = _newsThemeVars();
+    var s = _aiGetSettings();
+
+    var modal = document.createElement('div');
+    modal.id = 'b24t-campaign-prompt-picker';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:rgba(0,0,0,0.72);' +
+      'display:flex;align-items:center;justify-content:center;font-family:Geist,\'Segoe UI\',system-ui,sans-serif;';
+
+    var inner = document.createElement('div');
+    inner.style.cssText = 'background:' + t.bg + ';border:1px solid ' + t.border + ';border-radius:14px;' +
+      'padding:20px;width:420px;max-width:calc(100vw - 40px);box-shadow:' + t.shadow + ';color:' + t.text + ';';
+
+    var opts = '<option value="">— wybierz —</option>' + (s.prompts || []).map(function(p) {
+      return '<option value="' + p.id + '">' + _escHtml(p.name || p.id) + '</option>';
+    }).join('');
+
+    inner.innerHTML = [
+      '<div style="font-size:14px;font-weight:700;margin-bottom:8px;">⚠ Nie wybrano promptu AI</div>',
+      '<div style="font-size:11px;color:' + t.textMuted + ';line-height:1.55;margin-bottom:14px;">',
+        'W koszyku czeka <strong>' + count + '</strong> adres' + (count === 1 ? '' : 'ów') +
+        (campaign ? ' z kampanii <strong>' + _escHtml(campaign) + '</strong>' : '') + '. ',
+        'Sekcja <strong>Kampanie H&amp;M</strong> nie ma jeszcze przypisanego promptu, a bez niego skan ',
+        'nie oceni, czy strona dotyczy tej kampanii.',
+      '</div>',
+      '<label style="display:block;font-size:10px;font-weight:600;color:' + t.textMuted + ';letter-spacing:.04em;margin-bottom:4px;">PROMPT DLA KAMPANII</label>',
+      '<select id="b24t-cpp-sel" style="width:100%;box-sizing:border-box;font-size:11px;padding:7px 9px;border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-family:inherit;">' + opts + '</select>',
+      '<div style="margin-top:6px;font-size:9px;color:' + t.textFaint + ';line-height:1.45;">Do kampanii służy <code>prompts/news_ai_campaign.txt</code> — zna werdykt „poza kampanią" i podstawia nazwę kampanii pod <code>{CAMPAIGN}</code>. Jeśli nie ma go na liście, wklej go najpierw w ustawieniach AI.</div>',
+      '<div style="display:flex;gap:8px;margin-top:16px;">',
+        '<button id="b24t-cpp-ok" style="flex:2;background:var(--b24t-primary);border:none;color:#fff;border-radius:9px;padding:8px 0;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;">Zapisz i skanuj</button>',
+        '<button id="b24t-cpp-skip" style="flex:1;background:transparent;border:1px solid ' + t.border + ';color:' + t.textMuted + ';border-radius:9px;padding:8px 0;cursor:pointer;font-size:11px;font-family:inherit;" title="Skan bez oceny AI — wiersze trzeba będzie przejrzeć ręcznie">Skanuj bez AI</button>',
+      '</div>',
+    ].join('');
+
+    modal.appendChild(inner);
+    document.body.appendChild(modal);
+
+    var sel = inner.querySelector('#b24t-cpp-sel');
+    var ok = inner.querySelector('#b24t-cpp-ok');
+    sel.focus();
+
+    ok.addEventListener('click', function() {
+      if (!sel.value) {
+        sel.style.borderColor = '#f59e0b';
+        return;
+      }
+      var cfg = _aiGetSettings();
+      if (!cfg.campaign) cfg.campaign = {};
+      cfg.campaign.activePromptId = sel.value;
+      _aiSaveSettings(cfg);
+      modal.remove();
+      _campaignStartScan();
+    });
+    inner.querySelector('#b24t-cpp-skip').addEventListener('click', function() {
+      modal.remove();
+      var im = document.getElementById('b24t-news-import-modal');
+      if (im) im.style.display = 'none';
+      if (_newsImportRunner) _newsImportRunner();
+    });
+  }
+
+  // ── CAMPAIGN HUB — rozjazd trybu „Kampanie H&M": zbieranie albo dodawanie ──
+  // Dwa kroki tej samej roboty są rozdzielone, bo dzieli je czas: przebieg zbierania trwa
+  // minutami w innej karcie, a dodawanie robi się z gotowego koszyka, często później.
+  function _openCampaignHub() {
+    var existing = document.getElementById('b24t-campaign-hub');
+    if (existing) { existing.remove(); return; }
+
+    var t = _newsThemeVars();
+    var cart = _gsCartGet().items.length;
+    var run = _gsRunGet();
+
+    var modal = document.createElement('div');
+    modal.id = 'b24t-campaign-hub';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:2147483645;background:rgba(0,0,0,0.65);' +
+      'display:flex;align-items:center;justify-content:center;font-family:Geist,\'Segoe UI\',system-ui,sans-serif;' +
+      'animation:b24t-fadein 0.18s ease both;';
+
+    var inner = document.createElement('div');
+    inner.style.cssText = 'background:' + t.bg + ';border:1px solid ' + t.border + ';border-radius:14px;' +
+      'padding:22px 22px 20px;width:520px;max-width:calc(100vw - 40px);box-shadow:' + t.shadow + ';color:' + t.text + ';';
+
+    // Podpis pod kafelkiem „Dodawanie" mówi wprost, co jest w koszyku — bez tego trzeba
+    // wejść, żeby się dowiedzieć, czy jest z czego dodawać.
+    var cartInfo = cart
+      ? '<strong style="color:' + t.accent + ';">' + cart + '</strong> adres' + (cart === 1 ? '' : 'ów') + ' w koszyku' +
+        (run && run.campaign ? ' · ' + _escHtml(run.campaign) : '')
+      : 'koszyk pusty — najpierw zbieranie';
+
+    inner.innerHTML = [
+      '<div style="display:flex;align-items:center;margin-bottom:14px;">',
+        '<span style="font-size:14px;font-weight:700;flex:1;">🎯 Kampanie H&amp;M</span>',
+        '<button id="b24t-hub-close" style="background:transparent;border:none;color:' + t.textMuted + ';cursor:pointer;font-size:22px;line-height:1;padding:0 4px;">×</button>',
+      '</div>',
+      '<div style="font-size:11px;color:' + t.textMuted + ';margin-bottom:16px;line-height:1.5;">Zbierz adresy z wyników Google albo przejdź do dodawania z już zebranych.</div>',
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">',
+        '<div data-hub-tile="collect" style="padding:18px 16px;border-radius:12px;border:1px solid ' + t.border + ';background:' + t.bgDeep + ';cursor:pointer;transition:transform 0.15s, border-color 0.15s, background 0.15s;">',
+          '<div style="font-size:24px;margin-bottom:8px;">🔍</div>',
+          '<div style="font-size:13px;font-weight:700;color:' + t.text + ';margin-bottom:6px;">Zbieranie</div>',
+          '<div style="font-size:10px;color:' + t.textFaint + ';line-height:1.5;">Dane kampanii, rynek i zakres dat. Wtyczka sama przechodzi wyniki Google i zbiera adresy do koszyka.</div>',
+        '</div>',
+        '<div data-hub-tile="add" style="padding:18px 16px;border-radius:12px;border:1px solid ' + t.border + ';background:' + t.bgDeep + ';cursor:pointer;transition:transform 0.15s, border-color 0.15s, background 0.15s;">',
+          '<div style="font-size:24px;margin-bottom:8px;">📋</div>',
+          '<div style="font-size:13px;font-weight:700;color:' + t.text + ';margin-bottom:6px;">Dodawanie</div>',
+          '<div style="font-size:10px;color:' + t.textFaint + ';line-height:1.5;">Skan i ocena AI pod kampanię — osobny prompt i chipy z nazwy kampanii.</div>',
+          '<div style="margin-top:8px;font-size:10px;color:' + t.textMuted + ';">' + cartInfo + '</div>',
+        '</div>',
+      '</div>',
+    ].join('');
+
+    modal.appendChild(inner);
+    modal.addEventListener('click', function(e) { if (e.target === modal) modal.remove(); });
+    document.body.appendChild(modal);
+
+    var escHandler = function(e) { if (e.key === 'Escape') modal.remove(); };
+    document.addEventListener('keydown', escHandler);
+    var _origRemove = modal.remove.bind(modal);
+    modal.remove = function() { document.removeEventListener('keydown', escHandler); _origRemove(); };
+    inner.querySelector('#b24t-hub-close').addEventListener('click', function() { modal.remove(); });
+
+    inner.querySelectorAll('[data-hub-tile]').forEach(function(tile) {
+      tile.addEventListener('mouseenter', function() {
+        tile.style.transform = 'translateY(-2px)';
+        tile.style.borderColor = 'var(--b24t-primary)';
+        tile.style.background = 'var(--b24t-bg-section-c)';
+      });
+      tile.addEventListener('mouseleave', function() {
+        tile.style.transform = '';
+        tile.style.borderColor = t.border;
+        tile.style.background = t.bgDeep;
+      });
+      tile.addEventListener('click', function() {
+        var which = tile.getAttribute('data-hub-tile');
+        modal.remove();
+        if (which === 'collect') { _openCampaignModal(); return; }
+        _campaignOpenAdding();
+      });
+    });
+  }
+
+  // Widok dodawania w trybie kampanii. Wspólny punkt wejścia dla kafelka „Dodawanie"
+  // i dla powrotu z przebiegu (`_campaignHandoff`), żeby oba trafiały w ten sam stan.
+  function _campaignOpenAdding() {
+    openNewsPanels('campaign');
+    var nst = document.getElementById('b24t-news-side-tab');
+    if (nst) nst.classList.add('active');
+  }
+
+  // ── CAMPAIGN MODAL — przebieg wyszukiwania kampanii H&M w Google ──
+  // Ekran roboczy trybu „Kampanie H&M": tu powstaje kolejka zapytań, stąd rusza przebieg
+  // i tu wraca koszyk. Sama mechanika zbierania siedzi w sekcji GOOGLE SEARCH COLLECTOR.
+  function _openCampaignModal() {
+    var existing = document.getElementById('b24t-campaign-modal');
+    if (existing) { existing.remove(); return; }
+
+    var t = _newsThemeVars();
+    var cfg = lsGet(LS.CAMPAIGN_CFG, {});
+    var pc = _newsProjectCountry();
+    // Kraj z nazwy projektu (H&M_GR → GR), język z mapy krajów — oba do nadpisania ręcznie,
+    // bo jeden rynek bywa obsługiwany w kilku językach.
+    var cc = (cfg.cc || pc || '').toUpperCase();
+    var lang = cfg.lang || (_NEWS_LANG_MAP[cc.toLowerCase()] || [''])[0] || '';
+
+    function inp(id, type, val, extra) {
+      return '<input id="' + id + '" type="' + type + '" value="' + _escHtml(val || '') + '" ' +
+        (extra || '') + ' style="width:100%;box-sizing:border-box;font-size:11px;padding:6px 8px;' +
+        'border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-family:inherit;">';
+    }
+    function lbl(txt) {
+      return '<label style="display:block;font-size:10px;font-weight:600;color:' + t.textMuted +
+        ';letter-spacing:.04em;margin-bottom:4px;">' + txt + '</label>';
+    }
+
+    var modal = document.createElement('div');
+    modal.id = 'b24t-campaign-modal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:2147483645;background:rgba(0,0,0,0.72);' +
+      'display:flex;align-items:center;justify-content:center;font-family:Geist,\'Segoe UI\',system-ui,sans-serif;';
+
+    var inner = document.createElement('div');
+    inner.style.cssText = 'background:' + t.bg + ';border:1px solid ' + t.border + ';border-radius:14px;' +
+      'padding:20px;width:560px;max-width:calc(100vw - 40px);max-height:90vh;overflow-y:auto;' +
+      'box-shadow:' + t.shadow + ';color:' + t.text + ';';
+
+    inner.innerHTML = [
+      '<div style="display:flex;align-items:center;margin-bottom:14px;">',
+        '<span style="font-size:14px;font-weight:700;flex:1;">🎯 Kampania H&amp;M — wyszukiwanie</span>',
+        '<button id="b24t-camp-close" style="background:transparent;border:none;color:' + t.textMuted + ';cursor:pointer;font-size:22px;line-height:1;padding:0 4px;">×</button>',
+      '</div>',
+
+      '<div style="margin-bottom:10px;">',
+        lbl('NAZWA KAMPANII'),
+        inp('b24t-camp-phrase', 'text', cfg.phrase, 'placeholder="H&amp;M STUDIO ESSENTIALS AW26"'),
+      '</div>',
+
+      '<div style="margin-bottom:10px;">',
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">',
+          lbl('WARIANTY FRAZY'),
+          '<button id="b24t-camp-regen" style="font-size:10px;padding:1px 7px;border-radius:6px;border:1px solid ' + t.border + ';background:transparent;color:' + t.textMuted + ';cursor:pointer;">↺ z nazwy</button>',
+        '</div>',
+        '<textarea id="b24t-camp-variants" rows="3" placeholder="jeden wariant na linię" style="width:100%;box-sizing:border-box;font-size:11px;padding:6px 8px;border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-family:monospace;line-height:1.5;resize:vertical;"></textarea>',
+        '<div style="margin-top:3px;font-size:9px;color:' + t.textFaint + ';line-height:1.4;">Pełna nazwa często nie funkcjonuje na mniejszych rynkach — krótsze warianty łapią to, czego nie łapie pełna. Zakres dat trzyma szum w ryzach.</div>',
+      '</div>',
+
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:10px;">',
+        '<div>' + lbl('KRAJ') + inp('b24t-camp-cc', 'text', cc, 'maxlength="2" placeholder="GR"') + '</div>',
+        '<div>' + lbl('JĘZYK') + inp('b24t-camp-lang', 'text', lang, 'maxlength="3" placeholder="el"') + '</div>',
+        '<div>' + lbl('OD') + inp('b24t-camp-from', 'date', cfg.from) + '</div>',
+        '<div>' + lbl('DO') + inp('b24t-camp-to', 'date', cfg.to) + '</div>',
+      '</div>',
+
+      '<div style="display:flex;gap:16px;margin-bottom:12px;font-size:11px;">',
+        '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="b24t-camp-m-country"' + (cfg.modeCountry === false ? '' : ' checked') + '> filtr kraju</label>',
+        '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="b24t-camp-m-lang"' + (cfg.modeLang === false ? '' : ' checked') + '> filtr języka</label>',
+      '</div>',
+
+      '<details style="margin-bottom:12px;">',
+        '<summary style="font-size:10px;font-weight:600;color:' + t.textMuted + ';cursor:pointer;letter-spacing:.04em;">CZARNA LISTA DOMEN</summary>',
+        '<textarea id="b24t-camp-blacklist" rows="3" style="width:100%;box-sizing:border-box;margin-top:6px;font-size:10px;padding:6px 8px;border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-family:monospace;line-height:1.5;resize:vertical;"></textarea>',
+        '<div style="margin-top:3px;font-size:9px;color:' + t.textFaint + ';line-height:1.4;">Jedna na linię. Nie trafiają do koszyka, a strona wyników złożona z samych takich trafień jest przewijana szybciej.</div>',
+      '</details>',
+
+      '<div style="margin-bottom:12px;">',
+        lbl('PROMPT AI'),
+        '<select id="b24t-camp-prompt" style="width:100%;box-sizing:border-box;font-size:11px;padding:6px 8px;border-radius:7px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';font-family:inherit;"></select>',
+        '<div style="margin-top:3px;font-size:9px;color:' + t.textFaint + ';line-height:1.4;">Do kampanii służy <code>prompts/news_ai_campaign.txt</code> — zna werdykt <strong>poza kampanią</strong> i podstawia nazwę kampanii pod <code>{CAMPAIGN}</code>. Wklej go raz w ustawieniach AI.</div>',
+      '</div>',
+
+      '<div id="b24t-camp-cart" style="padding:9px 11px;border-radius:9px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';margin-bottom:12px;font-size:11px;"></div>',
+
+      '<div style="display:flex;gap:8px;">',
+        '<button id="b24t-camp-start" style="flex:2;background:var(--b24t-primary);border:none;color:#fff;border-radius:9px;padding:9px 0;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;">▶ Uruchom przebieg</button>',
+        '<button id="b24t-camp-manual" style="flex:1;background:transparent;border:1px solid ' + t.border + ';color:' + t.textMuted + ';border-radius:9px;padding:9px 0;cursor:pointer;font-size:11px;font-family:inherit;" title="Otwiera pierwsze wyszukiwanie bez automatu — strony przechodzisz sam, koszyk zbiera w tle">Otwórz ręcznie</button>',
+      '</div>',
+      '<div style="margin-top:8px;font-size:9px;color:' + t.textFaint + ';line-height:1.45;">Przebieg działa w nowej karcie i potrzebuje jej NA WIERZCHU. Karta zminimalizowana albo w całości zasłonięta innym oknem jest dla Chrome ukryta — wtedy przebieg sam się wstrzyma i poczeka. Osobny monitor jest w porządku.</div>',
+    ].join('');
+
+    modal.appendChild(inner);
+    modal.addEventListener('click', function(e) { if (e.target === modal) modal.remove(); });
+    document.body.appendChild(modal);
+
+    var phraseEl = inner.querySelector('#b24t-camp-phrase');
+    var varsEl   = inner.querySelector('#b24t-camp-variants');
+    var blEl     = inner.querySelector('#b24t-camp-blacklist');
+    var promptEl = inner.querySelector('#b24t-camp-prompt');
+
+    varsEl.value = (cfg.variants && cfg.variants.length ? cfg.variants : _gsVariants(cfg.phrase || '')).join('\n');
+    blEl.value = (cfg.blacklist && cfg.blacklist.length ? cfg.blacklist : GS_BLACKLIST_DEFAULT).join('\n');
+
+    // Warianty przepisujemy z nazwy tylko dopóki użytkownik ich nie tknął — inaczej ręcznie
+    // dopisany wariant lokalny znikałby przy każdej literze poprawianej w nazwie kampanii.
+    var varsTouched = !!(cfg.variants && cfg.variants.length);
+    varsEl.addEventListener('input', function() { varsTouched = true; });
+    phraseEl.addEventListener('input', function() {
+      if (!varsTouched) varsEl.value = _gsVariants(phraseEl.value).join('\n');
+    });
+    inner.querySelector('#b24t-camp-regen').addEventListener('click', function() {
+      varsEl.value = _gsVariants(phraseEl.value).join('\n');
+      varsTouched = false;
+    });
+
+    // Kraj steruje językiem, dopóki język nie został wpisany ręcznie.
+    var langEl = inner.querySelector('#b24t-camp-lang');
+    var ccEl   = inner.querySelector('#b24t-camp-cc');
+    var langTouched = !!cfg.lang;
+    langEl.addEventListener('input', function() { langTouched = true; });
+    ccEl.addEventListener('input', function() {
+      if (langTouched) return;
+      var l = (_NEWS_LANG_MAP[ccEl.value.toLowerCase()] || [''])[0] || '';
+      langEl.value = l;
+    });
+
+    (function fillPrompts() {
+      var s = _aiGetSettings();
+      var active = (s.campaign && s.campaign.activePromptId) || '';
+      promptEl.innerHTML = '<option value="">— brak / auto —</option>';
+      (s.prompts || []).forEach(function(p) {
+        var opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.name || p.id;
+        if (p.id === active) opt.selected = true;
+        promptEl.appendChild(opt);
+      });
+    })();
+    promptEl.addEventListener('change', function() {
+      var s = _aiGetSettings();
+      if (!s.campaign) s.campaign = {};
+      s.campaign.activePromptId = promptEl.value;
+      _aiSaveSettings(s);
+    });
+
+    function renderCart() {
+      var box = inner.querySelector('#b24t-camp-cart');
+      var n = _gsCartGet().items.length;
+      var run = _gsRunGet();
+      var statusTxt = '';
+      if (run && run.active) statusTxt = '<span style="color:#7dd3fc;">przebieg w toku</span>';
+      else if (run && run.stopped === 'blocked') statusTxt = '<span style="color:#ef4444;">zatrzymany przez CAPTCHA</span>';
+      else if (run && run.stopped === 'done') statusTxt = '<span style="color:#22c55e;">zakończony</span>';
+      else if (run && run.stopped === 'user') statusTxt = '<span style="color:' + t.textFaint + ';">zatrzymany ręcznie</span>';
+
+      // Koszyk jest JEDEN dla wszystkich przebiegów, a prompt AI podstawia nazwę kampanii
+      // z ostatnio zapisanej konfiguracji. Nazwa przy liczniku pokazuje, czyje są te adresy —
+      // bez niej koszyk z poprzedniej kampanii wjechałby pod prompt nowej bez śladu.
+      var cartOwner = run && run.campaign ? run.campaign : '';
+      box.innerHTML =
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:' + (n ? '8px' : '0') + ';">' +
+          '<span style="color:' + t.textMuted + ';">Koszyk:</span>' +
+          '<strong style="font-size:13px;">' + n + '</strong>' +
+          '<span style="color:' + t.textMuted + ';">adres' + (n === 1 ? '' : 'ów') + '</span>' +
+          '<span style="flex:1;text-align:right;font-size:10px;">' + statusTxt + '</span>' +
+        '</div>' +
+        (n && cartOwner ? '<div style="font-size:10px;color:' + t.textFaint + ';margin-bottom:8px;">z kampanii: ' + _escHtml(cartOwner) + '</div>' : '') +
+        (n ? '<div style="display:flex;gap:6px;">' +
+          '<button id="b24t-camp-paste" style="flex:2;background:var(--b24t-primary-bg);border:1px solid var(--b24t-primary);color:var(--b24t-text);border-radius:7px;padding:5px 0;cursor:pointer;font-size:11px;font-family:inherit;">Wklej do importu</button>' +
+          '<button id="b24t-camp-clear" style="flex:1;background:transparent;border:1px solid ' + t.border + ';color:' + t.textFaint + ';border-radius:7px;padding:5px 0;cursor:pointer;font-size:11px;font-family:inherit;">Wyczyść</button>' +
+        '</div>' : '');
+
+      var pasteBtn = box.querySelector('#b24t-camp-paste');
+      if (pasteBtn) pasteBtn.addEventListener('click', function() {
+        var ta = document.getElementById('b24t-news-paste-area');
+        if (!ta) return;
+        ta.value = _gsCartGet().items.map(function(it) { return it.u; }).join('\n');
+        modal.remove();
+        var im = document.getElementById('b24t-news-import-modal');
+        if (im) im.style.display = 'flex';
+        ta.focus();
+      });
+      var clearBtn = box.querySelector('#b24t-camp-clear');
+      if (clearBtn) clearBtn.addEventListener('click', function() {
+        _gsCartClear();
+        renderCart();
+      });
+    }
+    renderCart();
+
+    // Koszyk rośnie w karcie Google — bez nasłuchu licznik w tym modalu kłamałby do czasu
+    // ręcznego odświeżenia, a to jedyne miejsce, z którego widać postęp przebiegu.
+    var cartWatch = null;
+    try {
+      cartWatch = GM_addValueChangeListener(GS_CART_KEY, function() { renderCart(); });
+    } catch(e) {}
+    var escHandler = function(e) {
+      // Kursor w polu tekstowym — ESC należy do pola (czyszczenie podpowiedzi), nie do modalu.
+      var tag = (e.target && e.target.tagName) || '';
+      if (e.key === 'Escape' && tag !== 'INPUT' && tag !== 'TEXTAREA') modal.remove();
+    };
+    document.addEventListener('keydown', escHandler);
+    var _origRemove = modal.remove.bind(modal);
+    modal.remove = function() {
+      document.removeEventListener('keydown', escHandler);
+      try { if (cartWatch != null) GM_removeValueChangeListener(cartWatch); } catch(e) {}
+      _origRemove();
+    };
+    inner.querySelector('#b24t-camp-close').addEventListener('click', function() { modal.remove(); });
+
+    function readCfg() {
+      var variants = varsEl.value.split('\n').map(function(s) { return s.trim(); }).filter(Boolean);
+      var modes = [];
+      if (inner.querySelector('#b24t-camp-m-country').checked) modes.push('country');
+      if (inner.querySelector('#b24t-camp-m-lang').checked) modes.push('lang');
+      return {
+        phrase: phraseEl.value.trim(),
+        variants: variants,
+        cc: ccEl.value.trim().toUpperCase(),
+        lang: langEl.value.trim().toLowerCase(),
+        from: inner.querySelector('#b24t-camp-from').value,
+        to: inner.querySelector('#b24t-camp-to').value,
+        modes: modes,
+        modeCountry: inner.querySelector('#b24t-camp-m-country').checked,
+        modeLang: inner.querySelector('#b24t-camp-m-lang').checked,
+        blacklist: blEl.value.split('\n').map(function(s) { return s.trim(); }).filter(Boolean),
+      };
+    }
+
+    // Komunikat mówi, CO zrobić — brakujące pole samo w sobie nic nie podpowiada.
+    function validate(c) {
+      if (!c.variants.length) return 'Wpisz nazwę kampanii — z niej powstają warianty frazy.';
+      if (!c.modes.length) return 'Zaznacz przynajmniej jeden filtr: kraju albo języka.';
+      if (c.modes.indexOf('country') !== -1 && !/^[A-Z]{2}$/.test(c.cc)) return 'Filtr kraju wymaga dwuliterowego kodu, np. GR.';
+      if (c.modes.indexOf('lang') !== -1 && !/^[a-z]{2,3}$/.test(c.lang)) return 'Filtr języka wymaga kodu języka, np. el.';
+      if ((c.from && !c.to) || (!c.from && c.to)) return 'Podaj obie daty zakresu albo żadnej.';
+      if (c.from && c.to && c.from > c.to) return 'Data „od" jest późniejsza niż „do".';
+      return null;
+    }
+
+    function saveAnd(fn) {
+      var c = readCfg();
+      var err = validate(c);
+      if (err) {
+        var box = inner.querySelector('#b24t-camp-cart');
+        box.innerHTML = '<div style="color:#f59e0b;line-height:1.45;">⚠ ' + _escHtml(err) + '</div>';
+        setTimeout(renderCart, 3500);
+        return;
+      }
+      lsSet(LS.CAMPAIGN_CFG, c);
+      fn(c);
+    }
+
+    inner.querySelector('#b24t-camp-start').addEventListener('click', function() {
+      saveAnd(function(c) {
+        var url = _gsRunStart({
+          campaign: c.phrase, variants: c.variants, modes: c.modes,
+          cc: c.cc, lang: c.lang, from: c.from, to: c.to, blacklist: c.blacklist,
+          originTab: _b24TabToken(), originProject: state.projectId || null,
+        });
+        modal.remove();
+        var w = window.open(url, '_blank');
+        if (w) w.focus();
+      });
+    });
+
+    inner.querySelector('#b24t-camp-manual').addEventListener('click', function() {
+      saveAnd(function(c) {
+        // Tryb awaryjny: bez aktywnego przebiegu kolektor tylko zbiera to, co sam otworzysz.
+        _gsRunSet({ active: false, stopped: 'manual', blacklist: c.blacklist });
+        var w = window.open(_gsBuildUrl({
+          phrase: c.variants[0], mode: c.modes[0], cc: c.cc, lang: c.lang, from: c.from, to: c.to,
+          blacklist: c.blacklist,
+        }), '_blank');
+        if (w) w.focus();
       });
     });
   }
@@ -12112,7 +13371,8 @@ function showOnboarding(onComplete) {
       '</div>',
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">',
         '<label style="font-size:11px;font-weight:600;color:' + t.textMuted + ';letter-spacing:0.04em;">WKLEJ ADRESY URL</label>',
-        '<span style="font-size:9px;color:' + t.textFaint + ';">jeden na linię</span>',
+        '<button id="b24t-news-from-cart" style="display:none;font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid var(--b24t-primary);background:var(--b24t-primary-bg);color:' + t.text + ';cursor:pointer;font-family:inherit;"></button>',
+        '<span id="b24t-news-paste-hint" style="font-size:9px;color:' + t.textFaint + ';">jeden na linię</span>',
       '</div>',
       '<textarea id="b24t-news-paste-area" rows="7" placeholder="Wklej URLe...\n\nhttps://example.com/artykul-1\nhttps://example.com/artykul-2" style="width:100%;box-sizing:border-box;font-size:10px;padding:8px 10px;border-radius:8px;border:1px solid ' + t.border + ';background:' + t.bgInput + ';color:' + t.text + ';resize:vertical;font-family:monospace;line-height:1.5;min-height:130px;"></textarea>',
       '<div id="b24t-news-country-row" style="display:none;padding:7px 10px;border-radius:8px;background:' + t.bgDeep + ';border:1px solid ' + t.borderSub + ';font-size:11px;margin-top:8px;">',
@@ -13212,6 +14472,7 @@ function showOnboarding(onComplete) {
         _newsRefillPromptSelect(false);
         _newsRefillTranslateSelect();
         importModal.style.display = 'flex';
+        _newsRefreshCartBtn();
         if (!isCustom && _newsChipsRenderer) _newsChipsRenderer();
         var pasteEl = document.getElementById('b24t-news-paste-area');
         if (pasteEl) setTimeout(function() { pasteEl.focus(); }, 50);
@@ -13300,6 +14561,7 @@ function showOnboarding(onComplete) {
     }
     _newsChipsRenderer = renderChips;
     _newsListRenderer = renderUrlList;
+    _newsImportRunner = importUrls;
     // Tłumaczenie wraca asynchronicznie. Kartę przerysowujemy TYLKO wtedy, gdy annotator
     // nadal stoi na tym wierszu — inaczej odpowiedź dla poprzedniego URL-a podmieniłaby mu
     // pod ręką to, co właśnie czyta.
@@ -14045,7 +15307,9 @@ function showOnboarding(onComplete) {
     // otworzył pierwszego wiersza (`activeIdx === -1`): wtedy werdykty AI mogą dociągać
     // i układać listę do woli. Po pierwszym kliknięciu kolejność zamarza aż do przycisku —
     // wiersze przestawiające się pod kursorem w trakcie pracy są gorsze niż zła kolejność.
-    var _NEWS_VERDICT_RANK = { match: 0, borderline: 1, miss: 3, spam: 4 };
+    // `offcampaign` siada pod borderline: to wzmianka marki warta obejrzenia, ale nie ta
+    // kampania, więc nie ma konkurować o górę listy z trafieniami kampanijnymi.
+    var _NEWS_VERDICT_RANK = { match: 0, borderline: 1, offcampaign: 2, miss: 3, spam: 4 };
     function _newsSortRank(e) {
       if (!_newsRowSelectable(e)) return 9;                     // odrzucone przez skaner
       if (e.status === 'added' || e.status === 'error' || e.status === 'checked') return 8;  // załatwione
@@ -14238,6 +15502,9 @@ function showOnboarding(onComplete) {
           var _aic, _aib, _aibd, _ailbl;
           if (_verdict === 'match') {
             _aic = '#22c55e'; _aib = 'rgba(34,197,94,0.10)'; _aibd = 'rgba(34,197,94,0.25)'; _ailbl = '\u2705 Relevant';
+          } else if (_verdict === 'offcampaign') {
+            _aic = '#a78bfa'; _aib = 'rgba(167,139,250,0.10)'; _aibd = 'rgba(167,139,250,0.30)'; _ailbl = '\ud83c\udfaf Poza kampani\u0105';
+            if (!_airsn) _airsn = 'Strona dotyczy H&amp;M, ale nie szukanej kampanii';
           } else if (_verdict === 'borderline') {
             _aic = '#f59e0b'; _aib = 'rgba(245,158,11,0.10)'; _aibd = 'rgba(245,158,11,0.30)'; _ailbl = '\u26A0\uFE0F Borderline';
           } else if (_verdict === 'spam') {
@@ -14905,8 +16172,8 @@ function showOnboarding(onComplete) {
         parts.push(_sect('OCENA AI', '<div style="font-size:11px;line-height:1.6;color:#f87171;">🤖 ' + _escHtml(entry.aiError || 'błąd analizy') + '</div>'));
       } else if (entry.aiStatus === 'done') {
         var _v  = entry.aiVerdict || (entry.aiRelevant ? 'match' : 'miss');
-        var _vc = { match: '#22c55e', borderline: '#f59e0b', spam: '#f97316' }[_v] || '#9ca3af';
-        var _vl = { match: '✅ Relevant', borderline: '⚠️ Borderline', spam: '🚫 Spam' }[_v] || '❌ Irrelevant';
+        var _vc = { match: '#22c55e', offcampaign: '#a78bfa', borderline: '#f59e0b', spam: '#f97316' }[_v] || '#9ca3af';
+        var _vl = { match: '✅ Relevant', offcampaign: '🎯 Poza kampanią', borderline: '⚠️ Borderline', spam: '🚫 Spam' }[_v] || '❌ Irrelevant';
         parts.push(_sect('OCENA AI',
           '<div style="border-radius:9px;padding:10px 12px;background:' + _vc + '14;border:1px solid ' + _vc + '44;">' +
             '<div style="font-size:12px;font-weight:700;color:' + _vc + ';' + (entry.aiReason ? 'margin-bottom:5px;' : '') + '">' + _vl + '</div>' +
@@ -15518,6 +16785,7 @@ function showOnboarding(onComplete) {
         _newsRefillPromptSelect(false);
         _newsRefillTranslateSelect();
         _importModalRef.style.display = 'flex';
+        _newsRefreshCartBtn();
         if (!isCustom && _newsChipsRenderer) _newsChipsRenderer();
         var pasteEl = document.getElementById('b24t-news-paste-area');
         if (pasteEl) setTimeout(function() { pasteEl.focus(); }, 50);
@@ -15900,6 +17168,21 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.32.9",
+      "date": "2026-09-17",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "**Nowa sekcja „Kampanie H&M” w dodawaniu wzmianek.** Kafelek prowadzi do rozjazdu: *Zbieranie* albo *Dodawanie*. Zbieranie to przebieg po wynikach Google — podajesz nazwę kampanii, rynek i zakres dat, a wtyczka sama przechodzi strony wyników i zbiera adresy do koszyka. Dodawanie to znany skan z listy URL-i, ale z własnym promptem i własnymi chipami pod kampanię. Powód: wyszukiwanie stron z newsami o kampanii robiło się dotąd ręcznie per rynek, osobno dla filtra kraju i języka, z przeglądaniem wszystkich stron wyników wzrokiem"},
+        {"type": "feat", "text": "**Domeny marki i marketplace’ów są wykluczane po stronie Google, nie odsiewane po fakcie.** Zmierzone na rynku GR: fraza „H&M STUDIO ESSENTIALS” dawała ~917 wyników, z których pierwsze dwie strony to **wyłącznie** sklep H&M i Facebook; po dodaniu wykluczeń został 1 wynik — i był to poszukiwany artykuł. Odsiewanie dopiero w koszyku kazałoby przejść kilkanaście stron po to, żeby wszystko z nich wyrzucić, a każda strona to osobne zapytanie do wyszukiwarki. Czarna lista jest edytowalna i pełni obie role naraz: wyklucza w zapytaniu i filtruje koszyk"},
+        {"type": "feat", "text": "**Przerwy między stronami wyników zależą od tego, co jest na stronie.** Strona złożona z samych marketplace’ów dostaje 3–6 s (przelot wzrokiem), strona z realnym kandydatem 20–40 s, z 15% szansą na ponad minutę (otwarcie i przeczytanie). Rozkład wychodzi dwumodalny z treści, a nie z generatora liczb — bliżej prawdy niż stała przerwa z jitterem. Kolejność wariantów frazy i trybów filtra jest losowana raz na przebieg, bo powtarzalna sekwencja to sygnał, którego samo tempo nie maskuje"},
+        {"type": "feat", "text": "**Panel postępu na karcie zbierania.** Pokazuje licznik koszyka, nazwę kampanii, numer zadania z paskiem, listę wszystkich wariantów ze stanem (zrobione / w toku / czeka), bieżący krok z liczbą trafień i odliczanie do następnego. Przebieg trwa minutami w karcie, na którą się nie patrzy, więc bez tego nie było jak stwierdzić, czy to koniec, czy pierwszy z sześciu wariantów"},
+        {"type": "feat", "text": "**Po przebiegu jedno kliknięcie „Przejdź do skanowania”.** Robota wraca do **tej** karty panelu, która przebieg odpaliła — przez `window.opener`, więc adresy nie mogą trafić do innego projektu, gdy masz otwarte kilka kart. Panel wkleja adresy z koszyka i startuje skan sam. Gdy panel został w międzyczasie przeładowany, sygnał czeka i zostaje podjęty przy powrocie na kartę"},
+        {"type": "feat", "text": "**Osobny prompt AI dla kampanii, z werdyktem „poza kampanią”.** Warianty frazy skracają nazwę kampanii (pełna nazwa często nie daje na mniejszym rynku żadnych wyników), więc w wynikach ląduje też zwykłe pokrycie marki. Taka strona dostaje teraz własny status zamiast wypadać jako nietrafiona — wzmianka nadaje się do dodania, tylko nie do tej kampanii, a decyzja zostaje po stronie człowieka. Prompt siedzi w `prompts/news_ai_campaign.txt`, do wklejenia raz w ustawieniach AI"},
+        {"type": "feat", "text": "**Chipy kampanii dochodzą do wariantów marki, nie zastępują ich.** Z „H&M STUDIO ESSENTIALS AW26” powstają `studio essentials aw26`, `studio essentials` oraz osobno `aw26` — oznaczenie sezonu jako samodzielny chip, bo wewnątrz dłuższego trafiałoby dopiero przy pełnej frazie ciągiem, a artykuł pisze często „kolekcja H&M Studio na sezon AW26”. Chipy kampanii mają własny worek per rynek, więc ich edycja nie rusza zwykłego monitoringu marki"}
+      ]
+    },
+    {
       "version": "0.32.8",
       "date": "2026-09-15",
       "label": "fix",
@@ -15992,17 +17275,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "**Panel przestaje podskakiwać.** Wejścia okien i paneli szły na krzywej z przeskokiem — element wylatywał poza swoje miejsce i wracał. W narzędziu, w którym siedzi się godzinami, to męczy. Zostało to zdjęte z 19 z 20 miejsc; skok został tam, gdzie jest nagrodą: na liczniku dodanych wzmianek. Przy okazji zmiany kolorów przy najechaniu skróciły się z 300 do 100 ms, przez co panel wydaje się szybszy przy tej samej prędkości działania"}
       ]
     },
-    {
-      "version": "0.31.6",
-      "date": "2026-09-15",
-      "label": "fix",
-      "labelColor": "#f59e0b",
-      "changes": [
-        {"type": "fix", "text": "**Tłumaczenie naprawdę wchodzi linijka po linijce.** W 0.31.4 licznik stał na „tłumaczę 0/8” do samego końca i wszystko podmieniało się naraz — wtyczka prosiła menedżera skryptów o odpowiedź po kawałku, a ten oddaje ją dopiero w całości. Teraz odpowiedź czytana jest strumieniem bezpośrednio z API, więc fragmenty pojawiają się pojedynczo, w miarę jak model je pisze. Gdyby ta droga była gdzieś zablokowana, wtyczka po cichu wraca na starą — tłumaczenie wtedy wchodzi jednym skokiem, ale nie ginie i nie ma błędu"},
-        {"type": "fix", "text": "**Wracają migające podświetlenia, które wcześniej nie miały prawa się pokazać.** Fragment czekający na tłumaczenie pulsuje, a po wejściu polskiego tekstu błyska. Poprzednia wersja wyłączała oba efekty, gdy w systemie wyłączone są animacje interfejsu — a wtedy właśnie cała funkcja wyglądała na martwą. Te dwa efekty zmieniają wyłącznie przezroczystość i kolor, nic nie przesuwa się po ekranie"},
-        {"type": "fix", "text": "**Strona, która nie deklaruje swojego języka, też tłumaczy się sama.** Dotąd wtyczka czytała język wyłącznie z jednego atrybutu na początku strony; gdy go brakowało, wiersz trzeba było tłumaczyć ręcznie przyciskiem. Teraz sprawdzane są jeszcze dwa miejsca w nagłówku strony, a gdy i tam nic nie ma — brany jest język rynku projektu"}
-      ]
-    }
   ];
 
   function _fetchChangelog(onDone) {
@@ -23259,6 +24531,11 @@ Tej operacji nie można cofnąć.`)) {
   // ───────────────────────────────────────────
 
   function init() {
+    // Wyniki Google — kolektor adresów kampanii. Dokładany DO zwykłej ścieżki strony
+    // zewnętrznej, a nie zamiast niej: mini-button dodawania wzmianek działał tu wcześniej
+    // i nie ma powodu go zabierać.
+    if (_gsIsGoogleSearch()) _gsInit();
+
     // Na stronach poza /panel/results/ — tylko floating mini-button do dodawania wzmianek
     if (!window.location.pathname.includes('/panel/results/')) {
       _initMiniMentionButton();
@@ -23451,6 +24728,9 @@ Tej operacji nie można cofnąć.`)) {
     // Reaktywne: gdy brand24.com zapisze świeży token → auto-ponów dupcheck w panelu Niestandardowe
     _wireBridgeReactiveRefresh();
     _wireAccessOnFocus();
+
+    // Przekazanie roboty z karty przebiegu kolektora Google (GOOGLE_COLLECTOR.md §6b)
+    _wireCampaignHandoff();
 
     // Zastosuj opcjonalne funkcje
     applyFeatures();

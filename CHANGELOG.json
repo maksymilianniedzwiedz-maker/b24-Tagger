@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.32.10",
+    "date": "2026-09-17",
+    "label": "fix",
+    "changes": [
+      "fix: **CAPTCHA przechodziła niezauważona.** Zgłoszone z pierwszego realnego przebiegu: zagadka wyskoczyła, alarm nie zadzwonił. Detekcja sprawdzała tylko adres `/sorry/` i jeden formularz, a Google podaje blokadę w kilku formach i zmienia je bez zapowiedzi. Teraz decyduje sygnał odwrotny: jesteśmy na stronie wyników, a nie ma na niej ani listy wyników, ani licznika trafień — czegokolwiek Google tam nie pokazał, wyników tam nie ma. Licznik jest obecny nawet przy zerowym trafieniu, więc pusty wariant nie podnosi fałszywego alarmu",
+      "feat: **Alarm captchy — migający, dźwiękowy, zapętlony.** Trzy kanały naraz, bo karta zbierania bywa na drugim monitorze i komunikat w panelu jest wtedy niewidoczny: migająca czerwona ramka z instrukcją, pulsujący ton grający do odklikania (z przyciskiem wyciszenia) i migający tytuł karty, widoczny na pasku, gdy okno jest w tle. Uwaga: karta wyników nigdy nie dostała kliknięcia, więc Chrome może zablokować dźwięk — dlatego nie jest jedynym sygnałem",
+      "feat: **Captcha pauzuje przebieg, nie kasuje go.** Pozycja w kolejce i numer strony zostają nietknięte, więc po odklikaniu zbieranie wraca dokładnie tam, gdzie stanęło — samo, bez uruchamiania od nowa. Wcześniej wykryta blokada kończyła przebieg na dobre i trzeba było startować od początku. Zniknął też `alert()`: blokował wątek strony, czyli uniemożliwiał miganie i dźwięk, a to one mają zwrócić uwagę",
+      "fix: **Kolektor nie odpalał się w ogóle na stronie blokady**, bo jej adres nie jest `/search` — czyli dokładnie tam, gdzie alarm jest potrzebny, nie było go kto uruchomić",
+      "ui: **Oznaczenia wiersza dostosowane do kampanii.** W kampanii adresy przychodzą z wyszukiwania po nazwie kampanii, więc obecność marki jest przesądzona i badge „Relevant” nic nie wnosił — zastąpiony pytaniem, które ma znaczenie: „ta kampania” albo „poza kampanią”",
+      "ui: **Data liczona wobec okresu kampanii, nie wieku artykułu.** Zamiast ostrzeżenia „zbyt stary artykuł” wiersz mówi, czy data mieści się w zakresie podanym przy zbieraniu — z ptaszkiem albo ostrzeżeniem i pełnym zakresem w podpowiedzi. Ostrzeżenie o wieku było w kampanii mylące: zakres dostaje się od klienta, kampania sprzed miesiąca jest w porządku, a artykuł spoza zakresu jest bezużyteczny niezależnie od tego, czy ma tydzień, czy pół roku"
+    ]
+  },
+  {
     "version": "0.32.9",
     "date": "2026-09-17",
     "label": "feat",

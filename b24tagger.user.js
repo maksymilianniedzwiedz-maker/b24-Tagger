@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.32.9
+// @version      0.32.10
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -172,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.32.9';
+  const VERSION = '0.32.10';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8292,9 +8292,11 @@ function showOnboarding(onComplete) {
   }
 
   // Hosty Google mają setki domen krajowych (google.pl, google.com.tr, google.co.uk).
+  // Ścieżka blokady (`/sorry/`, `/interstitial`) też się liczy — bez tego skrypt nie odpaliłby
+  // się na stronie captchy, a to właśnie tam ma zadzwonić alarm i stanąć przebieg.
   function _gsIsGoogleSearch() {
     return /^(www\.)?google\.[a-z]{2,3}(\.[a-z]{2})?$/.test(location.hostname)
-        && location.pathname === '/search';
+        && /^\/(search|sorry\/|interstitial)/.test(location.pathname);
   }
 
   function _gsGet(key, fallback) {
@@ -8442,12 +8444,27 @@ function showOnboarding(onComplete) {
     return /wyświetlono wyniki dla|showing results for|did you mean|zamiast tego/i.test(el.textContent || '');
   }
 
-  // Blokada antybotowa. Rozpoznajemy ją po adresie (/sorry/) i po formularzu captcha — sam
-  // tekst „unusual traffic" bywa tłumaczony na język interfejsu i nie da się na nim polegać.
-  function _gsBlocked() {
-    return /\/sorry\//.test(location.pathname)
-        || !!document.querySelector('form#captcha-form, #recaptcha, iframe[src*="recaptcha"]');
+  // Blokada antybotowa. Zwraca powód (do logu) albo null.
+  //
+  // ⚠ Pierwsza wersja sprawdzała tylko `/sorry/` i `form#captcha-form` — i PRZEPUŚCIŁA realną
+  // captchę (2026-09-17, zgłoszone z przebiegu: alarm nie wyskoczył, choć zagadka była).
+  // Google podaje ją w kilku formach i zmienia je bez zapowiedzi, więc jawne sygnały nie
+  // wystarczają. Decyduje sygnał NEGATYWNY: jesteśmy na stronie wyników, a nie ma na niej
+  // ani listy wyników, ani licznika trafień — czegokolwiek Google tam nie pokazał, wyników
+  // tam nie ma i zbieranie nie ma sensu.
+  function _gsBlockedWhy() {
+    if (/\/sorry\/|\/interstitial/.test(location.pathname)) return 'adres /sorry/';
+    if (document.querySelector('form#captcha-form, #captcha-form, #recaptcha, .g-recaptcha, iframe[src*="recaptcha"], iframe[title*="recaptcha" i]')) return 'formularz captcha';
+    if (document.querySelector('form[action*="sorry"], form[action*="IndexRedirect"]')) return 'formularz /sorry/';
+    // `#result-stats` jest obecny ZAWSZE na stronie wyników, także przy zerowym trafieniu
+    // („Około 0 wyników") — zmierzone. Jego brak razem z brakiem `#search` znaczy, że to
+    // nie jest strona wyników, mimo adresu.
+    if (!document.getElementById('search') && !document.getElementById('result-stats')) {
+      return 'strona wyników bez wyników i bez licznika';
+    }
+    return null;
   }
+  function _gsBlocked() { return !!_gsBlockedWhy(); }
 
   // [ZW 2026-09-17] `#pnnext` jest obecny na każdej stronie z kontynuacją, na GR i TR, w obu
   // trybach filtra. Odnośnika z `aria-label="Dalej"` Google NIE wystawia — sprawdzony fallback
@@ -8550,15 +8567,10 @@ function showOnboarding(onComplete) {
   // Jedna iteracja: zbierz z bieżącej strony, odczekaj, przejdź dalej. Wołana raz na
   // załadowanie strony — nawigacja kończy ten kontekst, więc stan idzie przez GM.
   async function _gsRunStep(run) {
-    if (_gsBlocked()) {
-      _gsRunStop('blocked');
-      _gsHudSay('⛔ Google zablokował automatyczne zapytania (CAPTCHA). Przebieg zatrzymany — ' +
-                'koszyk zachowany. Rozwiąż zagadkę ręcznie i uruchom ponownie.', true);
-      try { alert('B24: Google pokazał CAPTCHA — przebieg zatrzymany.\n\nKoszyk jest zachowany. ' +
-                  'Rozwiąż zagadkę ręcznie, potem uruchom przebieg jeszcze raz.'); } catch(e) {}
-      return;
-    }
-
+    // CAPTCHA PAUZUJE, nie zatrzymuje. Przebieg zostaje `active` z niezmienionym `qi`/`page`,
+    // wiec po odklikaniu wraca dokladnie tam, gdzie stanal — Google przekierowuje wtedy na
+    // pierwotny adres wynikow i karta podejmuje prace sama. `alert()` tu NIE wchodzi:
+    // blokuje watek strony, wiec alarm nie moglby migac ani grac, a to on ma zwrocic uwage.
     if (run.ownerTab && run.ownerTab !== _gsTabToken()) return; // przebieg należy do innej karty
     if (!run.ownerTab) {
       // Przebieg przejmuje tylko karta otwarta przez modal — poznaje się po znaczniku adresu.
@@ -8566,6 +8578,13 @@ function showOnboarding(onComplete) {
       run.ownerTab = _gsTabToken();
       _gsRunSet(run);
     }
+
+    var _why = _gsBlockedWhy();
+    if (_why) {
+      _gsAlarmStart(_why);
+      return;
+    }
+    _gsAlarmStop();
 
     var found = _gsHarvest();
     var fresh = found.filter(function(e) { return !_gsIsBlacklisted(e.u, run.blacklist); });
@@ -8658,6 +8677,120 @@ function showOnboarding(onComplete) {
         _gsHudTick('⏳ ' + Math.ceil(left / 1000) + ' s → ' + what);
       }, 250);
     });
+  }
+
+  // ── ALARM CAPTCHY ──
+  // Przebieg staje, dopóki człowiek nie odklika zagadki, a karta bywa na drugim monitorze —
+  // sam komunikat w HUD-zie jest wtedy niewidoczny. Alarm ma trzy kanały naraz, bo każdy
+  // z nich osobno potrafi nie dojść: obrys strony (widać kątem oka), dźwięk (słychać
+  // z drugiego pokoju) i tytuł karty (widać na pasku, gdy okno jest w tle).
+
+  var _gsAlarm = { on: false, osc: null, ctx: null, blink: null, titleIv: null, titleWas: null, poll: null };
+
+  function _gsAlarmSound() {
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      _gsAlarm.ctx = ctx;
+      // Karta wyników nigdy nie dostała kliknięcia (przebieg startuje z karty panelu), więc
+      // Chrome trzyma kontekst w stanie `suspended`. Próbujemy go obudzić; gdy się nie da,
+      // zostają dwa pozostałe kanały — dlatego dźwięk nie jest jedynym sygnałem.
+      if (ctx.state === 'suspended' && ctx.resume) ctx.resume();
+
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      var lfo = ctx.createOscillator();      // pulsowanie głośności — brzmi jak alarm, nie jak buczenie
+      var lfoGain = ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.value = 880;
+      lfo.frequency.value = 3.2;
+      lfoGain.gain.value = 0.16;
+      gain.gain.value = 0.02;
+      lfo.connect(lfoGain);
+      lfoGain.connect(gain.gain);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      lfo.start();
+      _gsAlarm.osc = { osc: osc, lfo: lfo };
+    } catch(e) {}
+  }
+
+  function _gsAlarmStart(powod) {
+    if (_gsAlarm.on) return;
+    _gsAlarm.on = true;
+
+    var ov = document.createElement('div');
+    ov.id = 'b24t-gs-alarm';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none;' +
+      'border:8px solid #ef4444;box-sizing:border-box;';
+    var box = document.createElement('div');
+    box.style.cssText = 'position:fixed;top:0;left:50%;transform:translateX(-50%);' +
+      'background:#7f1d1d;color:#fff;font-family:Geist,\'Segoe UI\',system-ui,sans-serif;' +
+      'font-size:14px;font-weight:700;padding:10px 20px;border-radius:0 0 10px 10px;' +
+      'box-shadow:0 6px 20px rgba(0,0,0,.5);pointer-events:auto;text-align:center;line-height:1.5;';
+    box.innerHTML = '⛔ CAPTCHA — przebieg wstrzymany<br>' +
+      '<span style="font-size:11px;font-weight:400;opacity:.9;">Odklikaj zagadkę. Zbieranie ruszy dalej samo, ' +
+      'z tego samego miejsca.</span><br>' +
+      '<button id="b24t-gs-alarm-mute" style="margin-top:7px;background:#450a0a;border:1px solid #991b1b;' +
+      'color:#fecaca;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:10px;font-family:inherit;">' +
+      'Wycisz dźwięk</button>';
+    ov.appendChild(box);
+    document.body.appendChild(ov);
+    box.querySelector('#b24t-gs-alarm-mute').addEventListener('click', function(e) {
+      e.stopPropagation();
+      _gsAlarmSilence();
+      this.textContent = '🔇 wyciszone';
+      this.disabled = true;
+    });
+
+    var widoczny = true;
+    _gsAlarm.blink = setInterval(function() {
+      widoczny = !widoczny;
+      ov.style.borderColor = widoczny ? '#ef4444' : 'transparent';
+    }, 500);
+
+    _gsAlarm.titleWas = document.title;
+    var alt = false;
+    _gsAlarm.titleIv = setInterval(function() {
+      alt = !alt;
+      document.title = alt ? '⛔ CAPTCHA — kliknij tutaj' : '⚠ przebieg wstrzymany';
+    }, 900);
+
+    _gsAlarmSound();
+    _gsHudSay('⛔ CAPTCHA (' + _escHtml(powod || '?') + ') — przebieg wstrzymany.<br>' +
+              'Odklikaj zagadkę; zbieranie wróci samo do tego samego miejsca.');
+
+    // Captcha rozwiązana bez przeładowania strony — wtedy nic nas nie obudzi poza sprawdzaniem.
+    // Po przeładowaniu przebieg i tak startuje od nowa i sam podejmuje pracę.
+    _gsAlarm.poll = setInterval(function() {
+      if (_gsBlocked()) return;
+      _gsAlarmStop();
+      var run = _gsRunGet();
+      if (run && run.active) {
+        _gsHudSay('✓ Zagadka rozwiązana — wracam do zbierania…');
+        _gsRunStep(run).catch(function() {});
+      }
+    }, 1500);
+  }
+
+  function _gsAlarmSilence() {
+    try { if (_gsAlarm.osc) { _gsAlarm.osc.osc.stop(); _gsAlarm.osc.lfo.stop(); } } catch(e) {}
+    try { if (_gsAlarm.ctx) _gsAlarm.ctx.close(); } catch(e) {}
+    _gsAlarm.osc = null;
+    _gsAlarm.ctx = null;
+  }
+
+  function _gsAlarmStop() {
+    if (!_gsAlarm.on) return;
+    _gsAlarm.on = false;
+    _gsAlarmSilence();
+    if (_gsAlarm.blink) clearInterval(_gsAlarm.blink);
+    if (_gsAlarm.titleIv) clearInterval(_gsAlarm.titleIv);
+    if (_gsAlarm.poll) clearInterval(_gsAlarm.poll);
+    _gsAlarm.blink = _gsAlarm.titleIv = _gsAlarm.poll = null;
+    if (_gsAlarm.titleWas) { try { document.title = _gsAlarm.titleWas; } catch(e) {} }
+    var ov = document.getElementById('b24t-gs-alarm');
+    if (ov) ov.remove();
   }
 
   // ── HUD ──
@@ -15478,12 +15611,30 @@ function showOnboarding(onComplete) {
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);color:#d97706;" title="Tylko 1 sygna\u0142 artyku\u0142u: ' + _sigList + '">\u2753 typ niepewny</span>');
         }
         if (entry.articleDate) {
-          var _diffD = (Date.now() - new Date(entry.articleDate).getTime()) / 86400000;
-          var _dc = _diffD > 60 ? '#f87171' : _diffD > 30 ? '#f59e0b' : '#4ade80';
-          var _db = _diffD > 60 ? 'rgba(239,68,68,0.10)' : _diffD > 30 ? 'rgba(245,158,11,0.10)' : 'rgba(34,197,94,0.10)';
-          var _dbd = _diffD > 60 ? 'rgba(239,68,68,0.3)' : _diffD > 30 ? 'rgba(245,158,11,0.3)' : 'rgba(34,197,94,0.25)';
-          var _staleTitle = _diffD > 60 ? ' \u2014 zbyt stary artyku\u0142 (&gt;60 dni)' : '';
-          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:' + _db + ';border:1px solid ' + _dbd + ';color:' + _dc + ';" title="Data publikacji' + _staleTitle + '">📅 ' + entry.articleDate + '</span>');
+          // W kampanii NIE liczy się wiek artykułu, tylko czy data wpada w okres kampanii.
+          // Zakres dat jest tym, co właściciel projektu dostaje od klienta, a artykuł spoza
+          // niego jest bezużyteczny niezależnie od tego, czy ma tydzień, czy pół roku.
+          // Ostrzeżenie „zbyt stary" jest tu wręcz mylące: kampania sprzed miesiąca jest w porządku.
+          var _campCfg = newsState.campaign ? (lsGet(LS.CAMPAIGN_CFG, {}) || {}) : null;
+          var _dc, _db, _dbd, _dTitle, _dMark = '';
+          if (_campCfg && _campCfg.from && _campCfg.to) {
+            // Daty są w ISO (YYYY-MM-DD), więc porównanie tekstowe jest poprawne i odporne na
+            // strefy czasowe — `new Date()` na samej dacie przesuwa ją o offset UTC.
+            var _inRange = entry.articleDate >= _campCfg.from && entry.articleDate <= _campCfg.to;
+            _dc  = _inRange ? '#4ade80' : '#f87171';
+            _db  = _inRange ? 'rgba(34,197,94,0.10)' : 'rgba(239,68,68,0.10)';
+            _dbd = _inRange ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.3)';
+            _dMark = _inRange ? ' ✓' : ' ⚠';
+            _dTitle = (_inRange ? 'Mieści się w okresie kampanii' : 'POZA okresem kampanii')
+                    + ' (' + _campCfg.from + ' – ' + _campCfg.to + ')';
+          } else {
+            var _diffD = (Date.now() - new Date(entry.articleDate).getTime()) / 86400000;
+            _dc  = _diffD > 60 ? '#f87171' : _diffD > 30 ? '#f59e0b' : '#4ade80';
+            _db  = _diffD > 60 ? 'rgba(239,68,68,0.10)' : _diffD > 30 ? 'rgba(245,158,11,0.10)' : 'rgba(34,197,94,0.10)';
+            _dbd = _diffD > 60 ? 'rgba(239,68,68,0.3)' : _diffD > 30 ? 'rgba(245,158,11,0.3)' : 'rgba(34,197,94,0.25)';
+            _dTitle = 'Data publikacji' + (_diffD > 60 ? ' — zbyt stary artykuł (&gt;60 dni)' : '');
+          }
+          _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:' + _db + ';border:1px solid ' + _dbd + ';color:' + _dc + ';" title="' + _dTitle + '">📅 ' + entry.articleDate + _dMark + '</span>');
         }
         if (entry.pageLang) {
           _metaBadges.push('<span style="font-size:8px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.25);color:#a78bfa;" title="Wykryty j\u0119zyk strony">\ud83c\udf10 ' + entry.pageLang + '</span>');
@@ -15501,7 +15652,11 @@ function showOnboarding(onComplete) {
           var _airsn = (entry.aiReason || '').replace(/"/g, '&quot;');
           var _aic, _aib, _aibd, _ailbl;
           if (_verdict === 'match') {
-            _aic = '#22c55e'; _aib = 'rgba(34,197,94,0.10)'; _aibd = 'rgba(34,197,94,0.25)'; _ailbl = '\u2705 Relevant';
+            _aic = '#22c55e'; _aib = 'rgba(34,197,94,0.10)'; _aibd = 'rgba(34,197,94,0.25)';
+            // W kampanii adresy przychodz\u0105 z wyszukiwania po nazwie kampanii, wi\u0119c obecno\u015b\u0107
+            // marki jest za\u0142o\u017ceniem wej\u015bciowym \u2014 \u201eRelevant" nie wnosi tam nic. Pytanie jest
+            // inne: czy to TA kampania.
+            _ailbl = newsState.campaign ? '\ud83c\udfaf ta kampania' : '\u2705 Relevant';
           } else if (_verdict === 'offcampaign') {
             _aic = '#a78bfa'; _aib = 'rgba(167,139,250,0.10)'; _aibd = 'rgba(167,139,250,0.30)'; _ailbl = '\ud83c\udfaf Poza kampani\u0105';
             if (!_airsn) _airsn = 'Strona dotyczy H&amp;M, ale nie szukanej kampanii';
@@ -16173,7 +16328,7 @@ function showOnboarding(onComplete) {
       } else if (entry.aiStatus === 'done') {
         var _v  = entry.aiVerdict || (entry.aiRelevant ? 'match' : 'miss');
         var _vc = { match: '#22c55e', offcampaign: '#a78bfa', borderline: '#f59e0b', spam: '#f97316' }[_v] || '#9ca3af';
-        var _vl = { match: '✅ Relevant', offcampaign: '🎯 Poza kampanią', borderline: '⚠️ Borderline', spam: '🚫 Spam' }[_v] || '❌ Irrelevant';
+        var _vl = { match: (newsState.campaign ? '🎯 Ta kampania' : '✅ Relevant'), offcampaign: '🎯 Poza kampanią', borderline: '⚠️ Borderline', spam: '🚫 Spam' }[_v] || '❌ Irrelevant';
         parts.push(_sect('OCENA AI',
           '<div style="border-radius:9px;padding:10px 12px;background:' + _vc + '14;border:1px solid ' + _vc + '44;">' +
             '<div style="font-size:12px;font-weight:700;color:' + _vc + ';' + (entry.aiReason ? 'margin-bottom:5px;' : '') + '">' + _vl + '</div>' +
@@ -17168,6 +17323,20 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.32.10",
+      "date": "2026-09-17",
+      "label": "fix",
+      "labelColor": "#f59e0b",
+      "changes": [
+        {"type": "fix", "text": "**CAPTCHA przechodziła niezauważona.** Zgłoszone z pierwszego realnego przebiegu: zagadka wyskoczyła, alarm nie zadzwonił. Detekcja sprawdzała tylko adres `/sorry/` i jeden formularz, a Google podaje blokadę w kilku formach i zmienia je bez zapowiedzi. Teraz decyduje sygnał odwrotny: jesteśmy na stronie wyników, a nie ma na niej ani listy wyników, ani licznika trafień — czegokolwiek Google tam nie pokazał, wyników tam nie ma. Licznik jest obecny nawet przy zerowym trafieniu, więc pusty wariant nie podnosi fałszywego alarmu"},
+        {"type": "feat", "text": "**Alarm captchy — migający, dźwiękowy, zapętlony.** Trzy kanały naraz, bo karta zbierania bywa na drugim monitorze i komunikat w panelu jest wtedy niewidoczny: migająca czerwona ramka z instrukcją, pulsujący ton grający do odklikania (z przyciskiem wyciszenia) i migający tytuł karty, widoczny na pasku, gdy okno jest w tle. Uwaga: karta wyników nigdy nie dostała kliknięcia, więc Chrome może zablokować dźwięk — dlatego nie jest jedynym sygnałem"},
+        {"type": "feat", "text": "**Captcha pauzuje przebieg, nie kasuje go.** Pozycja w kolejce i numer strony zostają nietknięte, więc po odklikaniu zbieranie wraca dokładnie tam, gdzie stanęło — samo, bez uruchamiania od nowa. Wcześniej wykryta blokada kończyła przebieg na dobre i trzeba było startować od początku. Zniknął też `alert()`: blokował wątek strony, czyli uniemożliwiał miganie i dźwięk, a to one mają zwrócić uwagę"},
+        {"type": "fix", "text": "**Kolektor nie odpalał się w ogóle na stronie blokady**, bo jej adres nie jest `/search` — czyli dokładnie tam, gdzie alarm jest potrzebny, nie było go kto uruchomić"},
+        {"type": "ui", "text": "**Oznaczenia wiersza dostosowane do kampanii.** W kampanii adresy przychodzą z wyszukiwania po nazwie kampanii, więc obecność marki jest przesądzona i badge „Relevant” nic nie wnosił — zastąpiony pytaniem, które ma znaczenie: „ta kampania” albo „poza kampanią”"},
+        {"type": "ui", "text": "**Data liczona wobec okresu kampanii, nie wieku artykułu.** Zamiast ostrzeżenia „zbyt stary artykuł” wiersz mówi, czy data mieści się w zakresie podanym przy zbieraniu — z ptaszkiem albo ostrzeżeniem i pełnym zakresem w podpowiedzi. Ostrzeżenie o wieku było w kampanii mylące: zakres dostaje się od klienta, kampania sprzed miesiąca jest w porządku, a artykuł spoza zakresu jest bezużyteczny niezależnie od tego, czy ma tydzień, czy pół roku"}
+      ]
+    },
+    {
       "version": "0.32.9",
       "date": "2026-09-17",
       "label": "feat",
@@ -17261,18 +17430,6 @@ function showOnboarding(onComplete) {
         {"type": "fix", "text": "**Zmiana projektu nie zostawia werdyktu z poprzedniego.** Przy pustym polu adresu na ekranie zostawało „URL nowy w projekcie” dotyczące projektu, który właśnie przestał być wybrany"},
         {"type": "fix", "text": "**Ta sama strona idzie teraz do dwóch projektów pod rząd.** Wtyczka pamiętała każdy adres, który kiedykolwiek wysłała — bez zapisu, do którego projektu — i przy drugim podejściu odmawiała: „Ten URL był już wcześniej dodany do Brand24 (w tej lub poprzedniej sesji)”. Dodanie tej samej wzmianki do projektu PL i zaraz potem do CZ było przez to niemożliwe. Lista rosła bez końca (u właściciela 224 adresy) i nigdy się nie czyściła. Została zdjęta — rolę strażnika pełni sprawdzanie adresu w konkretnym projekcie, a prawdziwy duplikat odrzuca sam Brand24 przy wysyłce"},
         {"type": "fix", "text": "**Po dodaniu wzmianki formularz zostaje wypełniony (tryb „Niestandardowe”).** Wcześniej kasował tytuł, treść i datę — zachowanie z trybu listy, gdzie panel przechodzi na kolejny wiersz i wypełnia je od nowa. Tutaj wypełniać nie miał kto, bo strona się nie zmieniła: zostawał pusty formularz, którego nie dało się wysłać do drugiego projektu (a pusta data zatrzymywała też sprawdzanie duplikatu). Wystarczy teraz zmienić projekt i kliknąć drugi raz"}
-      ]
-    },
-    {
-      "version": "0.32.0",
-      "date": "2026-09-15",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "**Lista URL-i przestaje przebudowywać się w całości przy każdym werdykcie AI.** Wcześniej każda ocena kasowała i budowała od nowa wszystkie wiersze — przy liście 400 adresów to kilkaset pełnych przebudów, stąd miganie i uciekająca pozycja przewinięcia. Teraz podmienia się dokładnie ten jeden wiersz, którego dotyczy werdykt. Dopóki lista sama się układa wg ocen, nadal przestawia się w całości — ale najwyżej raz na 300 ms zamiast przy każdej odpowiedzi"},
-        {"type": "feat", "text": "**Widać, co się właśnie dzieje.** Wiersz w trakcie skanowania pokazuje pasek-szkielet w miejscu, gdzie za chwilę stanie fragment treści. Plakietka „AI…” pulsuje, dopóki ocena nie wróci, a po jej wejściu błyska — wcześniej podmieniała się bez żadnego sygnału. Wiersze wjeżdżają kaskadą zamiast pojawiać się naraz"},
-        {"type": "feat", "text": "**Przyciski reagują na wciśnięcie.** Do tej pory kliknięcie w cokolwiek we wtyczce nie dawało żadnego sygnału, że doszło — przycisk wyglądał identycznie przed i po. Teraz lekko się wciska. Drobiazg, ale dotyczy każdego kliknięcia w panelu"},
-        {"type": "fix", "text": "**Panel przestaje podskakiwać.** Wejścia okien i paneli szły na krzywej z przeskokiem — element wylatywał poza swoje miejsce i wracał. W narzędziu, w którym siedzi się godzinami, to męczy. Zostało to zdjęte z 19 z 20 miejsc; skok został tam, gdzie jest nagrodą: na liczniku dodanych wzmianek. Przy okazji zmiany kolorów przy najechaniu skróciły się z 300 do 100 ms, przez co panel wydaje się szybszy przy tej samej prędkości działania"}
       ]
     },
   ];

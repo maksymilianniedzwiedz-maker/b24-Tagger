@@ -1,5 +1,25 @@
 [
   {
+    "version": "0.33.1",
+    "date": "2026-09-18",
+    "label": "feat",
+    "labelColor": "#6366f1",
+    "changes": [
+      {
+        "type": "feat",
+        "text": "**Przebieg zbierania można wstrzymać i wznowić.** Przycisk „Pauza\" w panelu przebiegu zatrzymuje robotę tam, gdzie stoi, a „Wznów\" puszcza ją dalej. Po to, żeby dało się odejść od komputera bez zostawiania przebiegu bez nadzoru — captcha, która wyskoczy pod nieobecność, blokuje wszystko do powrotu, a odklikana od razu kosztuje kilkanaście sekund"
+      },
+      {
+        "type": "feat",
+        "text": "**Wstrzymany przebieg nie traci odliczonego czasu.** Pauza korzysta z tego samego mechanizmu, co wstrzymanie przy karcie w tle: czas postoju nie jest naliczany, a po wznowieniu odliczanie idzie dalej od miejsca, w którym stanęło. Stan przeżywa przeładowanie strony, czyli normalny krok tego przebiegu — przycisk po przejściu na kolejną stronę wyników nadal pokazuje „Wznów\", a nie wraca do „Pauza\""
+      },
+      {
+        "type": "fix",
+        "text": "**Adresy z bieżącej strony trafiają do koszyka także po wciśnięciu pauzy.** Odczyt z już załadowanej strony nie puka do Google, więc nie ma powodu go pomijać — wstrzymywane jest wyłącznie przejście dalej. Jedno zapytanie może jeszcze pójść, jeśli nawigacja ruszyła w chwili kliknięcia; przebieg stanie na następnej przerwie"
+      }
+    ]
+  },
+  {
     "version": "0.33.0",
     "date": "2026-09-18",
     "label": "feat",

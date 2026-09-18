@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.33.0
+// @version      0.33.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -172,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.33.0';
+  const VERSION = '0.33.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -8542,6 +8542,7 @@ function showOnboarding(onComplete) {
       blacklist: cfg.blacklist || GS_BLACKLIST_DEFAULT,
       queue: _gsBuildQueue(cfg.variants, cfg.modes),
       qi: 0, page: 0,
+      paused: false,
       ownerTab: null,
       // Karta panelu, do ktorej wroci robota po zakonczeniu (patrz _gsHandoffToPanel).
       originTab: cfg.originTab || null,
@@ -8561,7 +8562,11 @@ function showOnboarding(onComplete) {
     if (!run) return;
     run.active = false;
     run.stopped = reason;
+    // Pauza zdejmowana razem z zatrzymaniem — inaczej kolejny przebieg startowałby
+    // z odziedziczoną flagą i stanąłby zaraz po pierwszej stronie.
+    run.paused = false;
     _gsRunSet(run);
+    _gsHudPauseSync();
   }
 
   // Jedna iteracja: zbierz z bieżącej strony, odczekaj, przejdź dalej. Wołana raz na
@@ -8647,36 +8652,67 @@ function showOnboarding(onComplete) {
   // więcej jednego odpalenia na minutę — przerwa 20 s zamieniłaby się w minutę, a tempo
   // przestałoby znaczyć to, co mierzy. Zamiast liczyć nieprawdziwe sekundy, stoimy
   // i mówimy o tym wprost (to samo zjawisko opisuje reference_page_visibility_occlusion).
+  // Przerwa między krokami przebiegu — i jedyne miejsce, w którym przebieg stoi.
+  //
+  // Wstrzymanie ma DWA powody i obsługuje je ten sam mechanizm: karta zeszła w tło (§5) albo
+  // użytkownik wcisnął pauzę (§4.5). Oba działają tak samo — odliczanie nie nalicza sekund,
+  // których nie przeżyło, a po powrocie liczy dalej od miejsca, w którym stanęło. Osobna
+  // ścieżka dla pauzy byłaby drugim mechanizmem robiącym to samo.
+  //
+  // Pauza jest sprawdzana TU, a nie na wejściu do kroku, i to jest celowe: zbieranie wyników
+  // z już załadowanej strony nic nie kosztuje (żadnego zapytania), więc nie ma powodu go
+  // pomijać. Wstrzymać trzeba to, co generuje ruch do Google — czyli przejście dalej.
   function _gsWait(ms, what) {
     return new Promise(function(resolve) {
       var left = ms;
       var last = Date.now();
-      var sayBefore = null; // komunikat sprzed wstrzymania — wraca, gdy karta wraca na wierzch
+      var sayBefore = null;  // komunikat sprzed wstrzymania — wraca, gdy przebieg rusza dalej
+      var powodBefore = null; // żeby nie przepisywać HUD-a co 250 ms przy niezmienionym stanie
       var iv = setInterval(function() {
         var run = _gsRunGet();
         if (!run || !run.active) { clearInterval(iv); resolve(false); return; }
 
         var now = Date.now();
-        if (document.hidden) {
+        // Kolejność ma znaczenie tylko dla treści komunikatu: gdy zachodzą oba naraz,
+        // mówimy o pauzie, bo to stan wybrany świadomie i to go użytkownik będzie odklikiwał.
+        var powod = run.paused ? 'pauza' : (document.hidden ? 'tlo' : null);
+        if (powod) {
           last = now;
           if (sayBefore === null) {
             var el = document.getElementById('b24t-gs-say');
             sayBefore = el ? el.innerHTML : '';
-            _gsHudSay('⏸ Karta w tle — przebieg wstrzymany.<br>Przełącz się na nią, żeby ruszył dalej.');
+          }
+          if (powod !== powodBefore) {
+            powodBefore = powod;
+            _gsHudSay(powod === 'pauza'
+              ? '⏸ <strong>Pauza</strong> — przebieg stoi.<br>Kliknij „Wznów", gdy wrócisz.'
+              : '⏸ Karta w tle — przebieg wstrzymany.<br>Przełącz się na nią, żeby ruszył dalej.');
+            _gsHudTick('');
           }
           return;
         }
-        // Pierwszy tick po powrocie karty tylko przesuwa punkt odniesienia. Bez tego odliczanie
-        // liczyłoby czas od ostatniego ticku SPRZED odsłonięcia, czyli naliczałoby do jednego
-        // interwału czasu, w którym karta stała w tle — a to dokładnie ta zasada, której
+        // Pierwszy tick po wznowieniu tylko przesuwa punkt odniesienia. Bez tego odliczanie
+        // liczyłoby czas od ostatniego ticku SPRZED wstrzymania, czyli naliczałoby do jednego
+        // interwału czasu, którego przebieg nie przeżył — a to dokładnie ta zasada, której
         // ten mechanizm ma pilnować.
-        if (sayBefore !== null) { _gsHudSay(sayBefore); sayBefore = null; last = now; return; }
+        if (sayBefore !== null) { _gsHudSay(sayBefore); sayBefore = null; powodBefore = null; last = now; return; }
         left -= (now - last);
         last = now;
         if (left <= 0) { clearInterval(iv); resolve(true); return; }
         _gsHudTick('⏳ ' + Math.ceil(left / 1000) + ' s → ' + what);
       }, 250);
     });
+  }
+
+  // Ręczna pauza. Stan siedzi w `run`, czyli w GM — przeżywa przeładowanie strony, które
+  // przy tym przebiegu jest normalnym krokiem, a nie awarią. Bez tego pauza znikałaby przy
+  // pierwszym przejściu na kolejną stronę wyników.
+  function _gsRunPause(paused) {
+    var run = _gsRunGet();
+    if (!run || !run.active) return;
+    run.paused = !!paused;
+    _gsRunSet(run);
+    _gsHudPauseSync();
   }
 
   // ── GOOGLE NEWS RSS — drugi kanał zbierania ──
@@ -8923,7 +8959,10 @@ function showOnboarding(onComplete) {
         '<div id="b24t-gs-prog" style="display:none;margin-bottom:8px;"></div>' +
         '<div id="b24t-gs-say" style="font-size:11px;color:#9aa1b1;line-height:1.5;">Zbieram z tej strony…</div>' +
         '<div id="b24t-gs-tick" style="font-size:11px;color:#7dd3fc;margin-top:6px;"></div>' +
+        // Pauza stoi pierwsza i jest szersza, bo to jedyny z tych przycisków wciskany
+        // w trakcie normalnej pracy — Stop kończy robotę, Kopiuj przydaje się po niej.
         '<div style="display:flex;gap:6px;margin-top:9px;">' +
+          '<button id="b24t-gs-pause" style="flex:1.35;background:#1b2430;border:1px solid #2f4152;color:#7dd3fc;border-radius:7px;padding:5px 0;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit;">⏸ Pauza</button>' +
           '<button id="b24t-gs-stop" style="flex:1;background:#2a1b1b;border:1px solid #4a2a2a;color:#f0a0a0;border-radius:7px;padding:5px 0;cursor:pointer;font-size:11px;font-family:inherit;">Stop</button>' +
           '<button id="b24t-gs-copy" style="flex:1;background:#1b1f28;border:1px solid #2a2e3a;color:#e6e8ee;border-radius:7px;padding:5px 0;cursor:pointer;font-size:11px;font-family:inherit;">Kopiuj</button>' +
         '</div>' +
@@ -8936,6 +8975,11 @@ function showOnboarding(onComplete) {
       var hidden = bodyEl.style.display === 'none';
       bodyEl.style.display = hidden ? '' : 'none';
       minBtn.textContent = hidden ? '–' : '+';
+    });
+    hud.querySelector('#b24t-gs-pause').addEventListener('click', function() {
+      var run = _gsRunGet();
+      if (!run || !run.active) return;
+      _gsRunPause(!run.paused);
     });
     hud.querySelector('#b24t-gs-stop').addEventListener('click', function() {
       _gsRunStop('user');
@@ -8950,11 +8994,34 @@ function showOnboarding(onComplete) {
       }).catch(function() { btn.textContent = '✗ Błąd'; });
     });
     _gsHudCount();
+    _gsHudPauseSync();
   }
 
   function _gsHudCount() {
     var el = document.getElementById('b24t-gs-count');
     if (el) el.textContent = String(_gsCartGet().items.length);
+  }
+
+  // Wygląd przycisku pauzy czytany ze STANU, nie z tego, co przycisk pokazywał wcześniej.
+  // Powód: przejście na kolejną stronę wyników przeładowuje kartę i buduje HUD od nowa —
+  // przycisk pamiętający swój stan w DOM-ie wracałby wtedy do „Pauza" mimo stojącego przebiegu.
+  function _gsHudPauseSync() {
+    var btn = document.getElementById('b24t-gs-pause');
+    if (!btn) return;
+    var run = _gsRunGet();
+    if (!run || !run.active) { btn.style.display = 'none'; return; }
+    btn.style.display = '';
+    if (run.paused) {
+      btn.textContent = '▶ Wznów';
+      btn.style.background = '#16281c';
+      btn.style.borderColor = '#2f5238';
+      btn.style.color = '#86efac';
+    } else {
+      btn.textContent = '⏸ Pauza';
+      btn.style.background = '#1b2430';
+      btn.style.borderColor = '#2f4152';
+      btn.style.color = '#7dd3fc';
+    }
   }
   function _gsHudSay(html, final) {
     var el = document.getElementById('b24t-gs-say');
@@ -17661,6 +17728,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.33.1",
+      "date": "2026-09-18",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "**Przebieg zbierania można wstrzymać i wznowić.** Przycisk „Pauza\" w panelu przebiegu zatrzymuje robotę tam, gdzie stoi, a „Wznów\" puszcza ją dalej. Po to, żeby dało się odejść od komputera bez zostawiania przebiegu bez nadzoru — captcha, która wyskoczy pod nieobecność, blokuje wszystko do powrotu, a odklikana od razu kosztuje kilkanaście sekund"},
+        {"type": "feat", "text": "**Wstrzymany przebieg nie traci odliczonego czasu.** Pauza korzysta z tego samego mechanizmu, co wstrzymanie przy karcie w tle: czas postoju nie jest naliczany, a po wznowieniu odliczanie idzie dalej od miejsca, w którym stanęło. Stan przeżywa przeładowanie strony, czyli normalny krok tego przebiegu — przycisk po przejściu na kolejną stronę wyników nadal pokazuje „Wznów\", a nie wraca do „Pauza\""},
+        {"type": "fix", "text": "**Adresy z bieżącej strony trafiają do koszyka także po wciśnięciu pauzy.** Odczyt z już załadowanej strony nie puka do Google, więc nie ma powodu go pomijać — wstrzymywane jest wyłącznie przejście dalej. Jedno zapytanie może jeszcze pójść, jeśli nawigacja ruszyła w chwili kliknięcia; przebieg stanie na następnej przerwie"}
+      ]
+    },
+    {
       "version": "0.33.0",
       "date": "2026-09-18",
       "label": "feat",
@@ -17764,15 +17842,6 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "**Pole projektu pokazuje wybrany projekt od razu, a nie dopiero po kliknięciu.** Na stronach zewnętrznych modal otwierał się z szarym „szukaj lub wybierz projekt…” i nazwa wskakiwała dopiero, gdy kliknąłeś w pole — nie było widać, do czego właściwie dodajesz. Panel rysował to pole, **zanim** ustalił, który projekt jest wybrany; kliknięcie odpalało ten sam render drugi raz, już po ustaleniu. Teraz kolejność jest odwrotna, a w polu stoi dokładnie ten projekt, do którego poleci wzmianka — to ta sama wartość, którą czyta wysyłka"},
         {"type": "fix", "text": "**Kropka „CMS” sprawdza się sama przy otwarciu panelu.** Do tej pory pytanie o dostęp szło z pustym projektem (panel pytał o to, zanim wybrał projekt), więc kropka zawsze siadała na „nie wiem” i trzymała zablokowany przycisk dodawania, dopóki jej nie kliknąłeś. Teraz pyta sama, gdy projekt jest już znany; wynik żyje w pamięci pół godziny, więc kolejne otwarcia panelu nic nie kosztują. Kliknięcie kropki dalej wymusza sprawdzenie od nowa — po zalogowaniu się w innej karcie"}
-      ]
-    },
-    {
-      "version": "0.32.3",
-      "date": "2026-09-15",
-      "label": "fix",
-      "labelColor": "#f59e0b",
-      "changes": [
-        {"type": "fix", "text": "**Projekt otwarty na panelu `.pl` trafiał na inne strony bez nazwy — i przez to wyglądał na nieobecny.** Wtyczka brała nazwę projektu **wyłącznie z tytułu karty przeglądarki**. Zmierzone na `panel.brand24.pl/panel/results/<id>`: tytuł stoi na gołym „Brand24” i nie zmienia się przez cały czas, więc nazwa nie zapisywała się nigdzie — ani lokalnie, ani tam, skąd czytają ją Instagram i reszta. Projekt był w dropdownie modalu, ale jako „Projekt 294001552”, więc wpisanie jego nazwy nie znajdowało nic i wyglądało to na brak projektu. Wracał dopiero po otwarciu modalu na panelu (to sprawdzenie dostępu dociagało nazwę przy okazji) i przeładowaniu strony. Teraz, gdy tytuł nie daje nazwy, wtyczka pyta o nią Brand24 jednym lekkim zapytaniem i zapamiętuje jako potwierdzoną"}
       ]
     }
   ];

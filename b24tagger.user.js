@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.32.11
+// @version      0.33.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -172,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.32.11';
+  const VERSION = '0.33.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -9005,7 +9005,33 @@ function showOnboarding(onComplete) {
     if (!campEl || !progEl || !run || !run.queue || !run.queue.length) return;
 
     if (run.campaign) {
-      campEl.textContent = run.campaign + (run.cc ? ' · ' + run.cc : '');
+      // Rynek w osobnej linii i z nazwami. Sam kod („GR · el") wymaga pamiętania, co znaczy,
+      // a to jest jedyne miejsce, w którym w trakcie przebiegu widać, CZY filtr jest ten,
+      // o który chodziło — przebieg z cudzym rynkiem wygląda z zewnątrz dokładnie tak samo
+      // jak poprawny, tylko zbiera nie te adresy.
+      // Które filtry realnie lecą, czytamy z KOLEJKI, a nie z osobnego pola — `run` go nie ma,
+      // a kolejka jest źródłem prawdy: to z niej powstają adresy. Przy okazji działa dla
+      // przebiegów rozpoczętych przed tą zmianą.
+      var modes = {};
+      (run.queue || []).forEach(function(t) { modes[t.mode] = true; });
+      function _mk(kod, nazwa, aktywny, ikona) {
+        if (!kod) return '';
+        var kolor = aktywny ? '#a8afbd' : '#5b6472';
+        return '<span style="color:' + kolor + ';" title="' + (aktywny ? 'filtr aktywny' : 'filtr wyłączony') + '">' +
+          ikona + ' <strong>' + _escHtml(String(kod).toUpperCase()) + '</strong>' +
+          (nazwa ? ' <span style="opacity:.75;">' + _escHtml(nazwa) + '</span>' : '') +
+          (aktywny ? '' : ' <span style="opacity:.7;">(off)</span>') + '</span>';
+      }
+      var ccTxt = _mk(run.cc, _CC_NAMES[String(run.cc || '').toLowerCase()] || '',
+                      !!modes.country, '🌍');
+      var lgTxt = _mk(run.lang, _LANG_NAMES[String(run.lang || '').toLowerCase()] || '',
+                      !!modes.lang, '🗣');
+      campEl.innerHTML =
+        '<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + _escHtml(run.campaign) + '</div>' +
+        (ccTxt || lgTxt
+          ? '<div style="margin-top:3px;font-weight:400;font-size:9px;display:flex;gap:9px;flex-wrap:wrap;">' +
+            ccTxt + lgTxt + '</div>'
+          : '');
       campEl.style.display = '';
     }
 
@@ -9206,6 +9232,75 @@ function showOnboarding(onComplete) {
     'xk':['sq'], 'kz':['kk'], 'gb':['en'], 'us':['en'], 'au':['en'],
     'ie':['en'], 'ca':['en','fr'], 'nz':['en'],
   };
+
+  // Nazwy do pokazania przy polach kraju i języka w modalu kampanii. Sam kod nic nie mówi:
+  // „el" wygląda równie prawdopodobnie co „gr", a tylko jeden z nich jest greckim. Nazwa
+  // obok pola zamienia zgadywanie w odczyt.
+  var _CC_NAMES = {
+    'pl':'Polska', 'cz':'Czechy', 'sk':'Słowacja', 'hu':'Węgry', 'ro':'Rumunia',
+    'bg':'Bułgaria', 'hr':'Chorwacja', 'rs':'Serbia', 'lt':'Litwa', 'lv':'Łotwa',
+    'ee':'Estonia', 'fi':'Finlandia', 'se':'Szwecja', 'no':'Norwegia', 'dk':'Dania',
+    'de':'Niemcy', 'at':'Austria', 'fr':'Francja', 'nl':'Holandia', 'it':'Włochy',
+    'es':'Hiszpania', 'pt':'Portugalia', 'br':'Brazylia', 'tr':'Turcja', 'gr':'Grecja',
+    'ua':'Ukraina', 'ru':'Rosja', 'ge':'Gruzja', 'am':'Armenia', 'az':'Azerbejdżan',
+    'al':'Albania', 'mk':'Macedonia Płn.', 'ba':'Bośnia i Hercegowina', 'me':'Czarnogóra',
+    'md':'Mołdawia', 'xk':'Kosowo', 'kz':'Kazachstan', 'gb':'Wielka Brytania',
+    'us':'USA', 'au':'Australia', 'ie':'Irlandia', 'ca':'Kanada', 'nz':'Nowa Zelandia',
+    'ch':'Szwajcaria', 'be':'Belgia', 'si':'Słowenia', 'cy':'Cypr', 'mt':'Malta',
+  };
+
+  // Kody języków (ISO 639-1), którymi da się filtrować Google. Lista jest domknięciem
+  // wartości z `_NEWS_LANG_MAP` — czyli dokładnie tym, co realnie występuje na rynkach
+  // obsługiwanych przez ten monitoring — plus kilka sąsiednich.
+  var _LANG_NAMES = {
+    'pl':'polski', 'cs':'czeski', 'sk':'słowacki', 'hu':'węgierski', 'ro':'rumuński',
+    'bg':'bułgarski', 'hr':'chorwacki', 'sr':'serbski', 'lt':'litewski', 'lv':'łotewski',
+    'et':'estoński', 'fi':'fiński', 'sv':'szwedzki', 'no':'norweski', 'nb':'norweski (bokmål)',
+    'da':'duński', 'de':'niemiecki', 'fr':'francuski', 'nl':'niderlandzki', 'it':'włoski',
+    'es':'hiszpański', 'pt':'portugalski', 'tr':'turecki', 'el':'grecki', 'uk':'ukraiński',
+    'ru':'rosyjski', 'ka':'gruziński', 'hy':'ormiański', 'az':'azerski', 'sq':'albański',
+    'mk':'macedoński', 'bs':'bośniacki', 'kk':'kazachski', 'en':'angielski',
+    'sl':'słoweński', 'he':'hebrajski', 'ar':'arabski', 'ja':'japoński', 'zh':'chiński',
+  };
+
+  // Język domyślny dla kraju. Jedno miejsce zamiast trzech kopii tego samego wyrażenia.
+  function _langForCountry(cc) {
+    return (_NEWS_LANG_MAP[String(cc || '').toLowerCase()] || [''])[0] || '';
+  }
+
+  // Dlaczego to w ogóle istnieje: `gr` jest poprawnym kodem KRAJU i kompletnie błędnym kodem
+  // JĘZYKA (grecki to `el`), a sam format `[a-z]{2,3}` tego nie odróżnia. Google nie odrzuca
+  // `lr=lang_gr` — po cichu ignoruje filtr i zwraca wyniki w języku konta. Zmierzone przez
+  // właściciela 2026-09-18: po wpisaniu `Gr` w pole języka wyszukiwarka pokazała polski.
+  // Cicho zignorowany filtr to najgorszy możliwy wynik: przebieg idzie do końca i zbiera
+  // adresy z niewłaściwego rynku.
+  //
+  // Zwraca komunikat błędu albo null. Komunikat niesie LEKARSTWO, nie samą diagnozę.
+  function _langCodeError(lang, cc) {
+    var l = String(lang || '').trim().toLowerCase();
+    if (!/^[a-z]{2,3}$/.test(l)) return 'Filtr języka wymaga kodu języka, np. el (grecki).';
+    if (_LANG_NAMES[l]) return null;
+    // Klasyczna pomyłka: w polu języka wylądował kod kraju.
+    if (_CC_NAMES[l]) {
+      var sugg = _langForCountry(l);
+      return '„' + l.toUpperCase() + '" to kod kraju (' + _CC_NAMES[l] + '), nie języka. ' +
+             (sugg ? 'Wpisz „' + sugg + '" — ' + (_LANG_NAMES[sugg] || sugg) + '.'
+                   : 'Wpisz kod języka, np. el dla greckiego.') +
+             ' Google nie zna lang_' + l + ' i po cichu pominie filtr.';
+    }
+    var fallback = _langForCountry(cc);
+    return 'Nie znam kodu języka „' + l + '".' +
+           (fallback ? ' Dla kraju ' + String(cc).toUpperCase() + ' właściwy jest „' + fallback +
+                       '" (' + (_LANG_NAMES[fallback] || fallback) + ').' : '');
+  }
+
+  function _ccCodeError(cc) {
+    var c = String(cc || '').trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(c)) return 'Filtr kraju wymaga dwuliterowego kodu, np. GR.';
+    // Kod spoza listy przepuszczamy — `_CC_NAMES` to rynki tego monitoringu, a nie rejestr
+    // ISO. Blokowanie nieznanego kodu zablokowałoby rynek, który ktoś właśnie dokłada.
+    return null;
+  }
 
   function _newsCountryFromUrl(url) {
     try {
@@ -12750,29 +12845,41 @@ function showOnboarding(onComplete) {
     modal.style.cssText = 'position:fixed;inset:0;z-index:2147483645;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;font-family:Geist,\'Segoe UI\',system-ui,sans-serif;animation:b24t-fadein 0.18s ease both;';
 
     var inner = document.createElement('div');
-    inner.style.cssText = 'background:' + t.bg + ';border:1px solid ' + t.border + ';border-radius:14px;padding:22px 22px 20px;width:540px;max-width:calc(100vw - 40px);box-shadow:' + t.shadow + ';color:' + t.text + ';';
+    // `box-sizing` jest tu potrzebny, żeby `max-width` faktycznie ograniczał: bez niego
+    // 22 px paddingu z każdej strony dochodzi PONAD zadeklarowaną szerokość i na wąskim
+    // oknie modal wychodzi poza ekran mimo `calc(100vw - 40px)`.
+    inner.style.cssText = 'background:' + t.bg + ';border:1px solid ' + t.border + ';border-radius:14px;box-sizing:border-box;padding:22px 22px 20px;width:660px;max-width:calc(100vw - 40px);box-shadow:' + t.shadow + ';color:' + t.text + ';';
+
+    // Kafelki budowane z jednego wzorca, nie z trzech kopii stylu — inaczej każdy kolejny
+    // tryb dokładany do tego modalu rozjeżdżał się względem poprzednich.
+    //
+    // `minmax(0, 1fr)` zamiast `1fr` to nie kosmetyka: samo `1fr` znaczy `minmax(auto, 1fr)`,
+    // więc kolumna z dłuższym opisem rozpycha się kosztem sąsiednich i kafelki przestają
+    // być równe dokładnie w chwili, gdy dojdzie trzeci. Stąd też równa długość opisów
+    // i `align-content:flex-start` — wysokość wyrównuje grid, resztę robi treść.
+    function tile(key, icon, title, desc) {
+      return '<div data-launcher-tile="' + key + '" style="display:flex;flex-direction:column;' +
+        'padding:18px 16px;border-radius:12px;border:1px solid ' + t.border + ';background:' + t.bgDeep + ';' +
+        'cursor:pointer;transition:transform 0.15s, border-color 0.15s, background 0.15s;">' +
+        '<div style="font-size:24px;margin-bottom:8px;line-height:1;">' + icon + '</div>' +
+        '<div style="font-size:13px;font-weight:700;color:' + t.text + ';margin-bottom:6px;">' + title + '</div>' +
+        '<div style="font-size:10px;color:' + t.textFaint + ';line-height:1.5;">' + desc + '</div>' +
+      '</div>';
+    }
+
     inner.innerHTML = [
       '<div style="display:flex;align-items:center;margin-bottom:14px;">',
         '<span style="font-size:14px;font-weight:700;color:' + t.text + ';flex:1;">📋 Dodawanie wzmianek</span>',
         '<button id="b24t-launcher-close" style="background:transparent;border:none;color:' + t.textMuted + ';cursor:pointer;font-size:22px;line-height:1;padding:0 4px;">×</button>',
       '</div>',
       '<div style="font-size:11px;color:' + t.textMuted + ';margin-bottom:16px;line-height:1.5;">Wybierz tryb dodawania wzmianek do Brand24.</div>',
-      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">',
-        '<div data-launcher-tile="campaign" style="padding:18px 16px;border-radius:12px;border:1px solid ' + t.border + ';background:' + t.bgDeep + ';cursor:pointer;transition:transform 0.15s, border-color 0.15s, background 0.15s;">',
-          '<div style="font-size:24px;margin-bottom:8px;">🎯</div>',
-          '<div style="font-size:13px;font-weight:700;color:' + t.text + ';margin-bottom:6px;">Kampanie H&amp;M</div>',
-          '<div style="font-size:10px;color:' + t.textFaint + ';line-height:1.5;">Tryb News wsparty wyszukiwarką: wtyczka sama przechodzi wyniki Google dla wariantów frazy kampanii i zbiera adresy do koszyka.</div>',
-        '</div>',
-        '<div data-launcher-tile="news" style="padding:18px 16px;border-radius:12px;border:1px solid ' + t.border + ';background:' + t.bgDeep + ';cursor:pointer;transition:transform 0.15s, border-color 0.15s, background 0.15s;">',
-          '<div style="font-size:24px;margin-bottom:8px;">📰</div>',
-          '<div style="font-size:13px;font-weight:700;color:' + t.text + ';margin-bottom:6px;">News</div>',
-          '<div style="font-size:10px;color:' + t.textFaint + ';line-height:1.5;">Klasyczny tryb News — filtr słów kluczowych, kategoria News, tag <strong>dodane</strong> domyślnie.</div>',
-        '</div>',
-        '<div data-launcher-tile="custom" style="padding:18px 16px;border-radius:12px;border:1px solid ' + t.border + ';background:' + t.bgDeep + ';cursor:pointer;transition:transform 0.15s, border-color 0.15s, background 0.15s;">',
-          '<div style="font-size:24px;margin-bottom:8px;">✏️</div>',
-          '<div style="font-size:13px;font-weight:700;color:' + t.text + ';margin-bottom:6px;">Niestandardowe</div>',
-          '<div style="font-size:10px;color:' + t.textFaint + ';line-height:1.5;">Tryb otwarty — bez filtra słów kluczowych, auto-wykrywanie kategorii z domeny, pełny formularz (likes/pageviews/shares/comments).</div>',
-        '</div>',
+      '<div style="display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:12px;align-items:stretch;">',
+        tile('campaign', '🎯', 'Kampanie H&amp;M',
+             'Wtyczka sama przechodzi wyniki Google dla wariantów frazy i zbiera adresy do koszyka.'),
+        tile('news', '📰', 'News',
+             'Klasyczny tryb: filtr słów kluczowych, kategoria News, tag <strong>dodane</strong> domyślnie.'),
+        tile('custom', '✏️', 'Niestandardowe',
+             'Bez filtra słów, kategoria z domeny, pełny formularz metryk i autouzupełnianie z social mediów.'),
       '</div>',
     ].join('');
     modal.appendChild(inner);
@@ -13122,10 +13229,27 @@ function showOnboarding(onComplete) {
     var t = _newsThemeVars();
     var cfg = lsGet(LS.CAMPAIGN_CFG, {});
     var pc = _newsProjectCountry();
-    // Kraj z nazwy projektu (H&M_GR → GR), język z mapy krajów — oba do nadpisania ręcznie,
-    // bo jeden rynek bywa obsługiwany w kilku językach.
-    var cc = (cfg.cc || pc || '').toUpperCase();
-    var lang = cfg.lang || (_NEWS_LANG_MAP[cc.toLowerCase()] || [''])[0] || '';
+
+    // Co się przenosi między projektami, a co nie — to NIE jest ta sama kategoria.
+    //
+    // Nazwa kampanii, warianty frazy, zakres dat i czarna lista należą do KAMPANII: ta sama
+    // kampania idzie przez kilka rynków po kolei i przepisywanie ich za każdym razem to
+    // czysta strata. Zostają.
+    //
+    // Kraj i język należą do RYNKU, nie do kampanii. Zapamiętana para jest ważna wyłącznie
+    // dla projektu, w którym ją ustawiono (`cfg.ccProject`) — po przełączeniu projektu
+    // wyprowadzamy ją od nowa z nazwy nowego. Bez tego kampania odpalona na H&M_GR zaraz
+    // po H&M_TR szła z tureckim filtrem kraju i języka mimo greckiego projektu, a Google
+    // posłusznie zwracał turecki rynek (zgłoszone 2026-09-18).
+    //
+    // Wiązanie idzie po ID projektu, nie po kodzie kraju: dwa projekty tego samego rynku
+    // (inny język obsługi) mają prawo do osobnych ustawień.
+    // Bez wybranego projektu nie ma względem czego się adaptować — wtedy zapamiętana para
+    // zostaje, bo brak wiedzy to nie jest powód do kasowania tego, co użytkownik ustawił.
+    var _pid = String(state.projectId || '');
+    var _keepSaved = !_pid || String(cfg.ccProject || '') === _pid;
+    var cc = ((_keepSaved && cfg.cc) || pc || '').toUpperCase();
+    var lang = (_keepSaved && cfg.lang) || _langForCountry(cc);
 
     function inp(id, type, val, extra) {
       return '<input id="' + id + '" type="' + type + '" value="' + _escHtml(val || '') + '" ' +
@@ -13167,12 +13291,15 @@ function showOnboarding(onComplete) {
         '<div style="margin-top:3px;font-size:9px;color:' + t.textFaint + ';line-height:1.4;">Pełna nazwa często nie funkcjonuje na mniejszych rynkach — krótsze warianty łapią to, czego nie łapie pełna. Zakres dat trzyma szum w ryzach.</div>',
       '</div>',
 
-      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:10px;">',
+      // Kody są dwuliterowe, daty potrzebują miejsca na `dd.mm.rrrr` plus ikonę kalendarza —
+      // równy podział czterech kolumn ściskał pola dat do nieczytelnych.
+      '<div style="display:grid;grid-template-columns:0.72fr 0.72fr 1.28fr 1.28fr;gap:8px;margin-bottom:4px;">',
         '<div>' + lbl('KRAJ') + inp('b24t-camp-cc', 'text', cc, 'maxlength="2" placeholder="GR"') + '</div>',
         '<div>' + lbl('JĘZYK') + inp('b24t-camp-lang', 'text', lang, 'maxlength="3" placeholder="el"') + '</div>',
         '<div>' + lbl('OD') + inp('b24t-camp-from', 'date', cfg.from) + '</div>',
         '<div>' + lbl('DO') + inp('b24t-camp-to', 'date', cfg.to) + '</div>',
       '</div>',
+      '<div id="b24t-camp-market-hint" style="font-size:9px;color:' + t.textFaint + ';line-height:1.5;margin-bottom:10px;min-height:13px;"></div>',
 
       '<div style="display:flex;gap:16px;margin-bottom:12px;font-size:11px;">',
         '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="b24t-camp-m-country"' + (cfg.modeCountry === false ? '' : ' checked') + '> filtr kraju</label>',
@@ -13226,16 +13353,37 @@ function showOnboarding(onComplete) {
       varsTouched = false;
     });
 
-    // Kraj steruje językiem, dopóki język nie został wpisany ręcznie.
+    // Kraj steruje językiem, dopóki język nie został wpisany ręcznie DLA TEGO PROJEKTU.
+    // Ręczna zmiana zapamiętana przy innym projekcie nie ma tu nic do rzeczy — inaczej
+    // język raz poprawiony na jednym rynku zamrażałby automat na wszystkich kolejnych.
     var langEl = inner.querySelector('#b24t-camp-lang');
     var ccEl   = inner.querySelector('#b24t-camp-cc');
-    var langTouched = !!cfg.lang;
-    langEl.addEventListener('input', function() { langTouched = true; });
+    var langTouched = !!(_keepSaved && cfg.lang);
+    langEl.addEventListener('input', function() { langTouched = true; _marketHint(); });
     ccEl.addEventListener('input', function() {
-      if (langTouched) return;
-      var l = (_NEWS_LANG_MAP[ccEl.value.toLowerCase()] || [''])[0] || '';
-      langEl.value = l;
+      if (!langTouched) langEl.value = _langForCountry(ccEl.value);
+      _marketHint();
     });
+
+    // Podpis pod polami: co ten kod właściwie znaczy. Bez niego „el" i „gr" wyglądają
+    // tak samo prawdopodobnie, a tylko jeden jest greckim — i tylko jeden działa (§_langCodeError).
+    var hintEl = inner.querySelector('#b24t-camp-market-hint');
+    function _marketHint() {
+      if (!hintEl) return;
+      var c = ccEl.value.trim().toLowerCase();
+      var l = langEl.value.trim().toLowerCase();
+      var cName = _CC_NAMES[c] || '';
+      var lName = _LANG_NAMES[l] || '';
+      var parts = [];
+      if (c) parts.push(cName ? '<strong>' + c.toUpperCase() + '</strong> — ' + _escHtml(cName)
+                              : '<strong>' + _escHtml(c.toUpperCase()) + '</strong> — kraj nieznany na liście');
+      if (l) parts.push(lName ? '<strong>' + _escHtml(l) + '</strong> — ' + _escHtml(lName)
+                              : '<span style="color:#f59e0b;">' + _escHtml(l) + ' — nie jest kodem języka</span>');
+      hintEl.innerHTML = parts.join(' &nbsp;·&nbsp; ');
+      var err = _langCodeError(langEl.value, ccEl.value);
+      hintEl.style.color = err ? '#f59e0b' : t.textFaint;
+    }
+    _marketHint();
 
     (function fillPrompts() {
       var s = _aiGetSettings();
@@ -13331,6 +13479,9 @@ function showOnboarding(onComplete) {
         variants: variants,
         cc: ccEl.value.trim().toUpperCase(),
         lang: langEl.value.trim().toLowerCase(),
+        // Znacznik właściciela pary kraj/język. Przy otwarciu modalu na innym projekcie
+        // para jest wyprowadzana od nowa z jego nazwy, a nie brana stąd.
+        ccProject: String(state.projectId || ''),
         from: inner.querySelector('#b24t-camp-from').value,
         to: inner.querySelector('#b24t-camp-to').value,
         modes: modes,
@@ -13343,13 +13494,24 @@ function showOnboarding(onComplete) {
     // Komunikat mówi, CO zrobić — brakujące pole samo w sobie nic nie podpowiada.
     function validate(c, kanal) {
       if (!c.variants.length) return 'Wpisz nazwę kampanii — z niej powstają warianty frazy.';
+      // Sprawdzamy ZNACZENIE kodu, nie tylko jego kształt. `[a-z]{2,3}` przepuszcza „gr",
+      // które jest poprawnym kodem kraju i błędnym kodem języka — a Google taki filtr
+      // po cichu ignoruje, więc przebieg kończy się kompletem adresów z niewłaściwego rynku.
       if (kanal === 'rss') {
-        if (!/^[A-Z]{2}$/.test(c.cc)) return 'Google News wymaga dwuliterowego kodu kraju, np. GR.';
-        if (!/^[a-z]{2,3}$/.test(c.lang)) return 'Google News wymaga kodu języka, np. el.';
+        var eCc = _ccCodeError(c.cc);
+        if (eCc) return eCc;
+        var eLang = _langCodeError(c.lang, c.cc);
+        if (eLang) return eLang;
       } else {
         if (!c.modes.length) return 'Zaznacz przynajmniej jeden filtr: kraju albo języka.';
-        if (c.modes.indexOf('country') !== -1 && !/^[A-Z]{2}$/.test(c.cc)) return 'Filtr kraju wymaga dwuliterowego kodu, np. GR.';
-        if (c.modes.indexOf('lang') !== -1 && !/^[a-z]{2,3}$/.test(c.lang)) return 'Filtr języka wymaga kodu języka, np. el.';
+        if (c.modes.indexOf('country') !== -1) {
+          var eCc2 = _ccCodeError(c.cc);
+          if (eCc2) return eCc2;
+        }
+        if (c.modes.indexOf('lang') !== -1) {
+          var eLang2 = _langCodeError(c.lang, c.cc);
+          if (eLang2) return eLang2;
+        }
       }
       if ((c.from && !c.to) || (!c.from && c.to)) return 'Podaj obie daty zakresu albo żadnej.';
       if (c.from && c.to && c.from > c.to) return 'Data „od" jest późniejsza niż „do".';
@@ -17499,6 +17661,22 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.33.0",
+      "date": "2026-09-18",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "**Autouzupełnianie wzmianek działa na X i Facebooku.** Oba serwisy szły dotąd przez generyczny odczyt artykułu, który na X trafiał w oś czasu, a na Facebooku w nic — treść, tytuł, data i godzina zostawały puste. To nie był drobiazg: sprawdzanie duplikatów zawęża zapytanie do miesiąca z pola daty, a puste pole oznaczało „dzisiaj\", więc wpis sprzed pół roku był szukany w bieżącym miesiącu i wychodził jako „URL nowy\" dla wzmianki, która w projekcie już jest"},
+        {"type": "feat", "text": "**X — komplet danych wpisu niezależnie od tego, czy sesja jest zalogowana.** Data z godziną, treść, polubienia, odpowiedzi, język wpisu i autor przychodzą z endpointu, którym X obsługuje osadzanie wpisów na cudzych stronach. Powód, dla którego to nie może opierać się na samej stronie: wylogowany X **nie renderuje aplikacji w ogóle** — zmierzone na stronie wpisu, zero elementów `data-testid`, zero `time`, brak `react-root`. Repostów i wyświetleń ten kanał nie oddaje, te czytane są z widoku zalogowanego"},
+        {"type": "feat", "text": "**Facebook — dane posta bez ani jednego zapytania do Facebooka.** Czytane są z pamięci karty, gdzie post już jest, bo został otwarty. Daje dokładny czas publikacji, pełną treść (zmierzone **602 znaki** tam, gdzie widok ucina po „Wyświetl więcej\"), reakcje, komentarze i udostępnienia. Innej drogi tam nie ma: na stronie posta Facebook nie wystawia **żadnych** metadanych — zmierzone zero tagów `og:`, zero `ld+json`, zero `time`"},
+        {"type": "feat", "text": "**Wiersz autora działa wreszcie na Facebooku.** Brand24 trzyma adres autora jako `profile.php?id=` z numerycznym ID strony, którego w adresie posta nie ma — i dlatego to pole było na Facebooku wyłączone. Teraz ID przychodzi wprost z danych posta"},
+        {"type": "fix", "text": "**Kraj i język kampanii dostosowują się do przełączonego projektu.** Przebieg odpalony na projekcie greckim dzień po tureckim szedł z **tureckim** filtrem kraju i języka, bo zapamiętana konfiguracja miała pierwszeństwo przed krajem z nazwy projektu. Nazwa kampanii, warianty frazy i zakres dat przenoszą się dalej — należą do kampanii, nie do rynku. Ręczna zmiana kraju albo języka zostaje zapamiętana, ale tylko dla projektu, w którym ją zrobiono"},
+        {"type": "fix", "text": "**Błędny kod języka jest odrzucany, zamiast po cichu wyłączać filtr.** Wpisanie „gr\" w pole języka (bo kraj to GR) dawało wyniki po polsku — Google nie odrzuca `lang_gr`, tylko pomija nieznany filtr. Przebieg kończył się normalnie, HUD pokazywał postęp, a koszyk zapełniał się adresami z niewłaściwego rynku. Teraz sprawdzane jest znaczenie kodu, nie sam kształt, a komunikat podaje właściwy — grecki to „el\". Ten sam rozjazd mają CZ/cs, SE/sv, DK/da, EE/et, UA/uk, RS/sr i kilka innych; pod polami stoi podpis z nazwami kraju i języka"},
+        {"type": "feat", "text": "**Panel przebiegu pokazuje rynek.** Pod nazwą kampanii doszedł kraj i język z nazwami, a filtr niebiorący udziału w tym przebiegu jest wyszarzony. Powód wprost z poprzedniego punktu: przebieg z cudzym rynkiem wygląda z zewnątrz identycznie jak poprawny — ten sam postęp, ten sam rosnący koszyk"},
+        {"type": "fix", "text": "**Kafelki w oknie „Dodawanie wzmianek\" mają równy rozmiar.** Trzeci kafelek ściskał pozostałe, bo kolumna z dłuższym opisem rozpychała się kosztem sąsiednich. Zmierzone po poprawce: równa szerokość, równa wysokość, równe odstępy"}
+      ]
+    },
+    {
       "version": "0.32.11",
       "date": "2026-09-17",
       "label": "feat",
@@ -17596,17 +17774,7 @@ function showOnboarding(onComplete) {
       "changes": [
         {"type": "fix", "text": "**Projekt otwarty na panelu `.pl` trafiał na inne strony bez nazwy — i przez to wyglądał na nieobecny.** Wtyczka brała nazwę projektu **wyłącznie z tytułu karty przeglądarki**. Zmierzone na `panel.brand24.pl/panel/results/<id>`: tytuł stoi na gołym „Brand24” i nie zmienia się przez cały czas, więc nazwa nie zapisywała się nigdzie — ani lokalnie, ani tam, skąd czytają ją Instagram i reszta. Projekt był w dropdownie modalu, ale jako „Projekt 294001552”, więc wpisanie jego nazwy nie znajdowało nic i wyglądało to na brak projektu. Wracał dopiero po otwarciu modalu na panelu (to sprawdzenie dostępu dociagało nazwę przy okazji) i przeładowaniu strony. Teraz, gdy tytuł nie daje nazwy, wtyczka pyta o nią Brand24 jednym lekkim zapytaniem i zapamiętuje jako potwierdzoną"}
       ]
-    },
-    {
-      "version": "0.32.2",
-      "date": "2026-09-15",
-      "label": "fix",
-      "labelColor": "#f59e0b",
-      "changes": [
-        {"type": "fix", "text": "**Projekt otwarty w panelu jest od razu dostępny na innych stronach.** Wtyczka zapisywała projekt tam, skąd widzą go Instagram, TikTok i reszta, **wyłącznie przy pełnym przeładowaniu strony panelu**. Panel Brand24 przełącza projekty bez przeładowania, więc projekt otwarty w trakcie pracy — świeżo założony albo wzięty z CMS-a — nie istniał w dropdownie modalu i trzeba było wrócić na panel i przeładować stronę, żeby się pojawił. Teraz wtyczka pilnuje adresu panelu i zapisuje projekt w chwili, gdy go otworzysz. Nazwę bierze z tytułu karty, a gdy ten nie zdąży się przestawić — pyta o nią Brand24"},
-        {"type": "fix", "text": "**Modal na obcej stronie zastaje ostatnio oglądany projekt już wybrany.** Wchodzisz na projekt w panelu, otwierasz post na Instagramie — i on tam jest, bez szukania na liście. Do tej pory wtyczka zapamiętywała wyłącznie to, co sam wybrałeś w dropdownie modalu"}
-      ]
-    },
+    }
   ];
 
   function _fetchChangelog(onDone) {
@@ -23973,8 +24141,13 @@ Tej operacji nie można cofnąć.`)) {
       var _hasSocialMetric = _social && (_social.likes != null || _social.comments != null || _social.shares != null || _social.pageviews != null);
       var _metrics = _hasSocialMetric ? _social : _scrapeSocialMetrics();
       _customFillMetrics(_metrics);
-      // Autor z adresu strony (TikTok, X, YouTube). Instagram dochodzi niżej, razem z metrykami.
-      _customApplyAuthor(_socialAuthorUrl());
+      // Autor: adapter ma pierwszeństwo przed odczytem z adresu. Na Facebooku autora z adresu
+      // posta odczytać SIĘ NIE DA (potrzebne numeryczne ID strony, patrz `_socialAuthorUrl`),
+      // a adapter bierze je ze store'u — gdyby kolejność była odwrotna, pusty wynik odczytu
+      // z adresu kasowałby wiersz tuż po jego wypełnieniu. Instagram dochodzi niżej, razem
+      // z metrykami, bo tam autora zna dopiero odpowiedź sieciowa.
+      if (_social && _social.authorUrl) _customApplyAuthor(_social.authorUrl);
+      else _customApplyAuthor(_socialAuthorUrl());
 
       // Platformy, które potrafią oddać komplet dokładnych liczb jednym żądaniem. W samym DOM-ie
       // tych danych nie ma (sumy komentarzy i repostów na IG, wyświetlenia i udostępnienia na
@@ -23983,6 +24156,7 @@ Tej operacji nie można cofnąć.`)) {
       var _enrich = null;
       if (_social && _social.igCode)    _enrich = function(cb) { _igFetchMediaInfo(_social.igCode, cb); };
       else if (_social && _social.ttId) _enrich = function(cb) { _ttFetchDetail(_social.url, _social.ttId, cb); };
+      else if (_social && _social.xId)  _enrich = function(cb) { _xFetchTweet(_social.xId, cb); };
       if (_enrich) {
         _customSetMetricsPending(true);
         _enrich(function(info) {
@@ -24138,7 +24312,7 @@ Tej operacji nie można cofnąć.`)) {
         // czyli mają go od razu — flaga mówi o DOM-ie. Poza serwisami społecznościowymi
         // (i po wyjściu z posta na profil) nie ma na co czekać: odświeżamy natychmiast.
         var s = _scrapeSocialPost();
-        var postId = s ? (s.igCode || s.ttId || null) : null;
+        var postId = s ? (s.igCode || s.ttId || s.xId || s.fbPost || null) : null;
         if (!postId || s.ready || ++tries > 12) { _customAutoFillFromPage(); return; }
         setTimeout(waitForPost, 250);
       })();
@@ -24782,13 +24956,392 @@ Tej operacji nie można cofnąć.`)) {
     return _igAppIdCache;
   }
 
+  // ── X / TWITTER ────────────────────────────────────────────────────────────
+  // Pełna wiedza o tym adapterze, z pomiarami: X_SYNDICATION.md (cytowane niżej jako §N).
+  //
+  // Powód, dla którego ten adapter istnieje (§1): X nie renderuje aplikacji wylogowanej
+  // sesji WCALE — zmierzone na stronie wpisu: zero `[data-testid]`, zero `time[datetime]`,
+  // brak `react-root`. Generyczny scrape trafiał więc w pustkę i data szła domyślnikiem
+  // „dzisiaj", a ten zawęża dup-check do złego miesiąca (§4).
+
+  // Identyfikator wpisu z adresu. Ten sam wpis żyje pod twitter.com i x.com, a przy
+  // udostępnieniu dochodzi `?t=…&s=20` — liczbowe ID jest jedyną częścią stałą.
+  // `/i/web/status/<id>` to wariant, którym X otwiera wpis z powiadomień.
+  function _xStatusId(href) {
+    var path;
+    try { path = href ? new URL(href, location.href).pathname : window.location.pathname; }
+    catch(e) { path = window.location.pathname; }
+    var m = path.match(/\/status(?:es)?\/(\d+)/);
+    return m ? m[1] : null;
+  }
+
+  // Handle autora ze ścieżki. Na `/i/web/status/<id>` konta w adresie NIE MA — wtedy pusto,
+  // a prawdziwy handle dochodzi z odpowiedzi syndication (§3).
+  function _xHandle() {
+    var m = window.location.pathname.match(/^\/([^\/?#]+)\/status(?:es)?\/\d+/);
+    if (!m) return '';
+    return /^(i|home|explore|search|notifications|messages|settings)$/i.test(m[1]) ? '' : m[1];
+  }
+
+  function _scrapeX() {
+    var id = _xStatusId();
+    if (!id) return null;   // oś czasu, profil, /explore — nie ma jednego wpisu do przeczytania
+
+    var r = { content: '', title: '', url: '', date: '', hour: '', minute: '',
+              likes: null, shares: null, comments: null, pageviews: null, lang: null,
+              xId: id, strict: true, ready: false };
+    var handle = _xHandle();
+    // Adres kanoniczny bez `?t=…&s=20`. Te parametry dokleja sam X przy udostępnianiu i nie
+    // zdejmuje ich `_newsCanonicalUrl` (jego lista jest celowo wąska — utm_*, fbclid, gclid),
+    // więc bez tego dup-check pytałby o adres, którego w projekcie nie ma w tej postaci.
+    // Bez handla w adresie zostaje bieżąca ścieżka — `/i/web/status/<id>` jest brzydki, ale
+    // prawdziwy, a zgadywanie konta dałoby adres prowadzący donikąd.
+    r.url = handle ? 'https://x.com/' + handle + '/status/' + id
+                   : 'https://x.com' + window.location.pathname.replace(/\/+$/, '');
+
+    // Treść z drzewa wpisu. `[data-testid="tweetText"]` bierzemy z ARTYKUŁU dopasowanego po
+    // ID, a nie pierwszego z brzegu: pod wpisem stoją odpowiedzi i każda ma własny tweetText.
+    // [NIEZWERYFIKOWANE NA ŻYWO] — sesja, na której to rozpoznawałem, była wylogowana (§1),
+    // więc selektory zalogowanego widoku pochodzą z rozpoznania, nie z pomiaru. Dane z §3
+    // (syndication) są od tego niezależne i przychodzą tak czy tak.
+    var art = null;
+    try {
+      var arts = document.querySelectorAll('article[data-testid="tweet"]');
+      for (var i = 0; i < arts.length && !art; i++) {
+        if (arts[i].querySelector('a[href*="/status/' + id + '"]')) art = arts[i];
+      }
+    } catch(e) {}
+    if (art) {
+      var tx = art.querySelector('[data-testid="tweetText"]');
+      if (tx) {
+        var t = (tx.textContent || '').replace(/\s+/g, ' ').trim();
+        if (t) { r.content = t.slice(0, 600); r.title = _socialTitleFromText(t); }
+      }
+      // Czas publikacji: `time[datetime]` niesie pełny ISO z godziną, więc jest równie dobry
+      // co odpowiedź sieciowa i jest od razu.
+      var te = art.querySelector('time[datetime]');
+      if (te) {
+        var d = new Date(te.getAttribute('datetime'));
+        if (!isNaN(d.getTime())) {
+          r.date   = _localDateStr(d);
+          r.hour   = String(d.getHours()).padStart(2, '0');
+          r.minute = String(d.getMinutes()).padStart(2, '0');
+        }
+      }
+      // Jedyne miejsce w DOM-ie z liczbą WYŚWIETLEŃ i REPOSTÓW — syndication żadnej z nich
+      // nie oddaje (§3). Etykieta grupy ma postać „12 odpowiedzi, 5 repostów, 100 polubień,
+      // 3 zakładki, 4500 wyświetleń", czyli liczba stoi PRZED rzeczownikiem i jest pełna,
+      // nie skrócona jak nadruki na przyciskach.
+      var grp = art.querySelector('[role="group"][aria-label]');
+      if (grp) {
+        var lab = grp.getAttribute('aria-label') || '';
+        var _xLab = function(rx) { var m = lab.match(rx); return m ? _socialParseCount(m[1]) : null; };
+        r.comments  = _xLab(/([\d\s.,]+)\s*(?:odpowiedz|repl)/i);
+        r.shares    = _xLab(/([\d\s.,]+)\s*(?:repost|podan)/i);
+        r.likes     = _xLab(/([\d\s.,]+)\s*(?:polub|like)/i);
+        r.pageviews = _xLab(/([\d\s.,]+)\s*(?:wyświetl|view)/i);
+      }
+      r.ready = !!(r.content || r.date);
+    } else if (!document.querySelector('article[data-testid="tweet"]')) {
+      // Aplikacji nie ma w drzewie wcale — sesja wylogowana (§1). Czekanie na przerysowanie
+      // posta nic tu nie da, więc `ready` od razu, żeby odświeżanie po nawigacji SPA nie
+      // odliczało swoich trzech sekund do pustki. Treść w tym widoku niesie `og:description`
+      // i jest to PEŁNY tekst wpisu — zmierzone (§1). To jedyne miejsce, gdzie ten adapter
+      // sięga po metadane dokumentu: tu nie ma modala ani nawigacji SPA, która mogłaby je
+      // zostawić z poprzedniej strony.
+      var ogd = document.querySelector('meta[property="og:description"]');
+      var oc = ogd ? (ogd.getAttribute('content') || '').replace(/\s+/g, ' ').trim() : '';
+      if (oc) { r.content = oc.slice(0, 600); r.title = _socialTitleFromText(oc); }
+      r.ready = true;
+    }
+    return r;
+  }
+
+  // Komplet danych wpisu jednym żądaniem, niezależnie od tego, czy sesja jest zalogowana
+  // i czy X w ogóle wyrenderował aplikację. Źródłem jest endpoint, którym X obsługuje własne
+  // osadzanie tweetów na cudzych stronach (§2):
+  //
+  //     GET https://cdn.syndication.twimg.com/tweet-result?id=<id>&lang=<l>&token=<t>
+  //
+  // Dlaczego nie DOM: patrz §1 — wylogowana sesja nie ma czego czytać.
+  // Dlaczego nie API GraphQL X-a, którym obsługuje się sam: te wywołania niosą nagłówek
+  // `x-client-transaction-id` liczony w ich JS-ie, tak samo nieosiągalny jak `X-Bogus`
+  // TikToka. To ta sama granica, o którą rozbił się `_ttFetchDetail`.
+  //
+  // Czego ten endpoint NIE oddaje (zmierzone, §3): repostów i wyświetleń — obu kluczy nie ma
+  // w odpowiedzi wcale. Jedyne ich źródło to `aria-label` grupy akcji w DOM-ie, więc adapter
+  // czyta je stamtąd i odpowiedź ich nie nadpisuje.
+  function _xFetchTweet(id, cb) {
+    var done = false;
+    function finish(v) { if (done) return; done = true; try { cb(v); } catch(e) {} }
+    if (!id) return finish(null);
+    setTimeout(function() { finish(null); }, 8000);
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: 'https://cdn.syndication.twimg.com/tweet-result?id=' + encodeURIComponent(id) +
+           '&lang=en&token=' + _xToken(id),
+      timeout: 8000,
+      onload: function(resp) {
+        var j;
+        try { j = JSON.parse(resp.responseText); } catch(e) { return finish(null); }
+        // Pusty obiekt przy HTTP 200 to normalna odpowiedź tego endpointu na brak/odrzucenie
+        // parametrów (§2) — status nie wystarcza, trzeba sprawdzić zawartość.
+        if (!j || !j.id_str) return finish(null);
+        // Samokontrola jak przy Instagramie i TikToku: odpowiedź niesie własne ID, więc
+        // trafienie w inny wpis wychodzi tutaj, a nie w formularzu.
+        if (String(j.id_str) !== String(id)) return finish(null);
+        function _n(v) { var x = parseInt(v, 10); return isNaN(x) ? null : x; }
+        var out = {
+          likes:    _n(j.favorite_count),
+          // `conversation_count` to liczba odpowiedzi pod wpisem — odpowiednik komentarzy.
+          comments: _n(j.conversation_count),
+          // Repostów i wyświetleń w tej odpowiedzi nie ma (§3). `undefined` przechodzi przez
+          // `_customSetAuto` jako „nie ruszaj pola", więc wartość z DOM-u zostaje.
+          caption:  j.text || '',
+          // Język WPISU wykryty przez X, nie język interfejsu — w odróżnieniu od YouTube'a,
+          // TikToka i Instagrama można go tu ustawić bez ryzyka fałszywego ostrzeżenia.
+          lang:     j.lang || null,
+          date: '', hour: '', minute: ''
+        };
+        // Klucz `authorUrl` dokładamy TYLKO wtedy, gdy autor jest znany. Pusty łańcuch
+        // kasowałby wiersz autora, a na X jest on już wypełniony z adresu strony
+        // (`_socialAuthorUrl`) — odpowiedź bez `screen_name` nie ma prawa tego cofnąć.
+        if (j.user && j.user.screen_name) out.authorUrl = 'https://twitter.com/' + j.user.screen_name;
+        // Doklejony na końcu skrót `https://t.co/…` to nośnik załącznika, nie treść wpisu —
+        // X wstawia go do `text` zawsze, gdy wpis ma zdjęcie albo film.
+        if (out.caption) out.caption = out.caption.replace(/\s*https:\/\/t\.co\/\w+\s*$/, '').trim();
+        if (j.created_at) {
+          var d = new Date(j.created_at);
+          if (!isNaN(d.getTime())) {
+            out.date   = _localDateStr(d);
+            out.hour   = String(d.getHours()).padStart(2, '0');
+            out.minute = String(d.getMinutes()).padStart(2, '0');
+          }
+        }
+        finish(out);
+      },
+      onerror:   function() { finish(null); },
+      ontimeout: function() { finish(null); }
+    });
+  }
+
+  // Token z ID wpisu — ten sam rachunek, którego używa oficjalny widget osadzania.
+  // Zmierzone (§2): serwer go NIE weryfikuje — dowolna niepusta wartość zwraca pełne dane,
+  // a pusta zwraca `{}`. Liczymy go mimo to, bo żądanie ma wyglądać jak żądanie widgetu,
+  // a nie jak coś, co podstawia byle łańcuch.
+  function _xToken(id) {
+    try {
+      return ((Number(id) / 1e15) * Math.PI).toString(36).replace(/(0+|\.)/g, '') || 'x';
+    } catch(e) { return 'x'; }
+  }
+
+  // ── FACEBOOK ───────────────────────────────────────────────────────────────
+  // Pełna wiedza o tym źródle, z pomiarami: .claude/skills/facebook-collector-dev/references/
+  // facebook-relay-store.md (cytowane niżej jako STORE §N) oraz FACEBOOK_MENTION.md (§N).
+  //
+  // Powód, dla którego ten adapter czyta store, a nie DOM (§1): na stronie posta zalogowanej
+  // sesji Facebook nie wystawia ŻADNYCH metadanych — zmierzone na permalinku fanpage'a:
+  // `og:*` zero tagów, `ld+json` zero, `time[datetime]` zero. Nie ma tu czego skrobać
+  // „po taniości”, a sam tekst posta DOM podaje ucięty („Wyświetl więcej”) i rozsypany
+  // honeypotami. Store daje to samo bez ani jednego zapytania do Facebooka.
+
+  // Środowisko Relaya jest drogie do znalezienia tylko za pierwszym razem (chodzenie po
+  // fiberach), więc trzymamy je pod ręką. Przy nawigacji SPA korzeń zostaje ten sam.
+  var _fbEnvCache = null;
+
+  // Korzeń Reacta trzymamy przez `_win.document`, nie `document`. `__reactContainer$…` to
+  // expando ustawione przez kod strony, a userscript żyje w sandboxie Tampermonkeya —
+  // sięgnięcie po prawdziwy dokument strony zdejmuje pytanie, czy sandbox pokazuje te same
+  // obiekty węzłów. Sufiks klucza jest LOSOWY przy każdym załadowaniu (STORE §2) — nigdy
+  // go nie hardkoduj.
+  function _fbRelaySource() {
+    if (_fbEnvCache) { try { return _fbEnvCache.getStore().getSource(); } catch(e) { _fbEnvCache = null; } }
+    var doc = (_win && _win.document) || document;
+    var rootEl = null, rootKey = null;
+    var divs = doc.querySelectorAll('div');
+    for (var i = 0; i < divs.length && !rootKey; i++) {
+      var ks = Object.keys(divs[i]);
+      for (var j = 0; j < ks.length; j++) {
+        if (ks[j].indexOf('__reactContainer$') === 0) { rootEl = divs[i]; rootKey = ks[j]; break; }
+      }
+    }
+    if (!rootKey) return null;
+
+    // Środowisko rozpoznajemy po kaczce — obiekt z `getStore` i `lookup` (STORE §3).
+    // Licznik odwiedzin jest bezpiecznikiem: drzewo fiberów bywa cykliczne.
+    var env = null, visited = 0;
+    (function walk(f) {
+      if (!f || env || visited > 400000) return;
+      visited++;
+      var cands = [f.memoizedProps, f.memoizedState, f.stateNode];
+      for (var a = 0; a < cands.length; a++) {
+        var c = cands[a];
+        if (!c || typeof c !== 'object') continue;
+        if (c.getStore && c.lookup) { env = c; return; }
+        var kk = Object.keys(c).slice(0, 30);
+        for (var b = 0; b < kk.length; b++) {
+          var x = c[kk[b]];
+          if (x && typeof x === 'object' && x.getStore && x.lookup) { env = x; return; }
+        }
+      }
+      walk(f.child);
+      if (!env) walk(f.sibling);
+    })(rootEl[rootKey]);
+
+    if (!env) return null;
+    _fbEnvCache = env;
+    try { return env.getStore().getSource(); } catch(e) { return null; }
+  }
+
+  // Identyfikatory posta wyłuskane z adresu. Facebook ma kilka postaci permalinka i każda
+  // niesie inny rodzaj ID (§2):
+  //   /<strona>/posts/pfbid…              → pfbid
+  //   /groups/<gid>/posts/<pid>/          → numeryczne pid
+  //   /permalink.php?story_fbid=<pid>…    → numeryczne pid
+  //   /share/p/<kod>/                     → krótki link udostępniania, NIESPRAWDZONY (§2)
+  // Zwracamy wszystkie kandydatury, bo dopasowanie i tak idzie przez „czy permalink rekordu
+  // zawiera którekolwiek z tych ID”.
+  function _fbUrlIds() {
+    var s = window.location.pathname + window.location.search;
+    var out = (s.match(/pfbid[A-Za-z0-9]+/g) || []);
+    var nums = s.match(/\d{8,}/g) || [];
+    return out.concat(nums);
+  }
+
+  // Czy adres wskazuje POJEDYNCZY post tekstowy. Na feedzie, profilu i w grupie bez otwartego
+  // posta nie ma czego wypełniać — niech zadziała generyczny scrape.
+  //
+  // Rolek (`/reel/`) i wideo (`/videos/`) tu ŚWIADOMIE NIE MA, choć adresy są rozpoznawalne.
+  // Ich dane siedzą w store pod rekordem `Video`, nie `Story`, a feedback ma inny kształt:
+  // komentarze pod płaskim `comment_count`, udostępnienia pod `share_count_reduced` jako
+  // napis do wyświetlenia (STORE §5). Nie sprawdziłem tego na żywo, a wpisanie ich tutaj
+  // dałoby adapter, który melduje „rozpoznałem post”, po czym nie znajduje rekordu i przez
+  // `strict` blokuje wszystko inne — czyli gorzej niż brak obsługi. Dopisać po pomiarze.
+  function _fbIsSinglePost() {
+    var p = window.location.pathname;
+    return /\/posts\//.test(p) || /\/permalink\.php$/.test(p) ||
+           /story_fbid=/.test(window.location.search);
+  }
+
+  function _scrapeFacebook() {
+    if (!_fbIsSinglePost()) return null;
+
+    var r = { content: '', title: '', url: '', date: '', hour: '', minute: '',
+              likes: null, shares: null, comments: null, pageviews: null, lang: null,
+              fbPost: true, strict: true, ready: false };
+    // Adres kanoniczny nadpisujemy dopiero permalinkiem ze store'u; zanim go znajdziemy,
+    // zostaje bieżący bez parametrów śledzenia, które Facebook dokleja przy udostępnianiu.
+    r.url = window.location.origin + window.location.pathname.replace(/\/+$/, '');
+
+    var src = _fbRelaySource();
+    if (!src) return r;   // store nieosiągalny — `ready` zostaje false, panel nic nie zmyśla
+
+    var get = function(id) { return src.get(id); };
+    var deref = function(x) { return (x && x.__ref !== undefined) ? get(x.__ref) : x; };
+    var keyLike = function(o, re) { var k = Object.keys(o).filter(function(n) { return re.test(n); }); return k[0]; };
+
+    // Rekordy Story chodzą PARAMI: pełny i wydmuszka z samym `post_id` (STORE §6).
+    // Bez dedupu trafiłoby się na wydmuszkę i wyszłoby, że post nie ma ani treści, ani liczb.
+    var stories = [];
+    try {
+      var ids = src.getRecordIDs();
+      for (var i = 0; i < ids.length; i++) {
+        var rec = get(ids[i]);
+        if (rec && rec.__typename === 'Story' && rec.post_id) stories.push(rec);
+      }
+    } catch(e) { return r; }
+    var byId = {};
+    stories.forEach(function(s) {
+      var cur = byId[s.post_id];
+      if (!cur || (!cur.feedback && s.feedback)) byId[s.post_id] = s;
+    });
+
+    // Wskazanie TEGO posta, na którym stoi użytkownik. Store trzyma także sąsiednie posty
+    // (sugestie pod wpisem), więc branie pierwszego z brzegu dałoby cudze dane. Dopasowanie
+    // idzie przez permalink rekordu, bo to jedyne pole niosące pfbid z adresu.
+    // Zmierzone na permalinku fanpage'a: 4 posty w store, dokładnie 1 dopasowany (§3).
+    var urlIds = _fbUrlIds();
+    var story = null, storyUrl = '';
+    Object.keys(byId).forEach(function(pid) {
+      if (story) return;
+      var s = byId[pid];
+      var uk = keyLike(s, /^url\(site:"comet"\)/) || keyLike(s, /^url\(/);
+      var permalink = uk ? String(s[uk] || '') : '';
+      var hit = urlIds.some(function(id) { return permalink.indexOf(id) !== -1; }) ||
+                urlIds.indexOf(String(pid)) !== -1;
+      // Permalink wędruje OBOK rekordu, nie w nim. Rekordy pochodzą ze store'u Relaya, który
+      // jest żywą strukturą Facebooka — dopisanie do niego własnego pola to zanieczyszczenie
+      // cudzego stanu, a nie zapisanie sobie wyniku.
+      if (hit) { story = s; storyUrl = permalink; }
+    });
+    if (!story) return r;   // post jeszcze nie dociągnięty albo postać adresu, której nie znamy
+
+    if (storyUrl) r.url = storyUrl.split('?')[0];
+
+    // `creation_time` to unix publikacji, dokładny co do sekundy — w DOM-ie Facebook podaje
+    // tylko względne „3 dni temu”, a pełną datę chowa w dymku pod kursorem.
+    if (story.creation_time) {
+      var d = new Date(story.creation_time * 1000);
+      if (!isNaN(d.getTime())) {
+        r.date   = _localDateStr(d);
+        r.hour   = String(d.getHours()).padStart(2, '0');
+        r.minute = String(d.getMinutes()).padStart(2, '0');
+      }
+    }
+
+    // Pełna treść, bez honeypotu i bez klikania „Wyświetl więcej”. Klucz bywa gołym `message`
+    // albo sparametryzowanym `message(location:…)`, zależnie od powierzchni (STORE §4).
+    var mk = keyLike(story, /^message$/) || keyLike(story, /^message\(/);
+    var msg = mk ? deref(story[mk]) : null;
+    var text = (msg && msg.text) ? String(msg.text).replace(/\s+/g, ' ').trim() : '';
+    if (text) { r.content = text.slice(0, 600); r.title = _socialTitleFromText(text); }
+
+    var fb = deref(story.feedback);
+    if (fb) {
+      // `reactors.count` to JEDYNY uniwersalny klucz sumy reakcji — `reaction_count` na
+      // poziomie feedbacku zwykle NIE ISTNIEJE (STORE §5). Sprawdzone krzyżowo z ekranem.
+      var rk = keyLike(fb, /^reactors/) || keyLike(fb, /^unified_reactors/);
+      var reactors = rk ? deref(fb[rk]) : null;
+      if (reactors && reactors.count != null) r.likes = reactors.count;
+
+      // Komentarze: feed trzyma sumę pod `comment_rendering_instance(...)`, rolka pod
+      // płaskim `comment_count` (STORE §5).
+      var ck = keyLike(fb, /^comment_rendering_instance/);
+      var cri = ck ? deref(fb[ck]) : null;
+      var comments = (cri && cri.comments) ? deref(cri.comments) : null;
+      if (comments && comments.total_count != null) r.comments = comments.total_count;
+      else if (fb.comment_count != null) r.comments = fb.comment_count;
+
+      // Udostępnienia: `reshares.count` jest liczbą, `share_count_reduced` bywa napisem do
+      // wyświetlenia („1,4 tys.”) — stąd kolejność i parser na końcu (STORE §5).
+      var sk = keyLike(fb, /^reshares/);
+      var reshares = sk ? deref(fb[sk]) : null;
+      if (reshares && reshares.count != null) r.shares = reshares.count;
+      else if (fb.share_count_reduced != null) r.shares = _socialParseCount(fb.share_count_reduced);
+    }
+
+    // Autor. Brand24 trzyma adres autora Facebooka jako `facebook.com/profile.php?id=<ID>`
+    // i właśnie brak tego numerycznego ID był powodem, dla którego wiersz autora nie
+    // pokazywał się tu wcale (patrz komentarz przy `_socialAuthorUrl`). Store podaje je
+    // wprost, więc ten powód znika.
+    try {
+      var actor = (story.actors && story.actors.__refs) ? get(story.actors.__refs[0]) : null;
+      if (actor && actor.id) r.authorUrl = 'https://www.facebook.com/profile.php?id=' + actor.id;
+    } catch(e) {}
+
+    r.ready = !!(r.content || r.date);
+    return r;
+  }
+
   // Dyspozytor adapterów social media — zwraca komplet danych posta albo null (wtedy działa
-  // generyczny scrape artykułowy). Punkt rozszerzeń na kolejne platformy (X, FB…).
+  // generyczny scrape artykułowy).
   function _scrapeSocialPost() {
     var h = window.location.hostname;
     if (/(^|\.)tiktok\.com$/.test(h)) return _scrapeTikTok();
     if (/(^|\.)youtube\.com$/.test(h) || /(^|\.)youtu\.be$/.test(h)) return _scrapeYouTube();
     if (/(^|\.)instagram\.com$/.test(h)) return _scrapeInstagram();
+    if (/(^|\.)x\.com$/.test(h) || /(^|\.)twitter\.com$/.test(h)) return _scrapeX();
+    if (/(^|\.)facebook\.com$/.test(h)) return _scrapeFacebook();
     return null;
   }
 

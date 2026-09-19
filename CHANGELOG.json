@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.34.0",
+    "date": "2026-09-19",
+    "label": "feat",
+    "labelColor": "#6366f1",
+    "changes": [
+      {
+        "type": "feat",
+        "text": "**Powiadomienia na telefon — nowa zakładka „🔔 Powiadomienia\".** Wtyczka potrafi teraz odezwać się przez ntfy, gdy coś na Ciebie czeka albo gdy skończy dłuższą robotę. Powód: są w niej operacje trwające kwadranse i **dwa miejsca, w których po prostu stoi**, czekając na człowieka — captcha Google i pauza po partycji. Wszystkie dotychczasowe sygnały (log, ramka strony, dźwięk, tytuł karty) zakładają, że ktoś patrzy na ten ekran, a kosztują najwięcej dokładnie wtedy, gdy nikt nie patrzy"
+      },
+      {
+        "type": "feat",
+        "text": "**Każde powiadomienie włącza się osobno.** Osiem zdarzeń w trzech grupach: *Coś czeka na Ciebie* (captcha, partycja), *Skończone* (tagowanie z pliku, zbieranie adresów, skan newsów, audyt) i *Błędy* (tagowania, zbierania). Chcesz tylko sygnał o skończonym skanie newsów, a resztę wyłączoną — zaznaczasz jedno pole"
+      },
+      {
+        "type": "feat",
+        "text": "**Kanał wpisujesz własny, jak klucz API.** Nie ma go w kodzie i nigdzie nie jest współdzielony — każdy dostaje swoje powiadomienia na swój kanał. Jest przycisk „Wyślij testowe\", żeby sprawdzić konfigurację bez czekania na prawdziwe zdarzenie, oraz pole na własny serwer ntfy. **Nazwa kanału jest jedynym zabezpieczeniem** — kto ją zna, czyta Twoje powiadomienia, więc wymyśl długą i nieoczywistą"
+      },
+      {
+        "type": "feat",
+        "text": "**Powiadomienia mówią, co się stało, ile tego było i co z tym zrobić.** „📰 Skan gotowy — 23 do oceny\" zamiast samego „gotowe\", z nazwą projektu (bo na telefonie nie widać, którego rynku dotyczy) i czasem trwania. Przy błędzie leci podpowiedź, co poprawić. Rzeczy, które stoją, przychodzą jako pilne — telefon zawibruje; zakończenia jako zwykłe i tylko wtedy, gdy robota trwała dłużej niż ustawiony próg"
+      },
+      {
+        "type": "fix",
+        "text": "**Ustawienia powiadomień są wspólne dla wszystkich stron.** Zapisane są tak, żeby działały także poza panelem Brand24 — inaczej najważniejsze powiadomienie, to o captchy, nigdy by nie doszło, bo captcha wypada na stronie wyników Google, a ustawienia zapisane w panelu są tam niewidoczne"
+      }
+    ]
+  },
+  {
     "version": "0.33.1",
     "date": "2026-09-18",
     "label": "feat",

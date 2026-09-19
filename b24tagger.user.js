@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.33.1
+// @version      0.34.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -172,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.33.1';
+  const VERSION = '0.34.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -356,6 +356,149 @@
     }
     return B24Bridge.projects.names();
   }
+  // ── POWIADOMIENIA NTFY ─────────────────────────────────────────────────────
+  // Pełna wiedza, z pomiarami i wzorcami treści: NTFY_NOTIFICATIONS.md (niżej jako §N).
+  //
+  // Po co: wtyczka ma operacje trwające kwadranse (tagowanie z pliku, przebieg zbierania)
+  // i dwa miejsca, w których STOI, czekając na człowieka — captcha Google i pauza po partycji.
+  // Dotychczasowe sygnały (log, HUD, obrys strony, dźwięk, tytuł karty) są lokalne: nie
+  // dosięgają nikogo, kto odszedł od komputera, a wtedy właśnie kosztują najwięcej.
+  //
+  // Konfiguracja idzie przez GM_setValue, NIE localStorage, i to nie jest dowolny wybór:
+  // wtyczka ma `@match *://*/*`, a captcha wypada na **google.com**, nie na Brand24.
+  // localStorage jest per-domena, więc temat zapisany w panelu byłby na karcie przebiegu
+  // niewidoczny i najważniejsze powiadomienie nigdy by nie poszło. Ten sam powód, dla
+  // którego koszyk zbierania siedzi w GM — GOOGLE_COLLECTOR.md §2.1.
+  var NTFY_CFG_KEY = 'b24t_ntfy_cfg';
+  var NTFY_DEFAULT_SERVER = 'https://ntfy.sh';
+
+  // Rejestr zdarzeń — JEDNO źródło prawdy. Stąd bierze się priorytet wysyłki, to czy zdarzenie
+  // podlega progowi czasu, jego etykieta w ustawieniach i grupa, w której się pokazuje.
+  // Dołożenie kolejnego powiadomienia to dopisanie wiersza tutaj plus wywołanie `_ntfySend`
+  // z jego kluczem — UI zakładki „Powiadomienia" buduje się z tego rejestru sam.
+  //
+  // Priorytety ntfy: 3 = zwykły, 4 = wysoki, 5 = pilny (wibracja/dzwonek na telefonie).
+  // Pilny zostaje WYŁĄCZNIE dla rzeczy, które stoją i czekają na człowieka — inaczej
+  // przestanie cokolwiek znaczyć, a pierwszą reakcją stanie się wyciszenie całego kanału.
+  //
+  // `prog: false` znaczy „wyślij niezależnie od tego, jak krótko to trwało" — robota, która
+  // stoi, i błąd są warte sygnału nawet po dziesięciu sekundach.
+  var NTFY_GRUPY = [
+    { id: 'czeka',  label: 'Coś czeka na Ciebie', opis: 'Robota stoi, dopóki nie wrócisz. Wysyłane jako pilne — telefon zawibruje.' },
+    { id: 'koniec', label: 'Skończone',           opis: 'Długie operacje. Podlegają progowi czasu ustawionemu niżej.' },
+    { id: 'blad',   label: 'Błędy',               opis: 'Coś się wywróciło i czeka na decyzję.' },
+  ];
+  var NTFY_EVENTS = {
+    captcha:      { grupa: 'czeka',  prio: 5, prog: false, label: 'CAPTCHA zatrzymała zbieranie',      opis: 'Google prosi o weryfikację — przebieg stoi do odklikania' },
+    partPause:    { grupa: 'czeka',  prio: 5, prog: false, label: 'Partycja gotowa, tagowanie czeka',  opis: 'Tryb „Pauza" po partycji — czeka na kliknięcie Start' },
+    tagDone:      { grupa: 'koniec', prio: 3, prog: true,  label: 'Tagowanie z pliku zakończone',      opis: 'Wszystkie partycje przerobione' },
+    collectDone:  { grupa: 'koniec', prio: 3, prog: true,  label: 'Zbieranie adresów zakończone',      opis: 'Przebieg po wynikach Google doszedł do końca' },
+    scanDone:     { grupa: 'koniec', prio: 3, prog: true,  label: 'Skan newsów zakończony',            opis: 'Strony przeskanowane i ocenione' },
+    auditDone:    { grupa: 'koniec', prio: 3, prog: true,  label: 'Audyt zakończony',                  opis: 'Porównanie pliku z Brand24 gotowe' },
+    tagError:     { grupa: 'blad',   prio: 4, prog: false, label: 'Błąd tagowania',                    opis: 'Tagowanie przerwane — z podpowiedzią, co zrobić' },
+    collectError: { grupa: 'blad',   prio: 4, prog: false, label: 'Błąd zbierania',                    opis: 'Przebieg po wynikach Google przerwany' },
+  };
+
+  function _ntfyDefaultEvents() {
+    var e = {};
+    Object.keys(NTFY_EVENTS).forEach(function(k) { e[k] = true; });
+    return e;
+  }
+
+  function _ntfyGetCfg() {
+    var d = { topic: '', server: NTFY_DEFAULT_SERVER, events: _ntfyDefaultEvents(), minMin: 3 };
+    try {
+      var raw = GM_getValue(NTFY_CFG_KEY, null);
+      if (!raw) return d;
+      var c = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      // Czytamy po kluczach z REJESTRU, nie z zapisanego obiektu: zdarzenie dołożone
+      // w nowszej wersji dostaje wtedy domyślne „włączone", zamiast milczeć dlatego,
+      // że zapis powstał, zanim istniało.
+      var ev = {};
+      var zap = (c && typeof c.events === 'object' && c.events) ? c.events : {};
+      Object.keys(NTFY_EVENTS).forEach(function(k) { ev[k] = zap[k] !== false; });
+      return {
+        topic:  typeof c.topic === 'string' ? c.topic.trim() : '',
+        server: (typeof c.server === 'string' && c.server.trim()) ? c.server.trim().replace(/\/+$/, '') : NTFY_DEFAULT_SERVER,
+        events: ev,
+        minMin: (typeof c.minMin === 'number' && c.minMin >= 0) ? c.minMin : 3,
+      };
+    } catch(e) { return d; }
+  }
+  function _ntfySaveCfg(cfg) {
+    try { GM_setValue(NTFY_CFG_KEY, JSON.stringify(cfg)); } catch(e) {}
+  }
+
+  // Wysyłka. `o` = { kat, title, message, tags, click, minutes }.
+  //
+  // Publikujemy JSON W CIELE, nie przez nagłówki `Title`/`Tags`. Nagłówki HTTP są ASCII-only,
+  // a wszystkie tytuły tutaj są po polsku — zmierzone 2026-09-18: przez JSON „Partycja 2/5
+  // gotowa — czeka na Ciebie" wraca z serwera znak w znak, z ogonkami, myślnikiem i cudzysłowem
+  // drukarskim (§2). Przez nagłówki rozsypałoby się to na pierwszym „ę".
+  function _ntfySend(o) {
+    var cfg = _ntfyGetCfg();
+    if (!cfg.topic) return;                        // brak kanału = funkcja wyłączona
+    var def = NTFY_EVENTS[o.ev];
+    if (!def) return;                              // nieznane zdarzenie — cisza zamiast zgadywania
+    if (cfg.events[o.ev] === false) return;        // wyłączone przez użytkownika
+    // Próg czasu dotyczy tylko zdarzeń oznaczonych `prog: true`. Rzecz, która stoi, i błąd
+    // są warte sygnału niezależnie od tego, jak szybko się wydarzyły.
+    if (def.prog && cfg.minMin > 0 && typeof o.minutes === 'number' && o.minutes < cfg.minMin) return;
+
+    var body = {
+      topic: cfg.topic,
+      title: String(o.title || 'B24 Tagger'),
+      message: String(o.message || ''),
+      priority: def.prio,
+      tags: o.tags || [],
+    };
+    if (o.click) body.click = o.click;
+
+    try {
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url: cfg.server + '/',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        data: JSON.stringify(body),
+        timeout: 8000,
+        // Powiadomienie jest dodatkiem do roboty, nie jej częścią — cisza przy awarii jest
+        // właściwa. Log zostaje dla diagnostyki, ale nic się przez to nie zatrzymuje.
+        onload: function(r) {
+          if (r.status < 200 || r.status >= 300) _ntfyLog('ntfy: HTTP ' + r.status);
+        },
+        onerror:   function() { _ntfyLog('ntfy: błąd sieci'); },
+        ontimeout: function() { _ntfyLog('ntfy: timeout'); },
+      });
+    } catch(e) { _ntfyLog('ntfy: ' + (e && e.message ? e.message : String(e))); }
+  }
+
+  // `addLog` żyje tylko w panelu Brand24; na google.com go nie ma, a stamtąd leci
+  // najważniejsze powiadomienie. Bez tej osłony captcha kończyłaby się wyjątkiem.
+  function _ntfyLog(txt) {
+    try { if (typeof addLog === 'function') addLog('⚠ ' + txt, 'warn'); else console.warn('[B24T] ' + txt); }
+    catch(e) {}
+  }
+
+  // Nazwa projektu do treści powiadomienia. Na telefonie widać sam komunikat, bez panelu
+  // obok — bez tego „Tagowanie zakończone" nie mówi, KTÓREGO projektu dotyczy, a praca
+  // toczy się na kilku rynkach naraz.
+  function _ntfyProjekt() {
+    var n = (state && state.projectName) || '';
+    var i = (state && state.projectId) || '';
+    if (n && i) return n + ' (' + i + ')';
+    return n || (i ? 'projekt ' + i : '');
+  }
+
+  // Czas trwania po ludzku — „47 min", „1 h 12 min", „28 s".
+  function _ntfyCzas(ms) {
+    if (!ms || ms < 0) return '';
+    var s = Math.round(ms / 1000);
+    if (s < 60) return s + ' s';
+    var m = Math.round(s / 60);
+    if (m < 60) return m + ' min';
+    return Math.floor(m / 60) + ' h ' + (m % 60) + ' min';
+  }
+
   // ── AI SETTINGS HELPERS ────────────────────────────────────────────────────
 
   var _aiEditingPromptId = null;
@@ -2771,6 +2914,21 @@
           state.status = 'paused';
           updateStatusUI();
           addLog(`⏸ Partycja ${idx + 1} zakończona. Kliknij Start aby kontynuować.`, 'info');
+          // Tu wtyczka STOI i czeka na kliknięcie — przy kilku partycjach to najdłuższy
+          // przestój, jaki potrafi zrobić, i jedyny, który trwa dokładnie tyle, ile zajmie
+          // komuś powrót do ekranu. Dlatego kategoria „blocking", a nie „done”, i dlatego
+          // bez progu czasu: liczy się to, że robota stoi, nie ile trwała.
+          _ntfySend({
+            ev: 'partPause',
+            title: `⏸ Partycja ${idx + 1}/${state.partitions.length} gotowa — czeka na Ciebie`,
+            message: (_ntfyProjekt() ? _ntfyProjekt() + '\n' : '') +
+                     `zakres ${partition.dateFrom} → ${partition.dateTo}\n` +
+                     `łącznie otagowano ${state.stats.tagged}, pominięto ${state.stats.skipped}\n` +
+                     `zostało partycji: ${state.partitions.length - idx - 1}\n\n` +
+                     'Kliknij Start w panelu, żeby ruszyć z następną.',
+            tags: ['hourglass_flowing_sand'],
+            click: location.href,
+          });
           return;
         }
       }
@@ -2782,6 +2940,20 @@
       updateStatusUI();
       addLog(`✅ Wszystkie partycje zakończone! ${state.stats.tagged} otagowane.`, 'success');
       showToast(`✅ ${state.stats.tagged} wzmianek otagowanych!`, 'success', 5000);
+      var _tCzas = state.sessionStart ? Date.now() - state.sessionStart : 0;
+      var _tPominiete = state.stats.skipped || 0;
+      _ntfySend({
+        ev: 'tagDone',
+        title: '✅ Tagowanie zakończone',
+        message: (_ntfyProjekt() ? _ntfyProjekt() + '\n' : '') +
+                 `otagowano ${state.stats.tagged}` +
+                 (_tPominiete ? `, pominięto ${_tPominiete}` : '') + '\n' +
+                 `partycji: ${state.partitions.length}` +
+                 (_tCzas ? '\nczas: ' + _ntfyCzas(_tCzas) : '') +
+                 (_tPominiete ? '\n\nPominięte warto przejrzeć w logu — część da się odzyskać.' : ''),
+        tags: ['white_check_mark'],
+        minutes: _tCzas / 60000,
+      });
 
       // Switch view if configured
       if (state.switchViewOnDone && state.switchViewTagId) {
@@ -2961,6 +3133,19 @@
     updateStatusUI();
     addLog(`✕ [${ctx.src}] Błąd w: ${context} — ${error.message}\n  → ${ctx.hint}`, 'error');
     showCrashBanner(crash);
+    // Centralny handler błędów tagowania — jedno podpięcie zamiast osobnego przy każdej
+    // operacji. `ctx.hint` niesie już podpowiedź, co z tym zrobić, więc powiadomienie mówi
+    // nie tylko, że się wywróciło, ale i co dalej.
+    _ntfySend({
+      ev: 'tagError',
+      title: '✕ Tagowanie przerwane błędem',
+      message: (_ntfyProjekt() ? _ntfyProjekt() + '\n' : '') +
+               `w: ${context}\n${error.message}` +
+               (ctx.hint ? '\n\n→ ' + ctx.hint : '') +
+               (state.stats && state.stats.tagged ? '\n\nZdążyło się otagować: ' + state.stats.tagged : ''),
+      tags: ['rotating_light'],
+      click: location.href,
+    });
   }
 
   // ───────────────────────────────────────────
@@ -5052,6 +5237,7 @@
         <button class="b24t-tab" data-tab="aitag" id="b24t-aitag-tab-btn" style="display:none;">🤖 AI Tag</button>
         <button class="b24t-tab" data-tab="delete">🗑 Quick Delete</button>
         <button class="b24t-tab" data-tab="history">📋 Historia</button>
+        <button class="b24t-tab" data-tab="notify">🔔 Powiadomienia</button>
         <!-- Annotator Tools uses floating panel, no tab here -->
       </div>
 
@@ -5200,6 +5386,7 @@
               <input type="checkbox" id="b24t-sound-cb">
               <label for="b24t-sound-cb">Dźwięk po zakończeniu sesji</label>
             </div>
+
           </div>
 
         </div>
@@ -5253,6 +5440,9 @@
       <div id="b24t-aitag-tab-placeholder"></div>
 
       <!-- HISTORY TAB (injected by JS) -->\n      <div id=\"b24t-history-tab-placeholder\"></div>\n\n      <!-- NEWS TAB (injected by JS) -->\n      <div id="b24t-news-tab-placeholder"></div>
+
+      <!-- NOTIFY TAB (injected by JS) -->
+      <div id="b24t-notify-tab-placeholder"></div>
 
       <!-- Annotator Tools: floating panel, no inline tabs -->
       <!-- Annotator Tools: moved to floating panel -->
@@ -7893,6 +8083,167 @@ function showOnboarding(onComplete) {
     lsSet(LS.HISTORY, history.slice(0, 20));
   }
 
+  // Zakładka „Powiadomienia". Lista przełączników powstaje z rejestru `NTFY_EVENTS`, a nie
+  // z ręcznie wypisanego HTML-a — dzięki temu dołożenie powiadomienia to jeden wiersz
+  // w rejestrze, bez dotykania tego widoku. Grupy i ich opisy idą z `NTFY_GRUPY`.
+  function buildNotifyTab() {
+    const div = document.createElement('div');
+    div.id = 'b24t-notify-tab';
+    div.style.display = 'none';
+
+    let grupyHtml = '';
+    NTFY_GRUPY.forEach(function(g) {
+      const wiersze = Object.keys(NTFY_EVENTS).filter(function(k) { return NTFY_EVENTS[k].grupa === g.id; });
+      if (!wiersze.length) return;
+      grupyHtml +=
+        '<div style="margin-top:10px;">' +
+          '<div class="b24t-section-label" style="margin-bottom:2px;">' + _escHtml(g.label) +
+            (g.id === 'czeka' ? ' <span style="color:var(--b24t-text-faint);font-weight:400;">· pilne</span>' : '') +
+          '</div>' +
+          '<div style="font-size:9px;color:var(--b24t-text-faint);line-height:1.4;margin-bottom:5px;">' + _escHtml(g.opis) + '</div>' +
+          wiersze.map(function(k) {
+            const e = NTFY_EVENTS[k];
+            return '<div class="b24t-checkbox-row" style="align-items:flex-start;">' +
+              '<input type="checkbox" id="b24t-ntfy-ev-' + k + '" data-ntfy-ev="' + k + '" style="margin-top:2px;">' +
+              '<label for="b24t-ntfy-ev-' + k + '" style="line-height:1.35;">' + _escHtml(e.label) +
+                '<span style="display:block;font-size:9px;color:var(--b24t-text-faint);">' + _escHtml(e.opis) + '</span>' +
+              '</label>' +
+            '</div>';
+          }).join('') +
+        '</div>';
+    });
+
+    div.innerHTML =
+      '<div class="b24t-section">' +
+        '<div class="b24t-section-label primary">Kanał ntfy</div>' +
+        '<div style="font-size:10px;color:var(--b24t-text-faint);line-height:1.45;margin-bottom:6px;">' +
+          'Zainstaluj aplikację <strong>ntfy</strong> na telefonie, zasubskrybuj w niej własny kanał ' +
+          'i wpisz jego nazwę niżej. Nazwa kanału jest <strong>jedynym zabezpieczeniem</strong> — kto ją zna, ' +
+          'czyta Twoje powiadomienia. Wymyśl długą i nieoczywistą.' +
+        '</div>' +
+        '<input type="text" id="b24t-ntfy-topic" placeholder="np. b24t-2f9a4c7e1b6d" autocomplete="off" spellcheck="false" ' +
+          'style="width:100%;box-sizing:border-box;font-family:monospace;font-size:11px;padding:6px 8px;border-radius:6px;' +
+          'border:1px solid var(--b24t-border);background:var(--b24t-bg-input);color:var(--b24t-text);">' +
+        '<div id="b24t-ntfy-hint" style="font-size:9px;color:var(--b24t-text-faint);margin-top:4px;line-height:1.4;"></div>' +
+        '<div style="display:flex;gap:6px;margin-top:7px;">' +
+          '<button class="b24t-add-tag-btn" id="b24t-ntfy-test" style="flex:1;margin:0;">📲 Wyślij testowe</button>' +
+          '<button class="b24t-add-tag-btn" id="b24t-ntfy-server-toggle" style="flex:0 0 auto;margin:0;" title="Własny serwer ntfy">⚙</button>' +
+        '</div>' +
+        '<div id="b24t-ntfy-server-row" style="display:none;margin-top:6px;">' +
+          '<div style="font-size:9px;color:var(--b24t-text-faint);margin-bottom:3px;">Serwer (zostaw domyślny, jeśli nie masz własnego):</div>' +
+          '<input type="text" id="b24t-ntfy-server" placeholder="https://ntfy.sh" autocomplete="off" spellcheck="false" ' +
+            'style="width:100%;box-sizing:border-box;font-family:monospace;font-size:10px;padding:5px 7px;border-radius:6px;' +
+            'border:1px solid var(--b24t-border);background:var(--b24t-bg-input);color:var(--b24t-text);">' +
+        '</div>' +
+        '<div id="b24t-ntfy-status" style="font-size:10px;margin-top:5px;line-height:1.4;"></div>' +
+      '</div>' +
+      '<div class="b24t-section" id="b24t-ntfy-events">' +
+        '<div class="b24t-section-label primary">Co ma przychodzić</div>' +
+        grupyHtml +
+        '<div style="height:1px;background:var(--b24t-border);margin:10px 0 8px;"></div>' +
+        '<div class="b24t-toggle-row">' +
+          '<span class="b24t-toggle-label" style="font-size:10px;">Powiadomienia z grupy „Skończone" tylko powyżej:</span>' +
+          '<select id="b24t-ntfy-minmin" class="b24t-select" style="width:auto;font-size:10px;padding:2px 4px;">' +
+            '<option value="0">zawsze</option><option value="1">1 min</option><option value="3">3 min</option>' +
+            '<option value="5">5 min</option><option value="10">10 min</option>' +
+          '</select>' +
+        '</div>' +
+        '<div style="font-size:9px;color:var(--b24t-text-faint);line-height:1.4;margin-top:3px;">' +
+          'Krótka robota nie zawraca głowy. Rzeczy, które czekają, i błędy przychodzą zawsze — niezależnie od tego progu.' +
+        '</div>' +
+      '</div>';
+    return div;
+  }
+
+  // Wiązanie zakładki „Powiadomienia". Osobno od budowy, bo zakładka wstrzykiwana jest raz,
+  // a stan czytany z GM przy każdym wejściu do panelu.
+  function wireNotifyTab(root) {
+    const topicEl  = root.querySelector('#b24t-ntfy-topic');
+    const serverEl = root.querySelector('#b24t-ntfy-server');
+    const hintEl   = root.querySelector('#b24t-ntfy-hint');
+    const statusEl = root.querySelector('#b24t-ntfy-status');
+    const testEl   = root.querySelector('#b24t-ntfy-test');
+    const minEl    = root.querySelector('#b24t-ntfy-minmin');
+    const evEls    = Array.prototype.slice.call(root.querySelectorAll('[data-ntfy-ev]'));
+    if (!topicEl) return;
+
+    const cfg = _ntfyGetCfg();
+    topicEl.value  = cfg.topic;
+    serverEl.value = cfg.server === NTFY_DEFAULT_SERVER ? '' : cfg.server;
+    minEl.value    = String(cfg.minMin);
+    evEls.forEach(function(el) { el.checked = cfg.events[el.dataset.ntfyEv] !== false; });
+
+    function sync() {
+      const ma = !!topicEl.value.trim();
+      const evBox = root.querySelector('#b24t-ntfy-events');
+      if (evBox) evBox.style.opacity = ma ? '' : '0.45';
+      evEls.concat([minEl, testEl]).forEach(function(el) { if (el) el.disabled = !ma; });
+      if (!hintEl) return;
+      if (!ma) {
+        hintEl.textContent = 'Puste pole = powiadomienia wyłączone.';
+        hintEl.style.color = 'var(--b24t-text-faint)';
+      } else {
+        const ile = evEls.filter(function(el) { return el.checked; }).length;
+        hintEl.textContent = ile
+          ? 'Włączone: ' + ile + ' z ' + evEls.length + ' powiadomień.'
+          : 'Kanał ustawiony, ale wszystkie powiadomienia wyłączone — nic nie przyjdzie.';
+        hintEl.style.color = ile ? 'var(--b24t-ok)' : 'var(--b24t-warn, #f59e0b)';
+      }
+    }
+    function zapisz() {
+      const events = {};
+      evEls.forEach(function(el) { events[el.dataset.ntfyEv] = el.checked; });
+      _ntfySaveCfg({
+        topic: topicEl.value.trim(),
+        server: serverEl.value.trim() || NTFY_DEFAULT_SERVER,
+        events: events,
+        minMin: parseInt(minEl.value, 10) || 0,
+      });
+      sync();
+    }
+    topicEl.addEventListener('input', zapisz);
+    serverEl.addEventListener('input', zapisz);
+    minEl.addEventListener('change', zapisz);
+    evEls.forEach(function(el) { el.addEventListener('change', zapisz); });
+    sync();
+
+    const srvToggle = root.querySelector('#b24t-ntfy-server-toggle');
+    const srvRow    = root.querySelector('#b24t-ntfy-server-row');
+    if (srvToggle && srvRow) srvToggle.addEventListener('click', function() {
+      srvRow.style.display = srvRow.style.display === 'none' ? 'block' : 'none';
+    });
+
+    if (testEl) testEl.addEventListener('click', function() {
+      const t = topicEl.value.trim();
+      if (!t) return;
+      zapisz();
+      statusEl.textContent = 'Wysyłam…';
+      statusEl.style.color = 'var(--b24t-text-faint)';
+      // Test celowo omija `_ntfySend`: ta respektuje przełączniki i próg czasu, a test ma
+      // odpowiedzieć na jedno pytanie — „czy kanał działa" — niezależnie od ustawień.
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url: (serverEl.value.trim() || NTFY_DEFAULT_SERVER).replace(/\/+$/, '') + '/',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        data: JSON.stringify({
+          topic: t,
+          title: '📲 B24 Tagger — kanał działa',
+          message: 'Jeśli to widzisz na telefonie, powiadomienia są skonfigurowane poprawnie.\n\nWtyczka odezwie się przy zdarzeniach zaznaczonych w zakładce „Powiadomienia".',
+          priority: 3,
+          tags: ['white_check_mark'],
+        }),
+        timeout: 8000,
+        onload: function(r) {
+          const ok = r.status >= 200 && r.status < 300;
+          statusEl.textContent = ok ? '✓ Wysłane — sprawdź telefon.' : '✕ Serwer odpowiedział ' + r.status;
+          statusEl.style.color = ok ? 'var(--b24t-ok)' : 'var(--b24t-err)';
+        },
+        onerror:   function() { statusEl.textContent = '✕ Błąd sieci — sprawdź adres serwera.'; statusEl.style.color = 'var(--b24t-err)'; },
+        ontimeout: function() { statusEl.textContent = '✕ Przekroczony czas.'; statusEl.style.color = 'var(--b24t-err)'; },
+      });
+    });
+  }
+
   function buildHistoryTab() {
     const div = document.createElement('div');
     div.id = 'b24t-history-tab';
@@ -8096,6 +8447,23 @@ function showOnboarding(onComplete) {
     window.B24Tagger._lastAuditResult = result;
     showAuditReport(result);
     addLog('✓ Audit: ' + result.alreadyTagged.length + ' OK, ' + result.untagged.length + ' nieztagowane, ' + result.taggedWrong.length + ' złe tagi, ' + result.notFound.length + ' nie znaleziono', 'success');
+    // Audyt ciągnie wszystkie wzmianki z zakresu dat stronami, więc przy szerokim oknie
+    // schodzi mu kilka minut. Do powiadomienia idą liczby wymagające reakcji, nie samo „gotowe”:
+    // zgodne rekordy są bez znaczenia, rozjazdy trzeba obejrzeć.
+    var _aCzas = state.sessionStart ? Date.now() - state.sessionStart : 0;
+    var _aDoPoprawki = result.untagged.length + result.taggedWrong.length;
+    _ntfySend({
+      ev: 'auditDone',
+      title: _aDoPoprawki ? '🔍 Audyt gotowy — ' + _aDoPoprawki + ' do poprawki' : '🔍 Audyt gotowy — bez rozjazdów',
+      message: (_ntfyProjekt() ? _ntfyProjekt() + '\n' : '') +
+               'zgodne: ' + result.alreadyTagged.length + '\n' +
+               'nieotagowane: ' + result.untagged.length + '\n' +
+               'zły tag: ' + result.taggedWrong.length + '\n' +
+               'nie znaleziono w Brand24: ' + result.notFound.length +
+               (_aCzas ? '\nczas: ' + _ntfyCzas(_aCzas) : ''),
+      tags: [_aDoPoprawki ? 'mag' : 'white_check_mark'],
+      minutes: _aCzas / 60000,
+    });
     saveSessionToHistory();
   }
 
@@ -8637,6 +9005,19 @@ function showOnboarding(onComplete) {
       _gsHudProgress(run);
       _gsHudSay('✓ Przebieg zakończony. W koszyku: ' + _gsCartGet().items.length + ' adresów.', true);
       _gsHudHandoffBtn();
+      var _ileAdr = _gsCartGet().items.length;
+      var _czas = run.startedAt ? Date.now() - run.startedAt : 0;
+      _ntfySend({
+        ev: 'collectDone',
+        title: '✓ Zbieranie zakończone',
+        message: (run.campaign ? run.campaign + '\n' : '') +
+                 (run.cc ? 'rynek ' + String(run.cc).toUpperCase() + '\n' : '') +
+                 run.queue.length + ' zadań, w koszyku ' + _ileAdr + ' adresów' +
+                 (_czas ? '\nczas: ' + _ntfyCzas(_czas) : '') +
+                 '\n\nWróć do panelu, żeby przepuścić je przez skan.',
+        tags: ['white_check_mark'],
+        minutes: _czas / 60000,
+      });
       return;
     }
     _gsRunSet(run);
@@ -8863,6 +9244,27 @@ function showOnboarding(onComplete) {
   function _gsAlarmStart(powod) {
     if (_gsAlarm.on) return;
     _gsAlarm.on = true;
+
+    // Czwarty kanał alarmu — jedyny, który dosięga poza komputer. Pozostałe trzy (obrys,
+    // dźwięk, tytuł karty) zakładają, że ktoś patrzy na ten ekran, a captcha najczęściej
+    // wypada właśnie wtedy, gdy nie patrzy. Stoi pod strażą `_gsAlarm.on`, więc leci raz
+    // na zagadkę, a nie przy każdym obrocie pętli alarmu.
+    (function() {
+      var run = _gsRunGet() || {};
+      var zad = (run.queue && run.queue.length) ? (Math.min(run.qi + 1, run.queue.length) + '/' + run.queue.length) : '';
+      var szcz = [];
+      if (run.campaign) szcz.push(run.campaign);
+      if (run.cc) szcz.push('rynek ' + String(run.cc).toUpperCase());
+      if (zad) szcz.push('zadanie ' + zad + ', strona ' + ((run.page || 0) + 1));
+      szcz.push('w koszyku ' + _gsCartGet().items.length + ' adr.');
+      _ntfySend({
+        ev: 'captcha',
+        title: '⛔ CAPTCHA — zbieranie stoi',
+        message: szcz.join('\n') + '\n\nOdklikaj zagadkę — przebieg ruszy dalej sam, z tego samego miejsca.',
+        tags: ['no_entry'],
+        click: location.href,
+      });
+    })();
 
     var ov = document.createElement('div');
     ov.id = 'b24t-gs-alarm';
@@ -9148,9 +9550,18 @@ function showOnboarding(onComplete) {
       // Błąd w kroku przebiegu zostawiłby przebieg „aktywny" na zawsze i nikt by się o tym
       // nie dowiedział — karta stoi, a stan w GM mówi, że trwa. Zatrzymujemy jawnie.
       _gsRunStep(run).catch(function(e) {
+        var _msg = e && e.message ? e.message : String(e);
         _gsRunStop('error');
-        _gsHudSay('⛔ Błąd przebiegu: ' + _escHtml(e && e.message ? e.message : String(e)) +
+        _gsHudSay('⛔ Błąd przebiegu: ' + _escHtml(_msg) +
                   '<br>Koszyk zachowany — uruchom przebieg ponownie.', true);
+        _ntfySend({
+          ev: 'collectError',
+          title: '⛔ Zbieranie przerwane błędem',
+          message: (run.campaign ? run.campaign + '\n' : '') + _msg +
+                   '\n\nKoszyk zachowany (' + _gsCartGet().items.length + ' adr.) — trzeba uruchomić przebieg ponownie.',
+          tags: ['rotating_light'],
+          click: location.href,
+        });
       });
       return;
     }
@@ -17265,6 +17676,10 @@ function showOnboarding(onComplete) {
       if (importInfo) { importInfo.textContent = doneMsg; importInfo.style.display = ''; importInfo.style.color = '#22c55e'; }
 
       renderUrlList();
+      // Znacznik startu trzeba przejąć TU: `_newsRetryBlocked` nadpisuje
+      // `newsState.scanStartTime` własnym, więc po nim zostałby czas samej drugiej próby,
+      // a nie całego skanu.
+      var _scanT0 = newsState.scanStartTime;
       // Druga próba od razu po skanie — zmierzone 2026-09-14: odzyskuje komplet wierszy
       // z domen prasowych, które przy pięciu równoległych wątkach nie zdążyły odpowiedzieć.
       // Bez tego annotator musiał o tym pamiętać i kliknąć sam.
@@ -17272,6 +17687,26 @@ function showOnboarding(onComplete) {
       // Pierwszy wiersz, w który annotator wejdzie, też ma zastać tłumaczenie gotowe.
       _newsTranslateAhead(-1);
       _newsRunProjectCheck();
+
+      // Powiadomienie dopiero tutaj, po drugiej próbie — wcześniejsze niosłoby liczbę
+      // nieprzeskanowanych, którą retry zaraz zmieni, czyli mówiłoby nieprawdę.
+      var _kEnd = _newsUrlCounts();
+      var _kDoOceny = (_kEnd.match || 0) + (_kEnd.keytopic || 0) + (_kEnd.contentmatch || 0) + (_kEnd.mention || 0);
+      var _kBlok = _kEnd.blocked || 0;
+      var _kCzas = _scanT0 ? Date.now() - _scanT0 : 0;
+      _ntfySend({
+        ev: 'scanDone',
+        title: _kDoOceny ? '📰 Skan gotowy — ' + _kDoOceny + ' do oceny' : '📰 Skan gotowy — nic nie trafiło',
+        message: (_ntfyProjekt() ? _ntfyProjekt() + '\n' : '') +
+                 'przeskanowano ' + deduped.length + ' adresów' +
+                 (dupeCount ? ' (−' + dupeCount + ' dup.)' : '') + '\n' +
+                 'trafienia: ' + _kDoOceny +
+                 (_kBlok ? '\nnieprzeskanowane: ' + _kBlok : '') +
+                 (_kCzas ? '\nczas: ' + _ntfyCzas(_kCzas) : '') +
+                 (_kDoOceny ? '\n\nCzekają w panelu na przejrzenie.' : ''),
+        tags: [_kDoOceny ? 'newspaper' : 'heavy_minus_sign'],
+        minutes: _kCzas / 60000,
+      });
     }
 
     if (importBtn) importBtn.addEventListener('click', importUrls);
@@ -17728,6 +18163,19 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.34.0",
+      "date": "2026-09-19",
+      "label": "feat",
+      "labelColor": "#6366f1",
+      "changes": [
+        {"type": "feat", "text": "**Powiadomienia na telefon — nowa zakładka „🔔 Powiadomienia\".** Wtyczka potrafi teraz odezwać się przez ntfy, gdy coś na Ciebie czeka albo gdy skończy dłuższą robotę. Powód: są w niej operacje trwające kwadranse i **dwa miejsca, w których po prostu stoi**, czekając na człowieka — captcha Google i pauza po partycji. Wszystkie dotychczasowe sygnały (log, ramka strony, dźwięk, tytuł karty) zakładają, że ktoś patrzy na ten ekran, a kosztują najwięcej dokładnie wtedy, gdy nikt nie patrzy"},
+        {"type": "feat", "text": "**Każde powiadomienie włącza się osobno.** Osiem zdarzeń w trzech grupach: *Coś czeka na Ciebie* (captcha, partycja), *Skończone* (tagowanie z pliku, zbieranie adresów, skan newsów, audyt) i *Błędy* (tagowania, zbierania). Chcesz tylko sygnał o skończonym skanie newsów, a resztę wyłączoną — zaznaczasz jedno pole"},
+        {"type": "feat", "text": "**Kanał wpisujesz własny, jak klucz API.** Nie ma go w kodzie i nigdzie nie jest współdzielony — każdy dostaje swoje powiadomienia na swój kanał. Jest przycisk „Wyślij testowe\", żeby sprawdzić konfigurację bez czekania na prawdziwe zdarzenie, oraz pole na własny serwer ntfy. **Nazwa kanału jest jedynym zabezpieczeniem** — kto ją zna, czyta Twoje powiadomienia, więc wymyśl długą i nieoczywistą"},
+        {"type": "feat", "text": "**Powiadomienia mówią, co się stało, ile tego było i co z tym zrobić.** „📰 Skan gotowy — 23 do oceny\" zamiast samego „gotowe\", z nazwą projektu (bo na telefonie nie widać, którego rynku dotyczy) i czasem trwania. Przy błędzie leci podpowiedź, co poprawić. Rzeczy, które stoją, przychodzą jako pilne — telefon zawibruje; zakończenia jako zwykłe i tylko wtedy, gdy robota trwała dłużej niż ustawiony próg"},
+        {"type": "fix", "text": "**Ustawienia powiadomień są wspólne dla wszystkich stron.** Zapisane są tak, żeby działały także poza panelem Brand24 — inaczej najważniejsze powiadomienie, to o captchy, nigdy by nie doszło, bo captcha wypada na stronie wyników Google, a ustawienia zapisane w panelu są tam niewidoczne"}
+      ]
+    },
+    {
       "version": "0.33.1",
       "date": "2026-09-18",
       "label": "feat",
@@ -17832,16 +18280,6 @@ function showOnboarding(onComplete) {
       "labelColor": "#6366f1",
       "changes": [
         {"type": "feat", "text": "**Formularz zbiera też autora wpisu — na serwisach, z których da się go wziąć.** Brand24 ma pole „Adres autora SM” (widoczne tylko dla adminów), którego wtyczka dotąd w ogóle nie wypełniała. Teraz nad tagami pojawia się wiersz „Autor wpisu” z gotowym adresem i zaznaczonym kwadracikiem — odznacz, jeśli przy tej wzmiance autora nie chcesz. **Wiersz pokazuje się wyłącznie tam, gdzie adres faktycznie da się ustalić**: Instagram, TikTok, YouTube i X. Na stronie z newsami nie ma go wcale. Adresy Instagrama i TikToka sprawdzone na prawdziwych wzmiankach w CMS, żeby poszło dokładnie to, co Brand24 tam trzyma. **Facebook świadomie pominięty** — wymaga numerycznego ID strony, którego w adresie posta nie ma; lepiej nie pokazać wiersza, niż wysłać adres, którego Brand24 nie zrozumie"}
-      ]
-    },
-    {
-      "version": "0.32.4",
-      "date": "2026-09-15",
-      "label": "fix",
-      "labelColor": "#f59e0b",
-      "changes": [
-        {"type": "fix", "text": "**Pole projektu pokazuje wybrany projekt od razu, a nie dopiero po kliknięciu.** Na stronach zewnętrznych modal otwierał się z szarym „szukaj lub wybierz projekt…” i nazwa wskakiwała dopiero, gdy kliknąłeś w pole — nie było widać, do czego właściwie dodajesz. Panel rysował to pole, **zanim** ustalił, który projekt jest wybrany; kliknięcie odpalało ten sam render drugi raz, już po ustaleniu. Teraz kolejność jest odwrotna, a w polu stoi dokładnie ten projekt, do którego poleci wzmianka — to ta sama wartość, którą czyta wysyłka"},
-        {"type": "fix", "text": "**Kropka „CMS” sprawdza się sama przy otwarciu panelu.** Do tej pory pytanie o dostęp szło z pustym projektem (panel pytał o to, zanim wybrał projekt), więc kropka zawsze siadała na „nie wiem” i trzymała zablokowany przycisk dodawania, dopóki jej nie kliknąłeś. Teraz pyta sama, gdy projekt jest już znany; wynik żyje w pamięci pół godziny, więc kolejne otwarcia panelu nic nie kosztują. Kliknięcie kropki dalej wymusza sprawdzenie od nowa — po zalogowaniu się w innej karcie"}
       ]
     }
   ];
@@ -25533,6 +25971,14 @@ Tej operacji nie można cofnąć.`)) {
     const histPlaceholder = panel.querySelector('#b24t-history-tab-placeholder');
     if (histPlaceholder) histPlaceholder.replaceWith(histTab);
 
+    // Inject Notify tab
+    const notifyTab = buildNotifyTab();
+    const notifyPlaceholder = panel.querySelector('#b24t-notify-tab-placeholder');
+    if (notifyPlaceholder) {
+      notifyPlaceholder.replaceWith(notifyTab);
+      wireNotifyTab(notifyTab);
+    }
+
     // Inject History tab
     // Inject Auto-Delete section into settings
     const autoDelSection = buildAutoDeleteSection();
@@ -25625,6 +26071,7 @@ Tej operacji nie można cofnąć.`)) {
       aitag:    document.getElementById('b24t-aitag-tab'),
       delete:   document.getElementById('b24t-delete-tab'),
       history:  document.getElementById('b24t-history-tab'),
+      notify:   document.getElementById('b24t-notify-tab'),
       actions:  document.getElementById('b24t-actions'),
     };
     const tabBtns = panel.querySelectorAll('.b24t-tab');
@@ -25638,6 +26085,7 @@ Tej operacji nie można cofnąć.`)) {
         if (tabEls.aitag)    tabEls.aitag.style.display    = tab === 'aitag'    ? 'block' : 'none';
         if (tabEls.delete)   tabEls.delete.style.display   = tab === 'delete'   ? 'block' : 'none';
         if (tabEls.history)  tabEls.history.style.display  = tab === 'history'  ? 'block' : 'none';
+        if (tabEls.notify)   tabEls.notify.style.display   = tab === 'notify'   ? 'block' : 'none';
         if (tabEls.actions)  tabEls.actions.style.display  = tab === 'main'     ? 'flex'  : 'none';
         const activeEl = tabEls[tab];
         if (activeEl) { activeEl.style.animation = 'none'; void activeEl.offsetHeight; activeEl.style.animation = 'b24t-tab-enter 0.18s ease'; }

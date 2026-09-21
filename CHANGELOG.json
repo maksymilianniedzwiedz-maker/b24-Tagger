@@ -1,5 +1,32 @@
 [
   {
+    "version": "0.34.1",
+    "date": "2026-09-21",
+    "label": "fix",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "**Treść wzmianki potrafiła być z cudzego artykułu albo z menu serwisu.** Skaner brał pierwszy `<article>` w kodzie strony, a to bywa kafelek „polecane\" z kolumny obok. Zmierzone na 4 z 13 stron: radiopoznan.fm dawał słowo „Poznań\", newsmaxpolska.pl — artykuł o zupełnie innej sprawie, dlahandlu.pl — tytuł cudzego kafelka, tvn24.pl — całe menu serwisu. Teraz strefę treści wybiera **ilość prozy**, a spośród kontenerów mieszczących ~cały tekst bierzemy najciaśniejszy, żeby nie wciągnąć nawigacji"
+      },
+      {
+        "type": "fix",
+        "text": "**Godzina publikacji nie była czytana W OGÓLE.** Pola Godzina i Minuta dostawały czas otwarcia panelu, nawet gdy strona podawała pełny znacznik czasu. Na 6 z 6 stron z metadanymi godzina stała gotowa w `datePublished` i szła do kosza, bo kod wyciągał z niej tylko rok-miesiąc-dzień. Teraz godzina wychodzi z tego samego miejsca co data — i z tej samej konwersji na czas lokalny, żeby wpis z 23:40 UTC nie dostał daty o dzień wstecz"
+      },
+      {
+        "type": "fix",
+        "text": "**Data z widocznego tekstu, gdy serwis nie podaje jej w metadanych.** Wcześniej takie strony wracały z pustą datą — radiopoznan.fm („Publikacja: 17.09.2026 g.12:39\"), poznan.tvp.pl, naszglospoznanski.pl. Szukanie idzie od środka artykułu na zewnątrz, bo data z listy polecanych obok wygląda tak samo jak data tekstu. **Poza strefą artykułu daty nie zgadujemy**: lazarz.pl nie podaje jej nigdzie, a skan całej strony wyciągał z paska u góry datę dzisiejszą i wstawiał ją jako „wykrytą\" — brak daty jest uczciwszy"
+      },
+      {
+        "type": "fix",
+        "text": "**Facebook: filmy i zdjęcia dają teraz komplet danych.** Adresy `/watch/?v=…` i `/photo/?fbid=…` nie były rozpoznawane jako post, więc formularz wypełniał się śmieciami — Facebook nie wystawia na stronie posta żadnych metadanych. Teraz wchodzimy od rekordu materiału: treść, data z dokładnością do minuty, autor, reakcje, komentarze, udostępnienia, a przy wideo także **liczba odsłon**. Adres zapisuje się w postaci kanonicznej, bez parametrów przeglądania albumu"
+      },
+      {
+        "type": "fix",
+        "text": "**Strona za ścianą (paywall, wymuszone wyłączenie AdBlocka) nie zostawia już pustego pola Treść** — wpada do niego zajawka, którą serwis publikuje dla mediów społecznościowych"
+      }
+    ]
+  },
+  {
     "version": "0.34.0",
     "date": "2026-09-19",
     "label": "feat",

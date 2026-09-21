@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.34.0
+// @version      0.34.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -172,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.34.0';
+  const VERSION = '0.34.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -18163,16 +18163,58 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.34.1",
+      "date": "2026-09-21",
+      "label": "fix",
+      "changes": [
+        {
+          "type": "fix",
+          "text": "**Treść wzmianki potrafiła być z cudzego artykułu albo z menu serwisu.** Skaner brał pierwszy `<article>` w kodzie strony, a to bywa kafelek „polecane\" z kolumny obok. Zmierzone na 4 z 13 stron: radiopoznan.fm dawał słowo „Poznań\", newsmaxpolska.pl — artykuł o zupełnie innej sprawie, dlahandlu.pl — tytuł cudzego kafelka, tvn24.pl — całe menu serwisu. Teraz strefę treści wybiera **ilość prozy**, a spośród kontenerów mieszczących ~cały tekst bierzemy najciaśniejszy, żeby nie wciągnąć nawigacji"
+        },
+        {
+          "type": "fix",
+          "text": "**Godzina publikacji nie była czytana W OGÓLE.** Pola Godzina i Minuta dostawały czas otwarcia panelu, nawet gdy strona podawała pełny znacznik czasu. Na 6 z 6 stron z metadanymi godzina stała gotowa w `datePublished` i szła do kosza, bo kod wyciągał z niej tylko rok-miesiąc-dzień. Teraz godzina wychodzi z tego samego miejsca co data — i z tej samej konwersji na czas lokalny, żeby wpis z 23:40 UTC nie dostał daty o dzień wstecz"
+        },
+        {
+          "type": "fix",
+          "text": "**Data z widocznego tekstu, gdy serwis nie podaje jej w metadanych.** Wcześniej takie strony wracały z pustą datą — radiopoznan.fm („Publikacja: 17.09.2026 g.12:39\"), poznan.tvp.pl, naszglospoznanski.pl. Szukanie idzie od środka artykułu na zewnątrz, bo data z listy polecanych obok wygląda tak samo jak data tekstu. **Poza strefą artykułu daty nie zgadujemy**: lazarz.pl nie podaje jej nigdzie, a skan całej strony wyciągał z paska u góry datę dzisiejszą i wstawiał ją jako „wykrytą\" — brak daty jest uczciwszy"
+        },
+        {
+          "type": "fix",
+          "text": "**Facebook: filmy i zdjęcia dają teraz komplet danych.** Adresy `/watch/?v=…` i `/photo/?fbid=…` nie były rozpoznawane jako post, więc formularz wypełniał się śmieciami — Facebook nie wystawia na stronie posta żadnych metadanych. Teraz wchodzimy od rekordu materiału: treść, data z dokładnością do minuty, autor, reakcje, komentarze, udostępnienia, a przy wideo także **liczba odsłon**. Adres zapisuje się w postaci kanonicznej, bez parametrów przeglądania albumu"
+        },
+        {
+          "type": "fix",
+          "text": "**Strona za ścianą (paywall, wymuszone wyłączenie AdBlocka) nie zostawia już pustego pola Treść** — wpada do niego zajawka, którą serwis publikuje dla mediów społecznościowych"
+        }
+      ]
+    },
+    {
       "version": "0.34.0",
       "date": "2026-09-19",
       "label": "feat",
       "labelColor": "#6366f1",
       "changes": [
-        {"type": "feat", "text": "**Powiadomienia na telefon — nowa zakładka „🔔 Powiadomienia\".** Wtyczka potrafi teraz odezwać się przez ntfy, gdy coś na Ciebie czeka albo gdy skończy dłuższą robotę. Powód: są w niej operacje trwające kwadranse i **dwa miejsca, w których po prostu stoi**, czekając na człowieka — captcha Google i pauza po partycji. Wszystkie dotychczasowe sygnały (log, ramka strony, dźwięk, tytuł karty) zakładają, że ktoś patrzy na ten ekran, a kosztują najwięcej dokładnie wtedy, gdy nikt nie patrzy"},
-        {"type": "feat", "text": "**Każde powiadomienie włącza się osobno.** Osiem zdarzeń w trzech grupach: *Coś czeka na Ciebie* (captcha, partycja), *Skończone* (tagowanie z pliku, zbieranie adresów, skan newsów, audyt) i *Błędy* (tagowania, zbierania). Chcesz tylko sygnał o skończonym skanie newsów, a resztę wyłączoną — zaznaczasz jedno pole"},
-        {"type": "feat", "text": "**Kanał wpisujesz własny, jak klucz API.** Nie ma go w kodzie i nigdzie nie jest współdzielony — każdy dostaje swoje powiadomienia na swój kanał. Jest przycisk „Wyślij testowe\", żeby sprawdzić konfigurację bez czekania na prawdziwe zdarzenie, oraz pole na własny serwer ntfy. **Nazwa kanału jest jedynym zabezpieczeniem** — kto ją zna, czyta Twoje powiadomienia, więc wymyśl długą i nieoczywistą"},
-        {"type": "feat", "text": "**Powiadomienia mówią, co się stało, ile tego było i co z tym zrobić.** „📰 Skan gotowy — 23 do oceny\" zamiast samego „gotowe\", z nazwą projektu (bo na telefonie nie widać, którego rynku dotyczy) i czasem trwania. Przy błędzie leci podpowiedź, co poprawić. Rzeczy, które stoją, przychodzą jako pilne — telefon zawibruje; zakończenia jako zwykłe i tylko wtedy, gdy robota trwała dłużej niż ustawiony próg"},
-        {"type": "fix", "text": "**Ustawienia powiadomień są wspólne dla wszystkich stron.** Zapisane są tak, żeby działały także poza panelem Brand24 — inaczej najważniejsze powiadomienie, to o captchy, nigdy by nie doszło, bo captcha wypada na stronie wyników Google, a ustawienia zapisane w panelu są tam niewidoczne"}
+        {
+          "type": "feat",
+          "text": "**Powiadomienia na telefon — nowa zakładka „🔔 Powiadomienia\".** Wtyczka potrafi teraz odezwać się przez ntfy, gdy coś na Ciebie czeka albo gdy skończy dłuższą robotę. Powód: są w niej operacje trwające kwadranse i **dwa miejsca, w których po prostu stoi**, czekając na człowieka — captcha Google i pauza po partycji. Wszystkie dotychczasowe sygnały (log, ramka strony, dźwięk, tytuł karty) zakładają, że ktoś patrzy na ten ekran, a kosztują najwięcej dokładnie wtedy, gdy nikt nie patrzy"
+        },
+        {
+          "type": "feat",
+          "text": "**Każde powiadomienie włącza się osobno.** Osiem zdarzeń w trzech grupach: *Coś czeka na Ciebie* (captcha, partycja), *Skończone* (tagowanie z pliku, zbieranie adresów, skan newsów, audyt) i *Błędy* (tagowania, zbierania). Chcesz tylko sygnał o skończonym skanie newsów, a resztę wyłączoną — zaznaczasz jedno pole"
+        },
+        {
+          "type": "feat",
+          "text": "**Kanał wpisujesz własny, jak klucz API.** Nie ma go w kodzie i nigdzie nie jest współdzielony — każdy dostaje swoje powiadomienia na swój kanał. Jest przycisk „Wyślij testowe\", żeby sprawdzić konfigurację bez czekania na prawdziwe zdarzenie, oraz pole na własny serwer ntfy. **Nazwa kanału jest jedynym zabezpieczeniem** — kto ją zna, czyta Twoje powiadomienia, więc wymyśl długą i nieoczywistą"
+        },
+        {
+          "type": "feat",
+          "text": "**Powiadomienia mówią, co się stało, ile tego było i co z tym zrobić.** „📰 Skan gotowy — 23 do oceny\" zamiast samego „gotowe\", z nazwą projektu (bo na telefonie nie widać, którego rynku dotyczy) i czasem trwania. Przy błędzie leci podpowiedź, co poprawić. Rzeczy, które stoją, przychodzą jako pilne — telefon zawibruje; zakończenia jako zwykłe i tylko wtedy, gdy robota trwała dłużej niż ustawiony próg"
+        },
+        {
+          "type": "fix",
+          "text": "**Ustawienia powiadomień są wspólne dla wszystkich stron.** Zapisane są tak, żeby działały także poza panelem Brand24 — inaczej najważniejsze powiadomienie, to o captchy, nigdy by nie doszło, bo captcha wypada na stronie wyników Google, a ustawienia zapisane w panelu są tam niewidoczne"
+        }
       ]
     },
     {
@@ -18181,9 +18223,18 @@ function showOnboarding(onComplete) {
       "label": "feat",
       "labelColor": "#6366f1",
       "changes": [
-        {"type": "feat", "text": "**Przebieg zbierania można wstrzymać i wznowić.** Przycisk „Pauza\" w panelu przebiegu zatrzymuje robotę tam, gdzie stoi, a „Wznów\" puszcza ją dalej. Po to, żeby dało się odejść od komputera bez zostawiania przebiegu bez nadzoru — captcha, która wyskoczy pod nieobecność, blokuje wszystko do powrotu, a odklikana od razu kosztuje kilkanaście sekund"},
-        {"type": "feat", "text": "**Wstrzymany przebieg nie traci odliczonego czasu.** Pauza korzysta z tego samego mechanizmu, co wstrzymanie przy karcie w tle: czas postoju nie jest naliczany, a po wznowieniu odliczanie idzie dalej od miejsca, w którym stanęło. Stan przeżywa przeładowanie strony, czyli normalny krok tego przebiegu — przycisk po przejściu na kolejną stronę wyników nadal pokazuje „Wznów\", a nie wraca do „Pauza\""},
-        {"type": "fix", "text": "**Adresy z bieżącej strony trafiają do koszyka także po wciśnięciu pauzy.** Odczyt z już załadowanej strony nie puka do Google, więc nie ma powodu go pomijać — wstrzymywane jest wyłącznie przejście dalej. Jedno zapytanie może jeszcze pójść, jeśli nawigacja ruszyła w chwili kliknięcia; przebieg stanie na następnej przerwie"}
+        {
+          "type": "feat",
+          "text": "**Przebieg zbierania można wstrzymać i wznowić.** Przycisk „Pauza\" w panelu przebiegu zatrzymuje robotę tam, gdzie stoi, a „Wznów\" puszcza ją dalej. Po to, żeby dało się odejść od komputera bez zostawiania przebiegu bez nadzoru — captcha, która wyskoczy pod nieobecność, blokuje wszystko do powrotu, a odklikana od razu kosztuje kilkanaście sekund"
+        },
+        {
+          "type": "feat",
+          "text": "**Wstrzymany przebieg nie traci odliczonego czasu.** Pauza korzysta z tego samego mechanizmu, co wstrzymanie przy karcie w tle: czas postoju nie jest naliczany, a po wznowieniu odliczanie idzie dalej od miejsca, w którym stanęło. Stan przeżywa przeładowanie strony, czyli normalny krok tego przebiegu — przycisk po przejściu na kolejną stronę wyników nadal pokazuje „Wznów\", a nie wraca do „Pauza\""
+        },
+        {
+          "type": "fix",
+          "text": "**Adresy z bieżącej strony trafiają do koszyka także po wciśnięciu pauzy.** Odczyt z już załadowanej strony nie puka do Google, więc nie ma powodu go pomijać — wstrzymywane jest wyłącznie przejście dalej. Jedno zapytanie może jeszcze pójść, jeśli nawigacja ruszyła w chwili kliknięcia; przebieg stanie na następnej przerwie"
+        }
       ]
     },
     {
@@ -18192,94 +18243,103 @@ function showOnboarding(onComplete) {
       "label": "feat",
       "labelColor": "#6366f1",
       "changes": [
-        {"type": "feat", "text": "**Autouzupełnianie wzmianek działa na X i Facebooku.** Oba serwisy szły dotąd przez generyczny odczyt artykułu, który na X trafiał w oś czasu, a na Facebooku w nic — treść, tytuł, data i godzina zostawały puste. To nie był drobiazg: sprawdzanie duplikatów zawęża zapytanie do miesiąca z pola daty, a puste pole oznaczało „dzisiaj\", więc wpis sprzed pół roku był szukany w bieżącym miesiącu i wychodził jako „URL nowy\" dla wzmianki, która w projekcie już jest"},
-        {"type": "feat", "text": "**X — komplet danych wpisu niezależnie od tego, czy sesja jest zalogowana.** Data z godziną, treść, polubienia, odpowiedzi, język wpisu i autor przychodzą z endpointu, którym X obsługuje osadzanie wpisów na cudzych stronach. Powód, dla którego to nie może opierać się na samej stronie: wylogowany X **nie renderuje aplikacji w ogóle** — zmierzone na stronie wpisu, zero elementów `data-testid`, zero `time`, brak `react-root`. Repostów i wyświetleń ten kanał nie oddaje, te czytane są z widoku zalogowanego"},
-        {"type": "feat", "text": "**Facebook — dane posta bez ani jednego zapytania do Facebooka.** Czytane są z pamięci karty, gdzie post już jest, bo został otwarty. Daje dokładny czas publikacji, pełną treść (zmierzone **602 znaki** tam, gdzie widok ucina po „Wyświetl więcej\"), reakcje, komentarze i udostępnienia. Innej drogi tam nie ma: na stronie posta Facebook nie wystawia **żadnych** metadanych — zmierzone zero tagów `og:`, zero `ld+json`, zero `time`"},
-        {"type": "feat", "text": "**Wiersz autora działa wreszcie na Facebooku.** Brand24 trzyma adres autora jako `profile.php?id=` z numerycznym ID strony, którego w adresie posta nie ma — i dlatego to pole było na Facebooku wyłączone. Teraz ID przychodzi wprost z danych posta"},
-        {"type": "fix", "text": "**Kraj i język kampanii dostosowują się do przełączonego projektu.** Przebieg odpalony na projekcie greckim dzień po tureckim szedł z **tureckim** filtrem kraju i języka, bo zapamiętana konfiguracja miała pierwszeństwo przed krajem z nazwy projektu. Nazwa kampanii, warianty frazy i zakres dat przenoszą się dalej — należą do kampanii, nie do rynku. Ręczna zmiana kraju albo języka zostaje zapamiętana, ale tylko dla projektu, w którym ją zrobiono"},
-        {"type": "fix", "text": "**Błędny kod języka jest odrzucany, zamiast po cichu wyłączać filtr.** Wpisanie „gr\" w pole języka (bo kraj to GR) dawało wyniki po polsku — Google nie odrzuca `lang_gr`, tylko pomija nieznany filtr. Przebieg kończył się normalnie, HUD pokazywał postęp, a koszyk zapełniał się adresami z niewłaściwego rynku. Teraz sprawdzane jest znaczenie kodu, nie sam kształt, a komunikat podaje właściwy — grecki to „el\". Ten sam rozjazd mają CZ/cs, SE/sv, DK/da, EE/et, UA/uk, RS/sr i kilka innych; pod polami stoi podpis z nazwami kraju i języka"},
-        {"type": "feat", "text": "**Panel przebiegu pokazuje rynek.** Pod nazwą kampanii doszedł kraj i język z nazwami, a filtr niebiorący udziału w tym przebiegu jest wyszarzony. Powód wprost z poprzedniego punktu: przebieg z cudzym rynkiem wygląda z zewnątrz identycznie jak poprawny — ten sam postęp, ten sam rosnący koszyk"},
-        {"type": "fix", "text": "**Kafelki w oknie „Dodawanie wzmianek\" mają równy rozmiar.** Trzeci kafelek ściskał pozostałe, bo kolumna z dłuższym opisem rozpychała się kosztem sąsiednich. Zmierzone po poprawce: równa szerokość, równa wysokość, równe odstępy"}
+        {
+          "type": "feat",
+          "text": "**Autouzupełnianie wzmianek działa na X i Facebooku.** Oba serwisy szły dotąd przez generyczny odczyt artykułu, który na X trafiał w oś czasu, a na Facebooku w nic — treść, tytuł, data i godzina zostawały puste. To nie był drobiazg: sprawdzanie duplikatów zawęża zapytanie do miesiąca z pola daty, a puste pole oznaczało „dzisiaj\", więc wpis sprzed pół roku był szukany w bieżącym miesiącu i wychodził jako „URL nowy\" dla wzmianki, która w projekcie już jest"
+        },
+        {
+          "type": "feat",
+          "text": "**X — komplet danych wpisu niezależnie od tego, czy sesja jest zalogowana.** Data z godziną, treść, polubienia, odpowiedzi, język wpisu i autor przychodzą z endpointu, którym X obsługuje osadzanie wpisów na cudzych stronach. Powód, dla którego to nie może opierać się na samej stronie: wylogowany X **nie renderuje aplikacji w ogóle** — zmierzone na stronie wpisu, zero elementów `data-testid`, zero `time`, brak `react-root`. Repostów i wyświetleń ten kanał nie oddaje, te czytane są z widoku zalogowanego"
+        },
+        {
+          "type": "feat",
+          "text": "**Facebook — dane posta bez ani jednego zapytania do Facebooka.** Czytane są z pamięci karty, gdzie post już jest, bo został otwarty. Daje dokładny czas publikacji, pełną treść (zmierzone **602 znaki** tam, gdzie widok ucina po „Wyświetl więcej\"), reakcje, komentarze i udostępnienia. Innej drogi tam nie ma: na stronie posta Facebook nie wystawia **żadnych** metadanych — zmierzone zero tagów `og:`, zero `ld+json`, zero `time`"
+        },
+        {
+          "type": "feat",
+          "text": "**Wiersz autora działa wreszcie na Facebooku.** Brand24 trzyma adres autora jako `profile.php?id=` z numerycznym ID strony, którego w adresie posta nie ma — i dlatego to pole było na Facebooku wyłączone. Teraz ID przychodzi wprost z danych posta"
+        },
+        {
+          "type": "fix",
+          "text": "**Kraj i język kampanii dostosowują się do przełączonego projektu.** Przebieg odpalony na projekcie greckim dzień po tureckim szedł z **tureckim** filtrem kraju i języka, bo zapamiętana konfiguracja miała pierwszeństwo przed krajem z nazwy projektu. Nazwa kampanii, warianty frazy i zakres dat przenoszą się dalej — należą do kampanii, nie do rynku. Ręczna zmiana kraju albo języka zostaje zapamiętana, ale tylko dla projektu, w którym ją zrobiono"
+        },
+        {
+          "type": "fix",
+          "text": "**Błędny kod języka jest odrzucany, zamiast po cichu wyłączać filtr.** Wpisanie „gr\" w pole języka (bo kraj to GR) dawało wyniki po polsku — Google nie odrzuca `lang_gr`, tylko pomija nieznany filtr. Przebieg kończył się normalnie, HUD pokazywał postęp, a koszyk zapełniał się adresami z niewłaściwego rynku. Teraz sprawdzane jest znaczenie kodu, nie sam kształt, a komunikat podaje właściwy — grecki to „el\". Ten sam rozjazd mają CZ/cs, SE/sv, DK/da, EE/et, UA/uk, RS/sr i kilka innych; pod polami stoi podpis z nazwami kraju i języka"
+        },
+        {
+          "type": "feat",
+          "text": "**Panel przebiegu pokazuje rynek.** Pod nazwą kampanii doszedł kraj i język z nazwami, a filtr niebiorący udziału w tym przebiegu jest wyszarzony. Powód wprost z poprzedniego punktu: przebieg z cudzym rynkiem wygląda z zewnątrz identycznie jak poprawny — ten sam postęp, ten sam rosnący koszyk"
+        },
+        {
+          "type": "fix",
+          "text": "**Kafelki w oknie „Dodawanie wzmianek\" mają równy rozmiar.** Trzeci kafelek ściskał pozostałe, bo kolumna z dłuższym opisem rozpychała się kosztem sąsiednich. Zmierzone po poprawce: równa szerokość, równa wysokość, równe odstępy"
+        }
       ]
     },
     {
       "version": "0.32.11",
       "date": "2026-09-17",
       "label": "feat",
-      "labelColor": "#6366f1",
       "changes": [
-        {"type": "feat", "text": "**Google News jako drugi kanał zbierania.** Przycisk w modalu kampanii: jedno zapytanie na rynek zamiast serii do wyszukiwarki, czyli bez ryzyka captchy — i bez otwierania jakiejkolwiek karty. Zmierzone na rynku greckim: 57 pozycji z jednego zapytania, same serwisy informacyjne (marieclaire.gr, elle.gr, lifo.gr, protothema.gr), bez sklepu marki i marketplace’ów. Nie zastępuje przebiegu po wynikach Google, bo gubi blogi modowe i strony produktowe — jest uzupełnieniem"},
-        {"type": "feat", "text": "**Adresy z Google News są rozwijane do prawdziwych artykułów.** Kanał RSS podaje wyłącznie przekierowania `news.google.com/rss/articles/…`, a nazwa wydawcy przychodzi bez ścieżki. Wtyczka podąża za przekierowaniem i zapisuje faktyczny adres. Rozwijane są tylko pozycje, które przeszły filtr domeny i zakresu dat — każde rozwinięcie to osobne zapytanie, więc robienie tego dla wszystkiego byłoby marnotrawstwem"},
-        {"type": "feat", "text": "**Zakres dat odsiewany po stronie wtyczki dla Google News.** Kanał RSS, inaczej niż wyszukiwarka, nie zna filtra dat — bez tego lecą artykuły sprzed roku (w zmierzonej próbce pierwsza pozycja miała datę z marca przy kampanii sierpień–wrzesień)"},
-        {"type": "perf", "text": "**Sprawdzanie „czy już w projekcie” idzie teraz PRZED skanem, nie po nim.** Wcześniej strona obecna już w Brand24 była otwierana, skanowana i oceniana przez model, zanim wyszło, że była zbędna — skanowanie i tokeny szły w kosz. Dotyczy wyłącznie trybu kampanii; w zwykłym News zostaje po staremu, bo tam lista bywa wklejana bez zakresu dat i odpytanie projektu opóźniałoby start bez pewnego zysku"},
-        {"type": "fix", "text": "**Duplikaty szukane w okresie kampanii, nie w sztywnych ostatnich trzech miesiącach.** Kampania sprzed pół roku w ogóle nie mieściła się w tym oknie i duplikaty przechodziły niezauważone, a kampania krótka kazała pobierać wielokrotnie więcej wzmianek, niż trzeba. Teraz okno to zakres kampanii z miesięcznym marginesem z każdej strony — bo data wzmianki w Brand24 bywa datą zebrania, nie publikacji. Komunikat pokazuje faktyczny zakres zamiast zawsze mówić „z ostatnich 3 mies.”"}
+        "feat: **Google News jako drugi kanał zbierania.** Przycisk w modalu kampanii: jedno zapytanie na rynek zamiast serii do wyszukiwarki, czyli bez ryzyka captchy — i bez otwierania jakiejkolwiek karty. Zmierzone na rynku greckim: 57 pozycji z jednego zapytania, same serwisy informacyjne (marieclaire.gr, elle.gr, lifo.gr, protothema.gr), bez sklepu marki i marketplace’ów. Nie zastępuje przebiegu po wynikach Google, bo gubi blogi modowe i strony produktowe — jest uzupełnieniem",
+        "feat: **Adresy z Google News są rozwijane do prawdziwych artykułów.** Kanał RSS podaje wyłącznie przekierowania `news.google.com/rss/articles/…`, a nazwa wydawcy przychodzi bez ścieżki. Wtyczka podąża za przekierowaniem i zapisuje faktyczny adres. Rozwijane są tylko pozycje, które przeszły filtr domeny i zakresu dat — każde rozwinięcie to osobne zapytanie, więc robienie tego dla wszystkiego byłoby marnotrawstwem",
+        "feat: **Zakres dat odsiewany po stronie wtyczki dla Google News.** Kanał RSS, inaczej niż wyszukiwarka, nie zna filtra dat — bez tego lecą artykuły sprzed roku (w zmierzonej próbce pierwsza pozycja miała datę z marca przy kampanii sierpień–wrzesień)",
+        "perf: **Sprawdzanie „czy już w projekcie” idzie teraz PRZED skanem, nie po nim.** Wcześniej strona obecna już w Brand24 była otwierana, skanowana i oceniana przez model, zanim wyszło, że była zbędna — skanowanie i tokeny szły w kosz. Dotyczy wyłącznie trybu kampanii; w zwykłym News zostaje po staremu, bo tam lista bywa wklejana bez zakresu dat i odpytanie projektu opóźniałoby start bez pewnego zysku",
+        "fix: **Duplikaty szukane w okresie kampanii, nie w sztywnych ostatnich trzech miesiącach.** Kampania sprzed pół roku w ogóle nie mieściła się w tym oknie i duplikaty przechodziły niezauważone, a kampania krótka kazała pobierać wielokrotnie więcej wzmianek, niż trzeba. Teraz okno to zakres kampanii z miesięcznym marginesem z każdej strony — bo data wzmianki w Brand24 bywa datą zebrania, nie publikacji. Komunikat pokazuje faktyczny zakres zamiast zawsze mówić „z ostatnich 3 mies.”"
       ]
     },
     {
       "version": "0.32.10",
       "date": "2026-09-17",
       "label": "fix",
-      "labelColor": "#f59e0b",
       "changes": [
-        {"type": "fix", "text": "**CAPTCHA przechodziła niezauważona.** Zgłoszone z pierwszego realnego przebiegu: zagadka wyskoczyła, alarm nie zadzwonił. Detekcja sprawdzała tylko adres `/sorry/` i jeden formularz, a Google podaje blokadę w kilku formach i zmienia je bez zapowiedzi. Teraz decyduje sygnał odwrotny: jesteśmy na stronie wyników, a nie ma na niej ani listy wyników, ani licznika trafień — czegokolwiek Google tam nie pokazał, wyników tam nie ma. Licznik jest obecny nawet przy zerowym trafieniu, więc pusty wariant nie podnosi fałszywego alarmu"},
-        {"type": "feat", "text": "**Alarm captchy — migający, dźwiękowy, zapętlony.** Trzy kanały naraz, bo karta zbierania bywa na drugim monitorze i komunikat w panelu jest wtedy niewidoczny: migająca czerwona ramka z instrukcją, pulsujący ton grający do odklikania (z przyciskiem wyciszenia) i migający tytuł karty, widoczny na pasku, gdy okno jest w tle. Uwaga: karta wyników nigdy nie dostała kliknięcia, więc Chrome może zablokować dźwięk — dlatego nie jest jedynym sygnałem"},
-        {"type": "feat", "text": "**Captcha pauzuje przebieg, nie kasuje go.** Pozycja w kolejce i numer strony zostają nietknięte, więc po odklikaniu zbieranie wraca dokładnie tam, gdzie stanęło — samo, bez uruchamiania od nowa. Wcześniej wykryta blokada kończyła przebieg na dobre i trzeba było startować od początku. Zniknął też `alert()`: blokował wątek strony, czyli uniemożliwiał miganie i dźwięk, a to one mają zwrócić uwagę"},
-        {"type": "fix", "text": "**Kolektor nie odpalał się w ogóle na stronie blokady**, bo jej adres nie jest `/search` — czyli dokładnie tam, gdzie alarm jest potrzebny, nie było go kto uruchomić"},
-        {"type": "ui", "text": "**Oznaczenia wiersza dostosowane do kampanii.** W kampanii adresy przychodzą z wyszukiwania po nazwie kampanii, więc obecność marki jest przesądzona i badge „Relevant” nic nie wnosił — zastąpiony pytaniem, które ma znaczenie: „ta kampania” albo „poza kampanią”"},
-        {"type": "ui", "text": "**Data liczona wobec okresu kampanii, nie wieku artykułu.** Zamiast ostrzeżenia „zbyt stary artykuł” wiersz mówi, czy data mieści się w zakresie podanym przy zbieraniu — z ptaszkiem albo ostrzeżeniem i pełnym zakresem w podpowiedzi. Ostrzeżenie o wieku było w kampanii mylące: zakres dostaje się od klienta, kampania sprzed miesiąca jest w porządku, a artykuł spoza zakresu jest bezużyteczny niezależnie od tego, czy ma tydzień, czy pół roku"}
+        "fix: **CAPTCHA przechodziła niezauważona.** Zgłoszone z pierwszego realnego przebiegu: zagadka wyskoczyła, alarm nie zadzwonił. Detekcja sprawdzała tylko adres `/sorry/` i jeden formularz, a Google podaje blokadę w kilku formach i zmienia je bez zapowiedzi. Teraz decyduje sygnał odwrotny: jesteśmy na stronie wyników, a nie ma na niej ani listy wyników, ani licznika trafień — czegokolwiek Google tam nie pokazał, wyników tam nie ma. Licznik jest obecny nawet przy zerowym trafieniu, więc pusty wariant nie podnosi fałszywego alarmu",
+        "feat: **Alarm captchy — migający, dźwiękowy, zapętlony.** Trzy kanały naraz, bo karta zbierania bywa na drugim monitorze i komunikat w panelu jest wtedy niewidoczny: migająca czerwona ramka z instrukcją, pulsujący ton grający do odklikania (z przyciskiem wyciszenia) i migający tytuł karty, widoczny na pasku, gdy okno jest w tle. Uwaga: karta wyników nigdy nie dostała kliknięcia, więc Chrome może zablokować dźwięk — dlatego nie jest jedynym sygnałem",
+        "feat: **Captcha pauzuje przebieg, nie kasuje go.** Pozycja w kolejce i numer strony zostają nietknięte, więc po odklikaniu zbieranie wraca dokładnie tam, gdzie stanęło — samo, bez uruchamiania od nowa. Wcześniej wykryta blokada kończyła przebieg na dobre i trzeba było startować od początku. Zniknął też `alert()`: blokował wątek strony, czyli uniemożliwiał miganie i dźwięk, a to one mają zwrócić uwagę",
+        "fix: **Kolektor nie odpalał się w ogóle na stronie blokady**, bo jej adres nie jest `/search` — czyli dokładnie tam, gdzie alarm jest potrzebny, nie było go kto uruchomić",
+        "ui: **Oznaczenia wiersza dostosowane do kampanii.** W kampanii adresy przychodzą z wyszukiwania po nazwie kampanii, więc obecność marki jest przesądzona i badge „Relevant” nic nie wnosił — zastąpiony pytaniem, które ma znaczenie: „ta kampania” albo „poza kampanią”",
+        "ui: **Data liczona wobec okresu kampanii, nie wieku artykułu.** Zamiast ostrzeżenia „zbyt stary artykuł” wiersz mówi, czy data mieści się w zakresie podanym przy zbieraniu — z ptaszkiem albo ostrzeżeniem i pełnym zakresem w podpowiedzi. Ostrzeżenie o wieku było w kampanii mylące: zakres dostaje się od klienta, kampania sprzed miesiąca jest w porządku, a artykuł spoza zakresu jest bezużyteczny niezależnie od tego, czy ma tydzień, czy pół roku"
       ]
     },
     {
       "version": "0.32.9",
       "date": "2026-09-17",
       "label": "feat",
-      "labelColor": "#6366f1",
       "changes": [
-        {"type": "feat", "text": "**Nowa sekcja „Kampanie H&M” w dodawaniu wzmianek.** Kafelek prowadzi do rozjazdu: *Zbieranie* albo *Dodawanie*. Zbieranie to przebieg po wynikach Google — podajesz nazwę kampanii, rynek i zakres dat, a wtyczka sama przechodzi strony wyników i zbiera adresy do koszyka. Dodawanie to znany skan z listy URL-i, ale z własnym promptem i własnymi chipami pod kampanię. Powód: wyszukiwanie stron z newsami o kampanii robiło się dotąd ręcznie per rynek, osobno dla filtra kraju i języka, z przeglądaniem wszystkich stron wyników wzrokiem"},
-        {"type": "feat", "text": "**Domeny marki i marketplace’ów są wykluczane po stronie Google, nie odsiewane po fakcie.** Zmierzone na rynku GR: fraza „H&M STUDIO ESSENTIALS” dawała ~917 wyników, z których pierwsze dwie strony to **wyłącznie** sklep H&M i Facebook; po dodaniu wykluczeń został 1 wynik — i był to poszukiwany artykuł. Odsiewanie dopiero w koszyku kazałoby przejść kilkanaście stron po to, żeby wszystko z nich wyrzucić, a każda strona to osobne zapytanie do wyszukiwarki. Czarna lista jest edytowalna i pełni obie role naraz: wyklucza w zapytaniu i filtruje koszyk"},
-        {"type": "feat", "text": "**Przerwy między stronami wyników zależą od tego, co jest na stronie.** Strona złożona z samych marketplace’ów dostaje 3–6 s (przelot wzrokiem), strona z realnym kandydatem 20–40 s, z 15% szansą na ponad minutę (otwarcie i przeczytanie). Rozkład wychodzi dwumodalny z treści, a nie z generatora liczb — bliżej prawdy niż stała przerwa z jitterem. Kolejność wariantów frazy i trybów filtra jest losowana raz na przebieg, bo powtarzalna sekwencja to sygnał, którego samo tempo nie maskuje"},
-        {"type": "feat", "text": "**Panel postępu na karcie zbierania.** Pokazuje licznik koszyka, nazwę kampanii, numer zadania z paskiem, listę wszystkich wariantów ze stanem (zrobione / w toku / czeka), bieżący krok z liczbą trafień i odliczanie do następnego. Przebieg trwa minutami w karcie, na którą się nie patrzy, więc bez tego nie było jak stwierdzić, czy to koniec, czy pierwszy z sześciu wariantów"},
-        {"type": "feat", "text": "**Po przebiegu jedno kliknięcie „Przejdź do skanowania”.** Robota wraca do **tej** karty panelu, która przebieg odpaliła — przez `window.opener`, więc adresy nie mogą trafić do innego projektu, gdy masz otwarte kilka kart. Panel wkleja adresy z koszyka i startuje skan sam. Gdy panel został w międzyczasie przeładowany, sygnał czeka i zostaje podjęty przy powrocie na kartę"},
-        {"type": "feat", "text": "**Osobny prompt AI dla kampanii, z werdyktem „poza kampanią”.** Warianty frazy skracają nazwę kampanii (pełna nazwa często nie daje na mniejszym rynku żadnych wyników), więc w wynikach ląduje też zwykłe pokrycie marki. Taka strona dostaje teraz własny status zamiast wypadać jako nietrafiona — wzmianka nadaje się do dodania, tylko nie do tej kampanii, a decyzja zostaje po stronie człowieka. Prompt siedzi w `prompts/news_ai_campaign.txt`, do wklejenia raz w ustawieniach AI"},
-        {"type": "feat", "text": "**Chipy kampanii dochodzą do wariantów marki, nie zastępują ich.** Z „H&M STUDIO ESSENTIALS AW26” powstają `studio essentials aw26`, `studio essentials` oraz osobno `aw26` — oznaczenie sezonu jako samodzielny chip, bo wewnątrz dłuższego trafiałoby dopiero przy pełnej frazie ciągiem, a artykuł pisze często „kolekcja H&M Studio na sezon AW26”. Chipy kampanii mają własny worek per rynek, więc ich edycja nie rusza zwykłego monitoringu marki"}
+        "feat: **Nowa sekcja „Kampanie H&M” w dodawaniu wzmianek.** Kafelek prowadzi do rozjazdu: *Zbieranie* albo *Dodawanie*. Zbieranie to przebieg po wynikach Google — podajesz nazwę kampanii, rynek i zakres dat, a wtyczka sama przechodzi strony wyników i zbiera adresy do koszyka. Dodawanie to znany skan z listy URL-i, ale z własnym promptem i własnymi chipami pod kampanię. Powód: wyszukiwanie stron z newsami o kampanii robiło się dotąd ręcznie per rynek, osobno dla filtra kraju i języka, z przeglądaniem wszystkich stron wyników wzrokiem",
+        "feat: **Domeny marki i marketplace’ów są wykluczane po stronie Google, nie odsiewane po fakcie.** Zmierzone na rynku GR: fraza „H&M STUDIO ESSENTIALS” dawała ~917 wyników, z których pierwsze dwie strony to **wyłącznie** sklep H&M i Facebook; po dodaniu wykluczeń został 1 wynik — i był to poszukiwany artykuł. Odsiewanie dopiero w koszyku kazałoby przejść kilkanaście stron po to, żeby wszystko z nich wyrzucić, a każda strona to osobne zapytanie do wyszukiwarki. Czarna lista jest edytowalna i pełni obie role naraz: wyklucza w zapytaniu i filtruje koszyk",
+        "feat: **Przerwy między stronami wyników zależą od tego, co jest na stronie.** Strona złożona z samych marketplace’ów dostaje 3–6 s (przelot wzrokiem), strona z realnym kandydatem 20–40 s, z 15% szansą na ponad minutę (otwarcie i przeczytanie). Rozkład wychodzi dwumodalny z treści, a nie z generatora liczb — bliżej prawdy niż stała przerwa z jitterem. Kolejność wariantów frazy i trybów filtra jest losowana raz na przebieg, bo powtarzalna sekwencja to sygnał, którego samo tempo nie maskuje",
+        "feat: **Panel postępu na karcie zbierania.** Pokazuje licznik koszyka, nazwę kampanii, numer zadania z paskiem, listę wszystkich wariantów ze stanem (zrobione / w toku / czeka), bieżący krok z liczbą trafień i odliczanie do następnego. Przebieg trwa minutami w karcie, na którą się nie patrzy, więc bez tego nie było jak stwierdzić, czy to koniec, czy pierwszy z sześciu wariantów",
+        "feat: **Po przebiegu jedno kliknięcie „Przejdź do skanowania”.** Robota wraca do **tej** karty panelu, która przebieg odpaliła — przez `window.opener`, więc adresy nie mogą trafić do innego projektu, gdy masz otwarte kilka kart. Panel wkleja adresy z koszyka i startuje skan sam. Gdy panel został w międzyczasie przeładowany, sygnał czeka i zostaje podjęty przy powrocie na kartę",
+        "feat: **Osobny prompt AI dla kampanii, z werdyktem „poza kampanią”.** Warianty frazy skracają nazwę kampanii (pełna nazwa często nie daje na mniejszym rynku żadnych wyników), więc w wynikach ląduje też zwykłe pokrycie marki. Taka strona dostaje teraz własny status zamiast wypadać jako nietrafiona — wzmianka nadaje się do dodania, tylko nie do tej kampanii, a decyzja zostaje po stronie człowieka. Prompt siedzi w `prompts/news_ai_campaign.txt`, do wklejenia raz w ustawieniach AI",
+        "feat: **Chipy kampanii dochodzą do wariantów marki, nie zastępują ich.** Z „H&M STUDIO ESSENTIALS AW26” powstają `studio essentials aw26`, `studio essentials` oraz osobno `aw26` — oznaczenie sezonu jako samodzielny chip, bo wewnątrz dłuższego trafiałoby dopiero przy pełnej frazie ciągiem, a artykuł pisze często „kolekcja H&M Studio na sezon AW26”. Chipy kampanii mają własny worek per rynek, więc ich edycja nie rusza zwykłego monitoringu marki"
       ]
     },
     {
       "version": "0.32.8",
       "date": "2026-09-15",
       "label": "fix",
-      "labelColor": "#f59e0b",
       "changes": [
-        {"type": "fix", "text": "**Sentyment negatywny wysyłany był wartością, której formularz Brand24 nie zna.** Lista sentymentów w formularzu to `0` neutralny, `1` pozytywny, **`2` negatywny** — a wtyczka wysyłała przy negatywnym `-1`. Ta wartość pochodzi z filtra wyszukiwania w API, gdzie negatywny **faktycznie** jest `-1`; dwa różne API Brand24 liczą sentyment inaczej i wtyczka miała wpisaną konwencję nie tego, do którego wysyła. Dotyczyło wyłącznie wzmianek dodawanych ręcznie z oceną negatywną — warto sprawdzić w Brand24, czy takie wzmianki mają sentyment, który im nadano"}
+        "fix: **Sentyment negatywny wysyłany był wartością, której formularz Brand24 nie zna.** Lista sentymentów w formularzu to `0` neutralny, `1` pozytywny, **`2` negatywny** — a wtyczka wysyłała przy negatywnym `-1`. Ta wartość pochodzi z filtra wyszukiwania w API, gdzie negatywny **faktycznie** jest `-1`; dwa różne API Brand24 liczą sentyment inaczej i wtyczka miała wpisaną konwencję nie tego, do którego wysyła. Dotyczyło wyłącznie wzmianek dodawanych ręcznie z oceną negatywną — warto sprawdzić w Brand24, czy takie wzmianki mają sentyment, który im nadano"
       ]
     },
     {
       "version": "0.32.7",
       "date": "2026-09-15",
       "label": "fix",
-      "labelColor": "#f59e0b",
       "changes": [
-        {"type": "fix", "text": "**Kropka dostępu mówi teraz prawdę także wtedy, gdy żaden projekt nie jest wybrany.** W 0.32.4 sprawdzanie zaczęło odpalać się samo przy otwarciu panelu, ale przy braku projektu nie odpalało się wcale — kropka zostawała na startowym „● CMS”, a przycisk dodawania mógł zostać aktywny, choć nie było do czego wysłać. Teraz w takiej sytuacji wraca „● Nie wiem” i przycisk jest zablokowany, jak być powinno"}
+        "fix: **Kropka dostępu mówi teraz prawdę także wtedy, gdy żaden projekt nie jest wybrany.** W 0.32.4 sprawdzanie zaczęło odpalać się samo przy otwarciu panelu, ale przy braku projektu nie odpalało się wcale — kropka zostawała na startowym „● CMS”, a przycisk dodawania mógł zostać aktywny, choć nie było do czego wysłać. Teraz w takiej sytuacji wraca „● Nie wiem” i przycisk jest zablokowany, jak być powinno"
       ]
     },
     {
       "version": "0.32.6",
       "date": "2026-09-15",
       "label": "fix",
-      "labelColor": "#f59e0b",
       "changes": [
-        {"type": "fix", "text": "**Liczba odsłon wracała do Brand24 w próżnię — od teraz dochodzi.** Wtyczka wysyłała ją pod nazwą `mention_pageviews`, a w formularzu Brand24 pola o takiej nazwie **nie ma**: jest `mention_views` z etykietą „Odsłon”. To jedna i ta sama metryka, tylko wpisywana parametrem, którego nikt nie odbierał, więc wartość przepadała po cichu przy każdej wysyłce z trybu Niestandardowe. Polubienia, udostępnienia i komentarze szły poprawnie"},
-        {"type": "fix", "text": "**Kwadracik przy autorze zaczyna odznaczony.** Adres autora wtyczka nadal rozpoznaje i wpisuje w pole, żeby było widać, kogo znalazła, ale nic nie poleci do Brand24, dopóki sam nie zaznaczysz. Zaznaczenie **trzyma się przy przechodzeniu między postami** — tak samo jak wartość wpisana ręcznie w dowolne inne pole formularza, więc nie trzeba klikać przy każdej wzmiance"},
-        {"type": "fix", "text": "**Adres autora z YouTube w formacie, który Brand24 faktycznie trzyma** — `http://www.youtube.com/channel/<ID>`. Podpowiedź przy polu sugeruje inny zapis (bez `www`, z literówką `channe`), ale prawdziwe wzmianki w CMS wyglądają tak, jak wysyłamy teraz"}
-      ]
-    },
-    {
-      "version": "0.32.5",
-      "date": "2026-09-15",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {"type": "feat", "text": "**Formularz zbiera też autora wpisu — na serwisach, z których da się go wziąć.** Brand24 ma pole „Adres autora SM” (widoczne tylko dla adminów), którego wtyczka dotąd w ogóle nie wypełniała. Teraz nad tagami pojawia się wiersz „Autor wpisu” z gotowym adresem i zaznaczonym kwadracikiem — odznacz, jeśli przy tej wzmiance autora nie chcesz. **Wiersz pokazuje się wyłącznie tam, gdzie adres faktycznie da się ustalić**: Instagram, TikTok, YouTube i X. Na stronie z newsami nie ma go wcale. Adresy Instagrama i TikToka sprawdzone na prawdziwych wzmiankach w CMS, żeby poszło dokładnie to, co Brand24 tam trzyma. **Facebook świadomie pominięty** — wymaga numerycznego ID strony, którego w adresie posta nie ma; lepiej nie pokazać wiersza, niż wysłać adres, którego Brand24 nie zrozumie"}
+        "fix: **Liczba odsłon wracała do Brand24 w próżnię — od teraz dochodzi.** Wtyczka wysyłała ją pod nazwą `mention_pageviews`, a w formularzu Brand24 pola o takiej nazwie **nie ma**: jest `mention_views` z etykietą „Odsłon”. To jedna i ta sama metryka, tylko wpisywana parametrem, którego nikt nie odbierał, więc wartość przepadała po cichu przy każdej wysyłce z trybu Niestandardowe. Polubienia, udostępnienia i komentarze szły poprawnie",
+        "fix: **Kwadracik przy autorze zaczyna odznaczony.** Adres autora wtyczka nadal rozpoznaje i wpisuje w pole, żeby było widać, kogo znalazła, ale nic nie poleci do Brand24, dopóki sam nie zaznaczysz. Zaznaczenie **trzyma się przy przechodzeniu między postami** — tak samo jak wartość wpisana ręcznie w dowolne inne pole formularza, więc nie trzeba klikać przy każdej wzmiance",
+        "fix: **Adres autora z YouTube w formacie, który Brand24 faktycznie trzyma** — `http://www.youtube.com/channel/<ID>`. Podpowiedź przy polu sugeruje inny zapis (bez `www`, z literówką `channe`), ale prawdziwe wzmianki w CMS wyglądają tak, jak wysyłamy teraz"
       ]
     }
   ];
@@ -23776,8 +23836,235 @@ Tej operacji nie można cofnąć.`)) {
   // MINI MENTION BUTTON (poza /panel/results/ — np. obce strony, dashboard, settings)
   // ───────────────────────────────────────────
 
+  // ── STREFA TREŚCI NA ŻYWEJ STRONIE ──────────────────────────────────────────
+  // Pełna wiedza o tej ścieżce, z pomiarami: PAGE_SCRAPER.md (cytowane niżej jako §N).
+  //
+  // Skaner News wybiera strefę tą samą miarą — ILOŚCIĄ PROZY, nie priorytetem tagu —
+  // i powody stoją opisane przy `_CONTENT_ZONE_SEL` (NEWS_SCANNER.md §2.5). Kod jest tu
+  // osobny, bo wejście jest inne: tam sparsowany łańcuch HTML, z którego wolno wyciąć szum,
+  // tutaj ŻYWY dokument użytkownika, w którym nie wolno usunąć ani jednego węzła.
+  //
+  // Doszła różnica, której tamta ścieżka nie widzi: fetch dostaje HTML bez okna zgód,
+  // a otwarta karta ma je w drzewie. Zmierzone 2026-09-21 na wiadomosci.radiozet.pl:
+  // regulamin OneTrust to 15 653 znaki w akapitach, sześciokrotność artykułu — wygrałby
+  // każdą miarę „najwięcej tekstu". Stąd ZONE_NOISE_SEL.
+  //
+  // Miarą jest suma WŁASNYCH przebiegów tekstu elementów (tekst leżący wprost w elemencie
+  // plus jego wstawki liniowe), a nie suma akapitów <p>. Liczenie samych <p> przegrywa na
+  // stronach trzymających artykuł w gołym <div> rozdzielonym <br>: naszglospoznanski.pl ma
+  // 9 znaczników <p> i ani jednego z treścią, cały tekst leży w `div.entry`.
+  var ZONE_TEXT_MIN   = 40;     // krótszy przebieg to podpis, data albo pozycja menu
+  var ZONE_TOLERANCE  = 0.9;    // kandydat „mieści ~cały tekst" = ma ≥90% prozy lidera
+  var ZONE_BODY_FLOOR = 0.25;   // lider poniżej tej części prozy <body> → bierzemy <body>
+  var ZONE_INLINE_RE  = /^(A|B|I|EM|STRONG|SPAN|U|MARK|SUP|SUB|SMALL|CODE|TIME|ABBR|Q|FONT)$/;
+  var ZONE_SKIP_RE    = /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|SELECT|OPTION|TEXTAREA|BUTTON)$/;
+  var ZONE_CAND_SEL =
+    'article,main,[role="main"],[role="article"],[itemprop="articleBody"],' +
+    '[class*="article" i],[class*="entry" i],[class*="post" i],[class*="content" i],' +
+    '[class*="story" i],[class*="news" i],[id*="article" i],[id*="content" i],[id*="post" i]';
+  // Kandydat pod jednym z tych przodków nie jest treścią artykułu, choćby miał najwięcej
+  // tekstu na stronie. Lista jest KRÓTSZA niż NEWS_NOISE_SOFT i nie ma w niej „sidebar":
+  // tam wycięcie jest odwracalne (zostaje <body>), tu odrzucony kandydat przepada,
+  // a bywają serwisy trzymające cały artykuł w <div class="…sidebar">.
+  var ZONE_NOISE_SEL =
+    'nav,footer,aside,form,[role="dialog"],[aria-modal="true"],' +
+    '[class*="cookie" i],[class*="consent" i],[class*="gdpr" i],[class*="onetrust" i],' +
+    '[class*="popup" i],[class*="modal" i],[class*="newsletter" i],' +
+    '[id*="cookie" i],[id*="consent" i],[id*="onetrust" i]';
+
+  // WŁASNY przebieg tekstu elementu: to, co leży w nim wprost, razem ze wstawkami liniowymi.
+  // Tekst dzieci blokowych policzą te dzieci — inaczej każdy akapit liczyłby się tyle razy,
+  // ilu ma przodków. Krótszy niż próg = pusty, bo to podpis albo pozycja menu, nie proza.
+  function _zoneOwnText(el) {
+    if (ZONE_SKIP_RE.test(el.tagName)) return '';
+    var out = '';
+    for (var c = el.firstChild; c; c = c.nextSibling) {
+      if (c.nodeType === 3) out += c.nodeValue;
+      else if (c.nodeType === 1 && ZONE_INLINE_RE.test(c.tagName)) out += c.textContent || '';
+    }
+    out = out.replace(/\s+/g, ' ').trim();
+    return out.length >= ZONE_TEXT_MIN ? out : '';
+  }
+
+  // Element, w którym leży artykuł tej strony. `<body>`, gdy nic lepszego nie wygrało.
+  function _pageContentZone() {
+    var body = document.body;
+    if (!body) return null;
+    var cands = [], index = new Map(), noise = new Set();
+    try {
+      body.querySelectorAll(ZONE_CAND_SEL).forEach(function(el) {
+        var rec = { el: el, prose: 0 };
+        cands.push(rec);
+        index.set(el, rec);
+      });
+      body.querySelectorAll(ZONE_NOISE_SEL).forEach(function(el) { noise.add(el); });
+    } catch(e) {}
+    if (!cands.length) return body;
+    // Jeden przebieg po dokumencie: znaleziony przebieg tekstu doliczamy każdemu kandydatowi,
+    // który go w sobie mieści. Liczenie per kandydat (zapytanie w jego poddrzewie) obchodziłoby
+    // to samo drzewo tyle razy, ilu jest kandydatów — a bywa ich sto. Wspinaczka po przodkach
+    // załatwia przy okazji szum: dojście do elementu z listy ZONE_NOISE_SEL unieważnia cały
+    // przebieg. Osobne `closest` na każdym elemencie kosztowałoby dwa razy tyle (NEWS_SCANNER.md §11.3).
+    //
+    // Szum musi wypaść RÓWNIEŻ z `bodyProse`, nie tylko z kandydatów: to jest próg, poniżej
+    // którego rezygnujemy ze strefy na rzecz <body>. Zmierzone na poznan.tvp.pl — regulamin
+    // OneTrust podbijał go tak, że prawdziwy artykuł (2426 znaków) wyglądał na zbyt mały
+    // wobec „całej strony" i wybór strefy wyłączał się sam.
+    var bodyProse = 0;
+    try {
+      body.querySelectorAll('*').forEach(function(el) {
+        var n = _zoneOwnText(el).length;
+        if (!n) return;
+        var chain = [];
+        for (var p = el; p && p !== body; p = p.parentElement) {
+          if (noise.has(p)) return;
+          chain.push(p);
+        }
+        bodyProse += n;
+        for (var ci = 0; ci < chain.length; ci++) {
+          var rec = index.get(chain[ci]);
+          if (rec) rec.prose += n;
+        }
+      });
+    } catch(e) {}
+    var lead = 0;
+    cands.forEach(function(c) { if (c.prose > lead) lead = c.prose; });
+    if (!lead || lead < bodyProse * ZONE_BODY_FLOOR) return body;
+    // Spośród kandydatów mieszczących ~cały tekst bierzemy NAJCIAŚNIEJSZEGO, żeby razem
+    // z artykułem nie wciągnąć nawigacji i stopki opakowującego <div>.
+    var pool = cands.filter(function(c) { return c.prose >= lead * ZONE_TOLERANCE; });
+    pool.sort(function(a, b) { return (a.el.textContent || '').length - (b.el.textContent || '').length; });
+    return pool[0].el;
+  }
+
+  // ── DATA I GODZINA PUBLIKACJI (PAGE_SCRAPER.md §3) ──────────────────────────
+  // Godzina do 0.34.0 nie była czytana W OGÓLE — formularz dostawał czas otwarcia panelu,
+  // nawet gdy strona podawała pełny znacznik ISO. Zmierzone 2026-09-21: na 6 z 6 stron
+  // z metadanymi godzina publikacji stała w `datePublished` i szła do kosza.
+  //
+  // Godzina wychodzi Z TEGO SAMEGO łańcucha co data. Inaczej trafia się na wpis z 23:40 UTC,
+  // któremu strefa lokalna przesuwa datę na następny dzień, a pole daty zostaje z poprzedniego.
+  var PAGE_DATE_HINT_SEL =
+    '[itemprop*="date" i],[class*="date" i],[class*="publish" i],[class*="time" i],' +
+    '[class*="czas" i],[class*="datum" i]';
+  // Powyżej tylu znaków łańcuch jest tekstem strefy, a nie podpisem daty — wtedy czytamy
+  // z niego samą datę. „12:00" w akapicie bywa godziną otwarcia sklepu, o którym jest artykuł.
+  var PAGE_CLOCK_MAX_LEN = 120;
+  // Tyle łańcuchów z cyfrą próbujemy rozczytać w jednym miejscu, zanim uznamy, że daty tu nie ma.
+  var PAGE_DATE_HINT_TRIES = 30;
+  // Typy węzłów JSON-LD, które opisują pojedynczy materiał, a nie serwis ani stronę-wizytówkę.
+  var LD_ARTICLE_TYPE_RE = /article|posting|report|video|news|recipe|review/i;
+
+  function _pageParseStamp(raw, langs, out) {
+    if (!raw) return false;
+    var s = String(raw).trim();
+    // Pełny znacznik ISO bywa podany w UTC — data i godzina MUSZĄ pochodzić z jednej
+    // konwersji na czas lokalny, inaczej wieczorny wpis dostaje datę o dzień wstecz.
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) {
+      var d = new Date(s);
+      if (!isNaN(d.getTime())) {
+        var iso = _newsParseDate(_localDateStr(d), langs);   // ta sama blokada dat z przyszłości
+        if (!iso) return false;
+        out.date   = iso;
+        out.hour   = String(d.getHours()).padStart(2, '0');
+        out.minute = String(d.getMinutes()).padStart(2, '0');
+        return true;
+      }
+    }
+    // ISO w środku zdania („… Natalia Paluszkiewicz 2026-09-17 UDOSTĘPNIJ …" — poznan.tvp.pl).
+    // `_newsParseDate` tego nie widzi: sprawdza ISO tylko na początku łańcucha, a jego wzorzec
+    // liczbowy jest dzień-pierwszy i na zapisie rok-pierwszy się nie zaczepia.
+    var mid = s.match(/(20\d{2})-(\d{2})-(\d{2})/);
+    var date = _newsParseDate(mid ? mid[0] : s, langs);
+    if (!date) return false;
+    out.date = date;
+    if (s.length > PAGE_CLOCK_MAX_LEN) return true;
+    // Zegar tylko z dwukropkiem: „17.09.2026" ma w sobie parę cyfr rozdzieloną kropką
+    // i wariant z kropką wyczytałby z samej daty godzinę 17:09.
+    var t = s.match(/(?:^|[^\d])([01]?\d|2[0-3]):([0-5]\d)(?!\d)/);
+    if (t) { out.hour = ('0' + t[1]).slice(-2); out.minute = t[2]; }
+    return true;
+  }
+
+  function _pageDateTime(zone) {
+    var out = { date: '', hour: '', minute: '' };
+    var langs = _newsMonthLangs(document.documentElement.getAttribute('lang') || '', location.href);
+    var hit = function(raw) { return _pageParseStamp(raw, langs, out); };
+
+    // 1. JSON-LD — deklaracja wydawcy, najmocniejsze źródło.
+    // Dwa przebiegi: najpierw węzły opisujące ARTYKUŁ, dopiero potem pozostałe. Węzeł ogólny
+    // („WebPage") bywa datą całego serwisu, nie tekstu — zmierzone na stronie głównej onet.pl,
+    // gdzie `WebPage.datePublished` to `1996-06-02`, czyli data założenia portalu. Węzeł typu
+    // Article takiej wartości nie niesie, bo opisuje konkretny materiał.
+    var ldNodes = [];
+    document.querySelectorAll('script[type="application/ld+json"]').forEach(function(el) {
+      try {
+        var parsed = JSON.parse(el.textContent || '');
+        (Array.isArray(parsed) ? parsed : [parsed]).forEach(function(n) {
+          if (!n || typeof n !== 'object') return;
+          ldNodes.push(n);
+          if (Array.isArray(n['@graph'])) ldNodes = ldNodes.concat(n['@graph']);
+        });
+      } catch(e) {}
+    });
+    for (var pass = 0; pass < 2 && !out.date; pass++) {
+      for (var j = 0; j < ldNodes.length && !out.date; j++) {
+        var node = ldNodes[j];
+        if (!node) continue;
+        if (pass === 0 && !LD_ARTICLE_TYPE_RE.test(String(node['@type'] || ''))) continue;
+        hit(node.datePublished || node.dateCreated || node.uploadDate);
+      }
+    }
+    // 2. <meta> wydawcy
+    if (!out.date) {
+      var mEl = document.querySelector(
+        'meta[property="article:published_time"],meta[name="article:published_time"],' +
+        'meta[itemprop="datePublished"],meta[name="publish-date"],meta[name="pubdate"],' +
+        'meta[name="date"],meta[property="og:article:published_time"],meta[name="DC.date.issued"]');
+      if (mEl) hit(mEl.getAttribute('content'));
+    }
+    // 3. Widoczna strona — od strefy treści na zewnątrz. Kolejność jest tu całą ochroną:
+    // „21.09.2026 08:24" z listy polecanych obok wygląda dokładnie tak samo jak data artykułu,
+    // więc najpierw pytamy tam, gdzie stoi sam artykuł, i dopiero potem szerzej.
+    var probes = [];
+    if (zone) probes.push(zone);
+    if (zone && zone.parentElement) probes.push(zone.parentElement);
+    if (document.body && probes.indexOf(document.body) === -1) probes.push(document.body);
+    for (var p = 0; p < probes.length && !out.date; p++) {
+      var root = probes[p];
+      var tEl = root.querySelector('time[datetime],[itemprop="datePublished"]');
+      if (tEl) hit(tEl.getAttribute('datetime') || tEl.getAttribute('content') || tEl.textContent);
+      if (out.date) break;
+      // Limit liczymy w PRÓBACH, nie w elementach. `[class*="time"]` trafia też w „timeline"
+      // i „time-ago", więc licznik po elementach wyczerpywał się na kandydatach bez jednej cyfry,
+      // zanim doszedł do wiersza z datą.
+      var hints = root.querySelectorAll(PAGE_DATE_HINT_SEL);
+      for (var h = 0, tries = 0; h < hints.length && tries < PAGE_DATE_HINT_TRIES && !out.date; h++) {
+        var txt = (hints[h].textContent || '').replace(/\s+/g, ' ').trim();
+        if (!txt || txt.length > 80 || !/\d/.test(txt)) continue;
+        tries++;
+        hit(txt);
+      }
+      if (out.date) break;
+      // Czytanie daty z SUROWEGO TEKSTU tylko wewnątrz prawdziwej strefy treści. Gdy strefą
+      // został `<body>`, nie wiadomo, gdzie zaczyna się artykuł, a w nagłówku serwisu stoi
+      // zwykle data DZISIEJSZA. Zmierzone na lazarz.pl: artykuł nie podaje daty publikacji
+      // nigdzie, a skan `<body>` wyciągał „21 września 2026" z paska u góry strony i wstawiał
+      // ją do formularza z zielonym znacznikiem „wykryto automatycznie". Brak daty jest tu
+      // uczciwszy: pole i tak dostanie dzisiejszy domyślnik, tylko bez fałszywej pewności.
+      if (root === document.body || root === document.documentElement) continue;
+      hit((root.innerText || root.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 1200));
+    }
+    // 4. /2026/09/17/ albo /2026-09-17/ w adresie — typowe dla blogów i WordPressa
+    if (!out.date) {
+      var mu = location.href.match(/\/(20\d{2})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:\/|$|[-_?])/);
+      if (mu) hit(mu[1] + '-' + ('0' + mu[2]).slice(-2) + '-' + ('0' + mu[3]).slice(-2));
+    }
+    return out;
+  }
+
   function _miniScrapeCurrentPage() {
-    var result = { content: '', date: '', lang: null };
+    var result = { content: '', date: '', hour: '', minute: '', lang: null };
     // Language from <html lang>
     try {
       var hl = document.documentElement.getAttribute('lang') || '';
@@ -23788,51 +24075,41 @@ Tej operacji nie można cofnąć.`)) {
       var mLang = document.querySelector('meta[http-equiv="content-language"], meta[name="language"]');
       if (mLang) { var lm2 = (mLang.getAttribute('content') || '').match(/^([a-z]{2})/i); if (lm2) result.lang = lm2[1].toLowerCase(); }
     }
-    // Date — JSON-LD first (most reliable)
-    var ldScripts = document.querySelectorAll('script[type="application/ld+json"]');
-    for (var i = 0; i < ldScripts.length && !result.date; i++) {
-      try {
-        var ld = JSON.parse(ldScripts[i].textContent || '');
-        var arr = Array.isArray(ld) ? ld : [ld];
-        for (var j = 0; j < arr.length && !result.date; j++) {
-          var dp = arr[j].datePublished || arr[j].dateCreated;
-          if (dp) { var dm = String(dp).match(/(\d{4}-\d{2}-\d{2})/); if (dm) result.date = dm[1]; }
-        }
-      } catch(e) {}
-    }
-    // Date — meta tags
-    if (!result.date) {
-      var mDate = document.querySelector('meta[property="article:published_time"],meta[name="article:published_time"],meta[name="publish-date"],meta[name="date"],meta[property="og:article:published_time"]');
-      if (mDate) { var mdm = (mDate.getAttribute('content') || '').match(/(\d{4}-\d{2}-\d{2})/); if (mdm) result.date = mdm[1]; }
-    }
-    // Date — time[datetime]
-    if (!result.date) {
-      var te = document.querySelector('time[datetime]');
-      if (te) { var tdm = (te.getAttribute('datetime') || '').match(/(\d{4}-\d{2}-\d{2})/); if (tdm) result.date = tdm[1]; }
-    }
-    // Content — extract main article text
-    var cEl = document.querySelector('[itemprop="articleBody"]') ||
-              document.querySelector('article') ||
-              document.querySelector('.article-body,.article-content,.entry-content,.post-content,.content-body,.story-body,.post-body') ||
-              document.querySelector('main');
+
+    var cEl = _pageContentZone();
+
+    var dt = _pageDateTime(cEl);
+    result.date   = dt.date;
+    result.hour   = dt.hour;
+    result.minute = dt.minute;
+
     if (cEl) {
       var clone = cEl.cloneNode(true);
-      ['script','style','nav','header','footer','aside','figure','figcaption'].forEach(function(sel) {
-        try { clone.querySelectorAll(sel).forEach(function(el) { el.remove(); }); } catch(e) {}
-      });
+      ['script','style','noscript','nav','header','footer','aside','form','figure','figcaption', ZONE_NOISE_SEL]
+        .forEach(function(sel) {
+          try { clone.querySelectorAll(sel).forEach(function(el) { el.remove(); }); } catch(e) {}
+        });
       var _paras = clone.querySelectorAll('p');
       var txt = '';
-      if (_paras.length > 0) {
-        var _combined = '';
-        for (var _pi2 = 0; _pi2 < _paras.length && _pi2 < 5; _pi2++) {
-          var _pt = (_paras[_pi2].innerText || _paras[_pi2].textContent || '').replace(/\s+/g, ' ').trim();
-          if (!_pt || _pt.length < 20) continue;
-          _combined = _combined ? _combined + ' ' + _pt : _pt;
-          if (_combined.length >= 200) break;
+      for (var _pi2 = 0; _pi2 < _paras.length && _pi2 < 5; _pi2++) {
+        var _pt = (_paras[_pi2].innerText || _paras[_pi2].textContent || '').replace(/\s+/g, ' ').trim();
+        if (!_pt || _pt.length < 20) continue;
+        txt = txt ? txt + ' ' + _pt : _pt;
+        if (txt.length >= 200) break;
+      }
+      // Strefa bez użytecznych akapitów — artykuł leży wprost w <div>, rozdzielony <br>
+      // (naszglospoznanski.pl). Bierzemy NAJDŁUŻSZY własny przebieg tekstu, a nie cały tekst
+      // strefy: nad treścią stoi tam tytuł i wiersz „Autor: admin / 17.09.2026 Brak komentarzy
+      // Aktualności, Polecamy, Poznań", który przy całym tekście wchodziłby do pola Treść razem
+      // z artykułem.
+      if (txt.length < 80) {
+        var _runs = [clone].concat(Array.prototype.slice.call(clone.querySelectorAll('*')));
+        var _best = '';
+        for (var _ri = 0; _ri < _runs.length; _ri++) {
+          var _run = _zoneOwnText(_runs[_ri]);
+          if (_run.length > _best.length) _best = _run;
         }
-        txt = _combined || (_paras[0] ? (_paras[0].innerText || _paras[0].textContent || '').replace(/\s+/g, ' ').trim() : '');
-      } else {
-        txt = (clone.innerText || clone.textContent || '').replace(/\s+/g, ' ').trim();
+        if (_best.length > txt.length) txt = _best;
       }
       if (txt.length > 600) {
         var _sub = txt.substring(0, 600);
@@ -23840,6 +24117,13 @@ Tej operacji nie można cofnąć.`)) {
         txt = _dot > 300 ? _sub.substring(0, _dot + 1) : _sub;
       }
       result.content = txt;
+    }
+    // Strona za ścianą (paywall, wymuszone wyłączenie AdBlocka) nie odda treści z DOM-u,
+    // ale zajawkę dla mediów społecznościowych zostawia — lepsze to niż puste pole.
+    if (!result.content) {
+      var dEl = document.querySelector('meta[property="og:description"],meta[name="description"]');
+      var dTxt = dEl ? (dEl.getAttribute('content') || '').replace(/\s+/g, ' ').trim() : '';
+      if (dTxt.length > 40) result.content = dTxt.slice(0, 600);
     }
     return result;
   }
@@ -24624,15 +24908,19 @@ Tej operacji nie można cofnąć.`)) {
         _customSetAuto(dateFld, _localDateStr(new Date()));
       }
 
-      // Godzina i minuty — z posta social media jeśli znane, inaczej z bieżącego czasu.
+      // Godzina i minuty — z posta social media, ze strony z artykułem, a gdy nikt nie
+      // podał — z bieżącego czasu.
       // Tu domyślnik zostaje nawet na Instagramie (w odróżnieniu od daty, która zawęża
       // dup-check): jest oznaczony, więc odpowiedź z sieci go nadpisze.
+      // Na stronie posta zegar z układu artykułowego nic nie znaczy, dlatego gdy adapter
+      // rozpoznał platformę, bierzemy TYLKO jego odczyt — tak samo jak przy treści.
       var hourFld = document.getElementById('b24t-news-f-hour');
       var minFld  = document.getElementById('b24t-news-f-minute');
-      if (!_customSetAuto(hourFld, _social && _social.hour)) {
+      var _clock  = _social ? _social : scraped;
+      if (!_customSetAuto(hourFld, _clock.hour)) {
         _customSetAuto(hourFld, String(new Date().getHours()).padStart(2, '0'));
       }
-      if (!_customSetAuto(minFld, _social && _social.minute)) {
+      if (!_customSetAuto(minFld, _clock.minute)) {
         _customSetAuto(minFld, String(new Date().getMinutes()).padStart(2, '0'));
       }
 
@@ -25715,19 +26003,94 @@ Tej operacji nie można cofnąć.`)) {
     return out.concat(nums);
   }
 
-  // Czy adres wskazuje POJEDYNCZY post tekstowy. Na feedzie, profilu i w grupie bez otwartego
-  // posta nie ma czego wypełniać — niech zadziała generyczny scrape.
-  //
-  // Rolek (`/reel/`) i wideo (`/videos/`) tu ŚWIADOMIE NIE MA, choć adresy są rozpoznawalne.
-  // Ich dane siedzą w store pod rekordem `Video`, nie `Story`, a feedback ma inny kształt:
-  // komentarze pod płaskim `comment_count`, udostępnienia pod `share_count_reduced` jako
-  // napis do wyświetlenia (STORE §5). Nie sprawdziłem tego na żywo, a wpisanie ich tutaj
-  // dałoby adapter, który melduje „rozpoznałem post”, po czym nie znajduje rekordu i przez
-  // `strict` blokuje wszystko inne — czyli gorzej niż brak obsługi. Dopisać po pomiarze.
+  // Identyfikator MATERIAŁU (wideo, rolka, zdjęcie) wyłuskany z adresu. Te powierzchnie noszą
+  // ID w innym miejscu niż post tekstowy — w zapytaniu, nie w ścieżce (FACEBOOK_MENTION.md §2a):
+  //   /watch/?v=<id>                 → Video.id   [ŻYWO 2026-09-21]
+  //   /photo/?fbid=<id>&set=…        → Photo.id   [ŻYWO 2026-09-21]
+  //   /reel/<id>/                    → Video.id   [ZAŁ] — ten sam kształt co /watch/
+  //   /<strona>/videos/[slug/]<id>/  → Video.id   [ZAŁ]
+  function _fbMediaId() {
+    var p = window.location.pathname;
+    var q = new URLSearchParams(window.location.search);
+    if (/^\/(watch|video)\/?$/.test(p) && /^\d+$/.test(q.get('v') || '')) return q.get('v');
+    if (/^\/photo(\.php)?\/?$/.test(p) && /^\d+$/.test(q.get('fbid') || '')) return q.get('fbid');
+    var m = p.match(/^\/reel\/(\d+)/) || p.match(/\/videos\/(?:[^\/]+\/)?(\d+)/) || p.match(/^\/photo\/(\d+)/);
+    return m ? m[1] : '';
+  }
+
+  // Czy adres wskazuje POJEDYNCZY wpis — tekstowy albo materiał. Na feedzie, profilu i w grupie
+  // bez otwartego posta nie ma czego wypełniać; niech zadziała generyczny scrape.
   function _fbIsSinglePost() {
     var p = window.location.pathname;
     return /\/posts\//.test(p) || /\/permalink\.php$/.test(p) ||
-           /story_fbid=/.test(window.location.search);
+           /story_fbid=/.test(window.location.search) || !!_fbMediaId();
+  }
+
+  // Wskazanie rekordu Story, z którego czytamy wpis, razem z jego permalinkiem i feedbackiem.
+  // Drogi są dwie, bo store układa to inaczej dla postu i dla materiału (§2a):
+  //   post tekstowy   — Story szukamy po permalinku / `post_id`, feedback wisi NA Story
+  //   wideo, zdjęcie  — najpierw rekord Video/Photo po ID z adresu; Story leży pod jego
+  //                     `creation_story`, a feedback NA MATERIALE — na tej Story go nie ma
+  //                     (zmierzone 2026-09-21: `creation_story` z /watch/ nie ma klucza
+  //                     `feedback`, a liczby stoją komplet pod `Video.feedback`).
+  // Zwracamy też `deref`/`keyLike`/`get` domknięte na tym store, żeby wołający nie budował
+  // ich drugi raz — to jedyny powód, dla którego są w wyniku.
+  function _fbFindStory(src) {
+    var get = function(id) { return src.get(id); };
+    var deref = function(x) { return (x && x.__ref !== undefined) ? get(x.__ref) : x; };
+    var keyLike = function(o, re) { var k = Object.keys(o).filter(function(n) { return re.test(n); }); return k[0]; };
+    var permalinkOf = function(rec) {
+      var uk = keyLike(rec, /^url\(site:"comet"\)/) || keyLike(rec, /^url\(/) || keyLike(rec, /^url$/);
+      return uk ? String(rec[uk] || '') : '';
+    };
+    var pack = function(story, url, feedback) {
+      return { story: story, url: url, feedback: feedback, get: get, deref: deref, keyLike: keyLike };
+    };
+    var ids;
+    try { ids = src.getRecordIDs(); } catch(e) { return null; }
+
+    var mediaId = _fbMediaId();
+    if (mediaId) {
+      var media = null;
+      for (var mi = 0; mi < ids.length && !media; mi++) {
+        var rec = get(ids[mi]);
+        if (rec && (rec.__typename === 'Video' || rec.__typename === 'Photo') && rec.id === mediaId) media = rec;
+      }
+      if (!media) return null;
+      var mStory = deref(media.creation_story);
+      if (!mStory) return null;
+      return pack(mStory,
+                  permalinkOf(mStory) || String(media.permalink_url || media.url || ''),
+                  deref(media.feedback) || deref(mStory.feedback));
+    }
+
+    // Rekordy Story chodzą PARAMI: pełny i wydmuszka z samym `post_id` (STORE §6).
+    // Bez dedupu trafiłoby się na wydmuszkę i wyszłoby, że post nie ma ani treści, ani liczb.
+    var byId = {};
+    for (var i = 0; i < ids.length; i++) {
+      var st = get(ids[i]);
+      if (!st || st.__typename !== 'Story' || !st.post_id) continue;
+      var cur = byId[st.post_id];
+      if (!cur || (!cur.feedback && st.feedback)) byId[st.post_id] = st;
+    }
+
+    // Wskazanie TEGO posta, na którym stoi użytkownik. Store trzyma także sąsiednie posty
+    // (sugestie pod wpisem), więc branie pierwszego z brzegu dałoby cudze dane. Dopasowanie
+    // idzie przez permalink rekordu, bo to jedyne pole niosące pfbid z adresu.
+    // Zmierzone na permalinku fanpage'a: 4 posty w store, dokładnie 1 dopasowany (§3).
+    // Permalink wędruje OBOK rekordu, nie w nim. Rekordy pochodzą ze store'u Relaya, który
+    // jest żywą strukturą Facebooka — dopisanie do niego własnego pola to zanieczyszczenie
+    // cudzego stanu, a nie zapisanie sobie wyniku.
+    var urlIds = _fbUrlIds();
+    var pids = Object.keys(byId);
+    for (var pi = 0; pi < pids.length; pi++) {
+      var cand = byId[pids[pi]];
+      var permalink = permalinkOf(cand);
+      var hit = urlIds.some(function(id) { return permalink.indexOf(id) !== -1; }) ||
+                urlIds.indexOf(String(pids[pi])) !== -1;
+      if (hit) return pack(cand, permalink, deref(cand.feedback));
+    }
+    return null;
   }
 
   function _scrapeFacebook() {
@@ -25743,47 +26106,11 @@ Tej operacji nie można cofnąć.`)) {
     var src = _fbRelaySource();
     if (!src) return r;   // store nieosiągalny — `ready` zostaje false, panel nic nie zmyśla
 
-    var get = function(id) { return src.get(id); };
-    var deref = function(x) { return (x && x.__ref !== undefined) ? get(x.__ref) : x; };
-    var keyLike = function(o, re) { var k = Object.keys(o).filter(function(n) { return re.test(n); }); return k[0]; };
+    var found = _fbFindStory(src);
+    if (!found) return r; // post jeszcze nie dociągnięty albo postać adresu, której nie znamy
+    var story = found.story, get = found.get, deref = found.deref, keyLike = found.keyLike;
 
-    // Rekordy Story chodzą PARAMI: pełny i wydmuszka z samym `post_id` (STORE §6).
-    // Bez dedupu trafiłoby się na wydmuszkę i wyszłoby, że post nie ma ani treści, ani liczb.
-    var stories = [];
-    try {
-      var ids = src.getRecordIDs();
-      for (var i = 0; i < ids.length; i++) {
-        var rec = get(ids[i]);
-        if (rec && rec.__typename === 'Story' && rec.post_id) stories.push(rec);
-      }
-    } catch(e) { return r; }
-    var byId = {};
-    stories.forEach(function(s) {
-      var cur = byId[s.post_id];
-      if (!cur || (!cur.feedback && s.feedback)) byId[s.post_id] = s;
-    });
-
-    // Wskazanie TEGO posta, na którym stoi użytkownik. Store trzyma także sąsiednie posty
-    // (sugestie pod wpisem), więc branie pierwszego z brzegu dałoby cudze dane. Dopasowanie
-    // idzie przez permalink rekordu, bo to jedyne pole niosące pfbid z adresu.
-    // Zmierzone na permalinku fanpage'a: 4 posty w store, dokładnie 1 dopasowany (§3).
-    var urlIds = _fbUrlIds();
-    var story = null, storyUrl = '';
-    Object.keys(byId).forEach(function(pid) {
-      if (story) return;
-      var s = byId[pid];
-      var uk = keyLike(s, /^url\(site:"comet"\)/) || keyLike(s, /^url\(/);
-      var permalink = uk ? String(s[uk] || '') : '';
-      var hit = urlIds.some(function(id) { return permalink.indexOf(id) !== -1; }) ||
-                urlIds.indexOf(String(pid)) !== -1;
-      // Permalink wędruje OBOK rekordu, nie w nim. Rekordy pochodzą ze store'u Relaya, który
-      // jest żywą strukturą Facebooka — dopisanie do niego własnego pola to zanieczyszczenie
-      // cudzego stanu, a nie zapisanie sobie wyniku.
-      if (hit) { story = s; storyUrl = permalink; }
-    });
-    if (!story) return r;   // post jeszcze nie dociągnięty albo postać adresu, której nie znamy
-
-    if (storyUrl) r.url = storyUrl.split('?')[0];
+    if (found.url) r.url = found.url.split('?')[0];
 
     // `creation_time` to unix publikacji, dokładny co do sekundy — w DOM-ie Facebook podaje
     // tylko względne „3 dni temu”, a pełną datę chowa w dymku pod kursorem.
@@ -25803,7 +26130,7 @@ Tej operacji nie można cofnąć.`)) {
     var text = (msg && msg.text) ? String(msg.text).replace(/\s+/g, ' ').trim() : '';
     if (text) { r.content = text.slice(0, 600); r.title = _socialTitleFromText(text); }
 
-    var fb = deref(story.feedback);
+    var fb = found.feedback;
     if (fb) {
       // `reactors.count` to JEDYNY uniwersalny klucz sumy reakcji — `reaction_count` na
       // poziomie feedbacku zwykle NIE ISTNIEJE (STORE §5). Sprawdzone krzyżowo z ekranem.
@@ -25825,6 +26152,10 @@ Tej operacji nie można cofnąć.`)) {
       var reshares = sk ? deref(fb[sk]) : null;
       if (reshares && reshares.count != null) r.shares = reshares.count;
       else if (fb.share_count_reduced != null) r.shares = _socialParseCount(fb.share_count_reduced);
+
+      // Odsłony ma tylko materiał wideo. Przy poście tekstowym tego klucza nie ma i pole
+      // zostaje puste (§4). Bierzemy liczbę, nie `video_view_count_reduced` („2,8 tys.”).
+      if (fb.video_view_count != null) r.pageviews = fb.video_view_count;
     }
 
     // Autor. Brand24 trzyma adres autora Facebooka jako `facebook.com/profile.php?id=<ID>`

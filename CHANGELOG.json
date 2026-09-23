@@ -1,5 +1,28 @@
 [
   {
+    "version": "0.34.2",
+    "date": "2026-09-23",
+    "label": "feat",
+    "changes": [
+      {
+        "type": "feat",
+        "text": "**Funkcje AI działają też na modelach OpenAI i Gemini, nie tylko Claude.** Tagowanie AI, ocena w News, kampanie i tłumaczenie na karcie. W Ustawieniach → AI są trzy pola na klucze (Claude, OpenAI, Gemini) — wystarczy klucz dostawcy, którego modelu używasz. Model wybiera się osobno dla News i dla tagowania, więc można je mieszać."
+      },
+      {
+        "type": "feat",
+        "text": "**Lista modeli OpenAI i Gemini pobiera się od dostawcy** po kliknięciu „Testuj” przy kluczu — wtyczka nie starzeje się razem z listą wpisaną w kod. Test sprawdza klucz bez zużywania tokenów. Claude zostaje przy dwóch sprawdzonych modelach (Haiku 4.5, Sonnet 5)."
+      },
+      {
+        "type": "fix",
+        "text": "**Pod wyborem modelu pojawia się ostrzeżenie, gdy do tego modelu nie ma klucza** — wcześniej News z zaznaczonym AI po prostu nie oceniał wierszy i nie mówił dlaczego."
+      },
+      {
+        "type": "fix",
+        "text": "Zapytania do Claude'a są bez zmian (bajt w bajt), więc werdykty i koszty przy dotychczasowych ustawieniach się nie zmieniają. **OpenAI i Gemini są na razie niesprawdzone na prawdziwym kluczu** — zgłaszaj każdy błąd przy wierszu z tymi modelami."
+      }
+    ]
+  },
+  {
     "version": "0.34.1",
     "date": "2026-09-21",
     "label": "fix",

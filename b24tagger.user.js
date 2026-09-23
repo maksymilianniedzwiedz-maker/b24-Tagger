@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.34.1
+// @version      0.34.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -172,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.34.1';
+  const VERSION = '0.34.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -537,6 +537,379 @@
     return s;
   }
   function _aiSaveSettings(s) { lsSet(LS.AI_SETTINGS, s); }
+
+  // ── DOSTAWCY AI: Anthropic / OpenAI / Gemini ──────────────────────────────
+  // Jedno miejsce, które wie, jak rozmawia każdy dostawca. Wywołania w module (tagowanie,
+  // News, kampanie, tłumaczenie) opisują, CZEGO chcą (system, treść, limit, schemat
+  // odpowiedzi, strumień), a tu zamienia się to na format konkretnego API i z powrotem.
+  //
+  // Dostawcę rozpoznajemy po ID modelu, bez osobnego pola: ID w LS zostają takie jak były
+  // (`claude-haiku-4-5`), więc ustawienia sprzed tej zmiany działają bez migracji.
+  // Klucz Anthropic zostaje w `apiKey` z tego samego powodu.
+  //
+  // ⚠ Zapytania do Claude'a są bajt w bajt takie jak przed wprowadzeniem dostawców — prompty
+  // News i tagowania są strojone pomiarami (NEWS_CARD.md), zmiana ich opakowania wymagałaby
+  // powtórzenia pomiarów. Nie „ujednolicaj" gałęzi anthropic z pozostałymi.
+  //
+  // Formaty OpenAI (Responses API) i Gemini (generateContent) wzięte z dokumentacji
+  // 2026-09-23, NIESPRAWDZONE na żywo — nie było kluczy. Tagger/AI_PROVIDERS.md.
+  var AI_PROVIDER_LABEL = { anthropic: 'Claude', openai: 'OpenAI', google: 'Gemini' };
+  var AI_KEY_FIELD = { anthropic: 'apiKey', openai: 'openaiKey', google: 'geminiKey' };
+  var AI_MODELS_LS = 'b24t_ai_models';
+
+  function _aiProvider(model) {
+    var m = String(model || '').toLowerCase();
+    if (m.indexOf('claude') === 0) return 'anthropic';
+    if (/^(gemini|gemma|learnlm)/.test(m)) return 'google';
+    return 'openai';
+  }
+  function _aiKeyFor(model, s) {
+    s = s || _aiGetSettings();
+    return String(s[AI_KEY_FIELD[_aiProvider(model)]] || '').trim();
+  }
+
+  // Rozumowanie modelu ograniczamy, bo tokeny myślenia liczą się do limitu odpowiedzi
+  // (Sonnet 5 zmierzone: 125 zamiast 48 tokenów, ucięty JSON). U Claude'a steruje tym
+  // `noThinking` (tagowanie go nie ustawia — zapytanie zostaje jak przed zmianą), u OpenAI
+  // i Gemini zawsze: wszystkie wywołania to klasyfikacja albo tłumaczenie, a modele
+  // rozumujące OpenAI myślą domyślnie i przy limicie 1024 ucięłyby odpowiedź tagowania.
+  // U OpenAI i Gemini nie każdy model przyjmuje każdą wartość: GPT-6 Astra odrzuca
+  // `effort: "none"` błędem 400, modele bez rozumowania odrzucają samo pole `reasoning`,
+  // Gemini 2.5 i 3.x mają różne pola `thinkingConfig`. Zamiast listy modeli, która
+  // zestarzeje się w kwartał, próbujemy wariantów po kolei przy 400 i zapamiętujemy, który
+  // przeszedł. Wariant z rozumowaniem dostaje zapas limitu, żeby myślenie nie zjadło odpowiedzi.
+  var AI_REASONING_ZAPAS = 2048;
+  var _aiWariantModelu = {};   // { model: indeks wariantu, który przeszedł } — na czas życia karty
+
+  function _aiWarianty(provider, model) {
+    if (provider === 'openai') return [
+      { reasoning: { effort: 'none' }, zapas: 0 },
+      { reasoning: { effort: 'low' }, zapas: AI_REASONING_ZAPAS },
+      { reasoning: null, zapas: 0 },
+    ];
+    if (provider === 'google') {
+      var m = String(model).toLowerCase();
+      var pierwszy = /gemini-2\.5/.test(m)
+        ? { thinkingBudget: /pro/.test(m) ? 128 : 0 }
+        : { thinkingLevel: 'low' };
+      return [
+        { thinking: pierwszy, zapas: /pro/.test(m) ? AI_REASONING_ZAPAS : 0 },
+        { thinking: null, zapas: AI_REASONING_ZAPAS },
+      ];
+    }
+    return [{}];
+  }
+
+  // Buduje zapytanie. opts: { model, system, user, maxTokens, cacheSystem, noThinking,
+  // schema: { name, schema }, stream, browser, wariant }.
+  // Zwraca { url, headers, body } — body jako obiekt, serializuje wołający.
+  function _aiBuildRequest(opts, key) {
+    var provider = _aiProvider(opts.model);
+    var w = opts.wariant || {};
+    if (provider === 'anthropic') {
+      var headers = { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' };
+      if (opts.cacheSystem) headers['anthropic-beta'] = 'prompt-caching-2024-07-31';
+      if (opts.browser) headers['anthropic-dangerous-direct-browser-access'] = 'true';
+      var body = { model: opts.model };
+      if (opts.noThinking) body.thinking = { type: 'disabled' };
+      body.max_tokens = opts.maxTokens;
+      if (opts.stream) body.stream = true;
+      body.system = opts.cacheSystem
+        ? [{ type: 'text', text: opts.system, cache_control: { type: 'ephemeral' } }]
+        : opts.system;
+      if (opts.schema) {
+        body.tools = [{ name: opts.schema.name, description: opts.schema.description || '', input_schema: opts.schema.schema }];
+        body.tool_choice = { type: 'tool', name: opts.schema.name };
+      }
+      body.messages = [{ role: 'user', content: opts.user }];
+      return { url: 'https://api.anthropic.com/v1/messages', headers: headers, body: body };
+    }
+    if (provider === 'openai') {
+      var ob = {
+        model: opts.model,
+        instructions: opts.system,
+        input: [{ role: 'user', content: opts.user }],
+        max_output_tokens: opts.maxTokens + (w.zapas || 0),
+        // Bez zapisu po stronie OpenAI — wzmianki klientów nie mają tam czego szukać.
+        store: false,
+      };
+      if (w.reasoning) ob.reasoning = w.reasoning;
+      if (opts.stream) ob.stream = true;
+      if (opts.schema) {
+        ob.text = { format: { type: 'json_schema', name: opts.schema.name, schema: _aiStrictSchema(opts.schema.schema), strict: true } };
+      }
+      return {
+        url: 'https://api.openai.com/v1/responses',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+        body: ob,
+      };
+    }
+    var gc = { maxOutputTokens: opts.maxTokens + (w.zapas || 0) };
+    if (w.thinking) gc.thinkingConfig = w.thinking;
+    if (opts.schema) {
+      gc.responseMimeType = 'application/json';
+      gc.responseJsonSchema = opts.schema.schema;
+    }
+    return {
+      url: 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(opts.model) +
+        (opts.stream ? ':streamGenerateContent?alt=sse' : ':generateContent'),
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+      body: {
+        systemInstruction: { parts: [{ text: opts.system }] },
+        contents: [{ role: 'user', parts: [{ text: opts.user }] }],
+        generationConfig: gc,
+      },
+    };
+  }
+
+  // Tryb `strict` OpenAI wymaga `additionalProperties: false` i kompletu `required` na KAŻDYM
+  // obiekcie schematu. Schemat piszemy raz (dla Claude'a), tu go dopełniamy.
+  function _aiStrictSchema(node) {
+    if (!node || typeof node !== 'object') return node;
+    var out = Array.isArray(node) ? [] : {};
+    for (var k in node) out[k] = _aiStrictSchema(node[k]);
+    if (out.type === 'object' && out.properties) {
+      out.additionalProperties = false;
+      out.required = Object.keys(out.properties);
+    }
+    return out;
+  }
+
+  // Treść błędu z ciała odpowiedzi — wszyscy trzej dostawcy trzymają ją w `error.message`.
+  function _aiErrorText(bodyText) {
+    try {
+      var j = JSON.parse(bodyText);
+      var e = Array.isArray(j) ? (j[0] && j[0].error) : j.error;
+      return (e && (e.message || e.type || e.status)) || '';
+    } catch(e) { return ''; }
+  }
+  // Gemini zgłasza zły klucz jako 400 INVALID_ARGUMENT, nie 401. Bez przemapowania
+  // wtyczka pokazywałaby „błąd zapytania" zamiast „błędny klucz" i nie wyłączała News.
+  function _aiNormStatus(status, bodyText) {
+    if (status === 400 && /API key not valid|API_KEY_INVALID/i.test(bodyText || '')) return 401;
+    return status;
+  }
+  // 400 z powodu parametru rozumowania — tylko wtedy ma sens próbować kolejnego wariantu.
+  function _aiIsReasoningReject(status, bodyText) {
+    // Wąsko celowo: „not supported" samo w sobie pasuje też do błędów schematu, a wtedy
+    // kolejne warianty to tylko dodatkowe zapytania przed pokazaniem prawdziwego błędu.
+    return status === 400 && /reasoning|effort|thinking/i.test(bodyText || '');
+  }
+  function _aiStatusError(status, bodyText) {
+    var msg = status === 401 ? 'Błędny klucz API (401)'
+      : status === 403 ? 'Brak dostępu do modelu (403)'
+      : status === 404 ? 'Nieznany model (404)'
+      : status === 429 ? 'Limit API (429)'
+      : status >= 500 ? 'Błąd serwera API (' + status + ')'
+      : 'Błąd API ' + status;
+    var detail = _aiErrorText(bodyText);
+    var e = new Error(detail && status !== 401 && status !== 429 ? msg + ': ' + detail.slice(0, 140) : msg);
+    e.status = status;
+    return e;
+  }
+
+  // Zużycie w kształcie Anthropic ({ input_tokens, output_tokens, cache_read_input_tokens }),
+  // bo tak je sumuje log tagowania — i żeby tokeny myślenia nie znikały z rachunku.
+  function _aiUsage(provider, data) {
+    if (provider === 'anthropic') return data.usage || null;
+    if (provider === 'openai') {
+      var u = data.usage; if (!u) return null;
+      var cached = (u.input_tokens_details && u.input_tokens_details.cached_tokens) || 0;
+      return { input_tokens: (u.input_tokens || 0) - cached, output_tokens: u.output_tokens || 0, cache_read_input_tokens: cached };
+    }
+    var g = data.usageMetadata; if (!g) return null;
+    var gc = g.cachedContentTokenCount || 0;
+    return { input_tokens: (g.promptTokenCount || 0) - gc,
+             output_tokens: (g.candidatesTokenCount || 0) + (g.thoughtsTokenCount || 0),
+             cache_read_input_tokens: gc };
+  }
+
+  // Dlaczego odpowiedź jest niepełna — ucięta limitem, odmowa, blokada filtra. Bez tego
+  // pusty albo ucięty tekst kończy się komunikatem „błąd parsowania", który nic nie mówi.
+  function _aiResponseReason(provider, data) {
+    if (provider === 'openai') {
+      if (data.status === 'incomplete') {
+        var why = data.incomplete_details && data.incomplete_details.reason;
+        return why === 'max_output_tokens' ? 'odpowiedź ucięta limitem tokenów' : 'odpowiedź niepełna (' + (why || '?') + ')';
+      }
+      var refused = (data.output || []).some(function(item) {
+        return (item.content || []).some(function(c) { return c.type === 'refusal'; });
+      });
+      return refused ? 'model odmówił odpowiedzi' : '';
+    }
+    if (provider === 'google') {
+      if (data.promptFeedback && data.promptFeedback.blockReason) return 'zapytanie zablokowane przez filtr (' + data.promptFeedback.blockReason + ')';
+      var fr = data.candidates && data.candidates[0] && data.candidates[0].finishReason;
+      if (fr === 'MAX_TOKENS') return 'odpowiedź ucięta limitem tokenów';
+      if (fr && fr !== 'STOP') return 'odpowiedź przerwana (' + fr + ')';
+    }
+    return '';
+  }
+
+  // Tekst odpowiedzi (albo wejście narzędzia Claude'a przy schemacie) z pełnej odpowiedzi.
+  function _aiReadResponse(provider, data, schemaName) {
+    if (provider === 'anthropic') {
+      if (schemaName) {
+        var block = (data.content || []).find(function(b) { return b.type === 'tool_use' && b.name === schemaName; });
+        return { json: block ? block.input : null, text: '' };
+      }
+      return { text: (data.content && data.content[0] && data.content[0].text) || '' };
+    }
+    var text = '';
+    if (provider === 'openai') {
+      (data.output || []).forEach(function(item) {
+        (item.content || []).forEach(function(c) { if (c.type === 'output_text' && c.text) text += c.text; });
+      });
+    } else {
+      var cand = data.candidates && data.candidates[0];
+      ((cand && cand.content && cand.content.parts) || []).forEach(function(p) { if (p.text && !p.thought) text += p.text; });
+    }
+    if (!schemaName) return { text: text };
+    try { return { json: JSON.parse(text.replace(/```json|```/g, '').trim()), text: text }; }
+    catch(e) { return { json: null, text: text }; }
+  }
+
+  // Jedno zdarzenie strumienia SSE (już sparsowany JSON z linii `data:`) → { text } albo { error }.
+  function _aiStreamEvent(provider, ev) {
+    if (!ev) return {};
+    if (provider === 'anthropic') {
+      if (ev.type === 'content_block_delta' && ev.delta && typeof ev.delta.text === 'string') return { text: ev.delta.text };
+      if (ev.type === 'error' && ev.error) return { error: ev.error.message || ev.error.type || 'błąd strumienia' };
+      return {};
+    }
+    if (provider === 'openai') {
+      if (ev.type === 'response.output_text.delta' && typeof ev.delta === 'string') return { text: ev.delta };
+      if (ev.type === 'error') return { error: ev.message || (ev.error && ev.error.message) || 'błąd strumienia' };
+      if (ev.type === 'response.failed') return { error: (ev.response && ev.response.error && ev.response.error.message) || 'odpowiedź przerwana' };
+      if (ev.type === 'response.incomplete') return { error: _aiResponseReason('openai', ev.response || {}) || 'odpowiedź niepełna' };
+      return {};
+    }
+    // Gemini: każda porcja to pełny obiekt odpowiedzi z przyrostem tekstu w `parts`.
+    if (ev.error) return { error: ev.error.message || 'błąd strumienia' };
+    var c = ev.candidates && ev.candidates[0];
+    var t = '';
+    ((c && c.content && c.content.parts) || []).forEach(function(p) { if (p.text && !p.thought) t += p.text; });
+    var out = t ? { text: t } : {};
+    var reason = _aiResponseReason('google', ev);
+    if (reason) out.error = reason;
+    return out;
+  }
+
+  // Pełne (nie strumieniowe) wywołanie przez GM_xmlhttpRequest. Resolve: { text, json, usage }.
+  // Reject: Error z `.status` (401/403/404/429/5xx) albo bez (sieć, timeout, parsowanie).
+  function _aiCall(opts) {
+    var provider = _aiProvider(opts.model);
+    var key = _aiKeyFor(opts.model);
+    if (!key) return Promise.reject(new Error('Brak klucza API ' + AI_PROVIDER_LABEL[provider] + ' (Ustawienia → AI)'));
+    var warianty = _aiWarianty(provider, opts.model);
+    var start = _aiWariantModelu[opts.model] || 0;
+    return new Promise(function(resolve, reject) {
+      function proba(i) {
+        var req = _aiBuildRequest(Object.assign({}, opts, { wariant: warianty[i] }), key);
+        GM_xmlhttpRequest({
+          method: 'POST', url: req.url, headers: req.headers, data: JSON.stringify(req.body),
+          timeout: opts.timeout || 60000,
+          onload: function(resp) {
+            try {
+              var status = _aiNormStatus(resp.status, resp.responseText);
+              if (_aiIsReasoningReject(status, resp.responseText) && i + 1 < warianty.length) {
+                proba(i + 1); return;
+              }
+              if (status < 200 || status >= 300) { reject(_aiStatusError(status, resp.responseText)); return; }
+              _aiWariantModelu[opts.model] = i;
+              var data = JSON.parse(resp.responseText);
+              var out = _aiReadResponse(provider, data, opts.schema && opts.schema.name);
+              out.usage = _aiUsage(provider, data);
+              // Ucięta odpowiedź nie jest błędem sama w sobie — parser News wyciąga werdykt
+              // z uciętego JSON-a. Przyczyna idzie obok, wołający decyduje.
+              out.reason = _aiResponseReason(provider, data);
+              resolve(out);
+            } catch(e) { reject(new Error('Parse error: ' + e.message)); }
+          },
+          onerror:   function() { reject(new Error('Brak połączenia z API')); },
+          ontimeout: function() { reject(new Error('Timeout API')); },
+        });
+      }
+      proba(start);
+    });
+  }
+
+  // Lista modeli dostępnych dla klucza — prosto od dostawcy, żeby wtyczka nie starzała się
+  // razem z listą wpisaną w kod. Zapis w LS; selecty w ustawieniach czytają z niego.
+  // Filtr odrzuca modele, które nie piszą tekstu (embeddingi, obraz, mowa, realtime).
+  // Gemma przez API Gemini odrzuca systemInstruction i tryb JSON, `*-instruct` OpenAI nie
+  // obsługuje Responses API — obie działałyby tylko do pierwszego wywołania.
+  var AI_MODEL_SKIP = /(embed|image|imagen|tts|transcribe|audio|realtime|speech|moderation|dall-e|whisper|search|computer|robotics|live|veo|lyria|aqa|gemma|instruct)/i;
+
+  function _aiFetchModels(provider, key) {
+    var req = provider === 'anthropic'
+      ? { url: 'https://api.anthropic.com/v1/models?limit=1000', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' } }
+      : provider === 'openai'
+      ? { url: 'https://api.openai.com/v1/models', headers: { 'Authorization': 'Bearer ' + key } }
+      : { url: 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000', headers: { 'x-goog-api-key': key } };
+    return new Promise(function(resolve, reject) {
+      GM_xmlhttpRequest({
+        method: 'GET', url: req.url, headers: req.headers, timeout: 15000,
+        onload: function(resp) {
+          var status = _aiNormStatus(resp.status, resp.responseText);
+          if (status !== 200) { reject(_aiStatusError(status, resp.responseText)); return; }
+          try {
+            var j = JSON.parse(resp.responseText), list;
+            if (provider === 'google') {
+              list = (j.models || []).filter(function(m) {
+                return (m.supportedGenerationMethods || []).indexOf('generateContent') !== -1;
+              }).map(function(m) { return { id: String(m.name || '').replace(/^models\//, ''), label: m.displayName || '' }; });
+            } else if (provider === 'openai') {
+              list = (j.data || []).filter(function(m) { return /^(gpt-|o\d|chatgpt)/i.test(m.id); })
+                .map(function(m) { return { id: m.id, label: '' }; });
+            } else {
+              list = (j.data || []).map(function(m) { return { id: m.id, label: m.display_name || '' }; });
+            }
+            list = list.filter(function(m) { return m.id && !AI_MODEL_SKIP.test(m.id); })
+              .sort(function(a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });
+            var cache = lsGet(AI_MODELS_LS, {}) || {};
+            cache[provider] = list;
+            lsSet(AI_MODELS_LS, cache);
+            resolve(list);
+          } catch(e) { reject(new Error('Parse error: ' + e.message)); }
+        },
+        onerror:   function() { reject(new Error('Brak połączenia z API')); },
+        ontimeout: function() { reject(new Error('Timeout API')); },
+      });
+    });
+  }
+
+  // Opcje selecta modelu: Claude (dwa znane modele zawsze, bo tak było przed dostawcami) +
+  // to, co zwróciły API dostawców, do których jest klucz. Bieżąca wartość zawsze jest na
+  // liście — inaczej select pokazałby pierwszą opcję, a zapisany model byłby inny.
+  function _aiModelOptionsHtml(current, s) {
+    s = s || _aiGetSettings();
+    var cache = lsGet(AI_MODELS_LS, {}) || {};
+    var groups = {
+      anthropic: [{ id: 'claude-haiku-4-5', label: 'Haiku 4.5 — szybki, prompt bez cache' },
+                  { id: 'claude-sonnet-5', label: 'Sonnet 5 — mocniejszy, z cache taniej' }],
+      openai: [], google: [],
+    };
+    // Claude: tylko dwa modele, na których zapytania są sprawdzone. Lista z API dołożyłaby
+    // m.in. `claude-sonnet-4-6`, które AI_MODEL_ALIASES po cichu zamienia na Sonnet 5 przy
+    // każdym odczycie ustawień, i Opusa, na którym `thinking: disabled` ma własne pułapki
+    // (komentarz w _newsAiAnalyze). Test klucza Anthropic nadal pobiera listę — jako test.
+    ['openai', 'google'].forEach(function(p) {
+      if (!String(s[AI_KEY_FIELD[p]] || '').trim()) return;
+      (cache[p] || []).forEach(function(m) {
+        if (!groups[p].some(function(x) { return x.id === m.id; })) groups[p].push(m);
+      });
+    });
+    var all = [].concat(groups.anthropic, groups.openai, groups.google);
+    if (current && !all.some(function(m) { return m.id === current; })) groups[_aiProvider(current)].unshift({ id: current, label: '' });
+    return ['anthropic', 'openai', 'google'].map(function(p) {
+      if (!groups[p].length) return '';
+      return '<optgroup label="' + AI_PROVIDER_LABEL[p] + '">' + groups[p].map(function(m) {
+        return '<option value="' + _escHtml(m.id) + '"' + (m.id === current ? ' selected' : '') + '>' +
+          _escHtml(m.label && m.label !== m.id ? m.label + ' (' + m.id + ')' : m.id) + '</option>';
+      }).join('') + '</optgroup>';
+    }).join('');
+  }
   function _aiUuid() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
       var r = Math.random() * 16 | 0;
@@ -1725,16 +2098,20 @@
     };
   }
 
-  // Wysyła batch do Claude API z cache'owanym promptem; wymusza ustrukturyzowaną odpowiedź
+  // Wysyła batch do modelu z cache'owanym promptem; wymusza ustrukturyzowaną odpowiedź
   // (enum kategorii oceny, kolejność = kolejność wzmianek). Resolve: { assessments:[], usage }.
+  // Claude dostaje wymuszone narzędzie, OpenAI/Gemini — schemat JSON odpowiedzi (_aiBuildRequest).
   function _aiTagAnalyzeBatch(items, systemPrompt, model, assessments) {
-    return new Promise(function(resolve, reject) {
-      var s = _aiGetSettings();
-      if (!s.apiKey) { reject(new Error('Brak klucza API')); return; }
-      var tool = {
+    return _aiCall({
+      model: model,
+      system: systemPrompt,
+      user: _aiTagBuildBatchPrompt(items),
+      maxTokens: 1024,
+      cacheSystem: true,
+      schema: {
         name: 'submit_assessments',
         description: 'Return the assessment label for each mention, in the same order as provided.',
-        input_schema: {
+        schema: {
           type: 'object',
           properties: {
             mentions: {
@@ -1748,47 +2125,13 @@
           },
           required: ['mentions'],
         },
+      },
+    }).then(function(res) {
+      if (!res.json || !Array.isArray(res.json.mentions)) throw new Error(res.reason || 'Brak ustrukturyzowanej odpowiedzi');
+      return {
+        assessments: res.json.mentions.map(function(x) { return x && x.assessment; }),
+        usage: res.usage || null,
       };
-      GM_xmlhttpRequest({
-        method: 'POST',
-        url: 'https://api.anthropic.com/v1/messages',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': s.apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-beta': 'prompt-caching-2024-07-31',
-        },
-        data: JSON.stringify({
-          model: model,
-          max_tokens: 1024,
-          system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
-          tools: [tool],
-          tool_choice: { type: 'tool', name: 'submit_assessments' },
-          messages: [{ role: 'user', content: _aiTagBuildBatchPrompt(items) }],
-        }),
-        timeout: 60000,
-        onload: function(resp) {
-          try {
-            if (resp.status === 401) { reject(new Error('Błędny klucz API (401)')); return; }
-            if (resp.status === 429) { reject(new Error('Limit API (429)')); return; }
-            if (resp.status >= 500)  { reject(new Error('Błąd serwera API (' + resp.status + ')')); return; }
-            if (resp.status !== 200) { reject(new Error('Błąd API ' + resp.status)); return; }
-            var data = JSON.parse(resp.responseText);
-            var block = (data.content || []).find(function(b) {
-              return b.type === 'tool_use' && b.name === 'submit_assessments';
-            });
-            if (!block || !block.input || !Array.isArray(block.input.mentions)) {
-              reject(new Error('Brak ustrukturyzowanej odpowiedzi')); return;
-            }
-            resolve({
-              assessments: block.input.mentions.map(function(x) { return x && x.assessment; }),
-              usage: data.usage || null,
-            });
-          } catch(e) { reject(new Error('Parse error: ' + e.message)); }
-        },
-        onerror:   function() { reject(new Error('Brak połączenia z API')); },
-        ontimeout: function() { reject(new Error('Timeout API')); },
-      });
     });
   }
 
@@ -11927,7 +12270,9 @@ function showOnboarding(onComplete) {
   function _newsAiShouldRun() {
     var s = _aiGetSettings();
     if (!s.news || !s.news.enabled) return false;
-    if (!s.apiKey) return false;
+    // Klucz dostawcy modelu News, nie „jakikolwiek" — z samym kluczem Claude'a i modelem
+    // Gemini każde wywołanie kończyłoby się błędem przy wierszu.
+    if (!_aiKeyFor(s.news.model || 'claude-haiku-4-5', s)) return false;
     return true;
   }
   // Nazwa projektu w Brand24 to slug z sufiksem kraju („H&M_HR", „Cupra-PL"), a nie nazwa marki.
@@ -12037,80 +12382,59 @@ function showOnboarding(onComplete) {
         'Paywall: ' + !!entry.isPaywall,
         ctxLines ? 'Keyword contexts (zone in brackets):\n' + ctxLines : '',
       ].filter(Boolean).join('\n');
-      GM_xmlhttpRequest({
-        method: 'POST',
-        url: 'https://api.anthropic.com/v1/messages',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': s.apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-beta': 'prompt-caching-2024-07-31',
-        },
-        data: JSON.stringify({
-          model: model,
-          // Sonnet 5 ma adaptive thinking WŁĄCZONE domyślnie, a tokeny myślenia liczą się do
-          // max_tokens — zmierzone: 125 tokenów wyjścia zamiast 48, i co jakiś czas ucięty JSON.
-          // Przy klasyfikacji na cztery wartości nie ma nad czym myśleć. Haiku 4.5 też to przyjmuje.
-          // UWAGA: gdyby ktoś dodał do selecta Opus 5 — tam wyłączanie myślenia ma własne pułapki
-          // (wycieki tagów, wywołania narzędzi w tekście), więc trzeba to wtedy uwarunkować modelem.
-          thinking: { type: 'disabled' },
-          max_tokens: 320, // verdict + zdanie po polsku; przy 200 ~2% odpowiedzi urywało się w środku
-          system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
-          messages: [{ role: 'user', content: userPrompt }],
-        }),
+      var _render = function() { if (_newsRowRenderer) _newsRowRenderer(entry); };
+      _aiCall({
+        model: model,
+        // Sonnet 5 ma adaptive thinking WŁĄCZONE domyślnie, a tokeny myślenia liczą się do
+        // max_tokens — zmierzone: 125 tokenów wyjścia zamiast 48, i co jakiś czas ucięty JSON.
+        // Przy klasyfikacji na cztery wartości nie ma nad czym myśleć. Haiku 4.5 też to przyjmuje.
+        // UWAGA: gdyby ktoś dodał do selecta Opus 5 — tam wyłączanie myślenia ma własne pułapki
+        // (wycieki tagów, wywołania narzędzi w tekście), więc trzeba to wtedy uwarunkować modelem.
+        noThinking: true,
+        maxTokens: 320, // verdict + zdanie po polsku; przy 200 ~2% odpowiedzi urywało się w środku
+        system: systemPrompt,
+        cacheSystem: true,
+        user: userPrompt,
         timeout: 15000,
-        onload: function(resp) {
-          try {
-            if (resp.status === 401) {
-              var cfg = _aiGetSettings();
-              if (!cfg.news) cfg.news = {};
-              cfg.news.enabled = false;
-              _aiSaveSettings(cfg);
-              entry.aiStatus = 'error';
-              entry.aiError = 'błędny klucz API';
-              if (_newsRowRenderer) _newsRowRenderer(entry);
-              return;
-            }
-            if (resp.status === 429) {
-              entry.aiStatus = 'error';
-              entry.aiError = 'limit API (429)';
-              if (_newsRowRenderer) _newsRowRenderer(entry);
-              return;
-            }
-            if (resp.status >= 500) {
-              entry.aiStatus = 'error';
-              entry.aiError = 'błąd serwera (' + resp.status + ')';
-              if (_newsRowRenderer) _newsRowRenderer(entry);
-              return;
-            }
-            if (resp.status < 200 || resp.status >= 300) {
-              entry.aiStatus = 'error';
-              entry.aiError = 'HTTP ' + resp.status;
-              if (_newsRowRenderer) _newsRowRenderer(entry);
-              return;
-            }
-            var data = JSON.parse(resp.responseText);
-            var text = (data.content && data.content[0] && data.content[0].text) || '';
-            var parsed = _newsAiParseVerdict(text);
-            if (!parsed) throw new Error('brak werdyktu w odpowiedzi');
-            entry.aiStatus = 'done';
-            var _v = parsed.verdict;
-            if (!_v) _v = parsed.relevant ? 'match' : 'miss';
-            if (_v !== 'match' && _v !== 'offcampaign' && _v !== 'borderline' && _v !== 'miss' && _v !== 'spam') _v = parsed.relevant ? 'match' : 'miss';
-            entry.aiVerdict = _v;
-            // `offcampaign` liczy się jako relevantne: marka JEST w treści redakcyjnej, więc
-            // wzmianka nadaje się do dodania — po prostu nie należy do szukanej kampanii.
-            // O tym, czy wchodzi, decyduje człowiek, a nie filtr.
-            entry.aiRelevant = (_v === 'match' || _v === 'offcampaign' || _v === 'borderline');
-            entry.aiReason = parsed.reason || '';
-          } catch(e) {
-            entry.aiStatus = 'error';
-            entry.aiError = 'błąd parsowania';
-          }
-          if (_newsRowRenderer) _newsRowRenderer(entry);
-        },
-        onerror: function() { entry.aiStatus = 'error'; entry.aiError = 'brak połączenia'; if (_newsRowRenderer) _newsRowRenderer(entry); },
-        ontimeout: function() { entry.aiStatus = 'error'; entry.aiError = 'timeout'; if (_newsRowRenderer) _newsRowRenderer(entry); },
+      }).then(function(res) {
+        var parsed = _newsAiParseVerdict(res.text);
+        if (!parsed) { entry.aiStatus = 'error'; entry.aiError = res.reason || 'błąd parsowania'; _render(); return; }
+        entry.aiStatus = 'done';
+        var _v = parsed.verdict;
+        if (!_v) _v = parsed.relevant ? 'match' : 'miss';
+        if (_v !== 'match' && _v !== 'offcampaign' && _v !== 'borderline' && _v !== 'miss' && _v !== 'spam') _v = parsed.relevant ? 'match' : 'miss';
+        entry.aiVerdict = _v;
+        // `offcampaign` liczy się jako relevantne: marka JEST w treści redakcyjnej, więc
+        // wzmianka nadaje się do dodania — po prostu nie należy do szukanej kampanii.
+        // O tym, czy wchodzi, decyduje człowiek, a nie filtr.
+        entry.aiRelevant = (_v === 'match' || _v === 'offcampaign' || _v === 'borderline');
+        entry.aiReason = parsed.reason || '';
+        _render();
+      }, function(err) {
+        entry.aiStatus = 'error';
+        if (err.status === 401) {
+          var cfg = _aiGetSettings();
+          if (!cfg.news) cfg.news = {};
+          cfg.news.enabled = false;
+          _aiSaveSettings(cfg);
+          entry.aiError = 'błędny klucz API';
+        } else if (err.status === 429) {
+          entry.aiError = 'limit API (429)';
+        } else if (err.status >= 500) {
+          entry.aiError = 'błąd serwera (' + err.status + ')';
+        } else if (err.status) {
+          entry.aiError = 'HTTP ' + err.status;
+        } else {
+          entry.aiError = /Timeout/.test(err.message) ? 'timeout'
+            : /połączenia/.test(err.message) ? 'brak połączenia'
+            : /Parse/.test(err.message) ? 'błąd parsowania'
+            : err.message;
+        }
+        _render();
+      }).catch(function() {
+        entry.aiStatus = 'error';
+        entry.aiError = 'błąd przetwarzania odpowiedzi';
+        _render();
       });
     } catch(e) {
       entry.aiStatus = 'error';
@@ -12281,10 +12605,12 @@ function showOnboarding(onComplete) {
         if (!body) continue;
         var ev;
         try { ev = JSON.parse(body); } catch(e) { continue; }
-        if (ev.type === 'content_block_delta' && ev.delta && typeof ev.delta.text === 'string') { modelText += ev.delta.text; continue; }
+        // Format zdarzeń zależy od dostawcy — _aiStreamEvent zwraca przyrost tekstu albo błąd.
         // Strumień, który się urwał w połowie, kończy się zdarzeniem błędu przy statusie 200 —
         // bez tego annotator zobaczyłby „odpowiedź nie jest JSON-em" zamiast prawdziwej przyczyny.
-        if (ev.type === 'error' && ev.error) streamErr = ev.error.message || ev.error.type || 'błąd strumienia';
+        var got = _aiStreamEvent(provider, ev);
+        if (got.text) modelText += got.text;
+        if (got.error) streamErr = got.error;
       }
       _land();
     }
@@ -12331,47 +12657,84 @@ function showOnboarding(onComplete) {
 
     var s = _aiGetSettings();
     var model = (s.news && s.news.model) || 'claude-haiku-4-5';
-    var payload = {
+    var provider = _aiProvider(model);
+    var key = _aiKeyFor(model, s);
+    var warianty = _aiWarianty(provider, model);
+    var opts = {
       model: model,
-      thinking: { type: 'disabled' },
+      noThinking: true,
       // Tłumaczenie jest dłuższe od oryginału, a fragmentów bywa kilkanaście po ~200 znaków.
-      max_tokens: 2000,
+      maxTokens: 2000,
       // Strumień jest jedynym sposobem, żeby fragmenty pojawiały się pojedynczo: jedno
       // wywołanie zwracające komplet nie ma czego pokazać po drodze. Koszt ten sam.
       stream: true,
       system: systemPrompt,
-      messages: [{ role: 'user', content: JSON.stringify({ lang: entry.pageLang || '', items: pairs.map(function(p) { return p.text; }) }) }],
+      user: JSON.stringify({ lang: entry.pageLang || '', items: pairs.map(function(p) { return p.text; }) }),
     };
+    function _req(i, browser) {
+      return _aiBuildRequest(Object.assign({}, opts, { wariant: warianty[i], browser: browser }), key);
+    }
+    function _statusMsg(status) {
+      if (status === 401) return 'błędny klucz API';
+      if (status === 403) return 'brak dostępu do modelu (403)';
+      if (status === 404) return 'nieznany model (404)';
+      if (status === 429) return 'limit API (429)';
+      if (status >= 500) return 'błąd serwera (' + status + ')';
+      return 'HTTP ' + status;
+    }
 
     // ── TRANSPORT 1: `fetch` ze strumieniem ──
     // Anthropic wpuszcza żądania prosto z przeglądarki po nagłówku
     // `anthropic-dangerous-direct-browser-access`, a `response.body` jest wtedy zwykłym
-    // strumieniem — porcje przychodzą w trakcie, kiedy model jeszcze pisze.
+    // strumieniem — porcje przychodzą w trakcie, kiedy model jeszcze pisze. OpenAI i Gemini
+    // przyjmują żądania z przeglądarki bez takiego nagłówka (niesprawdzone na żywo — gdyby
+    // CORS nie przepuścił, łapie to transport 2).
     // ⚠ To jest JEDYNY transport, który faktycznie daje „linijka po linijce".
     // `GM_xmlhttpRequest` częściowej odpowiedzi NIE oddaje (zmierzone 2026-09-15: licznik stał
     // na 0/8 do samego końca, po czym wszystko wchodziło naraz). Nie zamieniaj tego z powrotem.
     // Klucz API i tak leży w `localStorage` tej strony (`b24t_ai_settings`), więc wysłanie go
     // z kontekstu strony nie zmienia tego, kto może go odczytać.
-    function _viaFetch() {
-      return fetch('https://api.anthropic.com/v1/messages', {
+    // Zapas wchodzi tylko, gdy strumień nie przyniósł ANI BAJTU — nie „ani litery tekstu":
+    // OpenAI z rozumowaniem wysyła najpierw zdarzenia bez tekstu, za które już płacimy.
+    var gotBytes = false;
+    var wariantIdx = _aiWariantModelu[model] || 0;
+    // Zawieszony strumień zostawiłby wiersz na zawsze w 'pending', a _newsTranslateEntry
+    // wraca od razu przy 'pending' — annotator nie mógłby nawet ponowić.
+    var CISZA_MS = 25000;
+    var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    var ciszaTimer = null;
+    function _pilnuj() {
+      if (!ctrl) return;
+      clearTimeout(ciszaTimer);
+      ciszaTimer = setTimeout(function() { ctrl.abort(); }, CISZA_MS);
+    }
+    function _viaFetch(i) {
+      wariantIdx = i;
+      var req = _req(i, true);
+      _pilnuj();
+      return fetch(req.url, {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-api-key': s.apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify(payload),
+        headers: req.headers,
+        body: JSON.stringify(req.body),
+        signal: ctrl ? ctrl.signal : undefined,
       }).then(function(r) {
-        if (r.status === 401) { _fail('błędny klucz API'); return; }
-        if (r.status === 429) { _fail('limit API (429)'); return; }
-        if (r.status < 200 || r.status >= 300) { _fail('HTTP ' + r.status); return; }
+        if (r.status < 200 || r.status >= 300) {
+          return r.text().then(function(t) {
+            var st = _aiNormStatus(r.status, t);
+            // Model nie przyjął wariantu rozumowania — kolejny wariant, zanim cokolwiek przyszło.
+            if (_aiIsReasoningReject(st, t) && i + 1 < warianty.length) return _viaFetch(i + 1);
+            _fail(_statusMsg(st));
+          });
+        }
         if (!r.body) throw new Error('brak strumienia');
+        _aiWariantModelu[model] = i;
         var reader = r.body.getReader();
         var dec = new TextDecoder();
         return (function _pump() {
+          _pilnuj();
           return reader.read().then(function(res) {
-            if (res.done) { _complete(); return; }
+            if (res.done) { clearTimeout(ciszaTimer); _feed(String.fromCharCode(10), true); _complete(); return; }
+            gotBytes = true;
             _feed(dec.decode(res.value, { stream: true }), true);
             return _pump();
           });
@@ -12380,28 +12743,30 @@ function showOnboarding(onComplete) {
     }
 
     // ── TRANSPORT 2: `GM_xmlhttpRequest` ──
-    // Zapasowy, na wypadek gdyby polityka bezpieczeństwa strony (CSP) nie wypuściła `fetch`.
-    // Tą drogą karta wypełnia się jednym skokiem zamiast linijka po linijce — ale tłumaczenie
-    // jest kompletne i nie ma błędu. Wchodzi WYŁĄCZNIE wtedy, gdy pierwszy transport nie
-    // przesłał ani bajtu; inaczej płacilibyśmy dwa razy za to samo.
-    function _viaGm() {
+    // Zapasowy, na wypadek gdyby polityka bezpieczeństwa strony (CSP) albo CORS dostawcy nie
+    // wypuściły `fetch`. Tą drogą karta wypełnia się jednym skokiem zamiast linijka po linijce —
+    // ale tłumaczenie jest kompletne i nie ma błędu. Wchodzi WYŁĄCZNIE wtedy, gdy pierwszy
+    // transport nie przesłał ani bajtu; inaczej płacilibyśmy dwa razy za to samo.
+    function _viaGm(i) {
       try {
+        var req = _req(i, false);
         GM_xmlhttpRequest({
           method: 'POST',
-          url: 'https://api.anthropic.com/v1/messages',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': s.apiKey,
-            'anthropic-version': '2023-06-01',
-          },
-          data: JSON.stringify(payload),
+          url: req.url,
+          headers: req.headers,
+          data: JSON.stringify(req.body),
           timeout: 25000,
           onprogress: function(resp) { try { _feed(resp && resp.responseText, false); } catch(e) {} },
           onload: function(resp) {
-            if (resp.status === 401) { _fail('błędny klucz API'); return; }
-            if (resp.status === 429) { _fail('limit API (429)'); return; }
-            if (resp.status < 200 || resp.status >= 300) { _fail('HTTP ' + resp.status); return; }
-            _feed(resp.responseText, false);
+            var st = _aiNormStatus(resp.status, resp.responseText);
+            if (st < 200 || st >= 300) {
+              if (_aiIsReasoningReject(st, resp.responseText) && i + 1 < warianty.length) { seenText = ''; tail = ''; _viaGm(i + 1); return; }
+              _fail(_statusMsg(st)); return;
+            }
+            _aiWariantModelu[model] = i;
+            // Znak końca linii domyka ostatnie zdarzenie — Gemini nie zawsze kończy strumień
+            // pustą linią, a `_feed` przetwarza tylko linie zakończone.
+            _feed(resp.responseText + String.fromCharCode(10), false);
             _complete();
           },
           onerror:   function() { _fail('brak połączenia'); },
@@ -12410,15 +12775,18 @@ function showOnboarding(onComplete) {
       } catch(e) { _fail('błąd wywołania'); }
     }
 
+    var startWariant = _aiWariantModelu[model] || 0;
     try {
-      _viaFetch().catch(function(e) {
+      _viaFetch(startWariant).catch(function(e) {
+        clearTimeout(ciszaTimer);
         if (settled) return;
         // Padło po pierwszej porcji — powtórzenie znaczyłoby drugie wywołanie modelu za to samo.
-        if (modelText) { _fail(streamErr || 'strumień urwany'); return; }
-        _viaGm();
+        if (gotBytes) { _fail(streamErr || (e && e.name === 'AbortError' ? 'strumień stanął' : 'strumień urwany')); return; }
+        // Od wariantu, do którego doszedł fetch — wcześniejsze model już odrzucił.
+        _viaGm(wariantIdx);
       });
     } catch(e) {
-      _viaGm();
+      _viaGm(startWariant);
     }
   }
 
@@ -18163,6 +18531,29 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.34.2",
+      "date": "2026-09-23",
+      "label": "feat",
+      "changes": [
+        {
+          "type": "feat",
+          "text": "**Funkcje AI działają też na modelach OpenAI i Gemini, nie tylko Claude.** Tagowanie AI, ocena w News, kampanie i tłumaczenie na karcie. W Ustawieniach → AI są trzy pola na klucze (Claude, OpenAI, Gemini) — wystarczy klucz dostawcy, którego modelu używasz. Model wybiera się osobno dla News i dla tagowania, więc można je mieszać."
+        },
+        {
+          "type": "feat",
+          "text": "**Lista modeli OpenAI i Gemini pobiera się od dostawcy** po kliknięciu „Testuj” przy kluczu — wtyczka nie starzeje się razem z listą wpisaną w kod. Test sprawdza klucz bez zużywania tokenów. Claude zostaje przy dwóch sprawdzonych modelach (Haiku 4.5, Sonnet 5)."
+        },
+        {
+          "type": "fix",
+          "text": "**Pod wyborem modelu pojawia się ostrzeżenie, gdy do tego modelu nie ma klucza** — wcześniej News z zaznaczonym AI po prostu nie oceniał wierszy i nie mówił dlaczego."
+        },
+        {
+          "type": "fix",
+          "text": "Zapytania do Claude'a są bez zmian (bajt w bajt), więc werdykty i koszty przy dotychczasowych ustawieniach się nie zmieniają. **OpenAI i Gemini są na razie niesprawdzone na prawdziwym kluczu** — zgłaszaj każdy błąd przy wierszu z tymi modelami."
+        }
+      ]
+    },
+    {
       "version": "0.34.1",
       "date": "2026-09-21",
       "label": "fix",
@@ -18330,16 +18721,6 @@ function showOnboarding(onComplete) {
       "label": "fix",
       "changes": [
         "fix: **Kropka dostępu mówi teraz prawdę także wtedy, gdy żaden projekt nie jest wybrany.** W 0.32.4 sprawdzanie zaczęło odpalać się samo przy otwarciu panelu, ale przy braku projektu nie odpalało się wcale — kropka zostawała na startowym „● CMS”, a przycisk dodawania mógł zostać aktywny, choć nie było do czego wysłać. Teraz w takiej sytuacji wraca „● Nie wiem” i przycisk jest zablokowany, jak być powinno"
-      ]
-    },
-    {
-      "version": "0.32.6",
-      "date": "2026-09-15",
-      "label": "fix",
-      "changes": [
-        "fix: **Liczba odsłon wracała do Brand24 w próżnię — od teraz dochodzi.** Wtyczka wysyłała ją pod nazwą `mention_pageviews`, a w formularzu Brand24 pola o takiej nazwie **nie ma**: jest `mention_views` z etykietą „Odsłon”. To jedna i ta sama metryka, tylko wpisywana parametrem, którego nikt nie odbierał, więc wartość przepadała po cichu przy każdej wysyłce z trybu Niestandardowe. Polubienia, udostępnienia i komentarze szły poprawnie",
-        "fix: **Kwadracik przy autorze zaczyna odznaczony.** Adres autora wtyczka nadal rozpoznaje i wpisuje w pole, żeby było widać, kogo znalazła, ale nic nie poleci do Brand24, dopóki sam nie zaznaczysz. Zaznaczenie **trzyma się przy przechodzeniu między postami** — tak samo jak wartość wpisana ręcznie w dowolne inne pole formularza, więc nie trzeba klikać przy każdej wzmiance",
-        "fix: **Adres autora z YouTube w formacie, który Brand24 faktycznie trzyma** — `http://www.youtube.com/channel/<ID>`. Podpowiedź przy polu sugeruje inny zapis (bez `www`, z literówką `channe`), ale prawdziwe wzmianki w CMS wyglądają tak, jak wysyłamy teraz"
       ]
     }
   ];
@@ -19242,45 +19623,46 @@ function showOnboarding(onComplete) {
         '<div class="b24t-set-pane" data-pane="ai" style="display:none;">' +
         '<div style="padding:12px 20px 16px;">' +
           '<div style="font-size:11px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Ustawienia AI</div>' +
-          '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">' +
-            '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">Klucz API:</span>' +
-            '<input type="password" id="b24t-ai-api-key" autocomplete="off" spellcheck="false" placeholder="sk-ant-api03-..." style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:monospace;">' +
-            '<button id="b24t-ai-key-toggle" title="Pokaż/ukryj" style="padding:3px 7px;flex-shrink:0;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;cursor:pointer;font-size:13px;">👁</button>' +
-          '</div>' +
-          '<div style="display:flex;align-items:center;gap:6px;margin-top:-4px;margin-bottom:10px;">' +
-            '<button id="b24t-ai-key-test" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid var(--b24t-border);background:transparent;color:var(--b24t-text-muted);cursor:pointer;flex-shrink:0;">Testuj klucz API</button>' +
-            '<span id="b24t-ai-key-test-result" style="font-size:10px;"></span>' +
-          '</div>' +
+          // Klucz na dostawcę: każda funkcja (News, tagowanie) ma własny model, więc można np.
+          // tagować Gemini, a newsy oceniać Claudem. „Testuj" pobiera listę modeli — sprawdza
+          // klucz i od razu zasila selecty modeli poniżej.
+          ['anthropic', 'openai', 'google'].map(function(p) {
+            var ph = p === 'anthropic' ? 'sk-ant-api03-...' : p === 'openai' ? 'sk-proj-...' : 'AIza...';
+            return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">' +
+              '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">' + AI_PROVIDER_LABEL[p] + ':</span>' +
+              '<input type="password" id="b24t-ai-key-' + p + '" autocomplete="off" spellcheck="false" placeholder="' + ph + '" style="flex:1;min-width:0;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:monospace;">' +
+              '<button class="b24t-ai-key-toggle" data-provider="' + p + '" title="Pokaż/ukryj" style="padding:3px 7px;flex-shrink:0;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;cursor:pointer;font-size:13px;">👁</button>' +
+              '<button class="b24t-ai-key-test" data-provider="' + p + '" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid var(--b24t-border);background:transparent;color:var(--b24t-text-muted);cursor:pointer;flex-shrink:0;">Testuj</button>' +
+            '</div>' +
+            '<div id="b24t-ai-key-result-' + p + '" style="font-size:10px;margin:-2px 0 6px 70px;"></div>';
+          }).join('') +
+          '<div style="font-size:10px;color:var(--b24t-text-faint);margin:0 0 10px 70px;">Wystarczy klucz dostawcy, którego modelu używasz. Po wpisaniu klucza kliknij „Testuj” — pobierze listę modeli.</div>' +
           '<div style="height:1px;background:var(--b24t-border-sub);margin:4px 0 10px;"></div>' +
           '<div style="font-size:10px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:7px;">News</div>' +
           '<div style="display:flex;align-items:center;gap:6px;margin-bottom:7px;">' +
             '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">Model:</span>' +
-            '<select id="b24t-ai-model-news" style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:#fff;color:#333;font-size:11px;font-family:inherit;color-scheme:light;">' +
-              '<option value="claude-haiku-4-5">Haiku 4.5 — szybki, prompt bez cache</option>' +
-              '<option value="claude-sonnet-5">Sonnet 5 — mocniejszy, z cache taniej</option>' +
-            '</select>' +
+            '<select id="b24t-ai-model-news" style="flex:1;min-width:0;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:#fff;color:#333;font-size:11px;font-family:inherit;color-scheme:light;"></select>' +
           '</div>' +
+          '<div id="b24t-ai-model-warn-news" style="font-size:10px;color:#f59e0b;margin:-4px 0 8px 70px;"></div>' +
           '<label style="display:flex;gap:10px;align-items:center;cursor:pointer;padding:4px 0;margin-bottom:4px;">' +
             '<input type="checkbox" id="b24t-ai-news-enabled" style="accent-color:var(--b24t-primary);width:14px;height:14px;flex-shrink:0;cursor:pointer;">' +
             '<div>' +
               '<div style="font-size:12px;font-weight:600;color:var(--b24t-text);">AI scoring w module News</div>' +
-              '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Automatyczna ocena artyku\u0142\u00f3w przez Claude</div>' +
+              '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Automatyczna ocena artyku\u0142\u00f3w przez model AI</div>' +
             '</div>' +
           '</label>' +
           '<div style="height:1px;background:var(--b24t-border-sub);margin:8px 0 10px;"></div>' +
           '<div style="font-size:10px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:7px;">Tagowanie</div>' +
           '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">' +
             '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">Model:</span>' +
-            '<select id="b24t-ai-model-tagging" style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:#fff;color:#333;font-size:11px;font-family:inherit;color-scheme:light;">' +
-              '<option value="claude-haiku-4-5">Haiku 4.5 — szybki, prompt bez cache</option>' +
-              '<option value="claude-sonnet-5">Sonnet 5 — mocniejszy, z cache taniej</option>' +
-            '</select>' +
+            '<select id="b24t-ai-model-tagging" style="flex:1;min-width:0;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:#fff;color:#333;font-size:11px;font-family:inherit;color-scheme:light;"></select>' +
           '</div>' +
+          '<div id="b24t-ai-model-warn-tagging" style="font-size:10px;color:#f59e0b;margin:-4px 0 8px 70px;"></div>' +
           '<label style="display:flex;gap:10px;align-items:center;cursor:pointer;padding:4px 0;margin-bottom:8px;">' +
             '<input type="checkbox" id="b24t-ai-tagging-enabled" style="accent-color:var(--b24t-primary);width:14px;height:14px;flex-shrink:0;cursor:pointer;">' +
             '<div>' +
               '<div style="font-size:12px;font-weight:600;color:var(--b24t-text);">Tryb AI Tagowanie (karta w panelu)</div>' +
-              '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Pokazuje kartę 🤖 AI Tag — ocena i tagowanie wzmianek przez Claude</div>' +
+              '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Pokazuje kartę 🤖 AI Tag — ocena i tagowanie wzmianek przez model AI</div>' +
             '</div>' +
           '</label>' +
           '<button id="b24t-ai-open-prompts" style="width:100%;box-sizing:border-box;padding:7px 12px;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:8px;cursor:pointer;font-family:inherit;font-size:11px;display:flex;align-items:center;justify-content:space-between;">📚 Biblioteka promptów<span style="font-size:10px;opacity:0.6;">→</span></button>' +
@@ -19320,73 +19702,73 @@ function showOnboarding(onComplete) {
     // AI Settings wiring
     (function() {
       var s = _aiGetSettings();
-      var apiKeyInput = document.getElementById('b24t-ai-api-key');
       var newsModelSelect = document.getElementById('b24t-ai-model-news');
       var taggingModelSelect = document.getElementById('b24t-ai-model-tagging');
       var newsEnabledCb = document.getElementById('b24t-ai-news-enabled');
       var taggingEnabledCb = document.getElementById('b24t-ai-tagging-enabled');
 
-      if (apiKeyInput) apiKeyInput.value = s.apiKey || '';
-      if (newsModelSelect) newsModelSelect.value = (s.news && s.news.model) || 'claude-haiku-4-5';
-      if (taggingModelSelect) taggingModelSelect.value = (s.tagging && s.tagging.model) || 'claude-haiku-4-5';
+      // Selecty modeli budowane z list pobranych od dostawców — przerysowujemy je po każdej
+      // zmianie klucza i po teście, żeby nowy dostawca od razu pojawił się do wyboru.
+      // Pod selectem ostrzeżenie, gdy do wybranego modelu nie ma klucza — bez niego News
+      // z zaznaczonym „AI scoring" po prostu nie ocenia wierszy i nie mówi dlaczego.
+      function renderModelSelects() {
+        var cfg = _aiGetSettings();
+        [['news', newsModelSelect], ['tagging', taggingModelSelect]].forEach(function(pair) {
+          var model = (cfg[pair[0]] && cfg[pair[0]].model) || 'claude-haiku-4-5';
+          if (pair[1]) pair[1].innerHTML = _aiModelOptionsHtml(model, cfg);
+          var warn = document.getElementById('b24t-ai-model-warn-' + pair[0]);
+          if (warn) warn.textContent = _aiKeyFor(model, cfg) ? '' : '⚠ Brak klucza ' + AI_PROVIDER_LABEL[_aiProvider(model)] + ' — ten model nie ruszy.';
+        });
+      }
+      renderModelSelects();
       if (newsEnabledCb) newsEnabledCb.checked = !!(s.news && s.news.enabled);
       if (taggingEnabledCb) taggingEnabledCb.checked = !!(s.tagging && s.tagging.enabled);
 
-      if (apiKeyInput) {
-        apiKeyInput.addEventListener('change', function() {
-          var cfg = _aiGetSettings(); cfg.apiKey = apiKeyInput.value.trim(); _aiSaveSettings(cfg);
+      ['anthropic', 'openai', 'google'].forEach(function(p) {
+        var input = document.getElementById('b24t-ai-key-' + p);
+        var result = document.getElementById('b24t-ai-key-result-' + p);
+        var toggle = modal.querySelector('.b24t-ai-key-toggle[data-provider="' + p + '"]');
+        var testBtn = modal.querySelector('.b24t-ai-key-test[data-provider="' + p + '"]');
+        if (!input) return;
+        input.value = s[AI_KEY_FIELD[p]] || '';
+        input.addEventListener('change', function() {
+          var cfg = _aiGetSettings(); cfg[AI_KEY_FIELD[p]] = input.value.trim(); _aiSaveSettings(cfg);
+          renderModelSelects();
         });
-      }
-      var keyToggle = document.getElementById('b24t-ai-key-toggle');
-      if (keyToggle && apiKeyInput) {
-        keyToggle.addEventListener('click', function() {
-          apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
+        if (toggle) toggle.addEventListener('click', function() {
+          input.type = input.type === 'password' ? 'text' : 'password';
         });
-      }
-      var aiKeyTestBtn    = document.getElementById('b24t-ai-key-test');
-      var aiKeyTestResult = document.getElementById('b24t-ai-key-test-result');
-      if (aiKeyTestBtn) {
-        aiKeyTestBtn.addEventListener('click', function() {
-          var key = (apiKeyInput ? apiKeyInput.value.trim() : '') || (_aiGetSettings().apiKey || '');
-          if (!key) { if (aiKeyTestResult) { aiKeyTestResult.textContent = '✗ Brak klucza'; aiKeyTestResult.style.color = '#f87171'; } return; }
-          aiKeyTestBtn.disabled = true; aiKeyTestBtn.textContent = '⏳ Sprawdzam…';
-          if (aiKeyTestResult) { aiKeyTestResult.textContent = ''; }
-          GM_xmlhttpRequest({
-            method: 'POST',
-            url: 'https://api.anthropic.com/v1/messages',
-            headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-            data: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: 1, messages: [{ role: 'user', content: 'test' }] }),
-            timeout: 12000,
-            onload: function(r) {
-              aiKeyTestBtn.disabled = false; aiKeyTestBtn.textContent = 'Testuj klucz API';
-              if (r.status === 200) {
-                aiKeyTestResult.textContent = '✓ Klucz działa'; aiKeyTestResult.style.color = '#22c55e';
-              } else if (r.status === 401) {
-                aiKeyTestResult.textContent = '✗ Błędny klucz (401)'; aiKeyTestResult.style.color = '#f87171';
-              } else if (r.status === 403) {
-                aiKeyTestResult.textContent = '✗ Brak dostępu (403)'; aiKeyTestResult.style.color = '#f87171';
-              } else if (r.status === 429) {
-                aiKeyTestResult.textContent = '⚠ Limit API (429)'; aiKeyTestResult.style.color = '#f59e0b';
-              } else {
-                aiKeyTestResult.textContent = '✗ Błąd ' + r.status; aiKeyTestResult.style.color = '#f87171';
-              }
-            },
-            onerror: function() {
-              aiKeyTestBtn.disabled = false; aiKeyTestBtn.textContent = 'Testuj klucz API';
-              aiKeyTestResult.textContent = '✗ Brak połączenia z API'; aiKeyTestResult.style.color = '#f87171';
-            },
-            ontimeout: function() {
-              aiKeyTestBtn.disabled = false; aiKeyTestBtn.textContent = 'Testuj klucz API';
-              aiKeyTestResult.textContent = '✗ Timeout — API nie odpowiada'; aiKeyTestResult.style.color = '#f87171';
-            },
+        if (!testBtn) return;
+        function show(txt, color) { if (result) { result.textContent = txt; result.style.color = color; } }
+        testBtn.addEventListener('click', function() {
+          var key = input.value.trim();
+          if (!key) { show('✗ Brak klucza', '#f87171'); return; }
+          // Zapis przed testem: `change` pola odpala się dopiero po utracie fokusu, a kliknięcie
+          // „Testuj" zaraz po wklejeniu nie zawsze go wyprzedza.
+          var cfg = _aiGetSettings(); cfg[AI_KEY_FIELD[p]] = key; _aiSaveSettings(cfg);
+          testBtn.disabled = true; testBtn.textContent = '⏳';
+          show('', '');
+          _aiFetchModels(p, key).then(function(list) {
+            show(p === 'anthropic' ? '✓ Klucz działa' : '✓ Klucz działa — ' + list.length + ' modeli do wyboru', '#22c55e');
+          }, function(err) {
+            show('✗ ' + err.message, err.status === 429 ? '#f59e0b' : '#f87171');
+            // Zły klucz — lista modeli z poprzedniego klucza nie może dalej wisieć w selektach.
+            if (err.status === 401 || err.status === 403) {
+              var cache = lsGet(AI_MODELS_LS, {}) || {};
+              delete cache[p]; lsSet(AI_MODELS_LS, cache);
+            }
+          }).then(function() {
+            testBtn.disabled = false; testBtn.textContent = 'Testuj';
+            renderModelSelects();
           });
         });
-      }
+      });
       if (newsModelSelect) {
         newsModelSelect.addEventListener('change', function() {
           var cfg = _aiGetSettings();
           if (!cfg.news) cfg.news = {};
           cfg.news.model = newsModelSelect.value; _aiSaveSettings(cfg);
+          renderModelSelects();
         });
       }
       if (taggingModelSelect) {
@@ -19394,6 +19776,7 @@ function showOnboarding(onComplete) {
           var cfg = _aiGetSettings();
           if (!cfg.tagging) cfg.tagging = {};
           cfg.tagging.model = taggingModelSelect.value; _aiSaveSettings(cfg);
+          renderModelSelects();
         });
       }
       if (newsEnabledCb) {
@@ -21850,7 +22233,7 @@ To jest NIEODWRACALNE.`)) return;
   function _aiAccConfigured() {
     try {
       var s = _aiGetSettings();
-      return !!(s && s.apiKey && s.tagging && s.tagging.activePromptId);
+      return !!(s && s.tagging && s.tagging.activePromptId && _aiKeyFor(s.tagging.model || 'claude-haiku-4-5', s));
     } catch(e) { return false; }
   }
 
@@ -23148,7 +23531,7 @@ Tej operacji nie można cofnąć.`)) {
       <div class="b24t-section">
         <div class="b24t-section-label">AI Tagowanie</div>
         <div style="font-size:12px;color:var(--b24t-text-muted);margin-bottom:10px;line-height:1.6;">
-          Pobiera wzmianki z panelu, ocenia je promptem przez Claude i nadaje tagi — bez notebooka i CSV.
+          Pobiera wzmianki z panelu, ocenia je promptem przez model AI i nadaje tagi — bez notebooka i CSV.
         </div>
 
         <!-- Źródło -->
@@ -23417,7 +23800,8 @@ Tej operacji nie można cofnąć.`)) {
     const setBar    = pct => { if (barEl) barEl.style.width = Math.max(0, Math.min(100, pct)) + '%'; };
 
     const s = _aiGetSettings();
-    if (!s.apiKey)        { setStatus('✗ Brak klucza API (Ustawienia → AI)', '#f87171'); return; }
+    const _tagModel = (s.tagging && s.tagging.model) || 'claude-haiku-4-5';
+    if (!_aiKeyFor(_tagModel, s)) { setStatus('✗ Brak klucza API ' + AI_PROVIDER_LABEL[_aiProvider(_tagModel)] + ' (Ustawienia → AI)', '#f87171'); return; }
     if (!state.projectId) { setStatus('✗ Brak wykrytego projektu', '#f87171'); return; }
     const promptSel = panel.querySelector('#b24t-ait-prompt');
     const prompt = (s.prompts || []).find(p => p.id === (promptSel && promptSel.value));
@@ -23502,8 +23886,10 @@ Tej operacji nie można cofnąć.`)) {
         } catch(e) {
           errors += batch.length;
           addLog('✕ AI batch ' + num + ' błąd: ' + e.message, 'error');
-          if (/401/.test(e.message)) fatal = e.message;
-          else if (/429/.test(e.message)) fatal = 'Limit API (429)';
+          // Po statusie, nie po treści: komunikat niesie tekst dostawcy („prompt is too long:
+          // 204291 tokens" pasowałoby do /429/ i przerwało cały przebieg jako limit).
+          if (e.status === 401) fatal = e.message;
+          else if (e.status === 429) fatal = 'Limit API (429)';
           done += batch.length; setBar(done / total * 100);
           return;
         }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.34.2
+// @version      0.35.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -172,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.34.2';
+  const VERSION = '0.35.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -220,6 +220,9 @@
   const QT_CONCURRENCY  = 2; // równoległość batchów w Quick Tag / Quick Untag
   const TAG_CONCURRENCY = 4; // równoległość batchów bulkTag w runTagging
   const FALLBACK_CONCURRENCY = 8; // równoległość single-ID w fallback bulkTag
+  // Równoległość setSentiment. Jedno wywołanie trwa 1,6–2,0 s, a mutacja nie ma wersji hurtowej;
+  // próg 429 dla niej niezmierzony, więc ostrożnie (BRAND24_NETWORK.md §7a).
+  const SENTIMENT_CONCURRENCY = 5;
   const HEALTH_CHECK_INTERVAL = 30000;
   const ACTION_TIMEOUT_WARN = 10000;
   const RETRY_DELAYS = [2000, 4000, 8000, 12000, 20000]; // 5 prób — Brand24 API czasem losowo failuje
@@ -1924,6 +1927,9 @@
       page: page || 1,
       order: 0,
     };
+    // `sentiment` tylko na żądanie: mapa dla samego tagowania, z której korzystają wszyscy
+    // annotatorzy, zostaje tym samym zapytaniem co przed dodaniem akcji „zmień sentyment”.
+    const sentimentField = opts && opts.withSentiment ? ' sentiment' : '';
     const data = await gqlRetry('getMentions', variables, `query getMentions(
       $projectId: Int!, $dateRange: DateRangeInput!,
       $filters: MentionFilterInput, $page: Int, $order: Int
@@ -1932,7 +1938,7 @@
                   filters: $filters, page: $page, order: $order) {
         count
         results {
-          id openUrl url createdDate
+          id openUrl url createdDate${sentimentField}
           host { name }
           author { name }
           tags { id title }
@@ -1981,6 +1987,28 @@
       const ctx = _errContext(brandMsg);
       addLog(`✕ [${ctx.src}] bulkUntagMentions UserError (${mentionsIds.length} IDs, tagId=${tagId}): "${brandMsg}"\n  → ${ctx.hint}`, 'error');
       throw new Error(brandMsg);
+    }
+    return { success: true };
+  }
+
+  // sentiment: 'positive' | 'negative' | 'neutral'. Brand24 zwraca null przy sukcesie, a obiekt
+  // błędu (np. MentionDoesNotExistError) przy porażce — HTTP jest wtedy nadal 200.
+  // ID wzmianki zawsze jako string: bywa 18-cyfrowe i Number() je przekłamuje (BRAND24_NETWORK.md §14).
+  async function setMentionSentiment(mentionId, sentiment) {
+    if (state.testRunMode) {
+      addLog(`[TEST] setSentiment: ${mentionId} → ${sentiment}`, 'info');
+      return { success: true, testRun: true };
+    }
+    const data = await gqlRetry('setSentiment', { mentionId: String(mentionId), sentiment }, `mutation setSentiment(
+      $mentionId: IntString!, $sentiment: Sentiment!
+    ) {
+      setSentiment(mentionId: $mentionId, sentiment: $sentiment) {
+        __typename
+        ... on MentionDoesNotExistError { message }
+      }
+    }`);
+    if (data.setSentiment) {
+      throw new Error(data.setSentiment.message || data.setSentiment.__typename);
     }
     return { success: true };
   }
@@ -2346,8 +2374,10 @@
   // URL MAP BUILDING
   // ───────────────────────────────────────────
 
-  async function buildUrlMap(dateFrom, dateTo, untaggedOnly) {
+  // withSentiment: wpisy mapy niosą bieżący sentyment wzmianki (potrzebny akcji „zmień sentyment”).
+  async function buildUrlMap(dateFrom, dateTo, untaggedOnly, withSentiment) {
     const gr = (untaggedOnly && state.untaggedId) ? [state.untaggedId] : [];
+    const mentionOpts = withSentiment ? { withSentiment: true } : undefined;
     const map = {};
     const diag = {
       step: 'init',
@@ -2392,7 +2422,7 @@
     diag.step = 'page1_fetch';
     let first;
     try {
-      first = await getMentions(state.projectId, dateFrom, dateTo, gr, 1);
+      first = await getMentions(state.projectId, dateFrom, dateTo, gr, 1, mentionOpts);
     } catch(e) {
       addLog(`✕ [DIAG/API] getMentions strona 1 FAILED: ${e.message}`, 'error');
       return map;
@@ -2439,7 +2469,7 @@
       if (matchUrl) {
         const key = normalizeUrl(matchUrl);
         if (map[key]) diag.dupeKeys++;
-        map[key] = { id: String(m.id), existingTags: m.tags || [] };
+        map[key] = { id: String(m.id), existingTags: m.tags || [], sentiment: m.sentiment };
       } else {
         diag.urlFieldEmpty++;
       }
@@ -2471,7 +2501,7 @@
         const p = _poolNextPage;
         if (p > totalPages) break;
         _poolNextPage++;
-        const result = await getMentions(state.projectId, dateFrom, dateTo, gr, p)
+        const result = await getMentions(state.projectId, dateFrom, dateTo, gr, p, mentionOpts)
           .catch(e => ({ _err: e.message, _page: p }));
         if (result && result._err !== undefined) {
           pageErrors++;
@@ -2492,7 +2522,7 @@
           if (matchUrl) {
             const key = normalizeUrl(matchUrl);
             if (map[key]) diag.dupeKeys++;
-            map[key] = { id: String(m.id), existingTags: m.tags || [] };
+            map[key] = { id: String(m.id), existingTags: m.tags || [], sentiment: m.sentiment };
           } else {
             diag.urlFieldEmpty++;
           }
@@ -2600,7 +2630,7 @@
       var projectMapping = {};
       Object.entries(savedMapping).forEach(function(_entry) {
         var label = _entry[0], m = _entry[1];
-        if (m.type === 'delete') {
+        if (m.type === 'delete' || m.type === 'sentiment') {
           projectMapping[label] = m;
           return;
         }
@@ -2703,11 +2733,14 @@
 
     // Build URL map — overwrite/multitag/delete wymaga pełnej mapy (nie tylko Untagged)
     const _hasDeleteMappings = Object.values(state.mapping).some(function(m) { return m.type === 'delete'; });
-    const _forceFullMap = state.conflictMode === 'overwrite' || state.conflictMode === 'multitag' || _hasDeleteMappings;
+    // Sentyment nie zależy od tagów, więc mapa samych Untagged zgubiłaby wzmianki już otagowane.
+    const _hasSentimentMappings = Object.values(state.mapping).some(function(m) { return m.type === 'sentiment'; });
+    const _forceFullMap = state.conflictMode === 'overwrite' || state.conflictMode === 'multitag' || _hasDeleteMappings || _hasSentimentMappings;
     if (_forceFullMap && state.mapMode === 'untagged') {
-      addLog('ℹ ' + (_hasDeleteMappings ? 'Usuwanie po assessmencie' : 'Tryb overwrite/multitag') + ': buduje mapę ze WSZYSTKICH wzmianek (ignoruje filtr Untagged)', 'info');
+      const _fullMapWhy = _hasDeleteMappings ? 'Usuwanie po assessmencie' : _hasSentimentMappings ? 'Zmiana sentymentu' : 'Tryb overwrite/multitag';
+      addLog('ℹ ' + _fullMapWhy + ': buduje mapę ze WSZYSTKICH wzmianek (ignoruje filtr Untagged)', 'info');
     }
-    state.urlMap = await buildUrlMap(dateFrom, dateTo, !_forceFullMap && state.mapMode === 'untagged');
+    state.urlMap = await buildUrlMap(dateFrom, dateTo, !_forceFullMap && state.mapMode === 'untagged', _hasSentimentMappings);
     if (state.status !== 'running') return;
 
     // Walidacja schematu pliku — blokuje tagowanie przy sci notation URL
@@ -2721,6 +2754,8 @@
     const batches = {};          // tagId → [snowflakeIds]
     const overwriteBatches = {}; // {oldTagId_newTagId} → {oldIds, newIds}
     const deleteBatch = [];      // mention IDs to delete (assessment mapped to __DELETE__)
+    const sentimentTargets = new Map();   // mention ID → { sentiment: docelowy, current: obecny w Brand24 }
+    const sentimentConflicts = new Set(); // wzmianki, którym plik daje dwa różne sentymenty — pomijane
     const skipped = [];
     const conflicts = [];
 
@@ -2728,6 +2763,7 @@
     const matchDiag = {
       total: rows.length, noAssessment: 0, noMapping: 0,
       noMatch: 0, truncated: 0, alreadyTagged: 0, conflict: 0, willTag: 0, overwrite: 0, toDelete: 0,
+      toSentiment: 0, sentimentUnchanged: 0,
       exactMatch: 0, fuzzyShort: 0,
       mapSize: Object.keys(state.urlMap).length,
       // próbki URL-i z pliku vs z mapy (pierwsze 2 każdej domeny)
@@ -2856,6 +2892,13 @@
           return;
         }
 
+        if (mapping.type === 'sentiment') {
+          const prevTarget = sentimentTargets.get(entry.id);
+          if (prevTarget && prevTarget.sentiment !== mapping.sentiment) sentimentConflicts.add(entry.id);
+          sentimentTargets.set(entry.id, { sentiment: mapping.sentiment, current: entry.sentiment });
+          return;
+        }
+
         const alreadyTagged = existingTagIds.includes(mapping.tagId);
         if (alreadyTagged) {
           skipped.push({ row, reason: 'ALREADY_TAGGED', tagId: mapping.tagId });
@@ -2894,6 +2937,16 @@
     matchDiag.toDelete   = deleteBatch.length;
     matchDiag.alreadyTagged = skipped.filter(s => s.reason === 'ALREADY_TAGGED').length;
     matchDiag.conflict   = skipped.filter(s => s.reason === 'CONFLICT_IGNORED').length;
+    // Sprzeczności i „już zgodne” rozstrzygane po całym pliku, nie wiersz po wierszu: wzmianka
+    // z dwoma różnymi celami ma wypaść także wtedy, gdy jeden z tych celów już jest ustawiony.
+    sentimentConflicts.forEach(id => sentimentTargets.delete(id));
+    if (sentimentConflicts.size > 0) {
+      addLog(`⚠ [SENTYMENT] ${sentimentConflicts.size} wzmianek ma w pliku sprzeczne sentymenty (ten sam URL w kilku wierszach albo kilka ocen w jednym) — pomijam je, popraw plik i puść jeszcze raz`, 'warn');
+    }
+    sentimentTargets.forEach((t, id) => {
+      if (t.current === t.sentiment) { sentimentTargets.delete(id); matchDiag.sentimentUnchanged++; }
+    });
+    matchDiag.toSentiment = sentimentTargets.size;
 
     addLog(
       `ℹ Wyniki matchowania ${matchDiag.total} wierszy vs ${matchDiag.mapSize} wzmianek w mapie:
@@ -2901,6 +2954,8 @@
       `  ✓ do otagowania: ${matchDiag.willTag}${matchDiag.overwrite > 0 ? ' + ' + matchDiag.overwrite + ' (podmiana tagu)' : ''}
 ` +
       (matchDiag.toDelete > 0 ? `  🗑 do usunięcia: ${matchDiag.toDelete}\n` : '') +
+      (matchDiag.toSentiment > 0 ? `  ◐ do zmiany sentymentu: ${matchDiag.toSentiment}\n` : '') +
+      (matchDiag.sentimentUnchanged > 0 ? `  ↷ sentyment już zgodny: ${matchDiag.sentimentUnchanged}\n` : '') +
       `  ✗ NO_MATCH: ${matchDiag.noMatch}
 ` +
       `  ✗ TRUNCATED_URL: ${matchDiag.truncated}
@@ -3114,11 +3169,34 @@
       addLog((_delFail === 0 ? '✓' : '⚠') + ' Usunięto: ' + _delOk + '/' + deleteBatch.length + (_delFail > 0 ? ' (' + _delFail + ' błędów)' : ''), _delFail === 0 ? 'success' : 'warn');
     }
 
+    // Zmiana sentymentu (assessmenty zmapowane na „Sentyment → …”). Brand24 nie ma wersji
+    // hurtowej tej mutacji, więc idą pojedyncze wywołania po SENTIMENT_CONCURRENCY naraz.
+    let _sentOk = 0, _sentFail = 0;
+    if (sentimentTargets.size > 0 && state.status === 'running') {
+      const _sentJobs = Array.from(sentimentTargets, ([id, t]) => ({ id, sentiment: t.sentiment }));
+      addLog(`→ Zmiana sentymentu: ${_sentJobs.length} wzmianek (${SENTIMENT_CONCURRENCY}× równolegle, ~2 s na wywołanie)...`, 'info');
+      updateProgress('sentiment', 0, _sentJobs.length);
+      for (let _si = 0; _si < _sentJobs.length; _si += SENTIMENT_CONCURRENCY) {
+        if (state.status !== 'running') break;
+        const _sChunk = _sentJobs.slice(_si, _si + SENTIMENT_CONCURRENCY);
+        const _sRes = await Promise.allSettled(_sChunk.map(j => setMentionSentiment(j.id, j.sentiment)));
+        _sRes.forEach((r, ci) => {
+          if (r.status === 'fulfilled') { _sentOk++; return; }
+          _sentFail++;
+          const msg = (r.reason && r.reason.message) || String(r.reason);
+          const ctx = _errContext(msg);
+          addLog(`✕ [SENTYMENT/${ctx.src}] ID ${_sChunk[ci].id} → ${_sChunk[ci].sentiment}: ${msg}\n  → ${ctx.hint}`, 'error');
+        });
+        updateProgress('sentiment', Math.min(_si + SENTIMENT_CONCURRENCY, _sentJobs.length), _sentJobs.length);
+      }
+      addLog(`${_sentFail === 0 ? '✓' : '⚠'} Zmieniono sentyment: ${_sentOk}/${_sentJobs.length}${_sentFail > 0 ? ` (${_sentFail} błędów)` : ''}`, _sentFail === 0 ? 'success' : 'warn');
+    }
+
     // Persystuj pominięte wiersze do state (NO_MATCH, TRUNCATED_URL, NO_MAPPING, NO_ASSESSMENT)
     const _exportableReasons = new Set(['NO_MATCH', 'TRUNCATED_URL', 'NO_MAPPING', 'NO_ASSESSMENT', 'FUZZY_LONG_SKIPPED']);
     state.skippedRows.push(...skipped.filter(s => _exportableReasons.has(s.reason)));
 
-    state.stats.skipped += skipped.length + totalTagFailed;
+    state.stats.skipped += skipped.length + totalTagFailed + _sentFail + matchDiag.sentimentUnchanged + sentimentConflicts.size;
 
     const _fuzzyLongSkipped = skipped.filter(s => s.reason === 'FUZZY_LONG_SKIPPED').length;
     const _report = [
@@ -3135,11 +3213,13 @@
       `Już otagowane:      ${matchDiag.alreadyTagged}`,
       `WYKONANO tagowań:   ${matchDiag.willTag}`,
       ...(matchDiag.overwrite > 0 ? [`Podmieniono tag:    ${matchDiag.overwrite}`] : []),
+      ...(matchDiag.toSentiment > 0 ? [`Zmiana sentymentu:  ${_sentOk}/${matchDiag.toSentiment}`] : []),
+      ...(matchDiag.sentimentUnchanged > 0 ? [`Sentyment zgodny:   ${matchDiag.sentimentUnchanged}`] : []),
       `════════════════════════`,
     ].join('\n');
     addLog(_report, 'info');
 
-    addLog(`✓ Partycja zakończona: ${state.stats.tagged} otagowane, ${state.stats.skipped} pominięte${totalTagFailed > 0 ? `, ${totalTagFailed} błędy fallback` : ''}`, 'success');
+    addLog(`✓ Partycja zakończona: ${state.stats.tagged} otagowane, ${state.stats.skipped} pominięte${_sentOk > 0 ? `, ${_sentOk} zmian sentymentu` : ''}${totalTagFailed > 0 ? `, ${totalTagFailed} błędy fallback` : ''}`, 'success');
   }
 
   // ───────────────────────────────────────────
@@ -3793,7 +3873,9 @@
     const pct = total > 0 ? Math.round((current / total) * 100) : 0;
     label.textContent = phase === 'map'
       ? `Budowanie mapy: ${current}/${total}`
-      : `Tagowanie: batch ${current}/${total}`;
+      : phase === 'sentiment'
+        ? `Zmiana sentymentu: ${current}/${total}`
+        : `Tagowanie: batch ${current}/${total}`;
     if (current === 0) _getBarMain().reset(); else _getBarMain().set(pct);
   }
 
@@ -6637,7 +6719,7 @@
     if (!colMap || !colMap.projectId) { coverageEl.innerHTML = ''; return; }
 
     var mapping = state.mapping || {};
-    var tagEntries = Object.values(mapping).filter(function(m) { return m.tagName && m.tagName !== '__DELETE__'; });
+    var tagEntries = Object.values(mapping).filter(function(m) { return m.tagName && m.tagName !== '__DELETE__' && m.type !== 'sentiment'; });
     if (!tagEntries.length) { coverageEl.innerHTML = ''; return; }
 
     // Deduplicate tag names
@@ -6807,6 +6889,14 @@
   // MAPPING UI
   // ───────────────────────────────────────────
 
+  // Akcje „zmień sentyment” w mapowaniu ocen. Wartość w selekcie to znacznik (jak __DELETE__),
+  // nie ID tagu, więc updateMappingState rozpoznaje go przed parseInt.
+  const SENTIMENT_ACTIONS = [
+    { value: '__SENTIMENT_NEGATIVE__', sentiment: 'negative', name: 'negatywny' },
+    { value: '__SENTIMENT_NEUTRAL__',  sentiment: 'neutral',  name: 'neutralny' },
+    { value: '__SENTIMENT_POSITIVE__', sentiment: 'positive', name: 'pozytywny' },
+  ];
+
   function renderMappingRows(assessments, savedSchema) {
     const container = document.getElementById('b24t-mapping-rows');
     if (!container) return;
@@ -6817,6 +6907,7 @@
     container.innerHTML = '';
 
     const deleteEnabled = loadFeatures().delete_by_assessment;
+    const sentimentEnabled = loadFeatures().sentiment_by_assessment;
 
     Object.entries(source).forEach(([label, count]) => {
       const row = document.createElement('div');
@@ -6829,6 +6920,11 @@
       // Tag select
       const deleteOption = deleteEnabled
         ? `<option value="__DELETE__" style="color:#f87171;" ${savedIsDelete ? 'selected' : ''}>🗑 Usuń</option>`
+        : '';
+      const sentimentOptions = sentimentEnabled
+        ? SENTIMENT_ACTIONS.map(a =>
+            `<option value="${a.value}" ${savedTagId === a.value ? 'selected' : ''}>◐ Sentyment → ${a.name}</option>`
+          ).join('')
         : '';
       const tagOptions = Object.entries(state.tags)
         .map(([name, id]) => `<option value="${id}" ${!savedIsDelete && savedTagId === id ? 'selected' : ''}>${_escHtml(name)}</option>`)
@@ -6851,6 +6947,7 @@
         <select class="b24t-select b24t-tag-select" data-label="${labelEsc}">
           <option value="">— wybierz tag —</option>
           ${deleteOption}
+          ${sentimentOptions}
           ${tagOptions}
         </select>
         <select class="b24t-select b24t-type-select" data-label="${labelEsc}">
@@ -6900,6 +6997,15 @@
       const typeSel = container.querySelector(`.b24t-type-select[data-label="${label}"]`);
       if (tagSel.value === '__DELETE__') {
         state.mapping[label.toUpperCase()] = { tagId: '__DELETE__', tagName: '__DELETE__', type: 'delete' };
+        if (typeSel) typeSel.style.display = 'none';
+        return;
+      }
+      const sentimentAction = SENTIMENT_ACTIONS.find(a => a.value === tagSel.value);
+      if (sentimentAction) {
+        state.mapping[label.toUpperCase()] = {
+          tagId: sentimentAction.value, tagName: sentimentAction.value,
+          type: 'sentiment', sentiment: sentimentAction.sentiment,
+        };
         if (typeSel) typeSel.style.display = 'none';
         return;
       }
@@ -7042,6 +7148,23 @@
         return _a.some(function(x) { return _deleteLabels.includes(x); });
       }).length;
       if (!confirm('⚠ Plik zawiera wzmianki do USUNIĘCIA\n\nOceny: ' + _deleteLabels.join(', ') + '\nLiczba wierszy: ' + _deleteCount + '\n\nUsunięcie jest NIEODWRACALNE. Czy na pewno kontynuować?')) {
+        addLog('⏹ Sesja anulowana przez użytkownika.', 'info');
+        return;
+      }
+    }
+
+    // Zmiana sentymentu da się cofnąć, ale dotyka danych klienta hurtem — skala przed startem.
+    const _sentimentMappings = Object.entries(state.mapping).filter(function(_e) { return _e[1].type === 'sentiment'; });
+    if (_sentimentMappings.length > 0 && !state.testRunMode) {
+      const _sentimentLines = _sentimentMappings.map(function(_e) {
+        const _rowsWithLabel = (state.file.rows || []).filter(function(row) {
+          const _a = ((row[state.file.colMap.assessment] || '') + '').trim().toUpperCase().split('|').map(function(x) { return x.trim(); });
+          return _a.includes(_e[0]);
+        }).length;
+        const _action = SENTIMENT_ACTIONS.find(function(a) { return a.value === _e[1].tagId; });
+        return '  ' + _e[0] + ' → ' + (_action ? _action.name : _e[1].sentiment) + ' (wierszy: ' + _rowsWithLabel + ')';
+      });
+      if (!confirm('◐ Plik zmieni sentyment wzmianek w Brand24\n\n' + _sentimentLines.join('\n') + '\n\nWzmianki, które już mają docelowy sentyment, zostaną pominięte. Kontynuować?')) {
         addLog('⏹ Sesja anulowana przez użytkownika.', 'info');
         return;
       }
@@ -18531,6 +18654,25 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.35.0",
+      "date": "2026-09-29",
+      "label": "feat",
+      "changes": [
+        {
+          "type": "feat",
+          "text": "**Zmiana sentymentu z pliku.** Po włączeniu w Dodatkowych funkcjach opcji „◐ Zmiana sentymentu po assessmencie” w mapowaniu ocen pojawiają się trzy akcje: „Sentyment → negatywny”, „Sentyment → neutralny” i „Sentyment → pozytywny”. Wzmianki z tak zmapowaną oceną dostają ten sentyment w Brand24 w zwykłym przebiegu Start, obok tagowania i usuwania. Jeden wiersz może łączyć tag i sentyment, np. `RELEVANT|NEUTRALNY`."
+        },
+        {
+          "type": "feat",
+          "text": "Wzmianki, które już mają docelowy sentyment, są pomijane. Wzmianka, której plik daje dwa różne sentymenty, jest pomijana w całości i zgłaszana w logu. Okno potwierdzenia przed startem podaje liczbę wierszy dla każdej oceny; przebieg testowy niczego nie zapisuje."
+        },
+        {
+          "type": "feat",
+          "text": "Brand24 przyjmuje zmianę sentymentu tylko pojedynczo, ok. 2 s na wzmiankę (pomiar na 2 wywołaniach); wtyczka wysyła 5 zmian naraz. **Funkcja niesprawdzona jeszcze na żywym przebiegu** — zgłaszaj każdy błąd przy zmianie sentymentu."
+        }
+      ]
+    },
+    {
       "version": "0.34.2",
       "date": "2026-09-23",
       "label": "feat",
@@ -18713,14 +18855,6 @@ function showOnboarding(onComplete) {
       "label": "fix",
       "changes": [
         "fix: **Sentyment negatywny wysyłany był wartością, której formularz Brand24 nie zna.** Lista sentymentów w formularzu to `0` neutralny, `1` pozytywny, **`2` negatywny** — a wtyczka wysyłała przy negatywnym `-1`. Ta wartość pochodzi z filtra wyszukiwania w API, gdzie negatywny **faktycznie** jest `-1`; dwa różne API Brand24 liczą sentyment inaczej i wtyczka miała wpisaną konwencję nie tego, do którego wysyła. Dotyczyło wyłącznie wzmianek dodawanych ręcznie z oceną negatywną — warto sprawdzić w Brand24, czy takie wzmianki mają sentyment, który im nadano"
-      ]
-    },
-    {
-      "version": "0.32.7",
-      "date": "2026-09-15",
-      "label": "fix",
-      "changes": [
-        "fix: **Kropka dostępu mówi teraz prawdę także wtedy, gdy żaden projekt nie jest wybrany.** W 0.32.4 sprawdzanie zaczęło odpalać się samo przy otwarciu panelu, ale przy braku projektu nie odpalało się wcale — kropka zostawała na startowym „● CMS”, a przycisk dodawania mógł zostać aktywny, choć nie było do czego wysłać. Teraz w takiej sytuacji wraca „● Nie wiem” i przycisk jest zablokowany, jak być powinno"
       ]
     }
   ];
@@ -19445,6 +19579,11 @@ function showOnboarding(onComplete) {
       id: 'delete_by_assessment',
       label: '⚠ Usuwanie po assessmencie',
       desc: 'Ryzykowna funkcja — w mapowaniu pojawia się opcja "🗑 Usuń" dla każdego assessmentu. Wzmianki z tym assessmentem są PERMANENTNIE usuwane podczas normalnego przebiegu Start, razem z tagowaniem.',
+    },
+    {
+      id: 'sentiment_by_assessment',
+      label: '◐ Zmiana sentymentu po assessmencie',
+      desc: 'W mapowaniu pojawiają się opcje "◐ Sentyment → negatywny / neutralny / pozytywny". Wzmianki z takim assessmentem dostają ten sentyment w Brand24 podczas normalnego przebiegu Start, razem z tagowaniem. Wzmianki, które już go mają, są pomijane.',
     },
   ];
 

@@ -1,5 +1,24 @@
 [
   {
+    "version": "0.35.0",
+    "date": "2026-09-29",
+    "label": "feat",
+    "changes": [
+      {
+        "type": "feat",
+        "text": "**Zmiana sentymentu z pliku.** Po włączeniu w Dodatkowych funkcjach opcji „◐ Zmiana sentymentu po assessmencie” w mapowaniu ocen pojawiają się trzy akcje: „Sentyment → negatywny”, „Sentyment → neutralny” i „Sentyment → pozytywny”. Wzmianki z tak zmapowaną oceną dostają ten sentyment w Brand24 w zwykłym przebiegu Start, obok tagowania i usuwania. Jeden wiersz może łączyć tag i sentyment, np. `RELEVANT|NEUTRALNY`."
+      },
+      {
+        "type": "feat",
+        "text": "Wzmianki, które już mają docelowy sentyment, są pomijane. Wzmianka, której plik daje dwa różne sentymenty, jest pomijana w całości i zgłaszana w logu. Okno potwierdzenia przed startem podaje liczbę wierszy dla każdej oceny; przebieg testowy niczego nie zapisuje."
+      },
+      {
+        "type": "feat",
+        "text": "Brand24 przyjmuje zmianę sentymentu tylko pojedynczo, ok. 2 s na wzmiankę (pomiar na 2 wywołaniach); wtyczka wysyła 5 zmian naraz. **Funkcja niesprawdzona jeszcze na żywym przebiegu** — zgłaszaj każdy błąd przy zmianie sentymentu."
+      }
+    ]
+  },
+  {
     "version": "0.34.2",
     "date": "2026-09-23",
     "label": "feat",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.36.0
+// @version      0.36.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -172,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.36.0';
+  const VERSION = '0.36.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -18765,6 +18765,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.36.1",
+      "date": "2026-09-30",
+      "label": "feat",
+      "changes": [
+        {
+          "type": "feat",
+          "text": "**Przegląd sentymentu: podstawa werdyktu „ocena marki”.** Nowa wersja promptu sentymentu (v4) ocenia markę, gdy tekst ją ocenia: wzmianka pokazująca markę w dobrym świetle jest pozytywna mimo negatywnego tonu reszty wypowiedzi. Marka tylko wspomniana nie zmienia werdyktu. Wtyczka przyjmuje i wyświetla tę podstawę na kafelku. Nowy prompt trzeba wkleić do biblioteki promptów w miejsce poprzedniego; werdykty zapamiętane dla starego promptu przestają obowiązywać same."
+        }
+      ]
+    },
+    {
       "version": "0.36.0",
       "date": "2026-09-30",
       "label": "feat",
@@ -18963,20 +18974,6 @@ function showOnboarding(onComplete) {
         "fix: **Kolektor nie odpalał się w ogóle na stronie blokady**, bo jej adres nie jest `/search` — czyli dokładnie tam, gdzie alarm jest potrzebny, nie było go kto uruchomić",
         "ui: **Oznaczenia wiersza dostosowane do kampanii.** W kampanii adresy przychodzą z wyszukiwania po nazwie kampanii, więc obecność marki jest przesądzona i badge „Relevant” nic nie wnosił — zastąpiony pytaniem, które ma znaczenie: „ta kampania” albo „poza kampanią”",
         "ui: **Data liczona wobec okresu kampanii, nie wieku artykułu.** Zamiast ostrzeżenia „zbyt stary artykuł” wiersz mówi, czy data mieści się w zakresie podanym przy zbieraniu — z ptaszkiem albo ostrzeżeniem i pełnym zakresem w podpowiedzi. Ostrzeżenie o wieku było w kampanii mylące: zakres dostaje się od klienta, kampania sprzed miesiąca jest w porządku, a artykuł spoza zakresu jest bezużyteczny niezależnie od tego, czy ma tydzień, czy pół roku"
-      ]
-    },
-    {
-      "version": "0.32.9",
-      "date": "2026-09-17",
-      "label": "feat",
-      "changes": [
-        "feat: **Nowa sekcja „Kampanie H&M” w dodawaniu wzmianek.** Kafelek prowadzi do rozjazdu: *Zbieranie* albo *Dodawanie*. Zbieranie to przebieg po wynikach Google — podajesz nazwę kampanii, rynek i zakres dat, a wtyczka sama przechodzi strony wyników i zbiera adresy do koszyka. Dodawanie to znany skan z listy URL-i, ale z własnym promptem i własnymi chipami pod kampanię. Powód: wyszukiwanie stron z newsami o kampanii robiło się dotąd ręcznie per rynek, osobno dla filtra kraju i języka, z przeglądaniem wszystkich stron wyników wzrokiem",
-        "feat: **Domeny marki i marketplace’ów są wykluczane po stronie Google, nie odsiewane po fakcie.** Zmierzone na rynku GR: fraza „H&M STUDIO ESSENTIALS” dawała ~917 wyników, z których pierwsze dwie strony to **wyłącznie** sklep H&M i Facebook; po dodaniu wykluczeń został 1 wynik — i był to poszukiwany artykuł. Odsiewanie dopiero w koszyku kazałoby przejść kilkanaście stron po to, żeby wszystko z nich wyrzucić, a każda strona to osobne zapytanie do wyszukiwarki. Czarna lista jest edytowalna i pełni obie role naraz: wyklucza w zapytaniu i filtruje koszyk",
-        "feat: **Przerwy między stronami wyników zależą od tego, co jest na stronie.** Strona złożona z samych marketplace’ów dostaje 3–6 s (przelot wzrokiem), strona z realnym kandydatem 20–40 s, z 15% szansą na ponad minutę (otwarcie i przeczytanie). Rozkład wychodzi dwumodalny z treści, a nie z generatora liczb — bliżej prawdy niż stała przerwa z jitterem. Kolejność wariantów frazy i trybów filtra jest losowana raz na przebieg, bo powtarzalna sekwencja to sygnał, którego samo tempo nie maskuje",
-        "feat: **Panel postępu na karcie zbierania.** Pokazuje licznik koszyka, nazwę kampanii, numer zadania z paskiem, listę wszystkich wariantów ze stanem (zrobione / w toku / czeka), bieżący krok z liczbą trafień i odliczanie do następnego. Przebieg trwa minutami w karcie, na którą się nie patrzy, więc bez tego nie było jak stwierdzić, czy to koniec, czy pierwszy z sześciu wariantów",
-        "feat: **Po przebiegu jedno kliknięcie „Przejdź do skanowania”.** Robota wraca do **tej** karty panelu, która przebieg odpaliła — przez `window.opener`, więc adresy nie mogą trafić do innego projektu, gdy masz otwarte kilka kart. Panel wkleja adresy z koszyka i startuje skan sam. Gdy panel został w międzyczasie przeładowany, sygnał czeka i zostaje podjęty przy powrocie na kartę",
-        "feat: **Osobny prompt AI dla kampanii, z werdyktem „poza kampanią”.** Warianty frazy skracają nazwę kampanii (pełna nazwa często nie daje na mniejszym rynku żadnych wyników), więc w wynikach ląduje też zwykłe pokrycie marki. Taka strona dostaje teraz własny status zamiast wypadać jako nietrafiona — wzmianka nadaje się do dodania, tylko nie do tej kampanii, a decyzja zostaje po stronie człowieka. Prompt siedzi w `prompts/news_ai_campaign.txt`, do wklejenia raz w ustawieniach AI",
-        "feat: **Chipy kampanii dochodzą do wariantów marki, nie zastępują ich.** Z „H&M STUDIO ESSENTIALS AW26” powstają `studio essentials aw26`, `studio essentials` oraz osobno `aw26` — oznaczenie sezonu jako samodzielny chip, bo wewnątrz dłuższego trafiałoby dopiero przy pełnej frazie ciągiem, a artykuł pisze często „kolekcja H&M Studio na sezon AW26”. Chipy kampanii mają własny worek per rynek, więc ich edycja nie rusza zwykłego monitoringu marki"
       ]
     }
   ];
@@ -24309,7 +24306,7 @@ Tej operacji nie można cofnąć.`)) {
       properties: {
         id:        { type: 'string' },
         sentiment: { type: 'string', enum: ['positive', 'neutral', 'negative'] },
-        basis:     { type: 'string', enum: ['comparison', 'problem', 'event', 'tone', 'dominant', 'balanced'] },
+        basis:     { type: 'string', enum: ['brand', 'comparison', 'problem', 'event', 'tone', 'dominant', 'balanced'] },
         doubts:    { type: 'array', items: { type: 'string', enum: ['sarcasm', 'context', 'language', 'mixed', 'unclear'] } },
         reason:    { type: 'string' },
       },
@@ -24318,7 +24315,7 @@ Tej operacji nie można cofnąć.`)) {
   var SENT_LABEL = { negative: 'negatywny', neutral: 'neutralny', positive: 'pozytywny' };
   var SENT_KEY_OF = { negative: 'N', neutral: 'U', positive: 'P' };
   var SENT_BY_KEY = { n: 'negative', u: 'neutral', p: 'positive' };
-  var SENT_BASIS = { comparison: 'porównanie z marką', problem: 'konkretny problem', event: 'negatywne zdarzenie',
+  var SENT_BASIS = { brand: 'ocena marki', comparison: 'porównanie z marką', problem: 'konkretny problem', event: 'negatywne zdarzenie',
                      tone: 'ton', dominant: 'przeważa jeden ton', balanced: 'tony w równowadze' };
   var SENT_DOUBT = { sarcasm: 'sarkazm?', context: 'brak kontekstu', language: 'język', mixed: 'mieszany', unclear: 'niejasne' };
   var SENT_GROUPS = [

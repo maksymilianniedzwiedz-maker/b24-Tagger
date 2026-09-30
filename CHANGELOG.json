@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.36.1",
+    "date": "2026-09-30",
+    "label": "feat",
+    "changes": [
+      {
+        "type": "feat",
+        "text": "**Przegląd sentymentu: podstawa werdyktu „ocena marki”.** Nowa wersja promptu sentymentu (v4) ocenia markę, gdy tekst ją ocenia: wzmianka pokazująca markę w dobrym świetle jest pozytywna mimo negatywnego tonu reszty wypowiedzi. Marka tylko wspomniana nie zmienia werdyktu. Wtyczka przyjmuje i wyświetla tę podstawę na kafelku. Nowy prompt trzeba wkleić do biblioteki promptów w miejsce poprzedniego; werdykty zapamiętane dla starego promptu przestają obowiązywać same."
+      }
+    ]
+  },
+  {
     "version": "0.36.0",
     "date": "2026-09-30",
     "label": "feat",

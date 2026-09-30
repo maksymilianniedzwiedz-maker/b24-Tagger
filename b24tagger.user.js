@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.35.0
+// @version      0.36.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -172,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.35.0';
+  const VERSION = '0.36.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -223,6 +223,12 @@
   // Równoległość setSentiment. Jedno wywołanie trwa 1,6–2,0 s, a mutacja nie ma wersji hurtowej;
   // próg 429 dla niej niezmierzony, więc ostrożnie (BRAND24_NETWORK.md §7a).
   const SENTIMENT_CONCURRENCY = 5;
+  // Para modeli przeglądu sentymentu: dwóch dostawców, zgodna w 87,6% przykładów z 81,7% trafności
+  // zgodnych (SENTIMENT.md §7.2). Dwa modele jednego dostawcy zgadzają się częściej i mylą razem.
+  const SENT_DEFAULT_MODELS = ['gemini-3.8-flash', 'gpt-6-luna'];
+  // Bez Claude'a: jego gałąź w _aiBuildRequest wymusza narzędzie bez myślenia, a tej konfiguracji
+  // nikt nie mierzył (pomiar Opusa w SENTIMENT.md §4.1 szedł przez output_config.format).
+  const SENT_PROVIDERS = ['google', 'openai'];
   const HEALTH_CHECK_INTERVAL = 30000;
   const ACTION_TIMEOUT_WARN = 10000;
   const RETRY_DELAYS = [2000, 4000, 8000, 12000, 20000]; // 5 prób — Brand24 API czasem losowo failuje
@@ -536,6 +542,9 @@
     s.news.model = _aiMigrateModel(s.news.model);
     s.tagging.model = _aiMigrateModel(s.tagging.model);
     s.custom.model = _aiMigrateModel(s.custom.model);
+    if (!s.sentiment) s.sentiment = {};
+    if (!s.sentiment.modelA) s.sentiment.modelA = SENT_DEFAULT_MODELS[0];
+    if (!s.sentiment.modelB) s.sentiment.modelB = SENT_DEFAULT_MODELS[1];
     if (!s.prompts) s.prompts = [];
     return s;
   }
@@ -800,12 +809,16 @@
 
   // Pełne (nie strumieniowe) wywołanie przez GM_xmlhttpRequest. Resolve: { text, json, usage }.
   // Reject: Error z `.status` (401/403/404/429/5xx) albo bez (sieć, timeout, parsowanie).
+  // `reasoning: 'default'` zostawia modelowi jego domyślne myślenie: bez wariantów z _aiWarianty
+  // i bez zapamiętywania wariantu, który obowiązuje pozostałe funkcje. Potrzebuje tego ocena
+  // sentymentu — ograniczone myślenie zmienia tam 11–15% werdyktów (SENTIMENT.md §4.2).
   function _aiCall(opts) {
     var provider = _aiProvider(opts.model);
     var key = _aiKeyFor(opts.model);
     if (!key) return Promise.reject(new Error('Brak klucza API ' + AI_PROVIDER_LABEL[provider] + ' (Ustawienia → AI)'));
-    var warianty = _aiWarianty(provider, opts.model);
-    var start = _aiWariantModelu[opts.model] || 0;
+    var domyslne = opts.reasoning === 'default';
+    var warianty = domyslne ? [{}] : _aiWarianty(provider, opts.model);
+    var start = domyslne ? 0 : (_aiWariantModelu[opts.model] || 0);
     return new Promise(function(resolve, reject) {
       function proba(i) {
         var req = _aiBuildRequest(Object.assign({}, opts, { wariant: warianty[i] }), key);
@@ -819,7 +832,7 @@
                 proba(i + 1); return;
               }
               if (status < 200 || status >= 300) { reject(_aiStatusError(status, resp.responseText)); return; }
-              _aiWariantModelu[opts.model] = i;
+              if (!domyslne) _aiWariantModelu[opts.model] = i;
               var data = JSON.parse(resp.responseText);
               var out = _aiReadResponse(provider, data, opts.schema && opts.schema.name);
               out.usage = _aiUsage(provider, data);
@@ -885,7 +898,8 @@
   // Opcje selecta modelu: Claude (dwa znane modele zawsze, bo tak było przed dostawcami) +
   // to, co zwróciły API dostawców, do których jest klucz. Bieżąca wartość zawsze jest na
   // liście — inaczej select pokazałby pierwszą opcję, a zapisany model byłby inny.
-  function _aiModelOptionsHtml(current, s) {
+  // `only` — lista dostawców do pokazania (przegląd sentymentu: SENT_PROVIDERS); bez niej wszyscy.
+  function _aiModelOptionsHtml(current, s, only) {
     s = s || _aiGetSettings();
     var cache = lsGet(AI_MODELS_LS, {}) || {};
     var groups = {
@@ -906,7 +920,7 @@
     var all = [].concat(groups.anthropic, groups.openai, groups.google);
     if (current && !all.some(function(m) { return m.id === current; })) groups[_aiProvider(current)].unshift({ id: current, label: '' });
     return ['anthropic', 'openai', 'google'].map(function(p) {
-      if (!groups[p].length) return '';
+      if (!groups[p].length || (only && only.indexOf(p) === -1)) return '';
       return '<optgroup label="' + AI_PROVIDER_LABEL[p] + '">' + groups[p].map(function(m) {
         return '<option value="' + _escHtml(m.id) + '"' + (m.id === current ? ' selected' : '') + '>' +
           _escHtml(m.label && m.label !== m.id ? m.label + ' (' + m.id + ')' : m.id) + '</option>';
@@ -2046,8 +2060,9 @@
     return data.getMentions;
   }
 
-  // getMentions z pełnymi polami potrzebnymi do tagowania AI (treść/tytuł/kategoria)
-  async function getMentionsForTagging(projectId, dateFrom, dateTo, filters, page) {
+  // getMentions z pełnymi polami potrzebnymi do tagowania AI (treść/tytuł/kategoria).
+  // `sentiment` tylko na żądanie przeglądu sentymentu — zapytanie AI Tagowania zostaje bez zmian.
+  async function getMentionsForTagging(projectId, dateFrom, dateTo, filters, page, opts) {
     const variables = {
       projectId,
       dateRange: { from: dateFrom, to: dateTo },
@@ -2055,6 +2070,7 @@
       page: page || 1,
       order: 0,
     };
+    const sentimentField = opts && opts.withSentiment ? ' sentiment' : '';
     const data = await gqlRetry('getMentions', variables, `query getMentions(
       $projectId: Int!, $dateRange: DateRangeInput!,
       $filters: MentionFilterInput, $page: Int, $order: Int
@@ -2063,7 +2079,7 @@
                   filters: $filters, page: $page, order: $order) {
         count
         results {
-          id openUrl url createdDate title content pageCategory
+          id openUrl url createdDate title content pageCategory${sentimentField}
           host { name }
           author { name }
           tags { id title }
@@ -2164,9 +2180,9 @@
   }
 
   // Pobiera wzmianki do tagowania (paginacja z limitem bezpieczeństwa); zwraca { results, total, truncated }.
-  async function _aiTagFetchMentions(projectId, dateFrom, dateTo, filters, maxMentions) {
+  async function _aiTagFetchMentions(projectId, dateFrom, dateTo, filters, maxMentions, opts) {
     var cap = maxMentions || 3000;
-    var first = await getMentionsForTagging(projectId, dateFrom, dateTo, filters, 1);
+    var first = await getMentionsForTagging(projectId, dateFrom, dateTo, filters, 1, opts);
     if (!first) return { results: [], total: 0, truncated: false };
     var total = first.count || 0;
     var results = (first.results || []).slice();
@@ -2179,7 +2195,7 @@
     for (var i = 0; i < pages.length; i += 10) {
       var batch = pages.slice(i, i + 10);
       var resArr = await Promise.all(batch.map(function(pg) {
-        return getMentionsForTagging(projectId, dateFrom, dateTo, filters, pg);
+        return getMentionsForTagging(projectId, dateFrom, dateTo, filters, pg, opts);
       }));
       resArr.forEach(function(r) { if (r && r.results) results.push.apply(results, r.results); });
     }
@@ -5278,6 +5294,97 @@
       #b24t-news-side-tab:hover { background: var(--b24t-bg-section-c); transform: scale(1.06); }
       #b24t-news-side-tab.active { background: #6366f1; color: #fff; border-color: #4f46e5; }
       #b24t-news-side-tab.active:hover { background: #4f46e5; }
+      /* ── PRZEGLAD SENTYMENTU: okno z kafelkami ──
+         Ruch jak w reszcie panelu (NEWS_CARD.md 6a): skoki J/K, zmiana fokusu i podmiana kafelka
+         bez animacji, bo ida setki razy na przeglad. */
+      #b24t-sent-overlay {
+        position: fixed; inset: 0; z-index: 2147483646; display: none;
+        align-items: center; justify-content: center;
+        background: rgba(0,0,0,0.55); backdrop-filter: blur(3px);
+        font-family: 'Geist','Segoe UI',system-ui,-apple-system,sans-serif;
+      }
+      #b24t-sent-win {
+        width: min(1180px, 96vw); height: 92vh; display: flex; flex-direction: column;
+        background: var(--b24t-bg); color: var(--b24t-text);
+        border: 1px solid var(--b24t-border); border-radius: 14px; box-shadow: var(--b24t-shadow-h);
+        animation: b24t-slidein var(--b24t-dur-normal) var(--b24t-ease-out);
+      }
+      .b24t-sent-head {
+        display: flex; align-items: center; gap: 10px; padding: 12px 18px; flex-shrink: 0;
+        background: var(--b24t-accent-grad); border-radius: 14px 14px 0 0; color: #fff;
+      }
+      .b24t-sent-head .t { font-size: 14px; font-weight: 700; }
+      .b24t-sent-head .sub { font-size: 11px; opacity: 0.85; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .b24t-sent-head button {
+        background: rgba(255,255,255,0.22); border: 1px solid rgba(255,255,255,0.45); color: #fff;
+        border-radius: 6px; font-size: 11px; padding: 5px 10px; cursor: pointer; font-family: inherit; flex-shrink: 0;
+      }
+      .b24t-sent-testbadge {
+        font-size: 10px; font-weight: 700; letter-spacing: 0.04em; padding: 3px 8px; border-radius: 99px;
+        background: #fef3c7; color: #78350f; flex-shrink: 0;
+      }
+      .b24t-sent-summary { padding: 10px 18px; border-bottom: 1px solid var(--b24t-border-sub); font-size: 12px; color: var(--b24t-text-muted); flex-shrink: 0; line-height: 1.6; }
+      .b24t-sent-summary b { color: var(--b24t-text); }
+      .b24t-sent-summary button { font-size: 11px; padding: 3px 10px; border-radius: 6px; border: 1px solid var(--b24t-border); background: transparent; color: var(--b24t-text-muted); cursor: pointer; font-family: inherit; margin-left: 8px; }
+      .b24t-sent-bar { display: grid; grid-template-columns: 170px 1fr auto; align-items: center; gap: 10px; font-size: 11px; margin-top: 4px; }
+      .b24t-sent-bar .track { height: 6px; border-radius: 99px; background: var(--b24t-bg-input); overflow: hidden; }
+      .b24t-sent-bar .fill { height: 100%; background: var(--b24t-accent-grad); border-radius: 99px; transition: width var(--b24t-dur-quick) var(--b24t-ease-out); }
+      .b24t-sent-list { flex: 1; overflow-y: auto; padding: 0 18px 18px; }
+      .b24t-sent-empty { padding: 40px 0; text-align: center; font-size: 13px; color: var(--b24t-text-faint); }
+      .b24t-sent-group-h {
+        position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 10px;
+        padding: 12px 0 8px; margin-bottom: 8px; background: var(--b24t-bg); border-bottom: 1px solid var(--b24t-border-sub);
+      }
+      .b24t-sent-group-h .n { font-size: 13px; font-weight: 700; color: var(--b24t-text); flex-shrink: 0; }
+      .b24t-sent-group-h .d { font-size: 11px; color: var(--b24t-text-faint); flex: 1; min-width: 0; }
+      .b24t-sent-group-h button { font-size: 11px; padding: 4px 11px; border-radius: 7px; border: 1px solid var(--b24t-border); background: transparent; color: var(--b24t-text-muted); cursor: pointer; font-family: inherit; flex-shrink: 0; }
+      .b24t-sent-group-h button.primary { background: var(--b24t-primary); border-color: var(--b24t-primary); color: #fff; font-weight: 600; }
+      .b24t-sent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 10px; margin-bottom: 18px; }
+      .b24t-sent-tile {
+        border: 1px solid var(--b24t-border); border-radius: 10px; background: var(--b24t-bg-elevated);
+        padding: 10px 12px; display: flex; flex-direction: column; gap: 7px; outline: none;
+        scroll-margin-top: 52px; content-visibility: auto; contain-intrinsic-size: auto 230px;
+      }
+      .b24t-sent-tile.is-focus { border-color: var(--b24t-primary); box-shadow: 0 0 0 2px var(--b24t-primary-glow); }
+      .b24t-sent-tile.is-done .b24t-sent-text, .b24t-sent-tile.is-done .b24t-sent-verdicts { opacity: 0.55; }
+      .b24t-sent-meta { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--b24t-text-faint); min-width: 0; }
+      .b24t-sent-meta .src { font-weight: 700; color: var(--b24t-text-muted); flex-shrink: 0; }
+      .b24t-sent-meta .au { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+      .b24t-sent-meta a { color: var(--b24t-primary); text-decoration: none; flex-shrink: 0; }
+      .b24t-sent-meta .cur { margin-left: auto; flex-shrink: 0; }
+      .b24t-sent-text {
+        font-size: 12.5px; line-height: 1.5; color: var(--b24t-text); word-break: break-word; cursor: pointer;
+        display: -webkit-box; -webkit-line-clamp: 7; -webkit-box-orient: vertical; overflow: hidden;
+      }
+      .b24t-sent-text.is-open { display: block; }
+      .b24t-sent-verdicts { display: flex; flex-direction: column; gap: 5px; padding: 7px 9px; border-radius: 8px; background: var(--b24t-bg-deep); }
+      .b24t-sent-v { font-size: 11px; line-height: 1.45; color: var(--b24t-text-muted); }
+      .b24t-sent-v .m { font-weight: 700; color: var(--b24t-text-faint); margin-right: 5px; }
+      .b24t-sent-v .b { color: var(--b24t-text-faint); margin-left: 4px; }
+      .b24t-sent-v .r { display: block; margin-top: 1px; }
+      .b24t-sent-v .e { color: #f59e0b; }
+      .b24t-sent-chip { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 99px; }
+      .b24t-sent-chip.s-negative { background: rgba(239,68,68,0.14); color: #ef4444; }
+      .b24t-sent-chip.s-neutral  { background: rgba(107,114,128,0.16); color: var(--b24t-text-muted); }
+      .b24t-sent-chip.s-positive { background: rgba(34,197,94,0.15); color: #22c55e; }
+      .b24t-sent-doubt { display: inline-block; font-size: 9.5px; padding: 0 6px; margin-left: 4px; border-radius: 99px; border: 1px solid rgba(245,158,11,0.55); color: #f59e0b; }
+      .b24t-sent-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+      .b24t-sent-actions button {
+        font-size: 11px; padding: 4px 9px; border-radius: 7px; border: 1px solid var(--b24t-border);
+        background: var(--b24t-bg); color: var(--b24t-text-muted); cursor: pointer; font-family: inherit;
+        transition: background var(--b24t-dur-instant), border-color var(--b24t-dur-instant), color var(--b24t-dur-instant);
+      }
+      .b24t-sent-actions button:hover { border-color: var(--b24t-border-strong); }
+      .b24t-sent-actions button.is-proposed { border-color: var(--b24t-primary); color: var(--b24t-primary); font-weight: 700; }
+      .b24t-sent-actions button.is-chosen { background: var(--b24t-primary); border-color: var(--b24t-primary); color: #fff; }
+      .b24t-sent-actions button:disabled { opacity: 0.5; cursor: default; }
+      .b24t-sent-actions kbd, .b24t-sent-foot kbd { font-family: inherit; font-size: 9.5px; font-weight: 700; opacity: 0.7; margin-right: 4px; }
+      .b24t-sent-status { font-size: 11px; color: var(--b24t-text-faint); margin-left: auto; text-align: right; }
+      .b24t-sent-status.ok { color: #22c55e; }
+      .b24t-sent-status.err { color: #ef4444; }
+      .b24t-sent-status.busy { color: #a78bfa; }
+      .b24t-sent-status a { color: var(--b24t-primary); cursor: pointer; margin-left: 7px; text-decoration: underline; }
+      .b24t-sent-foot { padding: 8px 18px; border-top: 1px solid var(--b24t-border-sub); font-size: 10.5px; color: var(--b24t-text-faint); flex-shrink: 0; }
       /* ── NETWORK MONITOR SIDE TAB ── */
       #b24t-nm-tab {
         position: fixed; right: 0; top: calc(50% + 200px);
@@ -5660,6 +5767,7 @@
         <button class="b24t-tab b24t-tab-active" data-tab="main">📄 Plik</button>
         <button class="b24t-tab" data-tab="quicktag">⚡ Quick Tag</button>
         <button class="b24t-tab" data-tab="aitag" id="b24t-aitag-tab-btn" style="display:none;">🤖 AI Tag</button>
+        <button class="b24t-tab" data-tab="sentiment" id="b24t-sent-tab-btn" style="display:none;" title="Przegląd sentymentu">◐ Sentyment</button>
         <button class="b24t-tab" data-tab="delete">🗑 Quick Delete</button>
         <button class="b24t-tab" data-tab="history">📋 Historia</button>
         <button class="b24t-tab" data-tab="notify">🔔 Powiadomienia</button>
@@ -5863,6 +5971,9 @@
 
       <!-- AI TAG TAB (injected by JS) -->
       <div id="b24t-aitag-tab-placeholder"></div>
+
+      <!-- SENTYMENT TAB (injected by JS) -->
+      <div id="b24t-sent-tab-placeholder"></div>
 
       <!-- HISTORY TAB (injected by JS) -->\n      <div id=\"b24t-history-tab-placeholder\"></div>\n\n      <!-- NEWS TAB (injected by JS) -->\n      <div id="b24t-news-tab-placeholder"></div>
 
@@ -18654,6 +18765,25 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.36.0",
+      "date": "2026-09-30",
+      "label": "feat",
+      "changes": [
+        {
+          "type": "feat",
+          "text": "**Przegląd sentymentu w oknie z kafelkami.** Nowa karta „◐ Sentyment” w panelu, włączana w Ustawienia → AI → Przegląd sentymentu. Pobiera negatywy projektu z zakresu dat albo bieżący widok Brand24 i ocenia je dwoma modelami AI (domyślnie gemini-3.8-flash i gpt-6-luna) promptem z biblioteki. Każdy kafelek pokazuje treść wzmianki oraz werdykt, uzasadnienie i wątpliwości obu modeli."
+        },
+        {
+          "type": "feat",
+          "text": "Kafelki są w trzech grupach: „Do decyzji” (modele się różnią, któryś nie ocenił albo zgłasza wątpliwość), „Zgodna zmiana” (oba proponują tę samą zmianę; zapis hurtowy jednym przyciskiem) i „Bez zmian” (zwinięta). Wybór sentymentu na kafelku zapisuje się w Brand24 od razu, bez pliku, 5 zmian naraz; każdą zmianę można cofnąć. Klawisze: J/K — następny / poprzedni kafelek, N/U/P — negatywny / neutralny / pozytywny, Z — cofnij, Esc — zamknij."
+        },
+        {
+          "type": "feat",
+          "text": "Werdykty są zapamiętywane dla wzmianki, modelu i promptu, więc ponowna ocena tego samego zakresu nie jest płatna drugi raz. Okno pokazuje koszt oceny i eksportuje do CSV dziennik decyzji z werdyktami modeli. W trybie Test Run zmiany sentymentu trafiają tylko do logu, a ocena modeli jest płatna jak zwykle. **Funkcja niesprawdzona jeszcze na żywym przebiegu.**"
+        }
+      ]
+    },
+    {
       "version": "0.35.0",
       "date": "2026-09-29",
       "label": "feat",
@@ -18847,14 +18977,6 @@ function showOnboarding(onComplete) {
         "feat: **Po przebiegu jedno kliknięcie „Przejdź do skanowania”.** Robota wraca do **tej** karty panelu, która przebieg odpaliła — przez `window.opener`, więc adresy nie mogą trafić do innego projektu, gdy masz otwarte kilka kart. Panel wkleja adresy z koszyka i startuje skan sam. Gdy panel został w międzyczasie przeładowany, sygnał czeka i zostaje podjęty przy powrocie na kartę",
         "feat: **Osobny prompt AI dla kampanii, z werdyktem „poza kampanią”.** Warianty frazy skracają nazwę kampanii (pełna nazwa często nie daje na mniejszym rynku żadnych wyników), więc w wynikach ląduje też zwykłe pokrycie marki. Taka strona dostaje teraz własny status zamiast wypadać jako nietrafiona — wzmianka nadaje się do dodania, tylko nie do tej kampanii, a decyzja zostaje po stronie człowieka. Prompt siedzi w `prompts/news_ai_campaign.txt`, do wklejenia raz w ustawieniach AI",
         "feat: **Chipy kampanii dochodzą do wariantów marki, nie zastępują ich.** Z „H&M STUDIO ESSENTIALS AW26” powstają `studio essentials aw26`, `studio essentials` oraz osobno `aw26` — oznaczenie sezonu jako samodzielny chip, bo wewnątrz dłuższego trafiałoby dopiero przy pełnej frazie ciągiem, a artykuł pisze często „kolekcja H&M Studio na sezon AW26”. Chipy kampanii mają własny worek per rynek, więc ich edycja nie rusza zwykłego monitoringu marki"
-      ]
-    },
-    {
-      "version": "0.32.8",
-      "date": "2026-09-15",
-      "label": "fix",
-      "changes": [
-        "fix: **Sentyment negatywny wysyłany był wartością, której formularz Brand24 nie zna.** Lista sentymentów w formularzu to `0` neutralny, `1` pozytywny, **`2` negatywny** — a wtyczka wysyłała przy negatywnym `-1`. Ta wartość pochodzi z filtra wyszukiwania w API, gdzie negatywny **faktycznie** jest `-1`; dwa różne API Brand24 liczą sentyment inaczej i wtyczka miała wpisaną konwencję nie tego, do którego wysyła. Dotyczyło wyłącznie wzmianek dodawanych ręcznie z oceną negatywną — warto sprawdzić w Brand24, czy takie wzmianki mają sentyment, który im nadano"
       ]
     }
   ];
@@ -19804,6 +19926,23 @@ function showOnboarding(onComplete) {
               '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Pokazuje kartę 🤖 AI Tag — ocena i tagowanie wzmianek przez model AI</div>' +
             '</div>' +
           '</label>' +
+          '<div style="height:1px;background:var(--b24t-border-sub);margin:8px 0 10px;"></div>' +
+          '<div style="font-size:10px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:7px;">Przegląd sentymentu</div>' +
+          [['A', 'Model 1:'], ['B', 'Model 2:']].map(function(x) {
+            return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:7px;">' +
+                '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">' + x[1] + '</span>' +
+                '<select id="b24t-ai-model-sent' + x[0] + '" style="flex:1;min-width:0;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:#fff;color:#333;font-size:11px;font-family:inherit;color-scheme:light;"></select>' +
+              '</div>' +
+              '<div id="b24t-ai-model-warn-sent' + x[0] + '" style="font-size:10px;color:#f59e0b;margin:-4px 0 8px 70px;"></div>';
+          }).join('') +
+          '<div style="font-size:10px;color:var(--b24t-text-faint);margin:-2px 0 8px 70px;">Dwa modele różnych dostawców (OpenAI i Gemini); wzmianka, co do której się różnią, trafia do decyzji. Modele oceniają z włączonym myśleniem.</div>' +
+          '<label style="display:flex;gap:10px;align-items:center;cursor:pointer;padding:4px 0;margin-bottom:8px;">' +
+            '<input type="checkbox" id="b24t-ai-sent-enabled" style="accent-color:var(--b24t-primary);width:14px;height:14px;flex-shrink:0;cursor:pointer;">' +
+            '<div>' +
+              '<div style="font-size:12px;font-weight:600;color:var(--b24t-text);">Karta ◐ Sentyment w panelu</div>' +
+              '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Ocena wzmianek dwoma modelami; zmiany zatwierdzane w oknie z kafelkami zapisują się od razu w Brand24</div>' +
+            '</div>' +
+          '</label>' +
           '<button id="b24t-ai-open-prompts" style="width:100%;box-sizing:border-box;padding:7px 12px;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:8px;cursor:pointer;font-family:inherit;font-size:11px;display:flex;align-items:center;justify-content:space-between;">📚 Biblioteka promptów<span style="font-size:10px;opacity:0.6;">→</span></button>' +
         '</div>' + // koniec bloku Ustawienia AI
         '</div>' + // koniec panelu AI
@@ -19858,10 +19997,35 @@ function showOnboarding(onComplete) {
           var warn = document.getElementById('b24t-ai-model-warn-' + pair[0]);
           if (warn) warn.textContent = _aiKeyFor(model, cfg) ? '' : '⚠ Brak klucza ' + AI_PROVIDER_LABEL[_aiProvider(model)] + ' — ten model nie ruszy.';
         });
+        ['A', 'B'].forEach(function(x) {
+          var model = cfg.sentiment['model' + x];
+          var sel = document.getElementById('b24t-ai-model-sent' + x);
+          if (sel) sel.innerHTML = _aiModelOptionsHtml(model, cfg, SENT_PROVIDERS);
+          var warn = document.getElementById('b24t-ai-model-warn-sent' + x);
+          if (warn) warn.textContent = _aiKeyFor(model, cfg) ? '' : '⚠ Brak klucza ' + AI_PROVIDER_LABEL[_aiProvider(model)] + ' — ten model nie ruszy.';
+        });
       }
       renderModelSelects();
       if (newsEnabledCb) newsEnabledCb.checked = !!(s.news && s.news.enabled);
       if (taggingEnabledCb) taggingEnabledCb.checked = !!(s.tagging && s.tagging.enabled);
+      var sentEnabledCb = document.getElementById('b24t-ai-sent-enabled');
+      if (sentEnabledCb) {
+        sentEnabledCb.checked = !!s.sentiment.enabled;
+        sentEnabledCb.addEventListener('change', function() {
+          var cfg = _aiGetSettings();
+          cfg.sentiment.enabled = sentEnabledCb.checked; _aiSaveSettings(cfg);
+          _sentSyncTabVisibility();
+        });
+      }
+      ['A', 'B'].forEach(function(x) {
+        var sel = document.getElementById('b24t-ai-model-sent' + x);
+        if (!sel) return;
+        sel.addEventListener('change', function() {
+          var cfg = _aiGetSettings();
+          cfg.sentiment['model' + x] = sel.value; _aiSaveSettings(cfg);
+          renderModelSelects();
+        });
+      });
 
       ['anthropic', 'openai', 'google'].forEach(function(p) {
         var input = document.getElementById('b24t-ai-key-' + p);
@@ -24107,6 +24271,906 @@ Tej operacji nie można cofnąć.`)) {
   }
 
   // ───────────────────────────────────────────
+  // PRZEGLĄD SENTYMENTU
+  // ───────────────────────────────────────────
+  // Dwa modele różnych dostawców oceniają wydźwięk wzmianek promptem z biblioteki, człowiek
+  // zatwierdza zmiany w oknie z kafelkami. Zatwierdzenie idzie od razu do Brand24
+  // (setMentionSentiment), bez pliku. Kryteria, pomiary i pułapki: Tagger/SENTIMENT.md §9.
+
+  var SENT_BATCH = 20;              // wzmianek w partii, jak w pomiarze (SENTIMENT.md §4)
+  var SENT_AI_CONCURRENCY = 8;      // partii w locie na model
+  // Limit odpowiedzi; myślenie liczy się do niego. luna: 16 000 bez uciętej partii w 96 (§5.2, §7).
+  // Gemini zużyło w jednej partii 15 363 tokeny na samo myślenie (§5.2), więc dostaje zapas.
+  // Płatne są tokeny zużyte, nie limit.
+  var SENT_MAX_TOKENS = { google: 32000, openai: 16000 };
+  // Tyle odrzuceń 400 bez żadnej udanej odpowiedzi modelu kończy ocenę nim: to już błąd zapytania,
+  // nie treść jednej wzmianki.
+  var SENT_MAX_REJECTED = 5;
+  var SENT_TIMEOUT = 180000;        // najdłuższa partia Gemini z myśleniem w pomiarze: 114 s
+  var SENT_MAX_MENTIONS = 3000;     // Toyota ma ~1 100 negatywów w miesiącu (§3)
+  var SENT_TEXT_MAX = 3000;
+  var SENT_VERDICTS_KEEP_DAYS = 60;
+  var SENT_DECISIONS_KEEP_DAYS = 365;
+  // Pamięć Tampermonkeya, nie localStorage: werdykty miesiąca to ~0,5 MB, a oba panele Brand24
+  // (.com i .pl) mają osobne localStorage.
+  var SENT_GM_VERDICTS = 'b24t_sent_verdicts';    // { "id|model|kontekst": { s, b, d, r, at } }
+  var SENT_GM_DECISIONS = 'b24t_sent_decisions';  // { id: { at, pid, url, from, to, a, b } }
+  var SENT_LS_PROJECT = 'b24t_sent_project_cfg';  // { pid: { brand, source } }
+  // $ za mln tokenów wejścia i wyjścia, cennik z 2026-09-30. Model spoza listy — bez kwoty.
+  var SENT_PRICE = { 'gemini-3.8-flash': [0.75, 3.75], 'gpt-6-luna': [0.10, 0.50] };
+
+  // Kontrakt z sekcją OUTPUT promptu `prompts/sentiment_review.txt`. `id` to klucz w partii
+  // („1”…„20”), nie ID Brand24 — modele przekręcają długie ID (SENTIMENT.md §5.1).
+  var SENT_SCHEMA = {
+    type: 'object', additionalProperties: false, required: ['results'],
+    properties: { results: { type: 'array', items: {
+      type: 'object', additionalProperties: false,
+      required: ['id', 'sentiment', 'basis', 'doubts', 'reason'],
+      properties: {
+        id:        { type: 'string' },
+        sentiment: { type: 'string', enum: ['positive', 'neutral', 'negative'] },
+        basis:     { type: 'string', enum: ['comparison', 'problem', 'event', 'tone', 'dominant', 'balanced'] },
+        doubts:    { type: 'array', items: { type: 'string', enum: ['sarcasm', 'context', 'language', 'mixed', 'unclear'] } },
+        reason:    { type: 'string' },
+      },
+    } } },
+  };
+  var SENT_LABEL = { negative: 'negatywny', neutral: 'neutralny', positive: 'pozytywny' };
+  var SENT_KEY_OF = { negative: 'N', neutral: 'U', positive: 'P' };
+  var SENT_BY_KEY = { n: 'negative', u: 'neutral', p: 'positive' };
+  var SENT_BASIS = { comparison: 'porównanie z marką', problem: 'konkretny problem', event: 'negatywne zdarzenie',
+                     tone: 'ton', dominant: 'przeważa jeden ton', balanced: 'tony w równowadze' };
+  var SENT_DOUBT = { sarcasm: 'sarkazm?', context: 'brak kontekstu', language: 'język', mixed: 'mieszany', unclear: 'niejasne' };
+  var SENT_GROUPS = [
+    { id: 'decide', name: 'Do decyzji', desc: 'modele się różnią, któryś nie ocenił albo proponowana zmiana ma wątpliwość' },
+    { id: 'change', name: 'Zgodna zmiana', desc: 'oba modele proponują tę samą zmianę, bez wątpliwości' },
+    { id: 'keep',   name: 'Bez zmian', desc: 'oba modele zgadzają się z sentymentem w Brand24' },
+  ];
+  // Kanał jak w pomiarze („X (Twitter)”, „Facebook”…). getMentions nie daje nazwy kategorii,
+  // więc strona spoza tych sieci idzie nazwą domeny (SENTIMENT.md §9.1).
+  var SENT_SOURCES = [
+    [/(^|\.)(twitter|x)\.com$/, 'X (Twitter)'], [/(^|\.)facebook\.com$/, 'Facebook'],
+    [/(^|\.)instagram\.com$/, 'Instagram'], [/(^|\.)tiktok\.com$/, 'TikTok'],
+    [/(^|\.)(youtube\.com|youtu\.be)$/, 'Video'],
+  ];
+
+  var sentState = {
+    run: null, running: false, stop: false,
+    focusId: null, openText: {}, keepOpen: false,
+    queue: [], inFlight: 0,
+  };
+
+  function _sentProjectCfg(pid) {
+    return (lsGet(SENT_LS_PROJECT, {}) || {})[String(pid)] || {};
+  }
+  function _sentSetProjectCfg(pid, patch) {
+    var all = lsGet(SENT_LS_PROJECT, {}) || {};
+    all[String(pid)] = Object.assign({}, all[String(pid)] || {}, patch);
+    lsSet(SENT_LS_PROJECT, all);
+  }
+
+  // Negatywy jak filtr panelu: se [-1] (BRAND24_NETWORK.md §5), reszta jak domyślny widok.
+  function _sentNegativeFilters() {
+    return { va: 1, rt: [], se: [-1], vi: null, gr: [], sq: '', do: '', au: '', lem: false,
+             ctr: [], nctr: false, is: [0, 10], tp: null, lang: [], nlang: false };
+  }
+
+  // Tytuł bywa początkiem treści (X, Facebook) — wtedy idzie sama treść, bez powtórzenia.
+  function _sentText(m) {
+    var t = String(m.title || '').replace(/\s+/g, ' ').trim();
+    var c = String(m.content || '').replace(/\s+/g, ' ').trim();
+    var text = !t || c.indexOf(t) === 0 ? c : !c ? t : t + ' — ' + c;
+    return text.slice(0, SENT_TEXT_MAX);
+  }
+  function _sentSource(m) {
+    var h = String((m.host && m.host.name) || '').toLowerCase().replace(/^www\./, '');
+    for (var i = 0; i < SENT_SOURCES.length; i++) if (SENT_SOURCES[i][0].test(h)) return SENT_SOURCES[i][1];
+    return h || 'Inne';
+  }
+  function _sentItem(m) {
+    var orig = SENT_LABEL[String(m.sentiment || '').toLowerCase()] ? String(m.sentiment).toLowerCase() : null;
+    return {
+      id: String(m.id), url: m.openUrl || m.url || '',
+      date: String(m.createdDate || '').replace('T', ' ').slice(0, 16),
+      source: _sentSource(m), author: (m.author && m.author.name) || '', text: _sentText(m),
+      orig: orig,     // sentyment w Brand24 w chwili pobrania — punkt odniesienia grup i cofania
+      now: orig,      // sentyment w Brand24 po zapisach z tego okna
+      v: {},          // { a, b }: { s, b, d, r } albo { err }
+      dec: null,      // { to, status, at, err, revertFailed }
+    };
+  }
+
+  function _sentHash(str) {
+    var h = 5381;
+    for (var i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36);
+  }
+  function _sentGmRead(key) {
+    try { return JSON.parse(GM_getValue(key, '{}')) || {}; } catch(e) { return {}; }
+  }
+  function _sentGmWrite(key, map, keepDays) {
+    var cut = Date.now() - keepDays * 86400000;
+    Object.keys(map).forEach(function(k) { if (!(map[k] && map[k].at > cut)) delete map[k]; });
+    try { GM_setValue(key, JSON.stringify(map)); }
+    catch(e) { addLog('⚠ Przegląd sentymentu: nie zapisano pamięci ' + key + ' (' + e.message + ')', 'warn'); }
+  }
+
+  function _sentPayload(brand, items) {
+    return JSON.stringify({ brand: brand, mentions: items.map(function(it, i) {
+      return { id: String(i + 1), source: it.source, text: it.text };
+    }) });
+  }
+
+  // Werdykty partii w kolejności `items`. Klucz spoza partii, powtórzony klucz i sentyment spoza
+  // schematu odrzucamy; kolejność odpowiedzi nigdy nie jest kluczem (SENTIMENT.md §5.1).
+  function _sentMapResults(items, json) {
+    var out = items.map(function() { return null; });
+    var list = json && Array.isArray(json.results) ? json.results : [];
+    list.forEach(function(r) {
+      var idx = r ? Number(r.id) - 1 : -1;
+      if (!r || String(idx + 1) !== r.id || idx < 0 || idx >= items.length || out[idx] || !SENT_LABEL[r.sentiment]) return;
+      out[idx] = {
+        s: r.sentiment,
+        b: SENT_BASIS[r.basis] ? r.basis : '',
+        d: (Array.isArray(r.doubts) ? r.doubts : []).filter(function(x) { return SENT_DOUBT[x]; }),
+        r: String(r.reason || ''),
+      };
+    });
+    return out;
+  }
+
+  // Jedno zapytanie z ponowieniem przy błędach, które mijają same: 429, 5xx, zerwane połączenie.
+  // Przekroczenia czasu nie ponawiamy — cztery próby po 180 s to 12 minut jednej partii.
+  async function _sentAsk(model, system, brand, items) {
+    var delays = [5000, 15000, 30000];
+    for (var attempt = 0; ; attempt++) {
+      try {
+        return await _aiCall({
+          model: model, system: system, user: _sentPayload(brand, items),
+          maxTokens: SENT_MAX_TOKENS[_aiProvider(model)], reasoning: 'default', timeout: SENT_TIMEOUT,
+          schema: { name: 'submit_sentiment', description: 'Sentiment verdict for every mention key.', schema: SENT_SCHEMA },
+        });
+      } catch(e) {
+        var przejsciowy = e.status === 429 || e.status >= 500 || e.message === 'Brak połączenia z API';
+        if (!przejsciowy || attempt >= delays.length || sentState.stop) throw e;
+        // Przerwa w krokach po 1 s, żeby „Zatrzymaj” nie czekał do jej końca.
+        for (var t = 0; t < delays[attempt] && !sentState.stop; t += 1000) await sleep(1000);
+        if (sentState.stop) throw e;
+      }
+    }
+  }
+
+  // Partia → werdykty w kolejności `items`.
+  // - Odpowiedź bez werdyktu dla części pozycji (blokada filtra Gemini, ucięta odpowiedź, brakujący
+  //   klucz — SENTIMENT.md §5.3) albo 400 dla całej partii: brakujące pozycje idą ponownie
+  //   pojedynczo, jedna po drugiej, więc w locie zostaje najwyżej SENT_AI_CONCURRENCY zapytań.
+  //   400 bywa odrzuceniem treści jednej wzmianki (OpenAI `invalid_prompt`).
+  // - Błąd przejściowy po ponowieniach (429, 5xx, przekroczony czas): cała partia z przyczyną, bez
+  //   rozbijania — 20 pojedynczych zapytań do dostawcy, który właśnie dławi ruch, tylko by to pogłębiło.
+  // - 401/403/404 i SENT_MAX_REJECTED odrzuceń 400 bez żadnej udanej odpowiedzi lecą wyżej i kończą
+  //   ocenę tym modelem: kolejne partie skończyłyby się tak samo.
+  async function _sentRunBatch(model, system, brand, items, st) {
+    var res = null, err = null;
+    try { res = await _sentAsk(model, system, brand, items); } catch(e) { err = e; }
+    if (err && (err.status === 401 || err.status === 403 || err.status === 404)) throw err;
+    if (err && err.status === 400 && ++st.rejected >= SENT_MAX_REJECTED && !st.answered) throw err;
+    if (res) {
+      st.answered++;
+      if (res.usage) {
+        st.inTok += (res.usage.input_tokens || 0) + (res.usage.cache_read_input_tokens || 0);
+        st.outTok += res.usage.output_tokens || 0;
+      }
+    }
+    var out = res ? _sentMapResults(items, res.json) : items.map(function() { return null; });
+    var why = err ? err.message : (res.reason || (res.json ? 'brak werdyktu w odpowiedzi' : 'odpowiedź bez poprawnego JSON'));
+    if (items.length > 1 && (res || err.status === 400)) {
+      for (var i = 0; i < items.length && !sentState.stop; i++) {
+        if (!out[i]) out[i] = (await _sentRunBatch(model, system, brand, [items[i]], st))[0];
+      }
+      why = 'ocena przerwana';
+    }
+    return out.map(function(v) { return v || { err: why }; });
+  }
+
+  function _sentModelState(model) {
+    return { model: model, total: 0, done: 0, cached: 0, inTok: 0, outTok: 0, fatal: '', answered: 0, rejected: 0 };
+  }
+
+  // Werdykt z pamięci obowiązuje, dopóki nie zmienił się model, prompt ani marka z promptu.
+  async function _sentEvaluateModel(run, slot, system, ctx, cache) {
+    var st = run.models[slot], todo = [];
+    run.items.forEach(function(it) {
+      var c = cache[it.id + '|' + st.model + '|' + ctx];
+      if (c) { it.v[slot] = { s: c.s, b: c.b, d: c.d || [], r: c.r }; st.cached++; }
+      else if (!it.text) it.v[slot] = { err: 'wzmianka bez treści' };
+      else todo.push(it);
+    });
+    st.total = todo.length;
+    var batches = [];
+    for (var i = 0; i < todo.length; i += SENT_BATCH) batches.push(todo.slice(i, i + SENT_BATCH));
+    var next = 0;
+    async function worker() {
+      while (!sentState.stop && !st.fatal && next < batches.length) {
+        var batch = batches[next++];
+        try {
+          var out = await _sentRunBatch(st.model, system, run.brand, batch, st);
+          batch.forEach(function(it, k) {
+            it.v[slot] = out[k];
+            if (out[k].s) cache[it.id + '|' + st.model + '|' + ctx] = { s: out[k].s, b: out[k].b, d: out[k].d, r: out[k].r, at: Date.now() };
+          });
+          st.done += batch.length;
+          _sentSaveCacheSoon(cache);
+        } catch(e) {
+          st.fatal = e.message;
+          addLog('✕ Przegląd sentymentu — ' + st.model + ': ' + e.message, 'error');
+        }
+        _sentRenderSummary();
+      }
+    }
+    var workers = [];
+    for (var w = 0; w < Math.min(SENT_AI_CONCURRENCY, batches.length); w++) workers.push(worker());
+    await Promise.all(workers);
+  }
+
+  // Pamięć werdyktów zapisywana także w trakcie oceny, co najwyżej raz na 10 s: miesiąc Toyoty
+  // to kilka minut i ~2 $, a przeładowanie karty w połowie przepaliłoby wszystko, co już przyszło.
+  // Zostaw dławik zamiast odkładania zapisu po każdej partii — partie kończą się co ~2 s, więc
+  // odkładany zapis nie zdążyłby ruszyć przed końcem oceny.
+  var _sentCacheTimer = null;
+  function _sentSaveCacheSoon(cache) {
+    if (_sentCacheTimer) return;
+    _sentCacheTimer = setTimeout(function() {
+      _sentCacheTimer = null;
+      _sentGmWrite(SENT_GM_VERDICTS, cache, SENT_VERDICTS_KEEP_DAYS);
+    }, 10000);
+  }
+
+  async function _sentEvaluate(run, system) {
+    var cache = _sentGmRead(SENT_GM_VERDICTS);
+    var ctx = _sentHash(system + '\n' + run.brand);
+    await Promise.all(['a', 'b'].map(function(slot) { return _sentEvaluateModel(run, slot, system, ctx, cache); }));
+    clearTimeout(_sentCacheTimer);
+    _sentCacheTimer = null;
+    _sentGmWrite(SENT_GM_VERDICTS, cache, SENT_VERDICTS_KEEP_DAYS);
+  }
+
+  // Grupa kafelka. Zgodność modeli dwóch dostawców jest sygnałem pewności (SENTIMENT.md §7.2);
+  // zmiana z wątpliwością idzie do decyzji, bo wątpliwość obniża trafność z ~79% do 61–69%.
+  // Zgodne „bez zmian” z wątpliwością zostaje w swojej grupie: niepewność dotyczy stanu, który już
+  // jest w Brand24. Grupa zależy tylko od werdyktów i stanu z chwili pobrania, więc decyzje
+  // nie przesuwają kafelków między grupami.
+  function _sentGroupOf(it) {
+    var a = it.v.a, b = it.v.b;
+    if (!a || !b || !a.s || !b.s || a.s !== b.s) return 'decide';
+    if (a.s === it.orig) return 'keep';
+    return a.d.length || b.d.length ? 'decide' : 'change';
+  }
+  function _sentProposal(it) {
+    var a = it.v.a, b = it.v.b;
+    return a && b && a.s && a.s === b.s ? a.s : null;
+  }
+  function _sentIsDone(it) {
+    var s = it.dec && it.dec.status;
+    return s === 'saved' || s === 'test' || s === 'kept' || s === 'earlier';
+  }
+  function _sentBusy(it) {
+    var s = it.dec && it.dec.status;
+    return s === 'queued' || s === 'saving' || s === 'reverting';
+  }
+
+  function _sentErrText(e) {
+    var m = (e && e.message) || String(e);
+    if (m === 'TOKEN_NOT_READY') return 'Token Brand24 jeszcze niegotowy — odśwież stronę panelu i spróbuj ponownie.';
+    if (m === 'GRAPHQL_AUTH_ERROR') return 'Sesja Brand24 wygasła — zaloguj się ponownie i uruchom ocenę jeszcze raz.';
+    return m;
+  }
+
+  // p: { projectId, dateFrom, dateTo, filters, brand, source, system }
+  async function _sentStart(p) {
+    var s = _aiGetSettings();
+    var run = {
+      projectId: p.projectId, projectName: _pnResolve(p.projectId), brand: p.brand, source: p.source,
+      dateFrom: p.dateFrom, dateTo: p.dateTo, items: [], byId: {}, phase: 'fetch', error: '', truncatedOf: 0,
+      models: { a: _sentModelState(s.sentiment.modelA), b: _sentModelState(s.sentiment.modelB) },
+    };
+    sentState.run = run; sentState.running = true; sentState.stop = false;
+    sentState.focusId = null; sentState.openText = {}; sentState.keepOpen = false;
+    _sentShow();
+    _sentTabStatus();
+    addLog('◐ Przegląd sentymentu — start: ' + run.projectName + ', ' + p.dateFrom + ' → ' + p.dateTo +
+      (p.source === 'view' ? ', widok Brand24' : ', negatywy') + ', modele ' + run.models.a.model + ' + ' + run.models.b.model, 'info');
+    try {
+      var fetched = await _aiTagFetchMentions(p.projectId, p.dateFrom, p.dateTo, p.filters, SENT_MAX_MENTIONS, { withSentiment: true });
+      (fetched.results || []).forEach(function(m) {
+        var id = String(m.id);
+        // Strony getMentions nachodzą na siebie, gdy w trakcie pobierania wpadają nowe wzmianki.
+        if (run.byId[id]) return;
+        var it = _sentItem(m);
+        run.byId[id] = it; run.items.push(it);
+      });
+      if (fetched.truncated) run.truncatedOf = fetched.total;
+      _sentFlushDecisions();
+      var dec = _sentGmRead(SENT_GM_DECISIONS);
+      run.items.forEach(function(it) {
+        // Wcześniejsza decyzja obowiązuje, dopóki Brand24 ma sentyment, który wtedy wybrano.
+        var d = dec[it.id];
+        if (d && d.to === it.orig) it.dec = { to: d.to, status: 'earlier', at: d.at };
+      });
+      run.phase = 'eval';
+      _sentRenderAll();
+      await _sentEvaluate(run, p.system);
+      run.phase = sentState.stop ? 'stopped' : 'done';
+      var cost = ['a', 'b'].map(function(k) { var st = run.models[k]; return st.model + ' ' + (_sentFmtUsd(_sentCost(st)) || (st.inTok + '/' + st.outTok + ' tok.')); }).join(', ');
+      addLog('◐ Przegląd sentymentu — ocenione ' + run.items.length + ' wzmianek; koszt: ' + cost, 'success');
+    } catch(e) {
+      run.phase = 'error'; run.error = _sentErrText(e);
+      addLog('✕ Przegląd sentymentu: ' + run.error, 'error');
+    } finally {
+      sentState.running = false;
+      _sentRenderAll();
+      _sentFocusFirstOpen();
+      _sentTabStatus();
+    }
+  }
+
+  function _sentCost(st) {
+    var p = SENT_PRICE[st.model];
+    return p && (st.inTok || st.outTok) ? (st.inTok * p[0] + st.outTok * p[1]) / 1e6 : null;
+  }
+  function _sentFmtUsd(x) {
+    return x == null ? '' : '≈ ' + x.toFixed(x < 0.1 ? 3 : 2).replace('.', ',') + ' $';
+  }
+
+  // ── Decyzje i zapis ─────────────────────────────────────────────────────
+  // Zapis od razu przy decyzji, kolejką po SENTIMENT_CONCURRENCY naraz: setSentiment nie ma
+  // wersji hurtowej, jedno wywołanie trwa 1,6–2,0 s (BRAND24_NETWORK.md §7a).
+
+  function _sentVerdictRow(model, v) {
+    return v && v.s ? [model, v.s, v.b, v.d.join('|'), v.r] : [model, '', '', '', (v && v.err) || 'nie oceniono'];
+  }
+  // Zmiany dziennika zbierane i zapisywane co najwyżej raz na sekundę do świeżo odczytanej kopii.
+  // Zostaw odczyt przed zapisem: druga karta z przeglądem (panel .com i .pl) prowadzi ten sam
+  // dziennik, a zapis mapy trzymanej w pamięci tej karty skasowałby jej wpisy.
+  var _sentPendingDecisions = {}, _sentDecisionsTimer = null;
+  function _sentQueueDecision(id, entry) {    // entry null = usuń wpis
+    _sentPendingDecisions[id] = entry;
+    if (!_sentDecisionsTimer) _sentDecisionsTimer = setTimeout(_sentFlushDecisions, 1000);
+  }
+  function _sentFlushDecisions() {
+    clearTimeout(_sentDecisionsTimer);
+    _sentDecisionsTimer = null;
+    var ids = Object.keys(_sentPendingDecisions);
+    if (!ids.length) return;
+    var all = _sentGmRead(SENT_GM_DECISIONS);
+    ids.forEach(function(id) {
+      if (_sentPendingDecisions[id]) all[id] = _sentPendingDecisions[id];
+      else delete all[id];
+    });
+    _sentPendingDecisions = {};
+    _sentGmWrite(SENT_GM_DECISIONS, all, SENT_DECISIONS_KEEP_DAYS);
+  }
+  function _sentPersist(it) {
+    var run = sentState.run;
+    _sentQueueDecision(it.id, { at: Date.now(), pid: run.projectId, url: it.url, from: it.orig, to: it.dec.to,
+      a: _sentVerdictRow(run.models.a.model, it.v.a), b: _sentVerdictRow(run.models.b.model, it.v.b) });
+  }
+  function _sentForget(id) {
+    _sentQueueDecision(id, null);
+  }
+
+  function _sentEnqueue(it, to, revert) {
+    sentState.queue.push({ id: it.id, to: to, revert: !!revert });
+    _sentPump();
+  }
+  function _sentPump() {
+    while (sentState.inFlight < SENTIMENT_CONCURRENCY && sentState.queue.length) _sentSave(sentState.queue.shift());
+  }
+  function _sentSave(job) {
+    var it = sentState.run && sentState.run.byId[job.id];
+    if (!it || !it.dec) return;
+    sentState.inFlight++;
+    it.dec.status = job.revert ? 'reverting' : 'saving';
+    _sentRefreshTile(it.id);
+    setMentionSentiment(it.id, job.to).then(function(r) {
+      var test = !!(r && r.testRun);
+      if (job.revert && test) {
+        // Zmiana poszła do Brand24 naprawdę, a tryb testowy włączono przed cofnięciem.
+        it.dec = { to: it.now, status: 'error', err: 'tryb testowy włączony — cofnięcie nie trafiło do Brand24', revertFailed: true };
+        return;
+      }
+      it.now = job.to;
+      if (job.revert) { it.dec = null; _sentForget(it.id); return; }
+      it.dec = { to: job.to, status: test ? 'test' : 'saved', at: Date.now() };
+      if (!test) _sentPersist(it);
+    }, function(e) {
+      var msg = _sentErrText(e);
+      addLog('✕ Przegląd sentymentu — wzmianka ' + it.id + (job.revert ? ', cofnięcie do ' : ' → ') + job.to + ': ' + msg, 'error');
+      it.dec = job.revert
+        ? { to: it.now, status: 'error', err: msg, revertFailed: true }
+        : { to: job.to, status: 'error', err: msg };
+    }).then(function() {
+      sentState.inFlight--;
+      _sentRefreshTile(it.id);
+      _sentPump();
+    });
+  }
+
+  // Wybór sentymentu na kafelku. Wybór tego, co już jest w Brand24, to decyzja „zostaje”
+  // bez zapisu; każdy inny idzie od razu do kolejki zapisu.
+  function _sentDecide(id, to, fromKeyboard) {
+    var run = sentState.run, it = run && run.byId[id];
+    if (!it || !SENT_LABEL[to] || _sentBusy(it) || (run.phase !== 'done' && run.phase !== 'stopped')) return;
+    if (to !== it.now) {
+      it.dec = { to: to, status: 'queued' };
+      _sentEnqueue(it, to, false);
+    } else if (it.now === it.orig && !_sentIsDone(it)) {
+      it.dec = { to: to, status: 'kept', at: Date.now() };
+      _sentPersist(it);
+    }
+    _sentRefreshTile(id);
+    _sentFocusNextOpen(id, fromKeyboard);
+  }
+  function _sentUndo(id) {
+    var it = sentState.run && sentState.run.byId[id], d = it && it.dec;
+    if (!d || _sentBusy(it)) return;
+    if (d.status === 'kept' || d.status === 'earlier') { it.dec = null; _sentForget(id); }
+    // Zapis w trybie testowym nie dotknął Brand24 — cofnięcie też nie musi.
+    else if (d.status === 'test') { it.now = it.orig; it.dec = null; }
+    else if ((d.status === 'saved' || d.revertFailed) && it.orig) { d.status = 'queued'; _sentEnqueue(it, it.orig, true); }
+    else if (d.status === 'error') it.dec = null;
+    _sentRefreshTile(id);
+  }
+  function _sentRetry(id) {
+    var it = sentState.run && sentState.run.byId[id], d = it && it.dec;
+    if (!d || d.status !== 'error') return;
+    if (d.revertFailed) { d.status = 'queued'; _sentEnqueue(it, it.orig, true); }
+    else { d.status = 'queued'; _sentEnqueue(it, d.to, false); }
+    _sentRefreshTile(id);
+  }
+  function _sentBulkTodo() {
+    var run = sentState.run;
+    if (!run || (run.phase !== 'done' && run.phase !== 'stopped')) return [];
+    return run.items.filter(function(it) {
+      return _sentGroupOf(it) === 'change' && (!it.dec || (it.dec.status === 'error' && !it.dec.revertFailed));
+    });
+  }
+  function _sentBulk() {
+    var todo = _sentBulkTodo();
+    if (!todo.length) return;
+    if (!confirm('Zapisać w Brand24 ' + todo.length + ' zmian sentymentu z grupy „Zgodna zmiana”? Każdą można potem cofnąć na kafelku.')) return;
+    todo.forEach(function(it) {
+      var to = _sentProposal(it);
+      it.dec = { to: to, status: 'queued' };
+      _sentEnqueue(it, to, false);
+      _sentRefreshTile(it.id);
+    });
+  }
+
+  // ── Okno ────────────────────────────────────────────────────────────────
+
+  function _sentEnsureWindow() {
+    var ov = document.getElementById('b24t-sent-overlay');
+    if (ov) return ov;
+    ov = document.createElement('div');
+    ov.id = 'b24t-sent-overlay';
+    ov.innerHTML =
+      '<div id="b24t-sent-win" role="dialog" aria-label="Przegląd sentymentu">' +
+        '<div class="b24t-sent-head">' +
+          '<span style="font-size:18px;">◐</span>' +
+          '<div style="flex:1;min-width:0;"><div class="t">Przegląd sentymentu</div><div class="sub" id="b24t-sent-sub"></div></div>' +
+          '<span class="b24t-sent-testbadge" id="b24t-sent-test" style="display:none;">TRYB TESTOWY — Brand24 bez zmian</span>' +
+          '<button id="b24t-sent-export" title="Wszystkie decyzje z werdyktami modeli, 12 miesięcy wstecz">⇩ Dziennik decyzji CSV</button>' +
+          '<button id="b24t-sent-close" title="Zamknij (Esc) — ocena i zapisy trwają dalej">✕</button>' +
+        '</div>' +
+        '<div class="b24t-sent-summary" id="b24t-sent-summary"></div>' +
+        '<div class="b24t-sent-list" id="b24t-sent-list"></div>' +
+        '<div class="b24t-sent-foot"><kbd>J</kbd><kbd>K</kbd>następna / poprzednia · <kbd>N</kbd>negatywny · <kbd>U</kbd>neutralny · <kbd>P</kbd>pozytywny · <kbd>Z</kbd>cofnij · <kbd>Esc</kbd>zamknij · każdy wybór inny niż obecny zapisuje się od razu w Brand24</div>' +
+      '</div>';
+    document.body.appendChild(ov);
+
+    ov.addEventListener('click', function(e) { if (e.target === ov) _sentHide(); });
+    ov.querySelector('#b24t-sent-close').addEventListener('click', _sentHide);
+    ov.querySelector('#b24t-sent-export').addEventListener('click', _sentExportCsv);
+    ov.querySelector('#b24t-sent-summary').addEventListener('click', function(e) {
+      if (!e.target.closest('[data-sent-stop]')) return;
+      sentState.stop = true;
+      _sentRenderSummary();
+    });
+    ov.querySelector('#b24t-sent-list').addEventListener('click', function(e) {
+      if (e.target.closest('[data-sent-bulk]')) { _sentBulk(); return; }
+      if (e.target.closest('[data-sent-toggle]')) { sentState.keepOpen = !sentState.keepOpen; _sentRenderList(); return; }
+      var tile = e.target.closest('.b24t-sent-tile');
+      if (!tile) return;
+      var id = tile.dataset.id, btn = e.target.closest('[data-sent]');
+      if (btn) { _sentFocus(id, false); _sentDecide(id, btn.dataset.sent, false); return; }
+      if (e.target.closest('[data-sent-undo]')) { _sentUndo(id); return; }
+      if (e.target.closest('[data-sent-retry]')) { _sentRetry(id); return; }
+      var txt = e.target.closest('[data-sent-expand]');
+      if (txt) { sentState.openText[id] = !sentState.openText[id]; txt.classList.toggle('is-open', sentState.openText[id]); }
+      if (!e.target.closest('a')) _sentFocus(id, false);
+    });
+    // Faza przechwytywania: okno przykrywa News i listę Brand24, więc J/K/N/U/P nie mogą dojść
+    // do ich własnych skrótów.
+    document.addEventListener('keydown', _sentOnKey, true);
+    window.addEventListener('beforeunload', _sentFlushDecisions);
+    return ov;
+  }
+
+  function _sentOnKey(e) {
+    var ov = document.getElementById('b24t-sent-overlay');
+    if (!ov || ov.style.display !== 'flex' || e.ctrlKey || e.metaKey || e.altKey) return;
+    var tag = document.activeElement && document.activeElement.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    var k = String(e.key || '').toLowerCase();
+    var handled = true;
+    if (e.key === 'Escape') _sentHide();
+    else if (k === 'j' || k === 'k') _sentStep(k === 'j' ? 1 : -1);
+    else if (SENT_BY_KEY[k] && sentState.focusId) _sentDecide(sentState.focusId, SENT_BY_KEY[k], true);
+    else if (k === 'z' && sentState.focusId) _sentUndo(sentState.focusId);
+    else handled = false;
+    if (handled) { e.preventDefault(); e.stopPropagation(); }
+  }
+
+  function _sentShow() {
+    var ov = _sentEnsureWindow();
+    ov.style.display = 'flex';
+    _sentRenderAll();
+  }
+  function _sentHide() {
+    var ov = document.getElementById('b24t-sent-overlay');
+    if (ov) ov.style.display = 'none';
+    _sentTabStatus();
+  }
+  function _sentRenderAll() {
+    var run = sentState.run;
+    var sub = document.getElementById('b24t-sent-sub');
+    if (sub) sub.textContent = run
+      ? run.projectName + ' · ' + run.dateFrom + ' → ' + run.dateTo + ' · ' + (run.source === 'view' ? 'widok Brand24' : 'negatywy') +
+        (run.items.length ? ' · ' + run.items.length.toLocaleString('pl-PL') + ' wzmianek' : '') + ' · marka w prompcie: ' + run.brand
+      : '';
+    var test = document.getElementById('b24t-sent-test');
+    if (test) test.style.display = state.testRunMode ? '' : 'none';
+    _sentRenderSummary();
+    _sentRenderList();
+  }
+
+  function _sentChip(s) {
+    return s ? '<span class="b24t-sent-chip s-' + s + '">' + SENT_LABEL[s] + '</span>' : '<span class="b24t-sent-chip s-neutral">brak</span>';
+  }
+
+  function _sentRenderSummary() {
+    var el = document.getElementById('b24t-sent-summary');
+    if (!el) return;
+    var run = sentState.run;
+    if (!run) { el.textContent = 'Brak przeglądu — uruchom ocenę z karty ◐ Sentyment w panelu.'; return; }
+    if (run.phase === 'fetch') { el.textContent = '⟳ Pobieram wzmianki z Brand24…'; return; }
+    if (run.phase === 'error') { el.innerHTML = '<span style="color:#ef4444;">✗ ' + _escHtml(run.error) + '</span>'; return; }
+    var bars = ['a', 'b'].map(function(slot) {
+      var st = run.models[slot];
+      var pct = st.total ? Math.round(st.done / st.total * 100) : 100;
+      var info = st.fatal ? '<span style="color:#ef4444;">✗ ' + _escHtml(st.fatal) + '</span>'
+        : st.done + '/' + st.total + (st.cached ? ' · z pamięci ' + st.cached : '') + (_sentCost(st) != null ? ' · ' + _sentFmtUsd(_sentCost(st)) : '');
+      return '<div class="b24t-sent-bar"><span>' + _escHtml(st.model) + '</span><div class="track"><div class="fill" style="width:' + pct + '%"></div></div><span>' + info + '</span></div>';
+    }).join('');
+    if (run.phase === 'eval') {
+      el.innerHTML = '⟳ Oceniam <b>' + run.items.length.toLocaleString('pl-PL') + '</b> wzmianek dwoma modelami' +
+        (sentState.stop ? ' — zatrzymuję po bieżących partiach…' : '<button data-sent-stop>⏹ Zatrzymaj</button>') + bars;
+      return;
+    }
+    var g = { decide: [0, 0], change: [0, 0], keep: [0, 0] }, saved = 0, errors = 0;
+    run.items.forEach(function(it) {
+      var c = g[_sentGroupOf(it)];
+      c[0]++;
+      if (_sentIsDone(it)) c[1]++;
+      if (it.dec && (it.dec.status === 'saved' || it.dec.status === 'test')) saved++;
+      if (it.dec && it.dec.status === 'error') errors++;
+    });
+    var notes = [];
+    if (run.phase === 'stopped') notes.push('ocena zatrzymana — wzmianki bez werdyktu są w „Do decyzji”, ponowna ocena weźmie gotowe werdykty z pamięci');
+    if (run.truncatedOf) notes.push('pobrano ' + run.items.length + ' z ' + run.truncatedOf + ' wzmianek (limit ' + SENT_MAX_MENTIONS + ') — zawęź zakres dat');
+    el.innerHTML =
+      'Do decyzji <b>' + g.decide[0] + '</b> (załatwione ' + g.decide[1] + ') · Zgodna zmiana <b>' + g.change[0] + '</b> (załatwione ' + g.change[1] + ') · Bez zmian <b>' + g.keep[0] + '</b>' +
+      ' · zapisane w Brand24: <b>' + saved + '</b>' + (sentState.queue.length + sentState.inFlight ? ' · w kolejce ' + (sentState.queue.length + sentState.inFlight) : '') +
+      (errors ? ' · <span style="color:#ef4444;">błędy zapisu: ' + errors + '</span>' : '') +
+      notes.map(function(n) { return '<div style="color:#f59e0b;">⚠ ' + _escHtml(n) + '</div>'; }).join('') + bars;
+  }
+
+  function _sentRenderList() {
+    var list = document.getElementById('b24t-sent-list');
+    if (!list) return;
+    var run = sentState.run;
+    if (!run || run.phase === 'error') { list.innerHTML = ''; return; }
+    if (run.phase === 'fetch' || run.phase === 'eval') {
+      var sk = '<div class="b24t-sent-tile"><div class="b24t-shimmer" style="height:10px;width:45%;"></div>' +
+        '<div class="b24t-shimmer" style="height:48px;"></div><div class="b24t-shimmer" style="height:34px;"></div></div>';
+      list.innerHTML = '<div class="b24t-sent-grid" style="margin-top:14px;">' + sk + sk + sk + sk + '</div>';
+      return;
+    }
+    if (!run.items.length) { list.innerHTML = '<div class="b24t-sent-empty">Brak wzmianek w wybranym zakresie.</div>'; return; }
+    var groups = { decide: [], change: [], keep: [] };
+    run.items.forEach(function(it) { groups[_sentGroupOf(it)].push(it); });
+    list.innerHTML = SENT_GROUPS.map(function(gr) {
+      var items = groups[gr.id];
+      if (!items.length) return '';
+      var collapsed = gr.id === 'keep' && !sentState.keepOpen;
+      var action = gr.id === 'change' ? '<button data-sent-bulk class="primary"></button>'
+        : gr.id === 'keep' ? '<button data-sent-toggle>' + (collapsed ? 'Pokaż ▾' : 'Zwiń ▴') + '</button>' : '';
+      return '<section data-group="' + gr.id + '">' +
+        '<div class="b24t-sent-group-h"><span class="n">' + gr.name + ' · ' + items.length + '</span><span class="d">' + gr.desc + '</span>' + action + '</div>' +
+        (collapsed ? '' : '<div class="b24t-sent-grid">' + items.map(_sentTileHtml).join('') + '</div>') +
+      '</section>';
+    }).join('');
+    _sentUpdateBulk();
+  }
+
+  function _sentUpdateBulk() {
+    var btn = document.querySelector('#b24t-sent-list [data-sent-bulk]');
+    if (!btn) return;
+    var n = _sentBulkTodo().length;
+    btn.textContent = n ? 'Zapisz wszystkie w Brand24 (' + n + ')' : 'Wszystkie załatwione';
+    btn.disabled = !n;
+  }
+
+  function _sentVerdictHtml(run, it, slot) {
+    var st = run.models[slot], v = it.v[slot];
+    var head = '<span class="m">' + _escHtml(st.model) + '</span>';
+    if (!v) return '<div class="b24t-sent-v">' + head + '<span class="e">nie ocenił' + (st.fatal ? ': ' + _escHtml(st.fatal) : ' (ocena przerwana)') + '</span></div>';
+    if (v.err) return '<div class="b24t-sent-v">' + head + '<span class="e">nie ocenił: ' + _escHtml(v.err) + '</span></div>';
+    return '<div class="b24t-sent-v">' + head + _sentChip(v.s) +
+      (v.b ? '<span class="b">' + SENT_BASIS[v.b] + '</span>' : '') +
+      v.d.map(function(d) { return '<span class="b24t-sent-doubt">' + SENT_DOUBT[d] + '</span>'; }).join('') +
+      (v.r ? '<span class="r">' + _escHtml(v.r) + '</span>' : '') + '</div>';
+  }
+
+  function _sentStatusHtml(it) {
+    var d = it.dec;
+    if (!d) return '';
+    var L = SENT_LABEL[d.to] || '';
+    var undo = '<a data-sent-undo>cofnij</a>';
+    if (d.status === 'queued') return '<span class="b24t-sent-status busy">⟳ w kolejce do zapisu…</span>';
+    if (d.status === 'saving') return '<span class="b24t-sent-status busy">⟳ zapisuję w Brand24…</span>';
+    if (d.status === 'reverting') return '<span class="b24t-sent-status busy">⟳ cofam w Brand24…</span>';
+    if (d.status === 'saved') return '<span class="b24t-sent-status ok">✓ zapisane w Brand24: ' + L + undo + '</span>';
+    if (d.status === 'test') return '<span class="b24t-sent-status ok">✓ tryb testowy, Brand24 bez zmian: ' + L + undo + '</span>';
+    if (d.status === 'kept') return '<span class="b24t-sent-status ok">✓ zostaje ' + L + undo + '</span>';
+    if (d.status === 'earlier') return '<span class="b24t-sent-status ok">✓ decyzja z ' + _localDateStr(new Date(d.at)) + ': ' + L + '<a data-sent-undo>otwórz ponownie</a></span>';
+    return '<span class="b24t-sent-status err">✗ ' + (d.revertFailed ? 'nie cofnięto, w Brand24 zostaje ' + L : 'nie zapisano') + ': ' +
+      _escHtml(d.err) + '<a data-sent-retry>ponów</a>' + (d.revertFailed ? '' : '<a data-sent-undo>odrzuć</a>') + '</span>';
+  }
+
+  function _sentTileHtml(it) {
+    var run = sentState.run, d = it.dec, prop = _sentProposal(it), busy = _sentBusy(it);
+    var chosen = !d || d.status === 'reverting' || (d.status === 'error' && !d.revertFailed) ? null : d.to;
+    var url = /^https?:\/\//i.test(it.url) ? it.url : '';
+    var btns = ['negative', 'neutral', 'positive'].map(function(sv) {
+      var cls = sv === chosen ? 'is-chosen' : sv === prop && sv !== it.orig ? 'is-proposed' : '';
+      return '<button data-sent="' + sv + '"' + (cls ? ' class="' + cls + '"' : '') + (busy ? ' disabled' : '') + '>' +
+        '<kbd>' + SENT_KEY_OF[sv] + '</kbd>' + SENT_LABEL[sv] + '</button>';
+    }).join('');
+    return '<div class="b24t-sent-tile' + (sentState.focusId === it.id ? ' is-focus' : '') + (_sentIsDone(it) ? ' is-done' : '') + '" data-id="' + _escHtml(it.id) + '">' +
+      '<div class="b24t-sent-meta"><span class="src">' + _escHtml(it.source) + '</span>' +
+        (it.author ? '<span class="au">· ' + _escHtml(it.author) + '</span>' : '') +
+        '<span>· ' + _escHtml(it.date) + '</span>' +
+        (url ? '<a href="' + _escHtml(url) + '" target="_blank" rel="noopener noreferrer" title="Otwórz wzmiankę">↗</a>' : '') +
+        '<span class="cur">Brand24: ' + _sentChip(it.now) + '</span></div>' +
+      '<div class="b24t-sent-text' + (sentState.openText[it.id] ? ' is-open' : '') + '" data-sent-expand title="Kliknij, aby rozwinąć albo zwinąć">' + _escHtml(it.text || '(brak treści)') + '</div>' +
+      '<div class="b24t-sent-verdicts">' + _sentVerdictHtml(run, it, 'a') + _sentVerdictHtml(run, it, 'b') + '</div>' +
+      '<div class="b24t-sent-actions">' + btns + _sentStatusHtml(it) + '</div>' +
+    '</div>';
+  }
+
+  // Podmiana jednego kafelka w miejscu (NEWS_CARD.md §6b) — decyzja dotyczy jednej wzmianki.
+  function _sentRefreshTile(id) {
+    var it = sentState.run && sentState.run.byId[id];
+    var el = it && document.querySelector('#b24t-sent-list .b24t-sent-tile[data-id="' + CSS.escape(id) + '"]');
+    if (el) {
+      var tmp = document.createElement('div');
+      tmp.innerHTML = _sentTileHtml(it);
+      el.replaceWith(tmp.firstChild);
+    }
+    _sentRenderSummary();
+    _sentUpdateBulk();
+  }
+
+  function _sentTileEls() {
+    return Array.prototype.slice.call(document.querySelectorAll('#b24t-sent-list .b24t-sent-tile[data-id]'));
+  }
+  function _sentFocus(id, scroll) {
+    _sentTileEls().forEach(function(el) { el.classList.toggle('is-focus', el.dataset.id === id); });
+    sentState.focusId = id;
+    if (!scroll || !id) return;
+    var el = document.querySelector('#b24t-sent-list .b24t-sent-tile[data-id="' + CSS.escape(id) + '"]');
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  }
+  function _sentStep(dir) {
+    var ids = _sentTileEls().map(function(el) { return el.dataset.id; });
+    if (!ids.length) return;
+    var i = ids.indexOf(sentState.focusId);
+    var j = i === -1 ? (dir > 0 ? 0 : ids.length - 1) : Math.max(0, Math.min(ids.length - 1, i + dir));
+    _sentFocus(ids[j], true);
+  }
+  function _sentFocusNextOpen(fromId, scroll) {
+    var run = sentState.run, ids = _sentTileEls().map(function(el) { return el.dataset.id; });
+    for (var i = ids.indexOf(fromId) + 1; i < ids.length; i++) {
+      var it = run.byId[ids[i]];
+      if (it && !it.dec) { _sentFocus(ids[i], scroll); return; }
+    }
+  }
+  function _sentFocusFirstOpen() {
+    var run = sentState.run;
+    if (!run || (run.phase !== 'done' && run.phase !== 'stopped')) return;
+    var first = _sentTileEls().filter(function(el) { var it = run.byId[el.dataset.id]; return it && !it.dec; })[0];
+    if (first) _sentFocus(first.dataset.id, false);
+  }
+
+  function _sentExportCsv() {
+    _sentFlushDecisions();
+    var all = _sentGmRead(SENT_GM_DECISIONS);
+    var ids = Object.keys(all).sort(function(x, y) { return all[x].at - all[y].at; });
+    if (!ids.length) { alert('Dziennik jest pusty — decyzje pojawią się po pierwszym zatwierdzeniu w oknie.'); return; }
+    var rows = [['czas', 'projekt', 'id_wzmianki', 'url', 'sentyment_przed', 'decyzja',
+                 'model_1', 'werdykt_1', 'podstawa_1', 'watpliwosci_1', 'uzasadnienie_1',
+                 'model_2', 'werdykt_2', 'podstawa_2', 'watpliwosci_2', 'uzasadnienie_2']];
+    ids.forEach(function(id) {
+      var d = all[id], t = new Date(d.at);
+      rows.push([_localDateStr(t) + ' ' + t.toTimeString().slice(0, 5), _pnResolve(d.pid), id, d.url, d.from, d.to]
+        .concat(d.a || [], d.b || []));
+    });
+    var csv = rows.map(function(r) { return r.map(function(v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; }).join(','); }).join('\n');
+    var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = 'b24tagger_sentyment_decyzje_' + _localDateStr(new Date()) + '.csv';
+    a.click(); URL.revokeObjectURL(url);
+  }
+
+  // ── Karta w panelu ──────────────────────────────────────────────────────
+
+  function _sentSyncTabVisibility() {
+    var btn = document.getElementById('b24t-sent-tab-btn');
+    if (btn) btn.style.display = _aiGetSettings().sentiment.enabled ? '' : 'none';
+  }
+
+  function buildSentimentTab() {
+    var div = document.createElement('div');
+    div.id = 'b24t-sent-tab';
+    div.style.display = 'none';
+    var H = 'font-size:12px;font-weight:700;color:var(--b24t-primary);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:5px;';
+    div.innerHTML =
+      '<div class="b24t-section">' +
+        '<div class="b24t-section-label">Przegląd sentymentu</div>' +
+        '<div style="font-size:12px;color:var(--b24t-text-muted);margin-bottom:10px;line-height:1.6;">' +
+          'Dwa modele oceniają wydźwięk wzmianek promptem z biblioteki. Zmiany zatwierdzasz w oknie z kafelkami; każda zapisuje się od razu w Brand24.' +
+        '</div>' +
+        '<div style="' + H + '">Wzmianki</div>' +
+        '<div class="b24t-radio-group" style="flex-direction:column;gap:5px;margin-bottom:8px;">' +
+          '<label class="b24t-radio" style="font-size:13px;"><input type="radio" name="b24t-sent-source" value="range" checked>' +
+            '<span style="font-size:13px;color:var(--b24t-text-muted);">Negatywy z zakresu dat</span></label>' +
+          '<label class="b24t-radio" style="font-size:13px;"><input type="radio" name="b24t-sent-source" value="view">' +
+            '<span style="font-size:13px;color:var(--b24t-text-muted);">Aktualny widok Brand24 (filtry i zakres)</span></label>' +
+        '</div>' +
+        '<div id="b24t-sent-range" style="display:flex;gap:8px;margin-bottom:10px;">' +
+          '<input type="date" id="b24t-sent-from" class="b24t-select" style="flex:1;">' +
+          '<input type="date" id="b24t-sent-to" class="b24t-select" style="flex:1;">' +
+        '</div>' +
+        '<div style="' + H + '">Marka w prompcie</div>' +
+        '<input type="text" id="b24t-sent-brand" class="b24t-select" style="width:100%;box-sizing:border-box;margin-bottom:3px;" placeholder="np. Cupra">' +
+        '<div style="font-size:11px;color:var(--b24t-text-faint);margin-bottom:10px;">Po tej nazwie model rozpoznaje porównanie z inną marką. Zapamiętywana dla projektu.</div>' +
+        '<div style="' + H + '">Prompt</div>' +
+        '<select class="b24t-select" id="b24t-sent-prompt" style="width:100%;margin-bottom:10px;"></select>' +
+        '<div id="b24t-sent-models" style="font-size:11px;color:var(--b24t-text-muted);margin-bottom:10px;line-height:1.6;"></div>' +
+        '<div id="b24t-sent-tabstatus" style="font-size:12px;color:var(--b24t-text-muted);min-height:16px;margin-bottom:8px;line-height:1.5;"></div>' +
+        '<button class="b24t-btn-primary" id="b24t-sent-run" style="width:100%;">◐ Oceń i otwórz przegląd</button>' +
+        '<button class="b24t-btn-secondary" id="b24t-sent-open" style="width:100%;margin-top:6px;display:none;">Otwórz ostatni przegląd</button>' +
+      '</div>';
+    return div;
+  }
+
+  function _sentTabStatus(msg, color) {
+    var el = document.getElementById('b24t-sent-tabstatus');
+    var openBtn = document.getElementById('b24t-sent-open');
+    var runBtn = document.getElementById('b24t-sent-run');
+    var run = sentState.run;
+    if (runBtn) runBtn.textContent = sentState.running ? '◐ Pokaż postęp oceny' : '◐ Oceń i otwórz przegląd';
+    if (openBtn) openBtn.style.display = run && !sentState.running ? '' : 'none';
+    if (!el) return;
+    if (msg) { el.textContent = msg; el.style.color = color || 'var(--b24t-text-muted)'; return; }
+    el.style.color = 'var(--b24t-text-muted)';
+    if (!run) { el.textContent = ''; return; }
+    if (sentState.running) { el.textContent = '⟳ Ocena w toku: ' + run.projectName; return; }
+    if (run.phase === 'error') { el.textContent = '✗ ' + run.error; el.style.color = '#f87171'; return; }
+    var open = run.items.filter(function(it) { return !it.dec && _sentGroupOf(it) !== 'keep'; }).length;
+    el.textContent = 'Ostatni przegląd: ' + run.projectName + ', ' + run.dateFrom + ' → ' + run.dateTo +
+      ' — ' + run.items.length + ' wzmianek, niezałatwionych zmian i decyzji: ' + open;
+  }
+
+  function wireSentimentTab(panel) {
+    var tab = panel.querySelector('#b24t-sent-tab');
+    if (!tab) return;
+    var q = function(sel) { return tab.querySelector(sel); };
+
+    function fillPrompts() {
+      var s = _aiGetSettings(), sel = q('#b24t-sent-prompt');
+      sel.innerHTML = '<option value="">— wybierz prompt —</option>' + (s.prompts || []).map(function(p) {
+        return '<option value="' + _escHtml(p.id) + '"' + (p.id === s.sentiment.promptId ? ' selected' : '') + '>' + _escHtml(p.name) + '</option>';
+      }).join('');
+    }
+    function renderModels() {
+      var s = _aiGetSettings(), el = q('#b24t-sent-models');
+      el.innerHTML = 'Modele: <b>' + _escHtml(s.sentiment.modelA) + '</b> + <b>' + _escHtml(s.sentiment.modelB) + '</b> (Ustawienia → AI)' +
+        [s.sentiment.modelA, s.sentiment.modelB].filter(function(m) { return !_aiKeyFor(m, s); }).map(function(m) {
+          return '<div style="color:#f59e0b;">⚠ Brak klucza ' + AI_PROVIDER_LABEL[_aiProvider(m)] + ' dla ' + _escHtml(m) + '</div>';
+        }).join('');
+    }
+    function syncRange() {
+      var src = (q('input[name="b24t-sent-source"]:checked') || {}).value;
+      q('#b24t-sent-range').style.display = src === 'view' ? 'none' : 'flex';
+    }
+    function restore() {
+      if (!state.projectId) return;
+      var cfg = _sentProjectCfg(state.projectId);
+      q('#b24t-sent-brand').value = cfg.brand || _pnResolve(state.projectId);
+      var r = q('input[name="b24t-sent-source"][value="' + (cfg.source === 'view' ? 'view' : 'range') + '"]');
+      if (r) r.checked = true;
+      syncRange();
+    }
+    function refresh() { fillPrompts(); renderModels(); restore(); _sentTabStatus(); }
+
+    var d = getAnnotatorDates();
+    q('#b24t-sent-from').value = d.dateFrom;
+    q('#b24t-sent-to').value = d.dateTo;
+
+    q('#b24t-sent-prompt').addEventListener('change', function() {
+      var s = _aiGetSettings();
+      s.sentiment.promptId = this.value || null;
+      _aiSaveSettings(s);
+    });
+    q('#b24t-sent-brand').addEventListener('change', function() {
+      if (state.projectId) _sentSetProjectCfg(state.projectId, { brand: this.value.trim() });
+    });
+    tab.querySelectorAll('input[name="b24t-sent-source"]').forEach(function(r) {
+      r.addEventListener('change', function() {
+        syncRange();
+        if (state.projectId) _sentSetProjectCfg(state.projectId, { source: r.value });
+      });
+    });
+    q('#b24t-sent-open').addEventListener('click', _sentShow);
+    q('#b24t-sent-run').addEventListener('click', function() {
+      if (sentState.running) { _sentShow(); return; }
+      var s = _aiGetSettings();
+      var prompt = (s.prompts || []).find(function(p) { return p.id === s.sentiment.promptId; });
+      if (!prompt) { _sentTabStatus('✗ Wybierz prompt (Ustawienia → AI → 📚 Biblioteka promptów).', '#f87171'); return; }
+      var ma = s.sentiment.modelA, mb = s.sentiment.modelB;
+      var obcy = [ma, mb].filter(function(m) { return SENT_PROVIDERS.indexOf(_aiProvider(m)) === -1; });
+      if (obcy.length) { _sentTabStatus('✗ Model ' + obcy[0] + ' nie jest obsługiwany w przeglądzie — wybierz model OpenAI albo Gemini (Ustawienia → AI).', '#f87171'); return; }
+      if (ma === mb) { _sentTabStatus('✗ Ustaw dwa różne modele w Ustawienia → AI → Przegląd sentymentu.', '#f87171'); return; }
+      var bez = [ma, mb].filter(function(m) { return !_aiKeyFor(m, s); });
+      if (bez.length) { _sentTabStatus('✗ Brak klucza ' + AI_PROVIDER_LABEL[_aiProvider(bez[0])] + ' dla ' + bez[0] + ' (Ustawienia → AI).', '#f87171'); return; }
+      if (!state.projectId) { _sentTabStatus('✗ Nie wykryto projektu — otwórz wzmianki projektu w Brand24.', '#f87171'); return; }
+      if (sentState.queue.length || sentState.inFlight) { _sentTabStatus('✗ Poczekaj, aż zapiszą się zmiany z poprzedniego przeglądu (' + (sentState.queue.length + sentState.inFlight) + ').', '#f87171'); return; }
+      var brand = q('#b24t-sent-brand').value.trim() || _pnResolve(state.projectId);
+      var src = (q('input[name="b24t-sent-source"]:checked') || {}).value === 'view' ? 'view' : 'range';
+      var p = { projectId: state.projectId, brand: brand, source: src, system: prompt.system };
+      if (src === 'view') {
+        var view = getCurrentViewFilters();
+        if (!view.dateFrom || !view.dateTo) { _sentTabStatus('✗ Brak widoku — otwórz wzmianki w Brand24.', '#f87171'); return; }
+        p.dateFrom = view.dateFrom; p.dateTo = view.dateTo; p.filters = view.filters;
+        p.projectId = view.projectId || state.projectId;
+      } else {
+        p.dateFrom = q('#b24t-sent-from').value; p.dateTo = q('#b24t-sent-to').value;
+        if (!p.dateFrom || !p.dateTo) { _sentTabStatus('✗ Ustaw zakres dat.', '#f87171'); return; }
+        p.filters = _sentNegativeFilters();
+      }
+      _sentSetProjectCfg(p.projectId, { brand: brand, source: src });
+      _sentStart(p);
+    });
+
+    new MutationObserver(function() { if (tab.style.display !== 'none') refresh(); })
+      .observe(tab, { attributes: true, attributeFilter: ['style'] });
+    refresh();
+  }
+
+  // ───────────────────────────────────────────
   // NETWORK MONITOR
   // ───────────────────────────────────────────
 
@@ -26851,6 +27915,11 @@ Tej operacji nie można cofnąć.`)) {
     const aitPlaceholder = panel.querySelector('#b24t-aitag-tab-placeholder');
     if (aitPlaceholder) aitPlaceholder.replaceWith(aitTab);
 
+    // Inject Sentyment tab
+    const sentTab = buildSentimentTab();
+    const sentPlaceholder = panel.querySelector('#b24t-sent-tab-placeholder');
+    if (sentPlaceholder) sentPlaceholder.replaceWith(sentTab);
+
     document.body.appendChild(panel);
 
     // ── MAIN PANEL SIDE TAB ──
@@ -26918,6 +27987,8 @@ Tej operacji nie można cofnąć.`)) {
     wireQuickTagEvents(panel);
     wireAiTagEvents(panel);
     _aitSyncTabVisibility();
+    wireSentimentTab(panel);
+    _sentSyncTabVisibility();
     wireHistoryTab();
 
     // Tab switching — DOM refs cached once after panel is in DOM
@@ -26925,6 +27996,7 @@ Tej operacji nie można cofnąć.`)) {
       main:     document.getElementById('b24t-main-tab'),
       quicktag: document.getElementById('b24t-quicktag-tab'),
       aitag:    document.getElementById('b24t-aitag-tab'),
+      sentiment: document.getElementById('b24t-sent-tab'),
       delete:   document.getElementById('b24t-delete-tab'),
       history:  document.getElementById('b24t-history-tab'),
       notify:   document.getElementById('b24t-notify-tab'),
@@ -26939,6 +28011,7 @@ Tej operacji nie można cofnąć.`)) {
         if (tabEls.main)     tabEls.main.style.display     = tab === 'main'     ? 'block' : 'none';
         if (tabEls.quicktag) tabEls.quicktag.style.display = tab === 'quicktag' ? 'block' : 'none';
         if (tabEls.aitag)    tabEls.aitag.style.display    = tab === 'aitag'    ? 'block' : 'none';
+        if (tabEls.sentiment) tabEls.sentiment.style.display = tab === 'sentiment' ? 'block' : 'none';
         if (tabEls.delete)   tabEls.delete.style.display   = tab === 'delete'   ? 'block' : 'none';
         if (tabEls.history)  tabEls.history.style.display  = tab === 'history'  ? 'block' : 'none';
         if (tabEls.notify)   tabEls.notify.style.display   = tab === 'notify'   ? 'block' : 'none';

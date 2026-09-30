@@ -1,5 +1,24 @@
 [
   {
+    "version": "0.36.0",
+    "date": "2026-09-30",
+    "label": "feat",
+    "changes": [
+      {
+        "type": "feat",
+        "text": "**Przegląd sentymentu w oknie z kafelkami.** Nowa karta „◐ Sentyment” w panelu, włączana w Ustawienia → AI → Przegląd sentymentu. Pobiera negatywy projektu z zakresu dat albo bieżący widok Brand24 i ocenia je dwoma modelami AI (domyślnie gemini-3.8-flash i gpt-6-luna) promptem z biblioteki. Każdy kafelek pokazuje treść wzmianki oraz werdykt, uzasadnienie i wątpliwości obu modeli."
+      },
+      {
+        "type": "feat",
+        "text": "Kafelki są w trzech grupach: „Do decyzji” (modele się różnią, któryś nie ocenił albo zgłasza wątpliwość), „Zgodna zmiana” (oba proponują tę samą zmianę; zapis hurtowy jednym przyciskiem) i „Bez zmian” (zwinięta). Wybór sentymentu na kafelku zapisuje się w Brand24 od razu, bez pliku, 5 zmian naraz; każdą zmianę można cofnąć. Klawisze: J/K — następny / poprzedni kafelek, N/U/P — negatywny / neutralny / pozytywny, Z — cofnij, Esc — zamknij."
+      },
+      {
+        "type": "feat",
+        "text": "Werdykty są zapamiętywane dla wzmianki, modelu i promptu, więc ponowna ocena tego samego zakresu nie jest płatna drugi raz. Okno pokazuje koszt oceny i eksportuje do CSV dziennik decyzji z werdyktami modeli. W trybie Test Run zmiany sentymentu trafiają tylko do logu, a ocena modeli jest płatna jak zwykle. **Funkcja niesprawdzona jeszcze na żywym przebiegu.**"
+      }
+    ]
+  },
+  {
     "version": "0.35.0",
     "date": "2026-09-29",
     "label": "feat",

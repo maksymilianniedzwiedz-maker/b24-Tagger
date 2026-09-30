@@ -18792,7 +18792,7 @@ function showOnboarding(onComplete) {
       "changes": [
         {
           "type": "feat",
-          "text": "**Claude Sonnet 5.5 do wyboru w modelach AI** (News, kampanie, tłumaczenie, tagowanie). Sonnet 5.5 dostaje własny wariant zapytania: odrzuca sposób wyłączania myślenia i wymuszoną odpowiedź przez narzędzie, których wtyczka używa dla Haiku 4.5 i Sonneta 5; zapytania do tych dwóch modeli zostają bez zmian. Pomiar News na 25 stronach PL i HR: wszystkie trzy modele odpowiadają bez ucięć; Sonnet 5.5 zgodny z Sonnetem 5 na 24 z 25 stron; koszt na 1000 stron: Haiku 4.5 ok. 2,6 $, Sonnet 5 ok. 4,0 $, Sonnet 5.5 ok. 4,8 $ (dłuższe uzasadnienia)."
+          "text": "**Claude Sonnet 5.5 do wyboru w modelach AI** (News, kampanie, tłumaczenie, tagowanie). Sonnet 5.5 dostaje własny wariant zapytania: odrzuca sposób wyłączania myślenia i wymuszoną odpowiedź przez narzędzie, których wtyczka używa dla Haiku 4.5 i Sonneta 5; zapytania do tych dwóch modeli zostają bez zmian. Pomiar News na 25 stronach PL i HR: wszystkie trzy modele odpowiadają bez ucięć; Sonnet 5.5 zgodny z Sonnetem 5 na 24 z 25 stron; koszt na 1000 stron w sesji: Haiku 4.5 ok. 2,0 $, Sonnet 5 ok. 2,4 $, Sonnet 5.5 ok. 2,6 $ (dłuższe uzasadnienia); Sonnet 5.5 odpowiada ok. 10% szybciej od Sonneta 5."
         }
       ]
     },

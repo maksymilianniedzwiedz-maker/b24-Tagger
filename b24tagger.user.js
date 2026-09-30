@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.36.1
+// @version      0.36.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -172,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.36.1';
+  const VERSION = '0.36.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -615,6 +615,13 @@
   // Buduje zapytanie. opts: { model, system, user, maxTokens, cacheSystem, noThinking,
   // schema: { name, schema }, stream, browser, wariant }.
   // Zwraca { url, headers, body } — body jako obiekt, serializuje wołający.
+  // Sonnet 5.5 ma własny wariant zapytania (AI_PROVIDERS.md §2a), bo odrzuca dwa elementy, na których
+  // stoją zapytania do Haiku 4.5 i Sonneta 5: `thinking: disabled` (400 — myślenie z góry wyłącza
+  // tylko jego `between_tools`) i wymuszone narzędzie (`tool_choice: tool` nie istnieje na modelach
+  // 5.5). Odpowiedź wg schematu idzie tam przez `output_config.format`. Dokumentacja Anthropic
+  // (thinking-troubleshooting, pricing) z 2026-09-30; News na 5.5 sprawdzony na żywo na 25 stronach.
+  var AI_CLAUDE_55 = /^claude-sonnet-5-5/;
+
   function _aiBuildRequest(opts, key) {
     var provider = _aiProvider(opts.model);
     var w = opts.wariant || {};
@@ -623,13 +630,21 @@
       if (opts.cacheSystem) headers['anthropic-beta'] = 'prompt-caching-2024-07-31';
       if (opts.browser) headers['anthropic-dangerous-direct-browser-access'] = 'true';
       var body = { model: opts.model };
-      if (opts.noThinking) body.thinking = { type: 'disabled' };
+      var m55 = AI_CLAUDE_55.test(opts.model);
+      // Na 5.5 także tagowanie (sam schemat) bez myślenia z góry: domyślnie model myśli, a limit
+      // tagowania to 1024 tokeny — myślenie ucinałoby JSON, jak na Sonnecie 5 w News.
+      if (m55 && (opts.noThinking || opts.schema)) body.thinking = { type: 'between_tools' };
+      else if (opts.noThinking) body.thinking = { type: 'disabled' };
       body.max_tokens = opts.maxTokens;
       if (opts.stream) body.stream = true;
       body.system = opts.cacheSystem
         ? [{ type: 'text', text: opts.system, cache_control: { type: 'ephemeral' } }]
         : opts.system;
-      if (opts.schema) {
+      if (opts.schema && m55) {
+        // Anthropic wymaga tu additionalProperties: false na każdym obiekcie (400 bez tego,
+        // sprawdzone 2026-09-30) — to samo dopełnienie co dla trybu strict OpenAI.
+        body.output_config = { format: { type: 'json_schema', schema: _aiStrictSchema(opts.schema.schema) } };
+      } else if (opts.schema) {
         body.tools = [{ name: opts.schema.name, description: opts.schema.description || '', input_schema: opts.schema.schema }];
         body.tool_choice = { type: 'tool', name: opts.schema.name };
       }
@@ -761,11 +776,15 @@
   // Tekst odpowiedzi (albo wejście narzędzia Claude'a przy schemacie) z pełnej odpowiedzi.
   function _aiReadResponse(provider, data, schemaName) {
     if (provider === 'anthropic') {
-      if (schemaName) {
-        var block = (data.content || []).find(function(b) { return b.type === 'tool_use' && b.name === schemaName; });
-        return { json: block ? block.input : null, text: '' };
-      }
-      return { text: (data.content && data.content[0] && data.content[0].text) || '' };
+      // Same bloki tekstu: na Sonnecie 5.5 przed tekstem może stać blok myślenia, a wtedy
+      // content[0] nie ma pola `text`. Na Haiku 4.5 i Sonnecie 5 wynik jest ten sam co content[0].
+      var atext = (data.content || []).filter(function(b) { return b.type === 'text'; })
+        .map(function(b) { return b.text || ''; }).join('');
+      if (!schemaName) return { text: atext };
+      var block = (data.content || []).find(function(b) { return b.type === 'tool_use' && b.name === schemaName; });
+      if (block) return { json: block.input, text: '' };
+      // Sonnet 5.5: schemat przez output_config.format, odpowiedź jako tekst JSON.
+      try { return { json: JSON.parse(atext), text: atext }; } catch(e) { return { json: null, text: atext }; }
     }
     var text = '';
     if (provider === 'openai') {
@@ -903,11 +922,13 @@
     s = s || _aiGetSettings();
     var cache = lsGet(AI_MODELS_LS, {}) || {};
     var groups = {
-      anthropic: [{ id: 'claude-haiku-4-5', label: 'Haiku 4.5 — szybki, prompt bez cache' },
-                  { id: 'claude-sonnet-5', label: 'Sonnet 5 — mocniejszy, z cache taniej' }],
+      anthropic: [{ id: 'claude-haiku-4-5', label: 'Haiku 4.5 — najtańszy' },
+                  { id: 'claude-sonnet-5', label: 'Sonnet 5 — poprzednia generacja' },
+                  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5 — najnowszy' }],
       openai: [], google: [],
     };
-    // Claude: tylko dwa modele, na których zapytania są sprawdzone. Lista z API dołożyłaby
+    // Claude: tylko modele, na których zapytania są sprawdzone (Sonnet 5.5 z własnym wariantem,
+    // AI_CLAUDE_55). Lista z API dołożyłaby
     // m.in. `claude-sonnet-4-6`, które AI_MODEL_ALIASES po cichu zamienia na Sonnet 5 przy
     // każdym odczycie ustawień, i Opusa, na którym `thinking: disabled` ma własne pułapki
     // (komentarz w _newsAiAnalyze). Test klucza Anthropic nadal pobiera listę — jako test.
@@ -18765,6 +18786,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.36.2",
+      "date": "2026-09-30",
+      "label": "feat",
+      "changes": [
+        {
+          "type": "feat",
+          "text": "**Claude Sonnet 5.5 do wyboru w modelach AI** (News, kampanie, tłumaczenie, tagowanie). Sonnet 5.5 dostaje własny wariant zapytania: odrzuca sposób wyłączania myślenia i wymuszoną odpowiedź przez narzędzie, których wtyczka używa dla Haiku 4.5 i Sonneta 5; zapytania do tych dwóch modeli zostają bez zmian. Pomiar News na 25 stronach PL i HR: wszystkie trzy modele odpowiadają bez ucięć; Sonnet 5.5 zgodny z Sonnetem 5 na 24 z 25 stron; koszt na 1000 stron: Haiku 4.5 ok. 2,6 $, Sonnet 5 ok. 4,0 $, Sonnet 5.5 ok. 4,8 $ (dłuższe uzasadnienia)."
+        }
+      ]
+    },
+    {
       "version": "0.36.1",
       "date": "2026-09-30",
       "label": "feat",
@@ -18961,19 +18993,6 @@ function showOnboarding(onComplete) {
         "feat: **Zakres dat odsiewany po stronie wtyczki dla Google News.** Kanał RSS, inaczej niż wyszukiwarka, nie zna filtra dat — bez tego lecą artykuły sprzed roku (w zmierzonej próbce pierwsza pozycja miała datę z marca przy kampanii sierpień–wrzesień)",
         "perf: **Sprawdzanie „czy już w projekcie” idzie teraz PRZED skanem, nie po nim.** Wcześniej strona obecna już w Brand24 była otwierana, skanowana i oceniana przez model, zanim wyszło, że była zbędna — skanowanie i tokeny szły w kosz. Dotyczy wyłącznie trybu kampanii; w zwykłym News zostaje po staremu, bo tam lista bywa wklejana bez zakresu dat i odpytanie projektu opóźniałoby start bez pewnego zysku",
         "fix: **Duplikaty szukane w okresie kampanii, nie w sztywnych ostatnich trzech miesiącach.** Kampania sprzed pół roku w ogóle nie mieściła się w tym oknie i duplikaty przechodziły niezauważone, a kampania krótka kazała pobierać wielokrotnie więcej wzmianek, niż trzeba. Teraz okno to zakres kampanii z miesięcznym marginesem z każdej strony — bo data wzmianki w Brand24 bywa datą zebrania, nie publikacji. Komunikat pokazuje faktyczny zakres zamiast zawsze mówić „z ostatnich 3 mies.”"
-      ]
-    },
-    {
-      "version": "0.32.10",
-      "date": "2026-09-17",
-      "label": "fix",
-      "changes": [
-        "fix: **CAPTCHA przechodziła niezauważona.** Zgłoszone z pierwszego realnego przebiegu: zagadka wyskoczyła, alarm nie zadzwonił. Detekcja sprawdzała tylko adres `/sorry/` i jeden formularz, a Google podaje blokadę w kilku formach i zmienia je bez zapowiedzi. Teraz decyduje sygnał odwrotny: jesteśmy na stronie wyników, a nie ma na niej ani listy wyników, ani licznika trafień — czegokolwiek Google tam nie pokazał, wyników tam nie ma. Licznik jest obecny nawet przy zerowym trafieniu, więc pusty wariant nie podnosi fałszywego alarmu",
-        "feat: **Alarm captchy — migający, dźwiękowy, zapętlony.** Trzy kanały naraz, bo karta zbierania bywa na drugim monitorze i komunikat w panelu jest wtedy niewidoczny: migająca czerwona ramka z instrukcją, pulsujący ton grający do odklikania (z przyciskiem wyciszenia) i migający tytuł karty, widoczny na pasku, gdy okno jest w tle. Uwaga: karta wyników nigdy nie dostała kliknięcia, więc Chrome może zablokować dźwięk — dlatego nie jest jedynym sygnałem",
-        "feat: **Captcha pauzuje przebieg, nie kasuje go.** Pozycja w kolejce i numer strony zostają nietknięte, więc po odklikaniu zbieranie wraca dokładnie tam, gdzie stanęło — samo, bez uruchamiania od nowa. Wcześniej wykryta blokada kończyła przebieg na dobre i trzeba było startować od początku. Zniknął też `alert()`: blokował wątek strony, czyli uniemożliwiał miganie i dźwięk, a to one mają zwrócić uwagę",
-        "fix: **Kolektor nie odpalał się w ogóle na stronie blokady**, bo jej adres nie jest `/search` — czyli dokładnie tam, gdzie alarm jest potrzebny, nie było go kto uruchomić",
-        "ui: **Oznaczenia wiersza dostosowane do kampanii.** W kampanii adresy przychodzą z wyszukiwania po nazwie kampanii, więc obecność marki jest przesądzona i badge „Relevant” nic nie wnosił — zastąpiony pytaniem, które ma znaczenie: „ta kampania” albo „poza kampanią”",
-        "ui: **Data liczona wobec okresu kampanii, nie wieku artykułu.** Zamiast ostrzeżenia „zbyt stary artykuł” wiersz mówi, czy data mieści się w zakresie podanym przy zbieraniu — z ptaszkiem albo ostrzeżeniem i pełnym zakresem w podpowiedzi. Ostrzeżenie o wieku było w kampanii mylące: zakres dostaje się od klienta, kampania sprzed miesiąca jest w porządku, a artykuł spoza zakresu jest bezużyteczny niezależnie od tego, czy ma tydzień, czy pół roku"
       ]
     }
   ];

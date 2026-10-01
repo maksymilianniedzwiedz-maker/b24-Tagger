@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.36.3
+// @version      0.36.4
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -172,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.36.3';
+  const VERSION = '0.36.4';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -18807,6 +18807,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.36.4",
+      "date": "2026-10-01",
+      "label": "fix",
+      "changes": [
+        {
+          "type": "fix",
+          "text": "**Przegląd sentymentu z zakresu dat znów pobiera negatywy.** Brand24 odrzucał zapytanie błędem „Enum \"Sentiment\" cannot represent non-string value: -1”: filtr sentymentu przyjmuje wartość „negative”, nie liczbę -1. Źródło „bieżący widok Brand24” bez zmian."
+        }
+      ]
+    },
+    {
       "version": "0.36.3",
       "date": "2026-10-01",
       "label": "fix",
@@ -18972,46 +18983,6 @@ function showOnboarding(onComplete) {
         {
           "type": "fix",
           "text": "**Adresy z bieżącej strony trafiają do koszyka także po wciśnięciu pauzy.** Odczyt z już załadowanej strony nie puka do Google, więc nie ma powodu go pomijać — wstrzymywane jest wyłącznie przejście dalej. Jedno zapytanie może jeszcze pójść, jeśli nawigacja ruszyła w chwili kliknięcia; przebieg stanie na następnej przerwie"
-        }
-      ]
-    },
-    {
-      "version": "0.33.0",
-      "date": "2026-09-18",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {
-          "type": "feat",
-          "text": "**Autouzupełnianie wzmianek działa na X i Facebooku.** Oba serwisy szły dotąd przez generyczny odczyt artykułu, który na X trafiał w oś czasu, a na Facebooku w nic — treść, tytuł, data i godzina zostawały puste. To nie był drobiazg: sprawdzanie duplikatów zawęża zapytanie do miesiąca z pola daty, a puste pole oznaczało „dzisiaj\", więc wpis sprzed pół roku był szukany w bieżącym miesiącu i wychodził jako „URL nowy\" dla wzmianki, która w projekcie już jest"
-        },
-        {
-          "type": "feat",
-          "text": "**X — komplet danych wpisu niezależnie od tego, czy sesja jest zalogowana.** Data z godziną, treść, polubienia, odpowiedzi, język wpisu i autor przychodzą z endpointu, którym X obsługuje osadzanie wpisów na cudzych stronach. Powód, dla którego to nie może opierać się na samej stronie: wylogowany X **nie renderuje aplikacji w ogóle** — zmierzone na stronie wpisu, zero elementów `data-testid`, zero `time`, brak `react-root`. Repostów i wyświetleń ten kanał nie oddaje, te czytane są z widoku zalogowanego"
-        },
-        {
-          "type": "feat",
-          "text": "**Facebook — dane posta bez ani jednego zapytania do Facebooka.** Czytane są z pamięci karty, gdzie post już jest, bo został otwarty. Daje dokładny czas publikacji, pełną treść (zmierzone **602 znaki** tam, gdzie widok ucina po „Wyświetl więcej\"), reakcje, komentarze i udostępnienia. Innej drogi tam nie ma: na stronie posta Facebook nie wystawia **żadnych** metadanych — zmierzone zero tagów `og:`, zero `ld+json`, zero `time`"
-        },
-        {
-          "type": "feat",
-          "text": "**Wiersz autora działa wreszcie na Facebooku.** Brand24 trzyma adres autora jako `profile.php?id=` z numerycznym ID strony, którego w adresie posta nie ma — i dlatego to pole było na Facebooku wyłączone. Teraz ID przychodzi wprost z danych posta"
-        },
-        {
-          "type": "fix",
-          "text": "**Kraj i język kampanii dostosowują się do przełączonego projektu.** Przebieg odpalony na projekcie greckim dzień po tureckim szedł z **tureckim** filtrem kraju i języka, bo zapamiętana konfiguracja miała pierwszeństwo przed krajem z nazwy projektu. Nazwa kampanii, warianty frazy i zakres dat przenoszą się dalej — należą do kampanii, nie do rynku. Ręczna zmiana kraju albo języka zostaje zapamiętana, ale tylko dla projektu, w którym ją zrobiono"
-        },
-        {
-          "type": "fix",
-          "text": "**Błędny kod języka jest odrzucany, zamiast po cichu wyłączać filtr.** Wpisanie „gr\" w pole języka (bo kraj to GR) dawało wyniki po polsku — Google nie odrzuca `lang_gr`, tylko pomija nieznany filtr. Przebieg kończył się normalnie, HUD pokazywał postęp, a koszyk zapełniał się adresami z niewłaściwego rynku. Teraz sprawdzane jest znaczenie kodu, nie sam kształt, a komunikat podaje właściwy — grecki to „el\". Ten sam rozjazd mają CZ/cs, SE/sv, DK/da, EE/et, UA/uk, RS/sr i kilka innych; pod polami stoi podpis z nazwami kraju i języka"
-        },
-        {
-          "type": "feat",
-          "text": "**Panel przebiegu pokazuje rynek.** Pod nazwą kampanii doszedł kraj i język z nazwami, a filtr niebiorący udziału w tym przebiegu jest wyszarzony. Powód wprost z poprzedniego punktu: przebieg z cudzym rynkiem wygląda z zewnątrz identycznie jak poprawny — ten sam postęp, ten sam rosnący koszyk"
-        },
-        {
-          "type": "fix",
-          "text": "**Kafelki w oknie „Dodawanie wzmianek\" mają równy rozmiar.** Trzeci kafelek ściskał pozostałe, bo kolumna z dłuższym opisem rozpychała się kosztem sąsiednich. Zmierzone po poprawce: równa szerokość, równa wysokość, równe odstępy"
         }
       ]
     }
@@ -24406,9 +24377,11 @@ Tej operacji nie można cofnąć.`)) {
     lsSet(SENT_LS_PROJECT, all);
   }
 
-  // Negatywy jak filtr panelu: se [-1] (BRAND24_NETWORK.md §5), reszta jak domyślny widok.
+  // Negatywy: `se` to lista enuma `Sentiment` (te same wartości co w setSentiment), nie liczb —
+  // `[-1]` serwer odrzuca błędem „Enum "Sentiment" cannot represent non-string value: -1”
+  // (BRAND24_NETWORK.md §5). Reszta jak domyślny widok.
   function _sentNegativeFilters() {
-    return { va: 1, rt: [], se: [-1], vi: null, gr: [], sq: '', do: '', au: '', lem: false,
+    return { va: 1, rt: [], se: ['negative'], vi: null, gr: [], sq: '', do: '', au: '', lem: false,
              ctr: [], nctr: false, is: [0, 10], tp: null, lang: [], nlang: false };
   }
 

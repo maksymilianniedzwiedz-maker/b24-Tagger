@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.36.4",
+    "date": "2026-10-01",
+    "label": "fix",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "**Przegląd sentymentu z zakresu dat znów pobiera negatywy.** Brand24 odrzucał zapytanie błędem „Enum \"Sentiment\" cannot represent non-string value: -1”: filtr sentymentu przyjmuje wartość „negative”, nie liczbę -1. Źródło „bieżący widok Brand24” bez zmian."
+      }
+    ]
+  },
+  {
     "version": "0.36.3",
     "date": "2026-10-01",
     "label": "fix",

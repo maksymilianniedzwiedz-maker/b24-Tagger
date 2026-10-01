@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.36.7",
+    "date": "2026-10-01",
+    "label": "feat",
+    "changes": [
+      {
+        "type": "feat",
+        "text": "**Przegląd sentymentu ocenia do 16 partii naraz na model zamiast 8.** Ocena miesiąca Toyoty (ok. 1 100 wzmianek) trwa ok. 2 min zamiast ok. 3,7 min (szacunek z czasów partii w pomiarze). Przeglądy do ok. 160 wzmianek mieszczą się w jednej turze i trwają tyle co dotąd. Koszt się nie zmienia."
+      }
+    ]
+  },
+  {
     "version": "0.36.6",
     "date": "2026-10-01",
     "label": "fix",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.36.6
+// @version      0.36.7
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -172,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.36.6';
+  const VERSION = '0.36.7';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -18896,6 +18896,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.36.7",
+      "date": "2026-10-01",
+      "label": "feat",
+      "changes": [
+        {
+          "type": "feat",
+          "text": "**Przegląd sentymentu ocenia do 16 partii naraz na model zamiast 8.** Ocena miesiąca Toyoty (ok. 1 100 wzmianek) trwa ok. 2 min zamiast ok. 3,7 min (szacunek z czasów partii w pomiarze). Przeglądy do ok. 160 wzmianek mieszczą się w jednej turze i trwają tyle co dotąd. Koszt się nie zmienia."
+        }
+      ]
+    },
+    {
       "version": "0.36.6",
       "date": "2026-10-01",
       "label": "fix",
@@ -19019,33 +19030,6 @@ function showOnboarding(onComplete) {
         {
           "type": "fix",
           "text": "Zapytania do Claude'a są bez zmian (bajt w bajt), więc werdykty i koszty przy dotychczasowych ustawieniach się nie zmieniają. **OpenAI i Gemini są na razie niesprawdzone na prawdziwym kluczu** — zgłaszaj każdy błąd przy wierszu z tymi modelami."
-        }
-      ]
-    },
-    {
-      "version": "0.34.1",
-      "date": "2026-09-21",
-      "label": "fix",
-      "changes": [
-        {
-          "type": "fix",
-          "text": "**Treść wzmianki potrafiła być z cudzego artykułu albo z menu serwisu.** Skaner brał pierwszy `<article>` w kodzie strony, a to bywa kafelek „polecane\" z kolumny obok. Zmierzone na 4 z 13 stron: radiopoznan.fm dawał słowo „Poznań\", newsmaxpolska.pl — artykuł o zupełnie innej sprawie, dlahandlu.pl — tytuł cudzego kafelka, tvn24.pl — całe menu serwisu. Teraz strefę treści wybiera **ilość prozy**, a spośród kontenerów mieszczących ~cały tekst bierzemy najciaśniejszy, żeby nie wciągnąć nawigacji"
-        },
-        {
-          "type": "fix",
-          "text": "**Godzina publikacji nie była czytana W OGÓLE.** Pola Godzina i Minuta dostawały czas otwarcia panelu, nawet gdy strona podawała pełny znacznik czasu. Na 6 z 6 stron z metadanymi godzina stała gotowa w `datePublished` i szła do kosza, bo kod wyciągał z niej tylko rok-miesiąc-dzień. Teraz godzina wychodzi z tego samego miejsca co data — i z tej samej konwersji na czas lokalny, żeby wpis z 23:40 UTC nie dostał daty o dzień wstecz"
-        },
-        {
-          "type": "fix",
-          "text": "**Data z widocznego tekstu, gdy serwis nie podaje jej w metadanych.** Wcześniej takie strony wracały z pustą datą — radiopoznan.fm („Publikacja: 17.09.2026 g.12:39\"), poznan.tvp.pl, naszglospoznanski.pl. Szukanie idzie od środka artykułu na zewnątrz, bo data z listy polecanych obok wygląda tak samo jak data tekstu. **Poza strefą artykułu daty nie zgadujemy**: lazarz.pl nie podaje jej nigdzie, a skan całej strony wyciągał z paska u góry datę dzisiejszą i wstawiał ją jako „wykrytą\" — brak daty jest uczciwszy"
-        },
-        {
-          "type": "fix",
-          "text": "**Facebook: filmy i zdjęcia dają teraz komplet danych.** Adresy `/watch/?v=…` i `/photo/?fbid=…` nie były rozpoznawane jako post, więc formularz wypełniał się śmieciami — Facebook nie wystawia na stronie posta żadnych metadanych. Teraz wchodzimy od rekordu materiału: treść, data z dokładnością do minuty, autor, reakcje, komentarze, udostępnienia, a przy wideo także **liczba odsłon**. Adres zapisuje się w postaci kanonicznej, bez parametrów przeglądania albumu"
-        },
-        {
-          "type": "fix",
-          "text": "**Strona za ścianą (paywall, wymuszone wyłączenie AdBlocka) nie zostawia już pustego pola Treść** — wpada do niego zajawka, którą serwis publikuje dla mediów społecznościowych"
         }
       ]
     }
@@ -24369,7 +24353,10 @@ Tej operacji nie można cofnąć.`)) {
   // (setMentionSentiment), bez pliku. Kryteria, pomiary i pułapki: Tagger/SENTIMENT.md §9.
 
   var SENT_BATCH = 20;              // wzmianek w partii, jak w pomiarze (SENTIMENT.md §4)
-  var SENT_AI_CONCURRENCY = 8;      // partii w locie na model
+  // Partii w locie na model. Przy 16 miesiąc Toyoty (~55 partii) to ~2 min zamiast ~3,7 przy 8;
+  // 32 skraca go o kolejne ~40 s, ale przy nieznanym limicie konta OpenAI grozi seria 429
+  // (SENTIMENT.md §9.2).
+  var SENT_AI_CONCURRENCY = 16;
   // Limit odpowiedzi; myślenie liczy się do niego. luna: 16 000 bez uciętej partii w 96 (§5.2, §7).
   // Gemini zużyło w jednej partii 15 363 tokeny na samo myślenie (§5.2), więc dostaje zapas.
   // Płatne są tokeny zużyte, nie limit.

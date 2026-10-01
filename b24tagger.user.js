@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.36.8
+// @version      0.36.9
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -172,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.36.8';
+  const VERSION = '0.36.9';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -18899,6 +18899,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.36.9",
+      "date": "2026-10-01",
+      "label": "feat",
+      "changes": [
+        {
+          "type": "feat",
+          "text": "**Przegląd sentymentu: powrót do przeglądu z karty ◐ Sentyment.** Karta pokazuje projekt, zakres dat i postęp („Do decyzji: załatwione 37 z 137 · Zgodna zmiana: 45 z 45”) z przyciskiem „↩ Wróć do przeglądu”. Zamknięcie okna nie kończy przeglądu, ocena i zapisy trwają dalej. Nowa ocena przy kafelkach bez decyzji pyta o potwierdzenie, bo zamyka bieżący przegląd; podjęte decyzje i werdykty modeli zostają, więc ponowna ocena tego samego zakresu nie wysyła zapytań do modeli. Przeładowanie strony nadal kończy przegląd."
+        }
+      ]
+    },
+    {
       "version": "0.36.8",
       "date": "2026-10-01",
       "label": "feat",
@@ -19002,25 +19013,6 @@ function showOnboarding(onComplete) {
         {
           "type": "feat",
           "text": "Werdykty są zapamiętywane dla wzmianki, modelu i promptu, więc ponowna ocena tego samego zakresu nie jest płatna drugi raz. Okno pokazuje koszt oceny i eksportuje do CSV dziennik decyzji z werdyktami modeli. W trybie Test Run zmiany sentymentu trafiają tylko do logu, a ocena modeli jest płatna jak zwykle. **Funkcja niesprawdzona jeszcze na żywym przebiegu.**"
-        }
-      ]
-    },
-    {
-      "version": "0.35.0",
-      "date": "2026-09-29",
-      "label": "feat",
-      "changes": [
-        {
-          "type": "feat",
-          "text": "**Zmiana sentymentu z pliku.** Po włączeniu w Dodatkowych funkcjach opcji „◐ Zmiana sentymentu po assessmencie” w mapowaniu ocen pojawiają się trzy akcje: „Sentyment → negatywny”, „Sentyment → neutralny” i „Sentyment → pozytywny”. Wzmianki z tak zmapowaną oceną dostają ten sentyment w Brand24 w zwykłym przebiegu Start, obok tagowania i usuwania. Jeden wiersz może łączyć tag i sentyment, np. `RELEVANT|NEUTRALNY`."
-        },
-        {
-          "type": "feat",
-          "text": "Wzmianki, które już mają docelowy sentyment, są pomijane. Wzmianka, której plik daje dwa różne sentymenty, jest pomijana w całości i zgłaszana w logu. Okno potwierdzenia przed startem podaje liczbę wierszy dla każdej oceny; przebieg testowy niczego nie zapisuje."
-        },
-        {
-          "type": "feat",
-          "text": "Brand24 przyjmuje zmianę sentymentu tylko pojedynczo, ok. 2 s na wzmiankę (pomiar na 2 wywołaniach); wtyczka wysyła 5 zmian naraz. **Funkcja niesprawdzona jeszcze na żywym przebiegu** — zgłaszaj każdy błąd przy zmianie sentymentu."
         }
       ]
     }
@@ -24626,6 +24618,16 @@ Tej operacji nie można cofnąć.`)) {
     var s = it.dec && it.dec.status;
     return s === 'saved' || s === 'test' || s === 'kept' || s === 'earlier';
   }
+  // Kafelki w grupach: [wszystkie, załatwione]. Wspólne dla podsumowania w oknie i karty w panelu.
+  function _sentProgress(run) {
+    var g = { decide: [0, 0], change: [0, 0], keep: [0, 0] };
+    run.items.forEach(function(it) {
+      var c = g[_sentGroupOf(it)];
+      c[0]++;
+      if (_sentIsDone(it)) c[1]++;
+    });
+    return g;
+  }
   function _sentBusy(it) {
     var s = it.dec && it.dec.status;
     return s === 'queued' || s === 'saving' || s === 'reverting';
@@ -24953,11 +24955,8 @@ Tej operacji nie można cofnąć.`)) {
         (sentState.stop ? ' — zatrzymuję po bieżących partiach…' : '<button data-sent-stop>⏹ Zatrzymaj</button>') + bars;
       return;
     }
-    var g = { decide: [0, 0], change: [0, 0], keep: [0, 0] }, saved = 0, errors = 0;
+    var g = _sentProgress(run), saved = 0, errors = 0;
     run.items.forEach(function(it) {
-      var c = g[_sentGroupOf(it)];
-      c[0]++;
-      if (_sentIsDone(it)) c[1]++;
       if (it.dec && (it.dec.status === 'saved' || it.dec.status === 'test')) saved++;
       if (it.dec && it.dec.status === 'error') errors++;
     });
@@ -25160,7 +25159,7 @@ Tej operacji nie można cofnąć.`)) {
         '<div id="b24t-sent-models" style="font-size:11px;color:var(--b24t-text-muted);margin-bottom:10px;line-height:1.6;"></div>' +
         '<div id="b24t-sent-tabstatus" style="font-size:12px;color:var(--b24t-text-muted);min-height:16px;margin-bottom:8px;line-height:1.5;"></div>' +
         '<button class="b24t-btn-primary" id="b24t-sent-run" style="width:100%;">◐ Oceń i otwórz przegląd</button>' +
-        '<button class="b24t-btn-secondary" id="b24t-sent-open" style="width:100%;margin-top:6px;display:none;">Otwórz ostatni przegląd</button>' +
+        '<button class="b24t-btn-secondary" id="b24t-sent-open" style="width:100%;margin-top:6px;display:none;">↩ Wróć do przeglądu</button>' +
       '</div>';
     return div;
   }
@@ -25178,9 +25177,10 @@ Tej operacji nie można cofnąć.`)) {
     if (!run) { el.textContent = ''; return; }
     if (sentState.running) { el.textContent = '⟳ Ocena w toku: ' + run.projectName; return; }
     if (run.phase === 'error') { el.textContent = '✗ ' + run.error; el.style.color = '#f87171'; return; }
-    var open = run.items.filter(function(it) { return !it.dec && _sentGroupOf(it) !== 'keep'; }).length;
-    el.textContent = 'Ostatni przegląd: ' + run.projectName + ', ' + run.dateFrom + ' → ' + run.dateTo +
-      ' — ' + run.items.length + ' wzmianek, niezałatwionych zmian i decyzji: ' + open;
+    var g = _sentProgress(run);
+    el.textContent = 'Przegląd: ' + run.projectName + ', ' + run.dateFrom + ' → ' + run.dateTo +
+      ' · Do decyzji: załatwione ' + g.decide[1] + ' z ' + g.decide[0] + ' · Zgodna zmiana: ' + g.change[1] + ' z ' + g.change[0] +
+      (run.phase === 'stopped' ? ' · ocena zatrzymana' : '');
   }
 
   function wireSentimentTab(panel) {
@@ -25247,6 +25247,12 @@ Tej operacji nie można cofnąć.`)) {
       if (bez.length) { _sentTabStatus('✗ Brak klucza ' + AI_PROVIDER_LABEL[_aiProvider(bez[0])] + ' dla ' + bez[0] + ' (Ustawienia → AI).', '#f87171'); return; }
       if (!state.projectId) { _sentTabStatus('✗ Nie wykryto projektu — otwórz wzmianki projektu w Brand24.', '#f87171'); return; }
       if (sentState.queue.length || sentState.inFlight) { _sentTabStatus('✗ Poczekaj, aż zapiszą się zmiany z poprzedniego przeglądu (' + (sentState.queue.length + sentState.inFlight) + ').', '#f87171'); return; }
+      var cur = sentState.run;
+      if (cur && cur.phase !== 'error') {
+        var g = _sentProgress(cur), left = g.decide[0] - g.decide[1] + g.change[0] - g.change[1];
+        if (left && !confirm('Nowa ocena zamknie bieżący przegląd (' + cur.projectName + ': ' + left + ' kafelków bez decyzji). ' +
+            'Podjęte decyzje zostają w Brand24 i w dzienniku, a werdykty modeli w pamięci: ponowna ocena tego samego zakresu ich nie powtarza. Kontynuować?')) return;
+      }
       var brand = q('#b24t-sent-brand').value.trim() || _pnResolve(state.projectId);
       var src = (q('input[name="b24t-sent-source"]:checked') || {}).value === 'view' ? 'view' : 'range';
       var p = { projectId: state.projectId, brand: brand, source: src, system: prompt.system };

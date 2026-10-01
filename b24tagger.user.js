@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.36.2
+// @version      0.36.3
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -172,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.36.2';
+  const VERSION = '0.36.3';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -546,6 +546,11 @@
     if (!s.sentiment.modelA) s.sentiment.modelA = SENT_DEFAULT_MODELS[0];
     if (!s.sentiment.modelB) s.sentiment.modelB = SENT_DEFAULT_MODELS[1];
     if (!s.prompts) s.prompts = [];
+    // Zapisane wcześniej coś, co nie jest kluczem (hasło do Brand24 z autouzupełniania
+    // przeglądarki), nie trafia ani do pola w ustawieniach, ani do nagłówka zapytania.
+    Object.keys(AI_KEY_FIELD).forEach(function(p) {
+      if (_aiKeyProblem(p, s[AI_KEY_FIELD[p]])) s[AI_KEY_FIELD[p]] = '';
+    });
     return s;
   }
   function _aiSaveSettings(s) { lsSet(LS.AI_SETTINGS, s); }
@@ -567,6 +572,22 @@
   // 2026-09-23, NIESPRAWDZONE na żywo — nie było kluczy. Tagger/AI_PROVIDERS.md.
   var AI_PROVIDER_LABEL = { anthropic: 'Claude', openai: 'OpenAI', google: 'Gemini' };
   var AI_KEY_FIELD = { anthropic: 'apiKey', openai: 'openaiKey', google: 'geminiKey' };
+  // Format klucza sprawdzany przy zapisie z ustawień. Autouzupełnianie przeglądarki wpisywało
+  // w pole klucza hasło do konta Brand24 i to hasło zapisywało się jako klucz Claude'a.
+  // Prefiksy kluczy wydawanych w 2026: Anthropic `sk-ant-api03-`, OpenAI `sk-proj-`/`sk-svcacct-`,
+  // Google `AIza` + 35 znaków. Gdy dostawca zmieni format, nowy klucz zostanie tu odrzucony
+  // z komunikatem — wtedy poszerzyć wzorzec.
+  var AI_KEY_FORMAT = {
+    anthropic: { rx: /^sk-ant-[\w-]{20,}$/,       prefix: 'sk-ant-' },
+    openai:    { rx: /^sk-(?!ant-)[\w-]{20,}$/,   prefix: 'sk-' },
+    google:    { rx: /^AIza[\w-]{30,}$/,          prefix: 'AIza' },
+  };
+  // null — pusty (usunięcie klucza) albo poprawny; inaczej komunikat dla użytkownika.
+  function _aiKeyProblem(provider, key) {
+    if (!key || AI_KEY_FORMAT[provider].rx.test(key)) return null;
+    return 'To nie jest klucz ' + AI_PROVIDER_LABEL[provider] + ': klucz zaczyna się od „' +
+      AI_KEY_FORMAT[provider].prefix + '” i nie ma spacji. Nie zapisano.';
+  }
   var AI_MODELS_LS = 'b24t_ai_models';
 
   function _aiProvider(model) {
@@ -18786,6 +18807,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.36.3",
+      "date": "2026-10-01",
+      "label": "fix",
+      "changes": [
+        {
+          "type": "fix",
+          "text": "**Pola kluczy API i tokenu GitHub nie są już polami hasła.** Przeglądarka nie proponuje zmiany hasła do konta Brand24 po wklejeniu klucza i nie wpisuje zapisanego hasła w pole klucza Claude. Wpis bez formatu klucza (Claude „sk-ant-…”, OpenAI „sk-…”, Gemini „AIza…”) nie zapisuje się, a pole wraca do zapisanego klucza. Hasło zapisane wcześniej w miejscu klucza jest pomijane: pole klucza jest puste i wymaga ponownego wklejenia klucza."
+        }
+      ]
+    },
+    {
       "version": "0.36.2",
       "date": "2026-09-30",
       "label": "feat",
@@ -18981,18 +19013,6 @@ function showOnboarding(onComplete) {
           "type": "fix",
           "text": "**Kafelki w oknie „Dodawanie wzmianek\" mają równy rozmiar.** Trzeci kafelek ściskał pozostałe, bo kolumna z dłuższym opisem rozpychała się kosztem sąsiednich. Zmierzone po poprawce: równa szerokość, równa wysokość, równe odstępy"
         }
-      ]
-    },
-    {
-      "version": "0.32.11",
-      "date": "2026-09-17",
-      "label": "feat",
-      "changes": [
-        "feat: **Google News jako drugi kanał zbierania.** Przycisk w modalu kampanii: jedno zapytanie na rynek zamiast serii do wyszukiwarki, czyli bez ryzyka captchy — i bez otwierania jakiejkolwiek karty. Zmierzone na rynku greckim: 57 pozycji z jednego zapytania, same serwisy informacyjne (marieclaire.gr, elle.gr, lifo.gr, protothema.gr), bez sklepu marki i marketplace’ów. Nie zastępuje przebiegu po wynikach Google, bo gubi blogi modowe i strony produktowe — jest uzupełnieniem",
-        "feat: **Adresy z Google News są rozwijane do prawdziwych artykułów.** Kanał RSS podaje wyłącznie przekierowania `news.google.com/rss/articles/…`, a nazwa wydawcy przychodzi bez ścieżki. Wtyczka podąża za przekierowaniem i zapisuje faktyczny adres. Rozwijane są tylko pozycje, które przeszły filtr domeny i zakresu dat — każde rozwinięcie to osobne zapytanie, więc robienie tego dla wszystkiego byłoby marnotrawstwem",
-        "feat: **Zakres dat odsiewany po stronie wtyczki dla Google News.** Kanał RSS, inaczej niż wyszukiwarka, nie zna filtra dat — bez tego lecą artykuły sprzed roku (w zmierzonej próbce pierwsza pozycja miała datę z marca przy kampanii sierpień–wrzesień)",
-        "perf: **Sprawdzanie „czy już w projekcie” idzie teraz PRZED skanem, nie po nim.** Wcześniej strona obecna już w Brand24 była otwierana, skanowana i oceniana przez model, zanim wyszło, że była zbędna — skanowanie i tokeny szły w kosz. Dotyczy wyłącznie trybu kampanii; w zwykłym News zostaje po staremu, bo tam lista bywa wklejana bez zakresu dat i odpytanie projektu opóźniałoby start bez pewnego zysku",
-        "fix: **Duplikaty szukane w okresie kampanii, nie w sztywnych ostatnich trzech miesiącach.** Kampania sprzed pół roku w ogóle nie mieściła się w tym oknie i duplikaty przechodziły niezauważone, a kampania krótka kazała pobierać wielokrotnie więcej wzmianek, niż trzeba. Teraz okno to zakres kampanii z miesięcznym marginesem z każdej strony — bo data wzmianki w Brand24 bywa datą zebrania, nie publikacji. Komunikat pokazuje faktyczny zakres zamiast zawsze mówić „z ostatnich 3 mies.”"
       ]
     }
   ];
@@ -19772,6 +19792,19 @@ function showOnboarding(onComplete) {
 
   }
 
+  // Pola na klucze API i token GitHuba to `type="text"` maskowany przez `-webkit-text-security`
+  // (Chromium, Safari, Firefox od 114), NIE `type="password"`. Menedżer haseł przeglądarki
+  // bierze każde pole hasła na brand24.com za hasło do konta: ignoruje `autocomplete="off"`,
+  // wpisuje w pierwsze takie pole zapisane hasło i po wklejeniu klucza proponuje „zaktualizuj
+  // hasło”. Atrybuty `data-*` wyłączają to samo w 1Password, LastPass, Bitwarden i Dashlane.
+  // Nie przełączać pola na `type="password"` nawet na chwilę (np. w „pokaż/ukryj”) — Chrome
+  // zapamiętuje pole, które choć raz było polem hasła.
+  var SECRET_INPUT_ATTRS = 'autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore data-form-type="other"';
+  function _secretToggle(input) {
+    var masked = input.style.getPropertyValue('-webkit-text-security') !== 'none';
+    input.style.setProperty('-webkit-text-security', masked ? 'none' : 'disc');
+  }
+
   function showFeaturesModal() {
     if (document.getElementById('b24t-features-modal')) return;
     const features = loadFeatures();
@@ -19844,7 +19877,7 @@ function showOnboarding(onComplete) {
         '</label>' +
         '<div style="display:flex;align-items:center;gap:6px;margin-bottom:7px;">' +
           '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">GitHub PAT:</span>' +
-          '<input type="password" id="b24t-na-pat" autocomplete="off" spellcheck="false" placeholder="ghp_..." style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:monospace;">' +
+          '<input type="text" id="b24t-na-pat" ' + SECRET_INPUT_ATTRS + ' placeholder="ghp_..." style="flex:1;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:monospace;-webkit-text-security:disc;">' +
           '<button id="b24t-na-pat-toggle" title="Pokaż/ukryj" style="padding:3px 7px;flex-shrink:0;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;cursor:pointer;font-size:13px;">👁</button>' +
         '</div>' +
         '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' +
@@ -19907,7 +19940,7 @@ function showOnboarding(onComplete) {
             var ph = p === 'anthropic' ? 'sk-ant-api03-...' : p === 'openai' ? 'sk-proj-...' : 'AIza...';
             return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">' +
               '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">' + AI_PROVIDER_LABEL[p] + ':</span>' +
-              '<input type="password" id="b24t-ai-key-' + p + '" autocomplete="off" spellcheck="false" placeholder="' + ph + '" style="flex:1;min-width:0;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:monospace;">' +
+              '<input type="text" id="b24t-ai-key-' + p + '" ' + SECRET_INPUT_ATTRS + ' placeholder="' + ph + '" style="flex:1;min-width:0;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:monospace;-webkit-text-security:disc;">' +
               '<button class="b24t-ai-key-toggle" data-provider="' + p + '" title="Pokaż/ukryj" style="padding:3px 7px;flex-shrink:0;background:transparent;border:1px solid var(--b24t-border);color:var(--b24t-text-muted);border-radius:6px;cursor:pointer;font-size:13px;">👁</button>' +
               '<button class="b24t-ai-key-test" data-provider="' + p + '" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid var(--b24t-border);background:transparent;color:var(--b24t-text-muted);cursor:pointer;flex-shrink:0;">Testuj</button>' +
             '</div>' +
@@ -20050,21 +20083,29 @@ function showOnboarding(onComplete) {
         var testBtn = modal.querySelector('.b24t-ai-key-test[data-provider="' + p + '"]');
         if (!input) return;
         input.value = s[AI_KEY_FIELD[p]] || '';
+        function show(txt, color) { if (result) { result.textContent = txt; result.style.color = color; } }
+        // Tekst, który nie jest kluczem, nie nadpisuje zapisanego klucza: pole wraca do niego,
+        // żeby kropki zawsze pokazywały to, co jest w ustawieniach.
+        function save(key) {
+          var cfg = _aiGetSettings();
+          var problem = _aiKeyProblem(p, key);
+          if (problem) { input.value = cfg[AI_KEY_FIELD[p]] || ''; show('✗ ' + problem, '#f87171'); return false; }
+          cfg[AI_KEY_FIELD[p]] = key; _aiSaveSettings(cfg);
+          return true;
+        }
         input.addEventListener('change', function() {
-          var cfg = _aiGetSettings(); cfg[AI_KEY_FIELD[p]] = input.value.trim(); _aiSaveSettings(cfg);
+          if (!save(input.value.trim())) return;
+          show('', '');
           renderModelSelects();
         });
-        if (toggle) toggle.addEventListener('click', function() {
-          input.type = input.type === 'password' ? 'text' : 'password';
-        });
+        if (toggle) toggle.addEventListener('click', function() { _secretToggle(input); });
         if (!testBtn) return;
-        function show(txt, color) { if (result) { result.textContent = txt; result.style.color = color; } }
         testBtn.addEventListener('click', function() {
           var key = input.value.trim();
           if (!key) { show('✗ Brak klucza', '#f87171'); return; }
           // Zapis przed testem: `change` pola odpala się dopiero po utracie fokusu, a kliknięcie
           // „Testuj" zaraz po wklejeniu nie zawsze go wyprzedza.
-          var cfg = _aiGetSettings(); cfg[AI_KEY_FIELD[p]] = key; _aiSaveSettings(cfg);
+          if (!save(key)) return;
           testBtn.disabled = true; testBtn.textContent = '⏳';
           show('', '');
           _aiFetchModels(p, key).then(function(list) {
@@ -20140,7 +20181,7 @@ function showOnboarding(onComplete) {
       }
       if (naPatToggle && naPatInput) {
         naPatToggle.addEventListener('click', function() {
-          naPatInput.type = naPatInput.type === 'password' ? 'text' : 'password';
+          _secretToggle(naPatInput);
         });
       }
       if (naRepoInput) {

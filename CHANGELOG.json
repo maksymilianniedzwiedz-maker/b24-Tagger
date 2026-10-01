@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.36.3",
+    "date": "2026-10-01",
+    "label": "fix",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "**Pola kluczy API i tokenu GitHub nie są już polami hasła.** Przeglądarka nie proponuje zmiany hasła do konta Brand24 po wklejeniu klucza i nie wpisuje zapisanego hasła w pole klucza Claude. Wpis bez formatu klucza (Claude „sk-ant-…”, OpenAI „sk-…”, Gemini „AIza…”) nie zapisuje się, a pole wraca do zapisanego klucza. Hasło zapisane wcześniej w miejscu klucza jest pomijane: pole klucza jest puste i wymaga ponownego wklejenia klucza."
+      }
+    ]
+  },
+  {
     "version": "0.36.2",
     "date": "2026-09-30",
     "label": "feat",

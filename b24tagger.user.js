@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.36.4
+// @version      0.36.5
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -172,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.36.4';
+  const VERSION = '0.36.5';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -572,21 +572,32 @@
   // 2026-09-23, NIESPRAWDZONE na żywo — nie było kluczy. Tagger/AI_PROVIDERS.md.
   var AI_PROVIDER_LABEL = { anthropic: 'Claude', openai: 'OpenAI', google: 'Gemini' };
   var AI_KEY_FIELD = { anthropic: 'apiKey', openai: 'openaiKey', google: 'geminiKey' };
-  // Format klucza sprawdzany przy zapisie z ustawień. Autouzupełnianie przeglądarki wpisywało
-  // w pole klucza hasło do konta Brand24 i to hasło zapisywało się jako klucz Claude'a.
-  // Prefiksy kluczy wydawanych w 2026: Anthropic `sk-ant-api03-`, OpenAI `sk-proj-`/`sk-svcacct-`,
-  // Google `AIza` + 35 znaków. Gdy dostawca zmieni format, nowy klucz zostanie tu odrzucony
-  // z komunikatem — wtedy poszerzyć wzorzec.
-  var AI_KEY_FORMAT = {
-    anthropic: { rx: /^sk-ant-[\w-]{20,}$/,       prefix: 'sk-ant-' },
-    openai:    { rx: /^sk-(?!ant-)[\w-]{20,}$/,   prefix: 'sk-' },
-    google:    { rx: /^AIza[\w-]{30,}$/,          prefix: 'AIza' },
+  // Sprawdzenie klucza przy zapisie z ustawień i przy odczycie. Autouzupełnianie przeglądarki
+  // wpisywało w pole klucza hasło do konta Brand24 i to hasło zapisywało się jako klucz Claude'a.
+  // ⚠ Nie zamieniać tego na listę dozwolonych formatów: Google wydaje klucze Gemini jako `AIza…`
+  // i jako `AQ.…`, a test prefiksu odrzucał drugi format i ukrywał już zapisany klucz. Każdy
+  // klucz API dostawców ma 39+ znaków drukowalnego ASCII bez spacji; hasło zwykle nie. Prefiksy
+  // niżej służą wyłącznie do wykrycia klucza wklejonego w pole innego dostawcy.
+  var AI_KEY_PREFIXES = {
+    anthropic: ['sk-ant-'],
+    openai:    ['sk-proj-', 'sk-svcacct-', 'sk-admin-'],
+    google:    ['AIza', 'AQ.'],
   };
-  // null — pusty (usunięcie klucza) albo poprawny; inaczej komunikat dla użytkownika.
+  // null — pusty (usunięcie klucza) albo wygląda na klucz; inaczej komunikat dla użytkownika.
   function _aiKeyProblem(provider, key) {
-    if (!key || AI_KEY_FORMAT[provider].rx.test(key)) return null;
-    return 'To nie jest klucz ' + AI_PROVIDER_LABEL[provider] + ': klucz zaczyna się od „' +
-      AI_KEY_FORMAT[provider].prefix + '” i nie ma spacji. Nie zapisano.';
+    if (!key) return null;
+    if (!/^[!-~]{30,}$/.test(key)) {
+      return 'To nie jest klucz ' + AI_PROVIDER_LABEL[provider] + ': klucz API ma co najmniej 30 znaków, ' +
+        'bez spacji i polskich liter. Skopiuj go ponownie z konsoli dostawcy. Nie zapisano.';
+    }
+    var owner = Object.keys(AI_KEY_PREFIXES).find(function(p) {
+      return AI_KEY_PREFIXES[p].some(function(prefix) { return key.indexOf(prefix) === 0; });
+    });
+    if (owner && owner !== provider) {
+      return 'To klucz ' + AI_PROVIDER_LABEL[owner] + ', nie ' + AI_PROVIDER_LABEL[provider] +
+        ': wklej go w pole „' + AI_PROVIDER_LABEL[owner] + '”. Nie zapisano.';
+    }
+    return null;
   }
   var AI_MODELS_LS = 'b24t_ai_models';
 
@@ -18807,6 +18818,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.36.5",
+      "date": "2026-10-01",
+      "label": "fix",
+      "changes": [
+        {
+          "type": "fix",
+          "text": "**Klucze Gemini w formacie „AQ.…” znów się zapisują i działają.** Sprawdzanie klucza nie wymaga już konkretnego początku: odrzucany jest tekst krótszy niż 30 znaków albo ze spacją lub polską literą oraz klucz innego dostawcy wklejony w nie to pole (np. klucz Gemini w polu Claude). Klucz Gemini zapisany przed 0.36.5 mógł zniknąć z ustawień przy zmianie innej opcji — wymaga ponownego wklejenia."
+        }
+      ]
+    },
+    {
       "version": "0.36.4",
       "date": "2026-10-01",
       "label": "fix",
@@ -18963,26 +18985,6 @@ function showOnboarding(onComplete) {
         {
           "type": "fix",
           "text": "**Ustawienia powiadomień są wspólne dla wszystkich stron.** Zapisane są tak, żeby działały także poza panelem Brand24 — inaczej najważniejsze powiadomienie, to o captchy, nigdy by nie doszło, bo captcha wypada na stronie wyników Google, a ustawienia zapisane w panelu są tam niewidoczne"
-        }
-      ]
-    },
-    {
-      "version": "0.33.1",
-      "date": "2026-09-18",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {
-          "type": "feat",
-          "text": "**Przebieg zbierania można wstrzymać i wznowić.** Przycisk „Pauza\" w panelu przebiegu zatrzymuje robotę tam, gdzie stoi, a „Wznów\" puszcza ją dalej. Po to, żeby dało się odejść od komputera bez zostawiania przebiegu bez nadzoru — captcha, która wyskoczy pod nieobecność, blokuje wszystko do powrotu, a odklikana od razu kosztuje kilkanaście sekund"
-        },
-        {
-          "type": "feat",
-          "text": "**Wstrzymany przebieg nie traci odliczonego czasu.** Pauza korzysta z tego samego mechanizmu, co wstrzymanie przy karcie w tle: czas postoju nie jest naliczany, a po wznowieniu odliczanie idzie dalej od miejsca, w którym stanęło. Stan przeżywa przeładowanie strony, czyli normalny krok tego przebiegu — przycisk po przejściu na kolejną stronę wyników nadal pokazuje „Wznów\", a nie wraca do „Pauza\""
-        },
-        {
-          "type": "fix",
-          "text": "**Adresy z bieżącej strony trafiają do koszyka także po wciśnięciu pauzy.** Odczyt z już załadowanej strony nie puka do Google, więc nie ma powodu go pomijać — wstrzymywane jest wyłącznie przejście dalej. Jedno zapytanie może jeszcze pójść, jeśli nawigacja ruszyła w chwili kliknięcia; przebieg stanie na następnej przerwie"
         }
       ]
     }
@@ -19908,7 +19910,7 @@ function showOnboarding(onComplete) {
           // tagować Gemini, a newsy oceniać Claudem. „Testuj" pobiera listę modeli — sprawdza
           // klucz i od razu zasila selecty modeli poniżej.
           ['anthropic', 'openai', 'google'].map(function(p) {
-            var ph = p === 'anthropic' ? 'sk-ant-api03-...' : p === 'openai' ? 'sk-proj-...' : 'AIza...';
+            var ph = p === 'anthropic' ? 'sk-ant-api03-...' : p === 'openai' ? 'sk-proj-...' : 'AIza... / AQ...';
             return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">' +
               '<span style="font-size:11px;color:var(--b24t-text-muted);flex-shrink:0;min-width:64px;">' + AI_PROVIDER_LABEL[p] + ':</span>' +
               '<input type="text" id="b24t-ai-key-' + p + '" ' + SECRET_INPUT_ATTRS + ' placeholder="' + ph + '" style="flex:1;min-width:0;padding:5px 8px;border-radius:7px;border:1px solid var(--b24t-border);background:var(--b24t-bg-card);color:var(--b24t-text);font-size:11px;font-family:monospace;-webkit-text-security:disc;">' +

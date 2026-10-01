@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.36.5",
+    "date": "2026-10-01",
+    "label": "fix",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "**Klucze Gemini w formacie „AQ.…” znów się zapisują i działają.** Sprawdzanie klucza nie wymaga już konkretnego początku: odrzucany jest tekst krótszy niż 30 znaków albo ze spacją lub polską literą oraz klucz innego dostawcy wklejony w nie to pole (np. klucz Gemini w polu Claude). Klucz Gemini zapisany przed 0.36.5 mógł zniknąć z ustawień przy zmianie innej opcji — wymaga ponownego wklejenia."
+      }
+    ]
+  },
+  {
     "version": "0.36.4",
     "date": "2026-10-01",
     "label": "fix",

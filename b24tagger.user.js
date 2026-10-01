@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.36.5
+// @version      0.36.6
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -172,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.36.5';
+  const VERSION = '0.36.6';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -509,6 +509,12 @@
   }
 
   // ── AI SETTINGS HELPERS ────────────────────────────────────────────────────
+  // Ustawienia AI (klucze dostawców, biblioteka promptów, modele, przełączniki) leżą w pamięci
+  // Tampermonkeya, NIE w localStorage panelu. localStorage jest osobny dla app.brand24.com
+  // i panel.brand24.pl, więc ustawienia z jednego panelu nie istniały na drugim, a ten sam
+  // magazyn czytają obce skrypty panelu (SECURITY.md §3.2). Dostęp wyłącznie przez
+  // _aiGetSettings / _aiSaveSettings.
+  var AI_SETTINGS_GM = 'b24t_ai_settings';
 
   var _aiEditingPromptId = null;
 
@@ -529,8 +535,79 @@
   function _aiMigrateModel(id) {
     return AI_MODEL_ALIASES[id] || id;
   }
+  function _aiReadStored() {
+    try {
+      var raw = GM_getValue(AI_SETTINGS_GM, null);
+      return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch(e) { return null; }
+  }
+  function _aiWriteStored(s) {
+    try { GM_setValue(AI_SETTINGS_GM, JSON.stringify(s)); return true; }
+    catch(e) { console.warn('[B24T] zapis ustawień AI nie powiódł się', e); return false; }
+  }
+
+  // Dołącza ustawienia z localStorage panelu do tych w pamięci Tampermonkeya, nie nadpisując
+  // niczego, co już tam jest: pusty klucz, brakujące ustawienie i nowy prompt przychodzą z `old`.
+  // Prompt o tej samej treści i kategoriach co istniejący nie dubluje się — odwołania do niego
+  // przechodzą na istniejący. Zwraca mapę { stare ID promptu: istniejące ID }.
+  function _aiMergeSettings(cur, old) {
+    // Bez prototypu: `idMap[v]` dostaje dowolną wartość ustawienia, a 'constructor' trafiłby w Object.
+    var idMap = Object.create(null), known = Object.create(null);
+    var prompts = (cur.prompts || []).slice();
+    prompts.forEach(function(p) { known[p.id] = true; });
+    (old.prompts || []).forEach(function(p) {
+      if (!p || known[p.id]) return;
+      var twin = prompts.find(function(q) {
+        return String(q.system || '').trim() === String(p.system || '').trim() &&
+          JSON.stringify(q.knownAssessments || []) === JSON.stringify(p.knownAssessments || []);
+      });
+      if (twin) idMap[p.id] = twin.id;
+      else { prompts.push(p); known[p.id] = true; }
+    });
+    function isObj(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+    (function fill(dst, src) {
+      Object.keys(src).forEach(function(k) {
+        if (k === 'prompts') return;
+        var v = src[k];
+        if (isObj(dst[k]) && isObj(v)) fill(dst[k], v);
+        else if (dst[k] === undefined || dst[k] === null || dst[k] === '') dst[k] = idMap[v] || v;
+      });
+    })(cur, old);
+    cur.prompts = prompts;
+    return idMap;
+  }
+
+  // Przeniesienie z localStorage, raz na panel (każdy panel ma własny localStorage). Tylko na
+  // panelach Brand24 — localStorage obcej strony może zawierać pod tym kluczem cokolwiek.
+  // Kopia w localStorage jest kasowana dopiero po udanym zapisie w Tampermonkeyu.
+  var _aiLsChecked = false;
+  function _aiMoveFromLs() {
+    _aiLsChecked = true;
+    if (!_isB24) return;
+    var old = lsGet(LS.AI_SETTINGS, null);
+    if (!old || typeof old !== 'object') return;
+    // Hasło z autouzupełniania zapisane jako klucz nie przechodzi.
+    Object.keys(AI_KEY_FIELD).forEach(function(p) {
+      if (_aiKeyProblem(p, old[AI_KEY_FIELD[p]])) delete old[AI_KEY_FIELD[p]];
+    });
+    var cur = _aiReadStored();
+    var idMap = cur ? _aiMergeSettings(cur, old) : {};
+    if (!_aiWriteStored(cur || old)) return;
+    try { localStorage.removeItem(LS.AI_SETTINGS); } catch(e) {}
+    // Konfiguracja AI tagowania projektów tego panelu wskazuje prompty po ID.
+    if (Object.keys(idMap).length) {
+      var projCfg = lsGet(LS.AI_TAG_PROJECT_CFG, {}) || {};
+      Object.keys(projCfg).forEach(function(pid) {
+        var c = projCfg[pid];
+        if (c && idMap[c.promptId]) c.promptId = idMap[c.promptId];
+      });
+      lsSet(LS.AI_TAG_PROJECT_CFG, projCfg);
+    }
+  }
+
   function _aiGetSettings() {
-    var s = lsGet(LS.AI_SETTINGS, _aiDefaultSettings());
+    if (!_aiLsChecked) _aiMoveFromLs();
+    var s = _aiReadStored() || _aiDefaultSettings();
     if (!s.news) s.news = {};
     if (!s.tagging) s.tagging = {};
     if (!s.custom) s.custom = {};
@@ -553,7 +630,7 @@
     });
     return s;
   }
-  function _aiSaveSettings(s) { lsSet(LS.AI_SETTINGS, s); }
+  function _aiSaveSettings(s) { _aiWriteStored(s); }
 
   // ── DOSTAWCY AI: Anthropic / OpenAI / Gemini ──────────────────────────────
   // Jedno miejsce, które wie, jak rozmawia każdy dostawca. Wywołania w module (tagowanie,
@@ -12979,8 +13056,9 @@ function showOnboarding(onComplete) {
     // ⚠ To jest JEDYNY transport, który faktycznie daje „linijka po linijce".
     // `GM_xmlhttpRequest` częściowej odpowiedzi NIE oddaje (zmierzone 2026-09-15: licznik stał
     // na 0/8 do samego końca, po czym wszystko wchodziło naraz). Nie zamieniaj tego z powrotem.
-    // Klucz API i tak leży w `localStorage` tej strony (`b24t_ai_settings`), więc wysłanie go
-    // z kontekstu strony nie zmienia tego, kto może go odczytać.
+    // Klucz leży w pamięci Tampermonkeya, ale ten transport wysyła go `fetch`-em z kontekstu
+    // strony, więc skrypt panelu, który podmienił `fetch`, widzi nagłówek z kluczem. Świadomy
+    // kompromis: tylko ten transport strumieniuje (SECURITY.md §3.2).
     // Zapas wchodzi tylko, gdy strumień nie przyniósł ANI BAJTU — nie „ani litery tekstu":
     // OpenAI z rozumowaniem wysyła najpierw zdarzenia bez tekstu, za które już płacimy.
     var gotBytes = false;
@@ -18818,6 +18896,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.36.6",
+      "date": "2026-10-01",
+      "label": "fix",
+      "changes": [
+        {
+          "type": "fix",
+          "text": "**Ustawienia AI są wspólne dla app.brand24.com i panel.brand24.pl.** Klucze, biblioteka promptów i wybrane modele leżą w pamięci Tampermonkeya zamiast w pamięci strony, osobnej dla każdego panelu, i nie znikają przy czyszczeniu danych strony. Przy pierwszym otwarciu każdego panelu jego dotychczasowe ustawienia przechodzą automatycznie. Drugi panel uzupełnia tylko to, czego brakuje (pusty klucz, nowy prompt); prompt o tej samej treści nie dubluje się."
+        }
+      ]
+    },
+    {
       "version": "0.36.5",
       "date": "2026-10-01",
       "label": "fix",
@@ -18957,34 +19046,6 @@ function showOnboarding(onComplete) {
         {
           "type": "fix",
           "text": "**Strona za ścianą (paywall, wymuszone wyłączenie AdBlocka) nie zostawia już pustego pola Treść** — wpada do niego zajawka, którą serwis publikuje dla mediów społecznościowych"
-        }
-      ]
-    },
-    {
-      "version": "0.34.0",
-      "date": "2026-09-19",
-      "label": "feat",
-      "labelColor": "#6366f1",
-      "changes": [
-        {
-          "type": "feat",
-          "text": "**Powiadomienia na telefon — nowa zakładka „🔔 Powiadomienia\".** Wtyczka potrafi teraz odezwać się przez ntfy, gdy coś na Ciebie czeka albo gdy skończy dłuższą robotę. Powód: są w niej operacje trwające kwadranse i **dwa miejsca, w których po prostu stoi**, czekając na człowieka — captcha Google i pauza po partycji. Wszystkie dotychczasowe sygnały (log, ramka strony, dźwięk, tytuł karty) zakładają, że ktoś patrzy na ten ekran, a kosztują najwięcej dokładnie wtedy, gdy nikt nie patrzy"
-        },
-        {
-          "type": "feat",
-          "text": "**Każde powiadomienie włącza się osobno.** Osiem zdarzeń w trzech grupach: *Coś czeka na Ciebie* (captcha, partycja), *Skończone* (tagowanie z pliku, zbieranie adresów, skan newsów, audyt) i *Błędy* (tagowania, zbierania). Chcesz tylko sygnał o skończonym skanie newsów, a resztę wyłączoną — zaznaczasz jedno pole"
-        },
-        {
-          "type": "feat",
-          "text": "**Kanał wpisujesz własny, jak klucz API.** Nie ma go w kodzie i nigdzie nie jest współdzielony — każdy dostaje swoje powiadomienia na swój kanał. Jest przycisk „Wyślij testowe\", żeby sprawdzić konfigurację bez czekania na prawdziwe zdarzenie, oraz pole na własny serwer ntfy. **Nazwa kanału jest jedynym zabezpieczeniem** — kto ją zna, czyta Twoje powiadomienia, więc wymyśl długą i nieoczywistą"
-        },
-        {
-          "type": "feat",
-          "text": "**Powiadomienia mówią, co się stało, ile tego było i co z tym zrobić.** „📰 Skan gotowy — 23 do oceny\" zamiast samego „gotowe\", z nazwą projektu (bo na telefonie nie widać, którego rynku dotyczy) i czasem trwania. Przy błędzie leci podpowiedź, co poprawić. Rzeczy, które stoją, przychodzą jako pilne — telefon zawibruje; zakończenia jako zwykłe i tylko wtedy, gdy robota trwała dłużej niż ustawiony próg"
-        },
-        {
-          "type": "fix",
-          "text": "**Ustawienia powiadomień są wspólne dla wszystkich stron.** Zapisane są tak, żeby działały także poza panelem Brand24 — inaczej najważniejsze powiadomienie, to o captchy, nigdy by nie doszło, bo captcha wypada na stronie wyników Google, a ustawienia zapisane w panelu są tam niewidoczne"
         }
       ]
     }

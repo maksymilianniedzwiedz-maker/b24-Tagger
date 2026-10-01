@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.36.6",
+    "date": "2026-10-01",
+    "label": "fix",
+    "changes": [
+      {
+        "type": "fix",
+        "text": "**Ustawienia AI są wspólne dla app.brand24.com i panel.brand24.pl.** Klucze, biblioteka promptów i wybrane modele leżą w pamięci Tampermonkeya zamiast w pamięci strony, osobnej dla każdego panelu, i nie znikają przy czyszczeniu danych strony. Przy pierwszym otwarciu każdego panelu jego dotychczasowe ustawienia przechodzą automatycznie. Drugi panel uzupełnia tylko to, czego brakuje (pusty klucz, nowy prompt); prompt o tej samej treści nie dubluje się."
+      }
+    ]
+  },
+  {
     "version": "0.36.5",
     "date": "2026-10-01",
     "label": "fix",

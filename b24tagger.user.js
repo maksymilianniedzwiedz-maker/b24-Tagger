@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.36.7
+// @version      0.36.8
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -172,7 +172,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.36.7';
+  const VERSION = '0.36.8';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5449,6 +5449,8 @@
         background: rgba(255,255,255,0.22); border: 1px solid rgba(255,255,255,0.45); color: #fff;
         border-radius: 6px; font-size: 11px; padding: 5px 10px; cursor: pointer; font-family: inherit; flex-shrink: 0;
       }
+      .b24t-sent-hidedone { display: flex; align-items: center; gap: 5px; font-size: 11px; cursor: pointer; flex-shrink: 0; user-select: none; }
+      .b24t-sent-hidedone input { margin: 0; cursor: pointer; accent-color: #fff; }
       .b24t-sent-testbadge {
         font-size: 10px; font-weight: 700; letter-spacing: 0.04em; padding: 3px 8px; border-radius: 99px;
         background: #fef3c7; color: #78350f; flex-shrink: 0;
@@ -5477,6 +5479,7 @@
       }
       .b24t-sent-tile.is-focus { border-color: var(--b24t-primary); box-shadow: 0 0 0 2px var(--b24t-primary-glow); }
       .b24t-sent-tile.is-done .b24t-sent-text, .b24t-sent-tile.is-done .b24t-sent-verdicts { opacity: 0.55; }
+      .b24t-sent-tile.is-hidden { display: none; }
       .b24t-sent-meta { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--b24t-text-faint); min-width: 0; }
       .b24t-sent-meta .src { font-weight: 700; color: var(--b24t-text-muted); flex-shrink: 0; }
       .b24t-sent-meta .au { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -18896,6 +18899,17 @@ function showOnboarding(onComplete) {
   // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.36.8",
+      "date": "2026-10-01",
+      "label": "feat",
+      "changes": [
+        {
+          "type": "feat",
+          "text": "**Przegląd sentymentu: przełącznik „Ukryj załatwione” w nagłówku okna.** Włączony ukrywa kafelki z decyzją, także te w trakcie zapisu. Ostatnio zdecydowany kafelek zostaje widoczny do następnej decyzji, z linkiem „cofnij”, a kafelek z błędem zapisu wraca na widok. Klawisze J/K przechodzą tylko po widocznych kafelkach. Wyłączenie przełącznika pokazuje wszystkie kafelki; jego stan jest zapamiętywany."
+        }
+      ]
+    },
+    {
       "version": "0.36.7",
       "date": "2026-10-01",
       "label": "feat",
@@ -19007,29 +19021,6 @@ function showOnboarding(onComplete) {
         {
           "type": "feat",
           "text": "Brand24 przyjmuje zmianę sentymentu tylko pojedynczo, ok. 2 s na wzmiankę (pomiar na 2 wywołaniach); wtyczka wysyła 5 zmian naraz. **Funkcja niesprawdzona jeszcze na żywym przebiegu** — zgłaszaj każdy błąd przy zmianie sentymentu."
-        }
-      ]
-    },
-    {
-      "version": "0.34.2",
-      "date": "2026-09-23",
-      "label": "feat",
-      "changes": [
-        {
-          "type": "feat",
-          "text": "**Funkcje AI działają też na modelach OpenAI i Gemini, nie tylko Claude.** Tagowanie AI, ocena w News, kampanie i tłumaczenie na karcie. W Ustawieniach → AI są trzy pola na klucze (Claude, OpenAI, Gemini) — wystarczy klucz dostawcy, którego modelu używasz. Model wybiera się osobno dla News i dla tagowania, więc można je mieszać."
-        },
-        {
-          "type": "feat",
-          "text": "**Lista modeli OpenAI i Gemini pobiera się od dostawcy** po kliknięciu „Testuj” przy kluczu — wtyczka nie starzeje się razem z listą wpisaną w kod. Test sprawdza klucz bez zużywania tokenów. Claude zostaje przy dwóch sprawdzonych modelach (Haiku 4.5, Sonnet 5)."
-        },
-        {
-          "type": "fix",
-          "text": "**Pod wyborem modelu pojawia się ostrzeżenie, gdy do tego modelu nie ma klucza** — wcześniej News z zaznaczonym AI po prostu nie oceniał wierszy i nie mówił dlaczego."
-        },
-        {
-          "type": "fix",
-          "text": "Zapytania do Claude'a są bez zmian (bajt w bajt), więc werdykty i koszty przy dotychczasowych ustawieniach się nie zmieniają. **OpenAI i Gemini są na razie niesprawdzone na prawdziwym kluczu** — zgłaszaj każdy błąd przy wierszu z tymi modelami."
         }
       ]
     }
@@ -24374,6 +24365,7 @@ Tej operacji nie można cofnąć.`)) {
   var SENT_GM_VERDICTS = 'b24t_sent_verdicts';    // { "id|model|kontekst": { s, b, d, r, at } }
   var SENT_GM_DECISIONS = 'b24t_sent_decisions';  // { id: { at, pid, url, from, to, a, b } }
   var SENT_LS_PROJECT = 'b24t_sent_project_cfg';  // { pid: { brand, source } }
+  var SENT_LS_HIDE_DONE = 'b24t_sent_hide_done';  // przełącznik „Ukryj załatwione” w oknie
   // $ za mln tokenów wejścia i wyjścia, cennik z 2026-09-30. Model spoza listy — bez kwoty.
   var SENT_PRICE = { 'gemini-3.8-flash': [0.75, 3.75], 'gpt-6-luna': [0.10, 0.50] };
 
@@ -24416,6 +24408,7 @@ Tej operacji nie można cofnąć.`)) {
     run: null, running: false, stop: false,
     focusId: null, openText: {}, keepOpen: false,
     queue: [], inFlight: 0,
+    hideDone: lsGet(SENT_LS_HIDE_DONE, false) === true, lastDoneId: null,
   };
 
   function _sentProjectCfg(pid) {
@@ -24637,6 +24630,12 @@ Tej operacji nie można cofnąć.`)) {
     var s = it.dec && it.dec.status;
     return s === 'queued' || s === 'saving' || s === 'reverting';
   }
+  // „Ukryj załatwione”: kafelek znika już przy decyzji (w kolejce, w zapisie), a błąd zapisu wraca
+  // na widok. Ostatnio zdecydowany zostaje do następnej decyzji: jego „cofnij” jest pod ręką, a siatka
+  // nie przeskakuje pod kursorem w chwili kliknięcia.
+  function _sentHidden(it) {
+    return sentState.hideDone && it.id !== sentState.lastDoneId && (_sentIsDone(it) || _sentBusy(it));
+  }
 
   function _sentErrText(e) {
     var m = (e && e.message) || String(e);
@@ -24654,7 +24653,7 @@ Tej operacji nie można cofnąć.`)) {
       models: { a: _sentModelState(s.sentiment.modelA), b: _sentModelState(s.sentiment.modelB) },
     };
     sentState.run = run; sentState.running = true; sentState.stop = false;
-    sentState.focusId = null; sentState.openText = {}; sentState.keepOpen = false;
+    sentState.focusId = null; sentState.openText = {}; sentState.keepOpen = false; sentState.lastDoneId = null;
     _sentShow();
     _sentTabStatus();
     addLog('◐ Przegląd sentymentu — start: ' + run.projectName + ', ' + p.dateFrom + ' → ' + p.dateTo +
@@ -24783,12 +24782,19 @@ Tej operacji nie można cofnąć.`)) {
     if (to !== it.now) {
       it.dec = { to: to, status: 'queued' };
       _sentEnqueue(it, to, false);
+      _sentSetLastDone(id);
     } else if (it.now === it.orig && !_sentIsDone(it)) {
       it.dec = { to: to, status: 'kept', at: Date.now() };
       _sentPersist(it);
+      _sentSetLastDone(id);
     }
     _sentRefreshTile(id);
     _sentFocusNextOpen(id, fromKeyboard);
+  }
+  function _sentSetLastDone(id) {
+    var prev = sentState.lastDoneId;
+    sentState.lastDoneId = id;
+    if (prev && prev !== id) _sentRefreshTile(prev);
   }
   function _sentUndo(id) {
     var it = sentState.run && sentState.run.byId[id], d = it && it.dec;
@@ -24839,6 +24845,8 @@ Tej operacji nie można cofnąć.`)) {
           '<span style="font-size:18px;">◐</span>' +
           '<div style="flex:1;min-width:0;"><div class="t">Przegląd sentymentu</div><div class="sub" id="b24t-sent-sub"></div></div>' +
           '<span class="b24t-sent-testbadge" id="b24t-sent-test" style="display:none;">TRYB TESTOWY — Brand24 bez zmian</span>' +
+          '<label class="b24t-sent-hidedone" title="Ukrywa kafelki z decyzją; błędy zapisu zostają widoczne">' +
+            '<input type="checkbox" id="b24t-sent-hidedone"' + (sentState.hideDone ? ' checked' : '') + '> Ukryj załatwione</label>' +
           '<button id="b24t-sent-export" title="Wszystkie decyzje z werdyktami modeli, 12 miesięcy wstecz">⇩ Dziennik decyzji CSV</button>' +
           '<button id="b24t-sent-close" title="Zamknij (Esc) — ocena i zapisy trwają dalej">✕</button>' +
         '</div>' +
@@ -24851,6 +24859,14 @@ Tej operacji nie można cofnąć.`)) {
     ov.addEventListener('click', function(e) { if (e.target === ov) _sentHide(); });
     ov.querySelector('#b24t-sent-close').addEventListener('click', _sentHide);
     ov.querySelector('#b24t-sent-export').addEventListener('click', _sentExportCsv);
+    ov.querySelector('#b24t-sent-hidedone').addEventListener('change', function() {
+      sentState.hideDone = this.checked;
+      lsSet(SENT_LS_HIDE_DONE, this.checked);
+      // Fokus na polu wyboru wyłączyłby skróty J/K/N/U/P (_sentOnKey pomija pola formularza).
+      this.blur();
+      _sentRenderList();
+      if (!_sentTileEls().some(function(el) { return el.dataset.id === sentState.focusId; })) { sentState.focusId = null; _sentFocusFirstOpen(); }
+    });
     ov.querySelector('#b24t-sent-summary').addEventListener('click', function(e) {
       if (!e.target.closest('[data-sent-stop]')) return;
       sentState.stop = true;
@@ -25027,7 +25043,8 @@ Tej operacji nie można cofnąć.`)) {
       return '<button data-sent="' + sv + '"' + (cls ? ' class="' + cls + '"' : '') + (busy ? ' disabled' : '') + '>' +
         '<kbd>' + SENT_KEY_OF[sv] + '</kbd>' + SENT_LABEL[sv] + '</button>';
     }).join('');
-    return '<div class="b24t-sent-tile' + (sentState.focusId === it.id ? ' is-focus' : '') + (_sentIsDone(it) ? ' is-done' : '') + '" data-id="' + _escHtml(it.id) + '">' +
+    return '<div class="b24t-sent-tile' + (sentState.focusId === it.id ? ' is-focus' : '') + (_sentIsDone(it) ? ' is-done' : '') +
+      (_sentHidden(it) ? ' is-hidden' : '') + '" data-id="' + _escHtml(it.id) + '">' +
       '<div class="b24t-sent-meta"><span class="src">' + _escHtml(it.source) + '</span>' +
         (it.author ? '<span class="au">· ' + _escHtml(it.author) + '</span>' : '') +
         '<span>· ' + _escHtml(it.date) + '</span>' +
@@ -25047,13 +25064,15 @@ Tej operacji nie można cofnąć.`)) {
       var tmp = document.createElement('div');
       tmp.innerHTML = _sentTileHtml(it);
       el.replaceWith(tmp.firstChild);
+      // Fokus na ukrytym kafelku (np. po zapisie hurtowym) skierowałby N/U/P na niewidoczną wzmiankę.
+      if (sentState.focusId === id && _sentHidden(it)) { sentState.focusId = null; _sentFocusNextOpen(id, true); }
     }
     _sentRenderSummary();
     _sentUpdateBulk();
   }
 
   function _sentTileEls() {
-    return Array.prototype.slice.call(document.querySelectorAll('#b24t-sent-list .b24t-sent-tile[data-id]'));
+    return Array.prototype.slice.call(document.querySelectorAll('#b24t-sent-list .b24t-sent-tile[data-id]:not(.is-hidden)'));
   }
   function _sentFocus(id, scroll) {
     _sentTileEls().forEach(function(el) { el.classList.toggle('is-focus', el.dataset.id === id); });

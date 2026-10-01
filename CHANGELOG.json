@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.36.8",
+    "date": "2026-10-01",
+    "label": "feat",
+    "changes": [
+      {
+        "type": "feat",
+        "text": "**Przegląd sentymentu: przełącznik „Ukryj załatwione” w nagłówku okna.** Włączony ukrywa kafelki z decyzją, także te w trakcie zapisu. Ostatnio zdecydowany kafelek zostaje widoczny do następnej decyzji, z linkiem „cofnij”, a kafelek z błędem zapisu wraca na widok. Klawisze J/K przechodzą tylko po widocznych kafelkach. Wyłączenie przełącznika pokazuje wszystkie kafelki; jego stan jest zapamiętywany."
+      }
+    ]
+  },
+  {
     "version": "0.36.7",
     "date": "2026-10-01",
     "label": "feat",

@@ -1,5 +1,22 @@
 [
   {
+    "version": "0.37.1",
+    "date": "2026-10-02",
+    "label": "fix",
+    "changes": [
+      {
+        "type": "fix",
+        "area": "Panel",
+        "title": "Naprawiono błąd, przez który włączony Network Monitor wywoływał pasek błędu w panelu",
+        "items": [
+          "Zapytania Brand24 z odpowiedzią w formacie JSON nie trafiały do monitora, a nad przyciskiem Start pojawiał się czerwony pasek błędu.",
+          "Monitor pokazuje także zapytania z odpowiedzią JSON."
+        ],
+        "text": "Naprawiono błąd, przez który włączony Network Monitor wywoływał pasek błędu w panelu. Zapytania Brand24 z odpowiedzią w formacie JSON nie trafiały do monitora, a nad przyciskiem Start pojawiał się czerwony pasek błędu. Monitor pokazuje także zapytania z odpowiedzią JSON."
+      }
+    ]
+  },
+  {
     "version": "0.37.0",
     "date": "2026-10-01",
     "label": "new",

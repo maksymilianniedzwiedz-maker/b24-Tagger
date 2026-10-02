@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.37.0
+// @version      0.37.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -173,7 +173,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.37.0';
+  const VERSION = '0.37.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1918,7 +1918,9 @@
             var dur = Math.round(performance.now() - _t0);
             var isGql = _u.includes('graphql'); var opName = '';
             if (isGql && _rb) { try { opName = JSON.parse(_rb).operationName || ''; } catch(e) {} }
-            _nmNewEntry({ method: _m.toUpperCase(), url: _u, opName: opName, status: xhr.status, duration: dur, isError: xhr.status >= 400 || xhr.status === 0, reqSnippet: _rb, resSnippet: (xhr.responseText || '').substring(0, 400) });
+            // responseText rzuca InvalidStateError przy responseType innym niż '' i 'text'; Brand24 używa 'json'.
+            var rt = xhr.responseType, resBody = rt === '' || rt === 'text' ? xhr.responseText : rt === 'json' && xhr.response != null ? JSON.stringify(xhr.response) : '';
+            _nmNewEntry({ method: _m.toUpperCase(), url: _u, opName: opName, status: xhr.status, duration: dur, isError: xhr.status >= 400 || xhr.status === 0, reqSnippet: _rb, resSnippet: (resBody || '').substring(0, 400) });
           }, { once: true });
         }
         return _origSend.apply(xhr, arguments);
@@ -18392,6 +18394,23 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.37.1",
+      "date": "2026-10-02",
+      "label": "fix",
+      "changes": [
+        {
+          "type": "fix",
+          "area": "Panel",
+          "title": "Naprawiono błąd, przez który włączony Network Monitor wywoływał pasek błędu w panelu",
+          "items": [
+            "Zapytania Brand24 z odpowiedzią w formacie JSON nie trafiały do monitora, a nad przyciskiem Start pojawiał się czerwony pasek błędu.",
+            "Monitor pokazuje także zapytania z odpowiedzią JSON."
+          ],
+          "text": "Naprawiono błąd, przez który włączony Network Monitor wywoływał pasek błędu w panelu. Zapytania Brand24 z odpowiedzią w formacie JSON nie trafiały do monitora, a nad przyciskiem Start pojawiał się czerwony pasek błędu. Monitor pokazuje także zapytania z odpowiedzią JSON."
+        }
+      ]
+    },
+    {
       "version": "0.37.0",
       "date": "2026-10-01",
       "label": "new",
@@ -18652,24 +18671,6 @@
             "Koszt oceny 1 000 stron w News: Haiku 4.5 ok. 2,0 $, Sonnet 5 ok. 2,4 $, Sonnet 5.5 ok. 2,6 $."
           ],
           "text": "Model Claude Sonnet 5.5 do wyboru w funkcjach AI. Dostępny w News, kampaniach H&amp;M, tłumaczeniu i AI Tag. Oceny stron w News są zbliżone do Sonneta 5. Koszt oceny 1 000 stron w News: Haiku 4.5 ok. 2,0 $, Sonnet 5 ok. 2,4 $, Sonnet 5.5 ok. 2,6 $."
-        }
-      ]
-    },
-    {
-      "version": "0.36.1",
-      "date": "2026-09-30",
-      "label": "improved",
-      "changes": [
-        {
-          "type": "improved",
-          "area": "Przegląd sentymentu",
-          "title": "Ocena sentymentu uwzględnia, jak wzmianka przedstawia markę",
-          "items": [
-            "Wzmianka pokazująca markę w dobrym świetle jest pozytywna, nawet gdy reszta tekstu ma negatywny ton. Samo wymienienie marki nie zmienia oceny.",
-            "Kafelek pokazuje wtedy podstawę oceny „ocena marki”."
-          ],
-          "action": "Zastąp prompt sentymentu w Ustawieniach → AI nową wersją. Wzmianki ocenione poprzednim promptem zostaną ocenione ponownie.",
-          "text": "Ocena sentymentu uwzględnia, jak wzmianka przedstawia markę. Wzmianka pokazująca markę w dobrym świetle jest pozytywna, nawet gdy reszta tekstu ma negatywny ton. Samo wymienienie marki nie zmienia oceny. Kafelek pokazuje wtedy podstawę oceny „ocena marki”. Zastąp prompt sentymentu w Ustawieniach → AI nową wersją. Wzmianki ocenione poprzednim promptem zostaną ocenione ponownie."
         }
       ]
     }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.36.9
+// @version      0.37.0
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -15,7 +15,8 @@
 // @grant        GM_setValue
 // @grant        GM_addValueChangeListener
 // @grant        GM_removeValueChangeListener
-// @connect       hooks.slack.com
+// @connect       script.google.com
+// @connect       script.googleusercontent.com
 // @connect       raw.githubusercontent.com
 // @connect       cdn.jsdelivr.net
 // @connect       *
@@ -172,7 +173,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.36.9';
+  const VERSION = '0.37.0';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -197,8 +198,8 @@
     NEWS_WIN_SIZE:    'b24tagger_news_win_size',
     CAMPAIGN_CFG:     'b24tagger_campaign_cfg',
     CAMPAIGN_CHIPS:   'b24tagger_campaign_chips',
-    WELCOME_SHOWN:    'b24tagger_welcome_shown_v0210',
     UPDATE_CHANNEL:   'b24tagger_update_channel',
+    CHANNEL_MOVED:    'b24tagger_channel_moved_stable', // wersja, która przełączyła kanał na Stabilny (_relMoveToStable)
     MONTH_CLOSE_DONE: 'b24tagger_month_close_done',
     OVERALL_ACTIVE_MONTH: 'b24tagger_overall_active_month',
     DEL_BATCH:        'b24tagger_del_batch',
@@ -950,6 +951,12 @@
     return new Promise(function(resolve, reject) {
       function proba(i) {
         var req = _aiBuildRequest(Object.assign({}, opts, { wariant: warianty[i] }), key);
+        var t0 = Date.now();
+        var diag = function(status, err, usage) {
+          _diagPush({ k: 'ai', op: opts.model, ms: Date.now() - t0, ok: !err, status: status,
+            err: err ? String(err).slice(0, 400) : undefined,
+            tok: usage ? [usage.input_tokens || 0, usage.output_tokens || 0] : undefined });
+        };
         GM_xmlhttpRequest({
           method: 'POST', url: req.url, headers: req.headers, data: JSON.stringify(req.body),
           timeout: opts.timeout || 60000,
@@ -959,19 +966,27 @@
               if (_aiIsReasoningReject(status, resp.responseText) && i + 1 < warianty.length) {
                 proba(i + 1); return;
               }
-              if (status < 200 || status >= 300) { reject(_aiStatusError(status, resp.responseText)); return; }
+              if (status < 200 || status >= 300) {
+                var bad = _aiStatusError(status, resp.responseText);
+                diag(status, bad.message);
+                reject(bad); return;
+              }
               if (!domyslne) _aiWariantModelu[opts.model] = i;
               var data = JSON.parse(resp.responseText);
               var out = _aiReadResponse(provider, data, opts.schema && opts.schema.name);
               out.usage = _aiUsage(provider, data);
+              diag(status, null, out.usage);
               // Ucięta odpowiedź nie jest błędem sama w sobie — parser News wyciąga werdykt
               // z uciętego JSON-a. Przyczyna idzie obok, wołający decyduje.
               out.reason = _aiResponseReason(provider, data);
               resolve(out);
-            } catch(e) { reject(new Error('Parse error: ' + e.message)); }
+            } catch(e) { diag(resp.status, 'Parse error: ' + e.message); reject(new Error('Parse error: ' + e.message)); }
           },
-          onerror:   function() { reject(new Error('Brak połączenia z API')); },
-          ontimeout: function() { reject(new Error('Timeout API')); },
+          onerror:   function() { diag(0, 'Brak połączenia z API'); reject(new Error('Brak połączenia z API')); },
+          ontimeout: function() { diag(0, 'Timeout API'); reject(new Error('Timeout API')); },
+          // Bez tego zapytanie przerwane przez przeglądarkę albo Tampermonkeya nie kończyło się niczym,
+          // a wołający (np. przegląd sentymentu) czekał bez końca.
+          onabort:   function() { diag(0, 'Zapytanie przerwane'); reject(new Error('Zapytanie do API przerwane')); },
         });
       }
       proba(start);
@@ -1962,7 +1977,21 @@
     return { src: 'BRAND24', hint: 'Nieoczekiwana odpowiedź Brand24 — możliwy tymczasowy błąd lub zmiana API. Spróbuj ponownie.' };
   }
 
+  // Każde zapytanie do Brand24 idzie do dziennika diagnostycznego: nazwa, czas, wynik, a przy błędzie
+  // parametry (bez długich tekstów) i komunikat serwera, np. „Enum "Sentiment" cannot represent…”.
   async function gql(operationName, variables, query, opts) {
+    const t0 = Date.now();
+    try {
+      const data = await _gqlCall(operationName, variables, query, opts);
+      _diagPush({ k: 'gql', op: operationName, ms: Date.now() - t0, ok: true });
+      return data;
+    } catch (e) {
+      _diagPush({ k: 'gql', op: operationName, ms: Date.now() - t0, ok: false, err: String(e && e.message || e), vars: _diagShort(variables) });
+      throw e;
+    }
+  }
+
+  async function _gqlCall(operationName, variables, query, opts) {
     if (!state.tokenHeaders) {
       addLog(`✕ [AUTORYZACJA] ${operationName} — token autoryzacji nie gotowy. Odśwież stronę Brand24.`, 'error');
       throw new Error('TOKEN_NOT_READY');
@@ -2557,7 +2586,7 @@
       if (!state.untaggedId) {
         addLog(`⚠ [DIAG/UNTAGGED] untaggedId=${state.untaggedId} — wartość domyślna, możliwe że tag "Untagged" nie został poprawnie wykryty.`, 'warn');
       } else {
-        addLog(`ℹ [DIAG/UNTAGGED] Filtr Untagged aktywny, gr=[${state.untaggedId}]`, 'info');
+        addLog(`ℹ [DIAG/UNTAGGED] Filtr Untagged aktywny, gr=[${state.untaggedId}]`, 'debug');
       }
     }
 
@@ -2586,7 +2615,7 @@
     const totalPages = Math.ceil(first.count / pageSize);
     diag.totalPages = totalPages;
 
-    addLog(`ℹ [DIAG/API] Strona 1: count=${first.count}, wyniki=${first.results.length}, pageSize=${pageSize}, totalPages=${totalPages}`, 'info');
+    addLog(`ℹ [DIAG/API] Strona 1: count=${first.count}, wyniki=${first.results.length}, pageSize=${pageSize}, totalPages=${totalPages}`, 'debug');
 
     if (first.count === 0) {
       addLog(`⚠ [DIAG/API] count=0 — Brand24 nie zwraca żadnych wzmianek dla tego zakresu/filtrów.
@@ -2688,7 +2717,7 @@
     await Promise.all(Array.from({ length: MAP_FETCH_CONCURRENCY }, _mapWorker));
 
     const _mapElapsed = Date.now() - _mapTStart;
-    addLog(`ℹ [DIAG/PERF] Mapa ${totalPages} stron: ${_mapElapsed}ms | concurrency=${MAP_FETCH_CONCURRENCY} | dupeId=${allDupeIds} (${first.count > 0 ? (allDupeIds / first.count * 100).toFixed(1) : 0}%)`, 'info');
+    addLog(`ℹ [DIAG/PERF] Mapa ${totalPages} stron: ${_mapElapsed}ms | concurrency=${MAP_FETCH_CONCURRENCY} | dupeId=${allDupeIds} (${first.count > 0 ? (allDupeIds / first.count * 100).toFixed(1) : 0}%)`, 'debug');
     diag.mentionsInMap = Object.keys(map).length;
 
     // ── KROK 7: weryfikacja kompletności ─────────────────────────────────
@@ -2705,7 +2734,7 @@
       );
     }
     if (diag.dupeKeys > 0) {
-      addLog(`ℹ [DIAG/DUPES] ${diag.dupeKeys} duplikatów URL w mapie (nadpisane) — Brand24 może zwracać tę samą wzmiankę na wielu stronach`, 'info');
+      addLog(`ℹ [DIAG/DUPES] ${diag.dupeKeys} duplikatów URL w mapie (nadpisane) — Brand24 może zwracać tę samą wzmiankę na wielu stronach`, 'debug');
     }
     if (pageErrors > 0) {
       addLog(`⚠ [DIAG/API] ${pageErrors} stron z błędem — mapa może być niekompletna!`, 'warn');
@@ -2718,7 +2747,7 @@
 
     // ── KROK 8: próbkowanie mapy — pokaż sample kluczy ───────────────────
     const mapSample = Object.keys(map).slice(0, 3);
-    addLog(`ℹ [DIAG/MAP_SAMPLE] Przykłady kluczy w mapie: ${mapSample.map(k => '"'+k+'"').join(' | ')}`, 'info');
+    addLog(`ℹ [DIAG/MAP_SAMPLE] Przykłady kluczy w mapie: ${mapSample.map(k => '"'+k+'"').join(' | ')}`, 'debug');
 
     return map;
   }
@@ -3089,6 +3118,9 @@
     if (sentimentConflicts.size > 0) {
       addLog(`⚠ [SENTYMENT] ${sentimentConflicts.size} wzmianek ma w pliku sprzeczne sentymenty (ten sam URL w kilku wierszach albo kilka ocen w jednym) — pomijam je, popraw plik i puść jeszcze raz`, 'warn');
     }
+    // Wzmianka usuwana w tym przebiegu nie dostaje sentymentu: usuwanie idzie przed zmianą sentymentu,
+    // więc mutacja trafiłaby w nieistniejącą wzmiankę i liczyła się jako błąd.
+    deleteBatch.forEach(id => sentimentTargets.delete(id));
     sentimentTargets.forEach((t, id) => {
       if (t.current === t.sentiment) { sentimentTargets.delete(id); matchDiag.sentimentUnchanged++; }
     });
@@ -3783,10 +3815,149 @@
   }
 
   // ───────────────────────────────────────────
+  // DZIENNIK DIAGNOSTYCZNY
+  // ───────────────────────────────────────────
+  // Zdarzenia do zgłoszeń błędów (Tagger/zgloszenia/README.md): wpisy logu, zapytania do Brand24
+  // i do modeli AI, nieobsłużone błędy z kodu wtyczki. Leży osobno od logu w panelu, więc „wyczyść”
+  // i ukryty log go nie ruszają. Sekrety maskuje dopiero składanie zgłoszenia (_diagScrub), bo
+  // zdarzeń jest dużo, a zgłoszeń mało; w pamięci GM leżą obok tych samych kluczy, więc nic nie wycieka.
+  var DIAG_MAX = 400;          // zdarzeń w pamięci karty
+  var DIAG_KEEP = 80;          // zdarzeń sesji zapisywanych w GM: tyle trafia do zgłoszenia jako „sprzed przeładowania”
+  var DIAG_SESSIONS = 3;       // sesji (kart) w GM; starsze wypadają
+  var DIAG_GM = 'b24t_diag';   // { id sesji: { t, v, url, ev: [...] } }
+  var DIAG_STR_MAX = 160;      // dłuższy tekst w parametrach zapytania to zwykle treść wzmianki
+  var _diag = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    ev: [], timer: null, due: 0, errors: 0,
+  };
+
+  // Kopia parametrów zapytania bez długich tekstów i długich list. Treść wzmianki nie trafia
+  // do zgłoszenia, a ID, daty i filtry wystarczają do odtworzenia zapytania.
+  function _diagShort(v, depth) {
+    depth = depth || 0;
+    if (typeof v === 'string') return v.length > DIAG_STR_MAX ? v.slice(0, 40) + '…(' + v.length + ' zn.)' : v;
+    if (!v || typeof v !== 'object') return v;
+    if (depth > 4) return '…';
+    if (Array.isArray(v)) {
+      var a = v.slice(0, 20).map(function(x) { return _diagShort(x, depth + 1); });
+      if (v.length > 20) a.push('…(+' + (v.length - 20) + ')');
+      return a;
+    }
+    var o = {};
+    Object.keys(v).forEach(function(k) { o[k] = _diagShort(v[k], depth + 1); });
+    return o;
+  }
+
+  // Kolejne udane wywołania tej samej operacji sklejają się w jedno zdarzenie z licznikiem:
+  // przebieg zmiany sentymentu to tysiące `setSentiment`, które inaczej wypchnęłyby z bufora
+  // początek przebiegu i pierwszy błąd.
+  function _diagPush(e) {
+    if (!_diag) return;
+    e.t = Date.now();
+    var last = _diag.ev[_diag.ev.length - 1];
+    if (e.ok && last && last.ok && last.k === e.k && last.op === e.op && e.t - last.t < 60000) {
+      last.n = (last.n || 1) + 1;
+      last.ms = Math.max(last.ms || 0, e.ms || 0);
+      if (e.tok) last.tok = [(last.tok ? last.tok[0] : 0) + e.tok[0], (last.tok ? last.tok[1] : 0) + e.tok[1]];
+      last.t = e.t;
+    } else {
+      _diag.ev.push(e);
+      if (_diag.ev.length > DIAG_MAX) _diag.ev.splice(0, _diag.ev.length - DIAG_MAX);
+    }
+    var bad = e.k === 'err' || e.ok === false || (e.k === 'log' && e.type === 'error');
+    if (bad) {
+      _diag.errors++;
+      _errBarShow(e);
+    }
+    _diagSaveSoon(bad ? 2000 : 15000);
+  }
+
+  // Zapis w GM, żeby zgłoszenie po przeładowaniu strony (wtyczka stanęła, ktoś odświeżył) miało
+  // jeszcze zdarzenia sprzed przeładowania. Poza Brand24 tylko po błędzie: wtyczka działa na każdej
+  // stronie, a zapis co 15 s z każdej odwiedzonej strony byłby pustym kosztem.
+  // Błąd przyspiesza zaplanowany zapis: wtyczka, która za chwilę stanie, nie poczeka 15 s.
+  function _diagSaveSoon(delay) {
+    if (!_isB24 && !_diag.errors) return;
+    var due = Date.now() + delay;
+    if (_diag.timer) {
+      if (due >= _diag.due) return;
+      clearTimeout(_diag.timer);
+    }
+    _diag.due = due;
+    _diag.timer = setTimeout(function() {
+      _diag.timer = null;
+      try {
+        var all = JSON.parse(GM_getValue(DIAG_GM, '{}')) || {};
+        all[_diag.id] = { t: Date.now(), v: VERSION, url: location.host + location.pathname, ev: _diag.ev.slice(-DIAG_KEEP) };
+        Object.keys(all).sort(function(a, b) { return all[b].t - all[a].t; }).slice(DIAG_SESSIONS).forEach(function(k) { delete all[k]; });
+        GM_setValue(DIAG_GM, JSON.stringify(all));
+      } catch (err) { console.warn('[B24 Tagger] zapis dziennika diagnostycznego nieudany', err); }
+    }, delay);
+  }
+
+  // Najnowsza inna sesja z ostatnich 6 godzin: zwykle karta sprzed przeładowania.
+  function _diagPrevious() {
+    try {
+      var all = JSON.parse(GM_getValue(DIAG_GM, '{}')) || {};
+      var ids = Object.keys(all).filter(function(k) { return k !== _diag.id && Date.now() - all[k].t < 6 * 3600000; });
+      ids.sort(function(a, b) { return all[b].t - all[a].t; });
+      return ids.length ? all[ids[0]] : null;
+    } catch (err) { return null; }
+  }
+
+  // Wartości, które nie mogą wyjść poza przeglądarkę: klucze API, token GitHuba narzędzi
+  // annotatora, kanał ntfy, nagłówki autoryzacji Brand24. Do tego wzorce kluczy na wypadek
+  // klucza wklejonego w treść błędu, którego nie ma w ustawieniach.
+  function _diagSecrets() {
+    var out = [];
+    try { var s = _aiGetSettings(); Object.keys(AI_KEY_FIELD).forEach(function(p) { out.push(s[AI_KEY_FIELD[p]]); }); } catch (err) {}
+    try { out.push((lsGet(LS.NA_SETTINGS, {}) || {}).pat); } catch (err) {}
+    try { out.push(_ntfyGetCfg().topic); } catch (err) {}
+    // Tylko nagłówki autoryzacji: wśród nich jest też `Content-Type: application/json`, którego maskowanie
+    // wycięłoby ten napis z całego zgłoszenia.
+    try {
+      Object.keys(state.tokenHeaders || {}).filter(function(h) { return /auth|token|csrf|cookie|key|session/i.test(h); })
+        .forEach(function(h) { out.push(String(state.tokenHeaders[h]).replace(/^(Bearer|Token|JWT)\s+/i, '')); });
+    } catch (err) {}
+    return out.filter(function(x) { return typeof x === 'string' && x.length >= 8; });
+  }
+  var DIAG_SECRET_RX = [
+    /\b(Bearer|Token|JWT)\s+[A-Za-z0-9._~+\/=-]{12,}/gi,
+    /\bsk-[A-Za-z0-9_-]{16,}/g,
+    /\bAIza[0-9A-Za-z_-]{20,}/g,
+    /\bAQ\.[0-9A-Za-z_-]{20,}/g,
+    /\b(ghp|gho|ghs|github_pat)_[A-Za-z0-9_]{20,}/g,
+    /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
+  ];
+  function _diagScrub(text, secrets) {
+    var s = String(text);
+    (secrets || []).forEach(function(v) { s = s.split(v).join('[ukryte]'); });
+    DIAG_SECRET_RX.forEach(function(rx) { s = s.replace(rx, '[ukryte]'); });
+    return s;
+  }
+
+  // Nieobsłużone błędy z kodu wtyczki. Brand24 i inne skrypty strony rzucają własnymi, więc liczą
+  // się tylko te ze stosem wskazującym na wtyczkę (Tampermonkey podpisuje kod jako userscript.html?name=…).
+  function _diagOwn(stack) { return /userscript\.html\?name=B24|B24(%20|[\s_-])*Tagger/i.test(String(stack || '')); }
+  window.addEventListener('error', function(ev) {
+    var stack = (ev.error && ev.error.stack) || ev.filename || '';
+    if (!_diagOwn(stack)) return;
+    _diagPush({ k: 'err', src: 'wyjątek', msg: String(ev.message || (ev.error && ev.error.message) || '?'), stack: String(stack).slice(0, 1200) });
+  });
+  window.addEventListener('unhandledrejection', function(ev) {
+    var r = ev.reason, stack = r && r.stack;
+    if (!_diagOwn(stack)) return;
+    _diagPush({ k: 'err', src: 'odrzucona obietnica', msg: String((r && r.message) || r), stack: String(stack).slice(0, 1200) });
+  });
+
+  // ───────────────────────────────────────────
   // LOGGING
   // ───────────────────────────────────────────
 
+  // type: info, success, warn, error, diag (panel loga), debug (tylko dziennik diagnostyczny).
   function addLog(message, type = 'info', extra = null) {
+    _diagPush({ k: 'log', type: type, msg: String(message).slice(0, 2000) });
+    if (type === 'debug') return;
     const now = new Date();
     const time = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
     const entry = { time, message, type, timestamp: Date.now(), extra };
@@ -3813,48 +3984,6 @@
     requestAnimationFrame(function() { log.scrollTop = log.scrollHeight; });
     // Keep max 200 entries in DOM
     while (log.children.length > 200) log.removeChild(log.firstChild);
-  }
-
-  // Build comprehensive bug report data
-  function buildBugReportData() {
-    const now = new Date();
-    const recentLogs = state.logs.slice(-30).map(function(l) {
-      return '[' + l.time + '] [' + l.type.toUpperCase() + '] ' + l.message;
-    });
-    const crashLog = lsGet(LS.CRASHLOG, null);
-    return {
-      version: VERSION,
-      timestamp: now.toISOString(),
-      localTime: now.toLocaleString('pl-PL'),
-      url: window.location.href,
-      projectId: state.projectId || null,
-      projectName: state.projectName || null,
-      sessionStatus: state.status,
-      hasToken: !!state.tokenHeaders,
-      testRunMode: state.testRunMode,
-      mapMode: state.mapMode,
-      stats: state.stats ? JSON.parse(JSON.stringify(state.stats)) : null,
-      fileName: state.file ? state.file.name : null,
-      fileRows: state.file ? state.file.rows.length : null,
-      urlMapSize: Object.keys(state.urlMap || {}).length,
-      partitions: state.partitions ? state.partitions.length : null,
-      sessionStart: state.sessionStart ? new Date(state.sessionStart).toISOString() : null,
-      recentLogs: recentLogs,
-      crashLog: crashLog ? {
-        version:    crashLog.version,
-        errorType:  crashLog.errorType,
-        localTime:  crashLog.localTime || crashLog.timestamp,
-        lastAction: crashLog.lastAction,
-        session:    crashLog.session || crashLog.state,
-        stats:      crashLog.stats,
-        file:       crashLog.file ? crashLog.file.name : null,
-        urlMapSize: crashLog.urlMapSize,
-        stack:      (crashLog.stack || crashLog.stackTrace || '').substring(0, 800),
-        logSnapshot: crashLog.logSnapshot ? crashLog.logSnapshot.slice(-20) : null,
-      } : null,
-      browser: navigator.userAgent.substring(0, 120),
-      screen: window.innerWidth + 'x' + window.innerHeight,
-    };
   }
 
   // ───────────────────────────────────────────
@@ -3950,6 +4079,7 @@
     const pauseBtn = document.getElementById('b24t-btn-pause');
     if (startBtn) startBtn.textContent = state.status === 'paused' ? 'Wznów' : 'Start';
     if (pauseBtn) pauseBtn.disabled = state.status !== 'running';
+    _updOnStatus();
   }
 
   function updateStatsUI() {
@@ -4088,20 +4218,15 @@
       detail.textContent = lines.join('\n');
     }
 
-    // Dodaj przycisk "Wyślij Bug Report" do bannera jeśli nie ma
+    // Zgłoszenie awarii: stan „Tagowanie z pliku” w zgłoszeniu zawiera zapis awarii z LS.CRASHLOG.
     const actions = banner.querySelector('.b24t-crash-actions');
     if (actions && !actions.querySelector('#b24t-crash-bugreport')) {
       const btn = document.createElement('button');
       btn.id = 'b24t-crash-bugreport';
       btn.className = 'b24t-btn-secondary';
       btn.style.cssText = 'font-size:10px;padding:4px 8px;color:#f87171;border-color:#f87171;';
-      btn.textContent = '🐛 Wyślij Bug Report';
-      btn.addEventListener('click', function() {
-        sendBugReport('Auto-report z crash bannera: ' + (crash.errorType || '?'), function() {
-          btn.textContent = '✓ Wysłano';
-          btn.disabled = true;
-        });
-      });
+      btn.textContent = '🐞 Zgłoś błąd';
+      btn.addEventListener('click', function() { showReportModal({ kind: 'bug', area: 'Tagowanie z pliku' }); });
       actions.appendChild(btn);
     }
   }
@@ -4324,13 +4449,16 @@
       sniffUiTag: () => { state._sniffUiTag = true; addLog('[SNIFF] Aktywny — otaguj teraz wzmiankę ręcznie w UI Brand24', 'info'); },
       getLogs: () => state.logs,
       getCrashLog: () => lsGet(LS.CRASHLOG),
+      // Dziennik diagnostyczny i zgłoszenie bez wysyłania: B24Tagger.debug.getDiag(), B24Tagger.debug.buildReport('bug').
+      getDiag: () => _diag.ev.slice(),
+      buildReport: (kind, area, text) => _reportBuild({ kind: kind || 'bug', area: area || _reportArea(), text: text || '' }),
       getUrlMap: () => ({ size: Object.keys(state.urlMap).length, sample: Object.entries(state.urlMap).slice(0, 3) }),
       testGraphQL: async () => { try { await getNotifications(); return 'OK'; } catch (e) { return `FAIL: ${e.message}`; } },
       retryLastAction: () => { if (state.status === 'paused' || state.status === 'error') { state.status = 'running'; updateStatusUI(); startRun(); } },
       forceStop: () => { state.status = 'idle'; updateStatusUI(); stopHealthCheck(); addLog('⏹ Awaryjne zatrzymanie.', 'warn'); },
       clearCheckpoint: () => { clearCheckpoint(); addLog('🗑 Checkpoint wyczyszczony.', 'info'); },
       getToken: () => state.tokenHeaders,
-      checkForUpdate: (manual) => checkForUpdate(manual),
+      checkForUpdate: (manual) => _updCheck(!!manual),
       // ── Kolektor Google (GOOGLE_COLLECTOR.md) ──
       // Start przez to wejście, a nie przez modal, ma jedną konkretną zaletę: modal otwiera
       // przebieg przez `window.open`, czyli w karcie, której nie widzi żadne narzędzie
@@ -5870,7 +5998,7 @@
     panel.innerHTML = `<div id="b24t-panel-inner">
       <!-- TOPBAR -->
       <div id="b24t-topbar">
-        <span class="b24t-logo"><span class="b24t-logo-name">B24 TAGGER<span style="font-size:9px;font-weight:700;letter-spacing:0.1em;background:rgba(255,255,255,0.18);color:#fff;border:1px solid rgba(255,255,255,0.35);border-radius:4px;padding:1px 5px;vertical-align:middle;margin-left:4px;">BETA</span></span><span id="b24t-version" class="b24t-version" title="Kliknij aby sprawdzić aktualizacje">v${VERSION}</span></span>
+        <span class="b24t-logo"><span class="b24t-logo-name">B24 TAGGER<span style="font-size:9px;font-weight:700;letter-spacing:0.1em;background:rgba(255,255,255,0.18);color:#fff;border:1px solid rgba(255,255,255,0.35);border-radius:4px;padding:1px 5px;vertical-align:middle;margin-left:4px;">BETA</span></span><span class="b24t-logo-ver"><span id="b24t-version" class="b24t-version" title="Sprawdź aktualizacje">v${VERSION}</span><button id="b24t-upd-chip" type="button" style="display:none"></button></span></span>
         <div id="b24t-topbar-right">
           <span id="b24t-status-badge" class="b24t-badge badge-idle">Idle</span>
           <button class="b24t-icon-btn" id="b24t-btn-features" title="Dodatkowe funkcje" style="font-size:14px;">⚙</button>
@@ -5886,11 +6014,11 @@
           <span id="b24t-latency-badge" style="display:none;cursor:pointer;font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;line-height:1.4;">⚠</span>
           <div class="b24t-meta-btn-wrap">
             <button class="b24t-icon-btn" id="b24t-btn-changelog" style="font-size:13px;padding:2px 6px;">📋</button>
-            <span class="b24t-meta-tooltip">Changelog</span>
+            <span class="b24t-meta-tooltip">Dziennik zmian</span>
           </div>
           <div class="b24t-meta-btn-wrap">
-            <button class="b24t-icon-btn" id="b24t-btn-feedback" style="font-size:13px;padding:2px 6px;">💬</button>
-            <span class="b24t-meta-tooltip">Feedback</span>
+            <button class="b24t-icon-btn" id="b24t-btn-feedback" style="font-size:13px;padding:2px 6px;" aria-label="Zgłoś błąd albo pomysł">💬</button>
+            <span class="b24t-meta-tooltip">Zgłoś błąd albo pomysł</span>
           </div>
         </div>
         <span id="b24t-session-timer">00:00:00</span>
@@ -6251,7 +6379,6 @@
     });
 
     panel.addEventListener('mousedown', function(e) {
-    if (panel.getAttribute('data-ob-locked')) return; // onboarding aktywny
       // Ignoruj kliknięcia na przyciski/inputy
       if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' ||
           e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
@@ -6364,7 +6491,6 @@
 
     topbar.addEventListener('mousedown', (e) => {
       if (e.target.closest('button')) return;
-      if (panel.getAttribute('data-ob-locked')) return; // onboarding aktywny
       isDragging = true;
       _bringToFront(panel);
       panel.classList.add('dragging');
@@ -6589,10 +6715,10 @@
     panel.querySelector('#b24t-btn-help').addEventListener('click', toggleHelpMode);
 
     // Changelog
-    panel.querySelector('#b24t-btn-changelog')?.addEventListener('click', () => showWhatsNewExtended(true));
+    panel.querySelector('#b24t-btn-changelog')?.addEventListener('click', () => showChangelog());
 
     // Feedback
-    panel.querySelector('#b24t-btn-feedback')?.addEventListener('click', () => showFeedbackModal());
+    panel.querySelector('#b24t-btn-feedback')?.addEventListener('click', () => showReportModal());
 
     // Latency badge → otwiera Network Monitor
     panel.querySelector('#b24t-latency-badge')?.addEventListener('click', function() { openNetworkMonitorPanel(); });
@@ -6604,17 +6730,6 @@
     applyTheme(lsGet(LS.THEME, 'light'));
 
     // Annotator Tools: wired in buildAnnotatorPanel()
-
-    // Version click — sprawdź aktualizacje
-    const versionEl = document.getElementById('b24t-version');
-    if (versionEl) {
-      versionEl.addEventListener('mousedown', function(e) { e.stopPropagation(); });
-      versionEl.addEventListener('click', function() {
-        versionEl.style.opacity = '0.5';
-        checkForUpdate(true);
-        setTimeout(function() { versionEl.style.opacity = ''; }, 3000);
-      });
-    }
 
     // Crash banner
     panel.querySelector('#b24t-crash-resume').addEventListener('click', () => {
@@ -7854,632 +7969,6 @@
     var old = document.getElementById('b24t-help-tip-el');
     if (old) old.remove();
   }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ONBOARDING v2 — Dynamiczny tour z dymkami
-// ─────────────────────────────────────────────────────────────────────────────
-
-function injectOnboardingStyles() {
-  const s = document.createElement('style');
-  s.id = 'b24t-onboarding-styles';
-  s.textContent = `
-    /* ── ONBOARDING OVERLAY ── */
-    #b24t-ob-overlay {
-      position: fixed; inset: 0;
-      background: rgba(0,0,0,0);
-      /* MUSI być wyższy niż panel (2147483647) żeby nakrywać */
-      z-index: 2147483640;
-      pointer-events: none;
-      transition: background 0.4s ease;
-    }
-    #b24t-ob-overlay.ob-active {
-      background: rgba(0,0,0,0.65);
-      pointer-events: all;
-    }
-    /* Spotlight — jeszcze wyżej, wycina "dziurę" przez box-shadow */
-    #b24t-ob-spotlight {
-      position: fixed;
-      border-radius: 10px;
-      z-index: 2147483644;
-      pointer-events: none;
-      box-shadow: 0 0 0 9999px rgba(0,0,0,0.65);
-      transition: top 0.32s cubic-bezier(0.4,0,0.2,1),
-                  left 0.32s cubic-bezier(0.4,0,0.2,1),
-                  width 0.32s cubic-bezier(0.4,0,0.2,1),
-                  height 0.32s cubic-bezier(0.4,0,0.2,1);
-      outline: 2px solid rgba(108,108,255,0.8);
-      outline-offset: 2px;
-    }
-    #b24t-ob-spotlight.ob-hidden {
-      box-shadow: none; outline: none;
-      width: 0 !important; height: 0 !important;
-      opacity: 0;
-    }
-
-    /* ── BUBBLE — najwyższy z-index ── */
-    #b24t-ob-bubble {
-      position: fixed;
-      z-index: 2147483647;
-      max-width: 320px;
-      min-width: 240px;
-      font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
-      background: var(--b24t-bg);
-      border: 1px solid rgba(108,108,255,0.4);
-      border-radius: 16px;
-      padding: 18px 20px 14px;
-      box-shadow: 0 16px 56px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.06);
-      pointer-events: all;
-      transition: opacity var(--b24t-dur-quick) ease, transform var(--b24t-dur-quick) var(--b24t-ease-out);
-    }
-    #b24t-ob-bubble.ob-entering {
-      opacity: 0; transform: translateY(10px) scale(0.97);
-    }
-    #b24t-ob-bubble.ob-visible {
-      opacity: 1; transform: translateY(0) scale(1);
-    }
-    #b24t-ob-bubble.ob-exiting {
-      opacity: 0; transform: translateY(-6px) scale(0.97);
-    }
-
-    /* Tail — strzałka wskazująca na podświetlony element */
-    #b24t-ob-bubble::before {
-      content: '';
-      position: absolute;
-      width: 11px; height: 11px;
-      background: var(--b24t-bg);
-      border: 1px solid rgba(108,108,255,0.4);
-      transform: rotate(45deg);
-      z-index: -1;
-    }
-    #b24t-ob-bubble[data-tail="bottom"]::before {
-      bottom: -6px; left: 50%; margin-left: -5px;
-      border-top: none; border-left: none;
-    }
-    #b24t-ob-bubble[data-tail="top"]::before {
-      top: -6px; left: 50%; margin-left: -5px;
-      border-bottom: none; border-right: none;
-    }
-    #b24t-ob-bubble[data-tail="right"]::before {
-      right: -6px; top: 40%; margin-top: -5px;
-      border-bottom: none; border-left: none;
-    }
-    #b24t-ob-bubble[data-tail="left"]::before {
-      left: -6px; top: 40%; margin-top: -5px;
-      border-top: none; border-right: none;
-    }
-    #b24t-ob-bubble[data-tail="none"]::before { display: none; }
-
-    /* Bubble content */
-    .ob-bubble-step {
-      font-size: 10px; font-weight: 600;
-      color: rgba(108,108,255,0.8);
-      letter-spacing: 0.12em; text-transform: uppercase;
-      margin-bottom: 5px;
-    }
-    .ob-bubble-title {
-      font-size: 14px; font-weight: 700;
-      color: var(--b24t-text);
-      margin-bottom: 8px; line-height: 1.3;
-    }
-    .ob-bubble-body {
-      font-size: 12px; color: var(--b24t-text-muted);
-      line-height: 1.7; margin-bottom: 14px;
-    }
-    .ob-bubble-body strong { color: var(--b24t-text); }
-    .ob-bubble-body .ob-tag {
-      display: inline-block;
-      background: rgba(108,108,255,0.14);
-      border: 1px solid rgba(108,108,255,0.28);
-      border-radius: 4px; padding: 1px 6px;
-      font-size: 11px; color: #9090ff; margin: 1px 2px;
-    }
-
-    /* Progress dots */
-    .ob-dots { display: flex; gap: 5px; margin-bottom: 12px; }
-    .ob-dot {
-      width: 5px; height: 5px; border-radius: 50%;
-      background: rgba(255,255,255,0.1);
-      transition: background 0.2s, transform 0.2s;
-    }
-    .ob-dot.ob-dot-done { background: rgba(74,222,128,0.45); }
-    .ob-dot.ob-dot-active { background: #6c6cff; transform: scale(1.5); }
-
-    /* Nav */
-    .ob-nav {
-      display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    }
-    .ob-btn-next {
-      background: linear-gradient(135deg, #6c6cff, #9b59ff);
-      color: #fff; border: none; border-radius: 8px;
-      padding: 8px 18px; font-size: 12px; font-weight: 700;
-      font-family: inherit; cursor: pointer;
-      transition: opacity 0.15s, transform 0.1s;
-      box-shadow: 0 2px 12px rgba(108,108,255,0.4);
-    }
-    .ob-btn-next:hover { opacity: 0.88; }
-    .ob-btn-next:active { transform: scale(0.95); }
-    .ob-btn-back {
-      background: rgba(255,255,255,0.05); color: var(--b24t-text-faint);
-      border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
-      padding: 8px 14px; font-size: 12px;
-      font-family: inherit; cursor: pointer;
-      transition: background 0.15s;
-    }
-    .ob-btn-back:hover { background: rgba(255,255,255,0.1); }
-    .ob-step-counter { font-size: 10px; color: var(--b24t-text-faint); letter-spacing: 0.05em; }
-
-    @keyframes ob-pulse {
-      0%, 100% { outline-color: rgba(108,108,255,0.7); }
-      50%       { outline-color: rgba(160,140,255,1.0); }
-    }
-    #b24t-ob-spotlight.ob-pulse { animation: ob-pulse 1.6s ease-in-out infinite; }
-  `;
-  document.head.appendChild(s);
-}
-
-// ── ONBOARDING STEPS ──
-function getOnboardingSteps() {
-  return [
-    // 0 — Powitanie (centrum ekranu, bez spotlightu)
-    {
-      target: null,
-      title: '👋 Cześć! Witaj w B24 Tagger!',
-      body: `Zanim zaczniesz — pozwól, że w kilku krokach oprowadzę Cię po wtyczce. <strong>Zajmie to dosłownie chwilę.</strong><br><br>Ten onboarding pojawi się tylko raz i <strong>nie można go pominąć</strong> 😄 — chcemy mieć pewność, że wiesz jak korzystać z narzędzia!`,
-      tail: 'none',
-      emoji: true,
-    },
-    // 1 — O projekcie (centrum ekranu)
-    {
-      target: null,
-      title: '🛠️ Czym jest B24 Tagger?',
-      body: `To <strong>autorski projekt członka Insights24</strong>, stworzony od zera, żeby przyspieszyć i ułatwić pracę annotatorską w Brand24.<br><br>Wtyczka cały czas się <strong>rozwija</strong> — nowe funkcje, poprawki i ulepszenia pojawiają się regularnie. Jesteś jednym z pierwszych użytkowników! 🚀`,
-      tail: 'none',
-    },
-    // 2 — Header / topbar
-    {
-      target: '#b24t-topbar',
-      title: '🏠 Header wtyczki',
-      body: `Na samej górze znajdziesz:<br>
-        <span class="ob-tag">B24 Tagger BETA</span> — nazwa i wersja<br>
-        <span class="ob-tag">Status badge</span> — aktualny stan (Idle / Running / Done)<br>
-        <span class="ob-tag">☀️🌙 Toggle</span> — przełącz jasny/ciemny motyw<br>
-        <span class="ob-tag">⚙</span> — funkcje opcjonalne (więcej za chwilę)<br>
-        <span class="ob-tag">?</span> — tryb pomocy<br>
-        <span class="ob-tag">▼</span> — zwiń/rozwiń panel<br><br>
-        Panel możesz <strong>przeciągać</strong> łapiąc za nagłówek! 🖱️`,
-      tail: 'bottom',
-    },
-    // 3 — Meta bar (token)
-    {
-      target: '#b24t-meta-bar',
-      title: '🔑 Pasek statusu',
-      body: `Tu widzisz dwie ważne informacje:<br><br>
-        <strong>● Token API</strong> — zielony = wtyczka jest połączona z Brand24 i gotowa do pracy. Żółty = czeka na inicjalizację (otwórz widok Mentions).<br><br>
-        <strong>Timer sesji</strong> — mierzy czas trwania aktualnej operacji tagowania.`,
-      tail: 'bottom',
-    },
-    // 4 — Zakładki
-    {
-      target: '#b24t-tabs',
-      title: '📑 Zakładki — tryby pracy',
-      body: `Cztery tryby pracy:<br><br>
-        <span class="ob-tag">📄 Plik</span> — główny tryb: wgraj plik CSV/JSON z ocenami i otaguj setki wzmianek automatycznie<br>
-        <span class="ob-tag">⚡ Quick Tag</span> — błyskawiczne tagowanie bez pliku, na podstawie aktualnego widoku Brand24<br>
-        <span class="ob-tag">🗑 Quick Delete</span> — masowe usuwanie wzmianek po tagu lub aktualnym widoku<br>
-        <span class="ob-tag">📋 Historia</span> — ostatnie 20 sesji ze statystykami`,
-      tail: 'bottom',
-    },
-    // 6 — Zakładka Plik — sekcja projekt
-    {
-      target: '#b24t-main-tab .b24t-section:first-child',
-      title: '🗂️ Sekcja: Projekt',
-      body: `Tutaj wyświetla się <strong>aktualnie wykryty projekt Brand24</strong> — nazwa i ID.<br><br>
-        Wtyczka wykrywa projekt automatycznie na podstawie URL. Przejdź do widoku <strong>Mentions</strong> konkretnego projektu, żeby projekt się tu pojawił.`,
-      tail: 'bottom',
-    },
-    // 7 — Plik źródłowy
-    {
-      target: '#b24t-file-zone',
-      title: '📂 Wgrywanie pliku',
-      body: `Kliknij lub przeciągnij plik z ocenami wzmianek.<br><br>
-        Obsługiwane formaty: <strong>JSON</strong> (zalecany!), CSV, XLSX<br><br>
-        <strong>⚠️ Ważne:</strong> używaj formatu JSON — XLSX może obcinać długie ID z TikToka i Twittera (19 cyfr)!<br><br>
-        Wymagane kolumny: <span class="ob-tag">url</span> <span class="ob-tag">assessment</span><br>
-        Opcjonalne: <span class="ob-tag">created_date</span> <span class="ob-tag">text</span>`,
-      tail: 'top',
-    },
-    // 8 — Quick Tag
-    {
-      target: '[data-tab="quicktag"]',
-      title: '⚡ Quick Tag',
-      body: `Zakładka do tagowania <strong>bez pliku</strong> — działa na aktualnym widoku Brand24.<br><br>
-        Ustaw filtry w Brand24 (zakres dat, tagi, frazy) → przejdź do Quick Tag → wybierz tag → kliknij <strong>Taguj widok</strong>.<br><br>
-        Wtyczka pobiera wzmianki z aktualnie otwartego widoku i taguje je wszystkie naraz. Przydatne do szybkich operacji! ⚡`,
-      tail: 'bottom',
-    },
-    // 9 — Quick Delete
-    {
-      target: '[data-tab="delete"]',
-      title: '🗑️ Quick Delete',
-      body: `Masowe usuwanie wzmianek — dwa tryby:<br><br>
-        <strong>Po tagu</strong> — usuwa wszystkie wzmianki oznaczone wybranym tagiem w zakresie dat<br><br>
-        <strong>Aktualny widok</strong> — usuwa wzmianki dokładnie z widoku który masz otwarty<br><br>
-        Każda operacja wymaga <strong>potwierdzenia</strong> — nie ma przypadkowych kasowań! 🛡️`,
-      tail: 'bottom',
-    },
-    // 10 — Historia
-    {
-      target: '[data-tab="history"]',
-      title: '📋 Historia sesji',
-      body: `Pełna historia ostatnich <strong>20 sesji</strong> tagowania.<br><br>
-        Dla każdej sesji widzisz: projekt, datę, czas trwania, liczbę otagowanych/pominiętych wzmianek i inne statystyki.<br><br>
-        Przydatne do audytu i sprawdzenia co dokładnie było tagowane poprzednim razem. 🕐`,
-      tail: 'bottom',
-    },
-    // 11 — Akcje (Start / Pause / Stop)
-    {
-      target: '#b24t-actions',
-      title: '▶️ Przyciski akcji',
-      body: `Na dole panelu (w zakładce Plik) znajdziesz główne przyciski operacji:<br><br>
-        <strong>Start</strong> — uruchamia tagowanie lub wznawia po pauzie<br>
-        <strong>Pause</strong> — bezpieczne zatrzymanie po aktualnej stronie<br>
-        <strong>Test Run</strong> — symulacja bez zapisu — sprawdź dopasowanie przed właściwym tagowaniem!<br><br>
-        Zawsze zacznij od <strong>Test Run</strong> przy nowym pliku! ✅`,
-      tail: 'top',
-    },
-    // 12 — Funkcje opcjonalne (⚙)
-    {
-      target: '#b24t-btn-features',
-      title: '⚙️ Funkcje opcjonalne',
-      body: `Przycisk ⚙ otwiera panel z funkcjami, które możesz włączyć w razie potrzeby.<br><br>
-        Każda z nich ma <strong>krótki przewodnik</strong>, który pojawi się automatycznie przy pierwszym włączeniu — nie musisz nic konfigurować z góry! 🎯<br><br>
-        Odkrywaj funkcje w swoim tempie.`,
-      tail: 'bottom',
-    },
-    // 13 — Tryb pomocy (?)
-    {
-      target: '#b24t-btn-help',
-      title: '❓ Tryb pomocy',
-      body: `Ten przycisk uruchamia <strong>interaktywny tryb pomocy</strong>.<br><br>
-        Panel zostanie <strong>przyciemniony</strong>, a Ty możesz klikać na dowolne elementy interfejsu, żeby dowiedzieć się co robią — każdy ma swój opis.<br><br>
-        Wróć tu kiedy zapomnisz do czego służy jakiś przycisk! 🔍`,
-      tail: 'bottom',
-    },
-    // 14 — Changelog: Co nowego & Planowane
-    {
-      target: '#b24t-btn-changelog',
-      title: '📰 Co nowego & Planowane',
-      body: `Przycisk <strong>📋 Changelog & Feedback</strong> otwiera okno z trzema zakładkami:<br><br>
-        <span class="ob-tag">📰 Co nowego</span> — pełna lista zmian per wersja<br>
-        <span class="ob-tag">🗓 Planowane</span> — co będzie w następnych wersjach<br>
-        <span class="ob-tag">💬 Feedback</span> — błędy i pomysły bezpośrednio do autora<br><br>
-        Wtyczka <strong>aktualizuje się automatycznie</strong> przez Tampermonkey — sprawdzaj tu co zostało zmienione!`,
-      tail: 'bottom',
-    },
-    // 15 — Bug Report — co jest wysyłane
-    {
-      target: '#b24t-btn-changelog',
-      title: '🐛 Bug Report — co jest wysyłane?',
-      body: `W zakładce <strong>Feedback</strong> możesz zgłosić problem lub zaproponować funkcję.<br><br>
-        Do Bug Reportu <strong>automatycznie dołączane</strong> są dane techniczne:<br>
-        <span class="ob-tag">wersja</span> <span class="ob-tag">ID projektu</span> <span class="ob-tag">status sesji</span> <span class="ob-tag">ostatnie 30 wpisów logu</span> <span class="ob-tag">crash log</span><br><br>
-        <strong>Nie są wysyłane</strong> treści wzmianek ani zawartość wgranych plików. Raport trafia bezpośrednio do autora na Slack. 🔒`,
-      tail: 'bottom',
-    },
-    // 16 — Resize panelu
-    {
-      target: '#b24t-panel',
-      title: '↔️ Zmiana rozmiaru panelu',
-      body: `Panel możesz <strong>dowolnie rozciągać</strong> — chwyć za <strong>dowolną krawędź lub róg</strong> i przeciągnij.<br><br>
-        Min: 360×380px &nbsp;|&nbsp; Max: 720px szerokości<br><br>
-        Wybrany rozmiar jest <strong>zapamiętywany</strong> między sesjami — panel zawsze otworzy się z Twoimi ustawieniami. 📐`,
-      tail: 'left',
-    },
-    // 17 — Drag
-    {
-      target: '#b24t-topbar',
-      title: '🖱️ Przeciąganie panelu',
-      body: `Panel możesz <strong>swobodnie przesuwać</strong> po ekranie — chwyć za <strong>pasek tytułowy</strong> (ten fioletowy na górze) i przeciągnij gdzie chcesz.<br><br>
-        Pozycja jest zapamiętywana między sesjami — panel wróci dokładnie tam gdzie go zostawisz. 📌`,
-      tail: 'bottom',
-    },
-    // 18 — Finał
-    {
-      target: null,
-      title: '🎉 Gotowy do pracy!',
-      body: `To tyle! Teraz wiesz jak działa B24 Tagger.<br><br>
-        <strong>Szybki start:</strong><br>
-        1️⃣ Przejdź do widoku Mentions w Brand24<br>
-        2️⃣ Wgraj plik JSON z ocenami<br>
-        3️⃣ Zrób <strong>Test Run</strong> żeby sprawdzić dopasowanie<br>
-        4️⃣ Kliknij <strong>Start</strong> i obserwuj progress!<br><br>
-        Pytania? Kliknij <span class="ob-tag">📋 Changelog & Feedback</span> → zakładka Feedback 💬`,
-      tail: 'none',
-    },
-  ];
-}
-
-// ── GŁÓWNA FUNKCJA ONBOARDINGU ──
-function showOnboarding(onComplete) {
-  if (document.getElementById('b24t-ob-overlay')) return; // guard
-
-  injectOnboardingStyles();
-
-  const steps = getOnboardingSteps();
-  let currentStep = 0;
-  let animating = false;
-
-  // ── Zablokuj pozycję panelu na czas onboardingu ──
-  // Snap do prawego-dolnego rogu (safe zone dla wszystkich rozmiarów ekranu)
-  const panel = document.getElementById('b24t-panel');
-  let panelPosBackup = null;
-  if (panel) {
-    panelPosBackup = {
-      left: panel.style.left, top: panel.style.top,
-      right: panel.style.right, bottom: panel.style.bottom,
-      width: panel.style.width,
-      zIndex: panel.style.zIndex,
-    };
-    // Ustaw stałą pozycję: prawy-dolny róg z marginesem
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const pw = Math.min(440, vw - 24);
-    const ph = panel.offsetHeight || 480;
-    // Centrum ekranu — bubble ma zawsze miejsce po bokach i górze
-    panel.style.width  = pw + 'px';
-    panel.style.left   = Math.round((vw - pw) / 2) + 'px';
-    panel.style.top    = Math.max(12, Math.round((vh - ph) / 2)) + 'px';
-    panel.style.right  = 'auto';
-    panel.style.bottom = 'auto';
-    // Obniż z-index panelu — overlay/spotlight/bubble muszą być nad nim
-    panel.style.zIndex = '100';
-    panel.setAttribute('data-ob-locked', '1');
-  }
-
-  // Obniż też Annotators Panel jeśli otwarty
-  const annPanel = document.getElementById('b24t-annotator-panel');
-  if (annPanel && annPanel.style.display !== 'none') {
-    panelPosBackup.annZIndex = annPanel.style.zIndex;
-    annPanel.style.zIndex = '99';
-  }
-
-  // Tworzę overlay + spotlight + bubble — wszystkie na body, nad panelem
-  const overlay = document.createElement('div');
-  overlay.id = 'b24t-ob-overlay';
-  document.body.appendChild(overlay);
-
-  const spotlight = document.createElement('div');
-  spotlight.id = 'b24t-ob-spotlight';
-  spotlight.classList.add('ob-hidden');
-  document.body.appendChild(spotlight);
-
-  const bubble = document.createElement('div');
-  bubble.id = 'b24t-ob-bubble';
-  bubble.classList.add('ob-entering');
-  document.body.appendChild(bubble);
-
-  requestAnimationFrame(() => { overlay.classList.add('ob-active'); });
-
-  function getTargetRect(selector) {
-    if (!selector) return null;
-    const el = document.querySelector(selector);
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    if (r.width === 0 && r.height === 0) return null; // element ukryty
-    return { top: r.top, left: r.left, width: r.width, height: r.height };
-  }
-
-  function positionSpotlight(rect) {
-    if (!rect) {
-      spotlight.classList.add('ob-hidden');
-      return;
-    }
-    const pad = 6;
-    spotlight.classList.remove('ob-hidden');
-    spotlight.classList.add('ob-pulse');
-    spotlight.style.top    = (rect.top  - pad) + 'px';
-    spotlight.style.left   = (rect.left - pad) + 'px';
-    spotlight.style.width  = (rect.width  + pad * 2) + 'px';
-    spotlight.style.height = (rect.height + pad * 2) + 'px';
-  }
-
-  function positionBubble(rect, tailHint) {
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const bw = Math.min(320, vw - 32); // responsive szerokość
-    const bh = bubble.offsetHeight || 240;
-    const margin = 12;
-    const gap = 14; // odległość od elementu
-
-    // Bez targetu — centrum ekranu
-    if (!rect) {
-      bubble.style.width = bw + 'px';
-      bubble.style.left  = Math.max(margin, (vw - bw) / 2) + 'px';
-      bubble.style.top   = Math.max(margin, (vh - bh) / 2) + 'px';
-      bubble.setAttribute('data-tail', 'none');
-      return;
-    }
-
-    bubble.style.width = bw + 'px';
-
-    // Sprawdź dostępne miejsce po każdej stronie
-    const spaceAbove = rect.top - margin;
-    const spaceBelow = vh - (rect.top + rect.height) - margin;
-    const spaceLeft  = rect.left - margin;
-    const spaceRight = vw - (rect.left + rect.width) - margin;
-
-    let tail, top, left;
-
-    // Priorytet pozycji: tailHint → dostępne miejsce
-    // tailHint="bottom" = bubble NAD elementem (ogon wskazuje w dół)
-    // tailHint="top"    = bubble POD elementem (ogon wskazuje w górę)
-
-    if (tailHint === 'bottom' && spaceAbove >= bh + gap) {
-      // Nad elementem
-      top  = rect.top - bh - gap;
-      tail = 'bottom';
-    } else if (tailHint === 'top' && spaceBelow >= bh + gap) {
-      // Pod elementem
-      top  = rect.top + rect.height + gap;
-      tail = 'top';
-    } else if (spaceAbove >= bh + gap) {
-      // Fallback: nad
-      top  = rect.top - bh - gap;
-      tail = 'bottom';
-    } else if (spaceBelow >= bh + gap) {
-      // Fallback: pod
-      top  = rect.top + rect.height + gap;
-      tail = 'top';
-    } else if (spaceLeft >= bw + gap) {
-      // Po lewej
-      top  = Math.max(margin, rect.top + rect.height / 2 - bh / 2);
-      top  = Math.min(top, vh - bh - margin);
-      left = rect.left - bw - gap;
-      bubble.style.left = left + 'px';
-      bubble.style.top  = top  + 'px';
-      bubble.setAttribute('data-tail', 'right');
-      return;
-    } else if (spaceRight >= bw + gap) {
-      // Po prawej
-      top  = Math.max(margin, rect.top + rect.height / 2 - bh / 2);
-      top  = Math.min(top, vh - bh - margin);
-      left = rect.left + rect.width + gap;
-      bubble.style.left = left + 'px';
-      bubble.style.top  = top  + 'px';
-      bubble.setAttribute('data-tail', 'left');
-      return;
-    } else {
-      // Ostateczność: wyśrodkuj ekran i ukryj ogon
-      bubble.style.left = Math.max(margin, (vw - bw) / 2) + 'px';
-      bubble.style.top  = Math.max(margin, (vh - bh) / 2) + 'px';
-      bubble.setAttribute('data-tail', 'none');
-      return;
-    }
-
-    // Poziomo: wyśrodkuj względem elementu, nie wychodź poza ekran
-    left = rect.left + rect.width / 2 - bw / 2;
-    left = Math.max(margin, Math.min(left, vw - bw - margin));
-
-    bubble.style.left = left + 'px';
-    bubble.style.top  = Math.max(margin, Math.min(top, vh - bh - margin)) + 'px';
-    bubble.setAttribute('data-tail', tail);
-  }
-
-  function renderStep(idx) {
-    if (animating) return;
-    animating = true;
-
-    const step = steps[idx];
-    const dots = steps.map((_, i) => {
-      let cls = i < idx ? 'ob-dot-done' : i === idx ? 'ob-dot-active' : '';
-      return `<div class="ob-dot ${cls}"></div>`;
-    }).join('');
-
-    bubble.classList.remove('ob-visible');
-    bubble.classList.add('ob-exiting');
-
-    setTimeout(() => {
-      const rect = getTargetRect(step.target);
-      positionSpotlight(rect);
-
-      bubble.innerHTML = `
-        <div class="ob-dots">${dots}</div>
-        <div class="ob-bubble-step">Krok ${idx + 1} z ${steps.length}</div>
-        <div class="ob-bubble-title">${step.title}</div>
-        <div class="ob-bubble-body">${step.body}</div>
-        <div class="ob-nav">
-          ${idx > 0
-            ? `<button class="ob-btn-back" id="ob-btn-back">← Wstecz</button>`
-            : `<span class="ob-step-counter">${idx + 1} / ${steps.length}</span>`}
-          <button class="ob-btn-next" id="ob-btn-next">
-            ${idx < steps.length - 1 ? 'Dalej →' : '🎉 Zaczynamy!'}
-          </button>
-        </div>
-      `;
-
-      bubble.classList.remove('ob-exiting');
-      bubble.classList.add('ob-entering');
-
-      // Dwa RAF żeby browser zdążył obliczyć offsetHeight bubble
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        positionBubble(rect, step.tail);
-        bubble.classList.remove('ob-entering');
-        bubble.classList.add('ob-visible');
-        animating = false;
-      }));
-
-      document.getElementById('ob-btn-next').addEventListener('click', () => {
-        if (idx < steps.length - 1) { currentStep++; renderStep(currentStep); }
-        else finishOnboarding();
-      });
-      const backBtn = document.getElementById('ob-btn-back');
-      if (backBtn) backBtn.addEventListener('click', () => { currentStep--; renderStep(currentStep); });
-
-    }, 200);
-  }
-
-  function finishOnboarding() {
-    overlay.style.background = 'rgba(0,0,0,0)';
-    bubble.style.opacity = '0';
-    bubble.style.transform = 'scale(0.92) translateY(-8px)';
-    spotlight.style.opacity = '0';
-
-    setTimeout(() => {
-      overlay.remove();
-      spotlight.remove();
-      bubble.remove();
-      // Usuń resize handler żeby closure nie trzymało DOM nodes / state'u onboarding
-      if (finishOnboarding._resizeHandler) {
-        window.removeEventListener('resize', finishOnboarding._resizeHandler);
-        finishOnboarding._resizeHandler = null;
-      }
-      // Przywróć pozycję i rozmiar panelu
-      if (panel && panelPosBackup) {
-        panel.style.left   = panelPosBackup.left;
-        panel.style.top    = panelPosBackup.top;
-        panel.style.right  = panelPosBackup.right;
-        panel.style.bottom = panelPosBackup.bottom;
-        panel.style.width  = panelPosBackup.width;
-        panel.style.zIndex = panelPosBackup.zIndex;
-        panel.removeAttribute('data-ob-locked');
-      }
-      const annPanel = document.getElementById('b24t-annotator-panel');
-      if (annPanel && panelPosBackup.annZIndex !== undefined) {
-        annPanel.style.zIndex = panelPosBackup.annZIndex;
-      }
-      lsSet(LS.SETUP_DONE, true);
-      if (onComplete) onComplete();
-    }, 350);
-  }
-
-  // Resize handler — named ref żeby można było usunąć w finishOnboarding (inaczej wyciek closure)
-  let resizeTimer;
-  const _obResizeHandler = () => {
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => {
-      if (!panel) return;
-      // Re-centruj panel po resize okna
-      const vw2 = window.innerWidth;
-      const vh2 = window.innerHeight;
-      const pw2 = Math.min(440, vw2 - 24);
-      const ph2 = panel.offsetHeight || 480;
-      panel.style.width = pw2 + 'px';
-      panel.style.left  = Math.round((vw2 - pw2) / 2) + 'px';
-      panel.style.top   = Math.max(12, Math.round((vh2 - ph2) / 2)) + 'px';
-      // Reposition spotlight + bubble
-      const step = steps[currentStep];
-      const rect = getTargetRect(step.target);
-      positionSpotlight(rect);
-      positionBubble(rect, step.tail);
-    }, 120);
-  };
-  window.addEventListener('resize', _obResizeHandler);
-  // Eksponujemy handler do finishOnboarding (declared above) — używamy property na funkcji żeby uniknąć hoisting issues.
-  finishOnboarding._resizeHandler = _obResizeHandler;
-
-  renderStep(0);
-}
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELP MODE — Tryb pomocy (przycisk ?)
@@ -15086,6 +14575,7 @@ function showOnboarding(onComplete) {
       '<button id="b24t-news-modal-open-btn" style="background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.55);color:#fff;cursor:pointer;font-size:12px;font-weight:700;padding:5px 14px;border-radius:7px;flex-shrink:0;letter-spacing:0.01em;">+ Importuj URLe</button>',
       '<span id="b24t-news-panel-dot" class="b24t-cms-checking" style="font-size:11px;font-weight:700;flex-shrink:0;cursor:default;color:rgba(255,255,255,0.5);" title="Sprawdzanie logowania...">● Panel</span>',
       '<span id="b24t-news-cms-dot" class="b24t-cms-checking" style="font-size:11px;font-weight:700;flex-shrink:0;cursor:default;color:rgba(255,255,255,0.5);" title="Sprawdzanie CMS...">● CMS</span>',
+      '<button id="b24t-news-report-btn" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);color:#fff;cursor:pointer;font-size:12px;padding:3px 8px;border-radius:6px;flex-shrink:0;" title="Zgłoś błąd albo pomysł" aria-label="Zgłoś błąd albo pomysł">🐞</button>',
       '<button class="b24t-news-close-all" style="background:rgba(255,255,255,0.20);border:1px solid rgba(255,255,255,0.4);color:#fff;cursor:pointer;font-size:17px;line-height:1;padding:1px 7px;border-radius:5px;flex-shrink:0;">×</button>',
     ].join('');
 
@@ -16015,6 +15505,9 @@ function showOnboarding(onComplete) {
         });
       }
     });
+
+    var reportBtn = document.getElementById('b24t-news-report-btn');
+    if (reportBtn) reportBtn.addEventListener('click', function() { showReportModal({ kind: 'bug', area: 'Dodawanie wzmianek' }); });
 
     // ─── LEGEND BUTTON ───
     var legendBtn   = document.getElementById('b24t-news-legend-btn');
@@ -18893,52 +18386,202 @@ function showOnboarding(onComplete) {
 
 
   // ───────────────────────────────────────────
-  // CHANGELOG - historia wersji
+  // DZIENNIKI ZMIAN I AKTUALIZACJE
   // ───────────────────────────────────────────
-
-  // ── CHANGELOG (inline fallback: ostatnie 10 wersji; pełna lista ładowana z repo) ──
+  // Format i zasady obu dzienników: Tagger/CHANGELOG_STYLE.md. CHANGELOG_FALLBACK to 10 najnowszych
+  // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
+    {
+      "version": "0.37.0",
+      "date": "2026-10-01",
+      "label": "new",
+      "changes": [
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Nowy dziennik zmian",
+          "items": [
+            "Wersje nowsze niż ostatnio przeczytana są na górze, starsze zwinięte.",
+            "Filtr obszaru i wyszukiwanie obejmują całą historię.",
+            "Każda zmiana ma typ (new, improved, fix) i obszar wtyczki.",
+            "Dziennik obejmuje wersje od 0.32.0, przepisane w tym układzie."
+          ],
+          "comment": "Stary dziennik był jedną długą listą, w której każda wersja wyglądała na równie ważną. Ten da się filtrować i przeszukiwać.",
+          "text": "Nowy dziennik zmian. Wersje nowsze niż ostatnio przeczytana są na górze, starsze zwinięte. Filtr obszaru i wyszukiwanie obejmują całą historię. Każda zmiana ma typ (new, improved, fix) i obszar wtyczki. Dziennik obejmuje wersje od 0.32.0, przepisane w tym układzie."
+        },
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Kropka i połysk na przycisku 📋 przy nieprzeczytanej wersji",
+          "items": [
+            "Znikają po otwarciu dziennika."
+          ],
+          "comment": "Subtelna presja, żeby jednak zajrzeć.",
+          "text": "Kropka i połysk na przycisku 📋 przy nieprzeczytanej wersji. Znikają po otwarciu dziennika."
+        },
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Okno z opisem dużej zmiany po aktualizacji",
+          "items": [
+            "Pokazuje się raz, przy pierwszym otwarciu panelu po aktualizacji, która zawiera dużą zmianę.",
+            "„Zobacz w dzienniku zmian” otwiera dziennik na tej zmianie."
+          ],
+          "text": "Okno z opisem dużej zmiany po aktualizacji. Pokazuje się raz, przy pierwszym otwarciu panelu po aktualizacji, która zawiera dużą zmianę. „Zobacz w dzienniku zmian” otwiera dziennik na tej zmianie."
+        },
+        {
+          "type": "improved",
+          "area": "Przegląd sentymentu",
+          "title": "Przegląd sentymentu obejmuje wzmianki z każdym sentymentem",
+          "items": [
+            "Źródło „Wzmianki z zakresu dat” pobiera wzmianki z sentymentami zaznaczonymi na karcie ◐ Sentyment: negatywnymi, neutralnymi i pozytywnymi. Domyślnie zaznaczone są wszystkie, a wybór jest zapamiętywany dla projektu.",
+            "Jeden przegląd obejmuje do 5 000 wzmianek."
+          ],
+          "comment": "Przegląd zaczął się od negatywów, ale raport potrzebuje poprawnego sentymentu w każdą stronę.",
+          "text": "Przegląd sentymentu obejmuje wzmianki z każdym sentymentem. Źródło „Wzmianki z zakresu dat” pobiera wzmianki z sentymentami zaznaczonymi na karcie ◐ Sentyment: negatywnymi, neutralnymi i pozytywnymi. Domyślnie zaznaczone są wszystkie, a wybór jest zapamiętywany dla projektu. Jeden przegląd obejmuje do 5 000 wzmianek."
+        },
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Okno nowej wersji pod nagłówkiem panelu",
+          "items": [
+            "Okno pokazuje się tylko na stronie wyników Brand24 i zawiera listę zmian z nowej wersji.",
+            "„Później” zamyka okno na 24 godziny. Znacznik z numerem nowej wersji w nagłówku panelu otwiera je w każdej chwili.",
+            "Po instalacji okno przypomina o odświeżeniu strony. W trakcie przebiegu, oceny albo zapisu sentymentu przycisk „Odśwież stronę” jest nieaktywny, bo odświeżenie by je przerwało.",
+            "Kliknięcie numeru wersji w nagłówku panelu sprawdza dostępność aktualizacji i pokazuje wynik."
+          ],
+          "text": "Okno nowej wersji pod nagłówkiem panelu. Okno pokazuje się tylko na stronie wyników Brand24 i zawiera listę zmian z nowej wersji. „Później” zamyka okno na 24 godziny. Znacznik z numerem nowej wersji w nagłówku panelu otwiera je w każdej chwili. Po instalacji okno przypomina o odświeżeniu strony. W trakcie przebiegu, oceny albo zapisu sentymentu przycisk „Odśwież stronę” jest nieaktywny, bo odświeżenie by je przerwało. Kliknięcie numeru wersji w nagłówku panelu sprawdza dostępność aktualizacji i pokazuje wynik."
+        },
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Kanał Stabilny ma dziennik aktualizacji z pełnym opisem wersji",
+          "items": [
+            "Po instalacji przyciskiem „Zainstaluj w Tampermonkey” opis nowej wersji otwiera się sam.",
+            "Po automatycznej aktualizacji przez Tampermonkey pod nagłówkiem panelu pojawia się okno „Wtyczka została zaktualizowana” z przyciskiem „Zobacz zmiany”.",
+            "Na kanale Experimental przycisk 📋 otwiera dziennik zmian."
+          ],
+          "text": "Kanał Stabilny ma dziennik aktualizacji z pełnym opisem wersji. Po instalacji przyciskiem „Zainstaluj w Tampermonkey” opis nowej wersji otwiera się sam. Po automatycznej aktualizacji przez Tampermonkey pod nagłówkiem panelu pojawia się okno „Wtyczka została zaktualizowana” z przyciskiem „Zobacz zmiany”. Na kanale Experimental przycisk 📋 otwiera dziennik zmian."
+        },
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Instalacje na kanale Experimental przechodzą na kanał Stabilny",
+          "items": [
+            "Przełączenie odbywa się raz, gdy ta wersja jest dostępna na kanale Stabilnym, osobno w app.brand24.com i panel.brand24.pl.",
+            "Zmienia się tylko kanał aktualizacji. Ustawienia, klucze API i funkcje zostają bez zmian."
+          ],
+          "action": "Jeśli wtyczka ma dalej dostawać wersje testowe, trzeba wybrać w ⚙ w sekcji „Kanał aktualizacji” opcję „🔬 Eksperymentalny”.",
+          "text": "Instalacje na kanale Experimental przechodzą na kanał Stabilny. Przełączenie odbywa się raz, gdy ta wersja jest dostępna na kanale Stabilnym, osobno w app.brand24.com i panel.brand24.pl. Zmienia się tylko kanał aktualizacji. Ustawienia, klucze API i funkcje zostają bez zmian. Jeśli wtyczka ma dalej dostawać wersje testowe, trzeba wybrać w ⚙ w sekcji „Kanał aktualizacji” opcję „🔬 Eksperymentalny”."
+        },
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Zgłaszanie błędów i pomysłów z wtyczki",
+          "items": [
+            "Przycisk 💬 w panelu, przycisk 🐞 w oknach przeglądu sentymentu i News oraz „Zgłoś” na pasku błędu otwierają okienko zgłoszenia.",
+            "Do zgłoszenia błędu wtyczka dołącza ostatnie zdarzenia, wersję i stan funkcji. Klucze API, tokeny i treści wzmianek zostają w przeglądarce.",
+            "Gdy wysyłka się nie uda, „Kopiuj zgłoszenie” kopiuje treść do schowka."
+          ],
+          "comment": "Najtrudniej naprawić błąd, którego nikt nie umie opisać. Teraz wtyczka opisuje go sama.",
+          "text": "Zgłaszanie błędów i pomysłów z wtyczki. Przycisk 💬 w panelu, przycisk 🐞 w oknach przeglądu sentymentu i News oraz „Zgłoś” na pasku błędu otwierają okienko zgłoszenia. Do zgłoszenia błędu wtyczka dołącza ostatnie zdarzenia, wersję i stan funkcji. Klucze API, tokeny i treści wzmianek zostają w przeglądarce. Gdy wysyłka się nie uda, „Kopiuj zgłoszenie” kopiuje treść do schowka."
+        },
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Log w panelu domyślnie ukryty",
+          "items": [
+            "Log włącza się w ⚙ opcją „📜 Log w panelu”.",
+            "Bez logu błędy pokazuje pasek nad przyciskiem Start."
+          ],
+          "text": "Log w panelu domyślnie ukryty. Log włącza się w ⚙ opcją „📜 Log w panelu”. Bez logu błędy pokazuje pasek nad przyciskiem Start."
+        },
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Pierwsze uruchomienie bez przewodnika z dymkami",
+          "comment": "Przewodnik pokazywał panel sprzed kilkunastu wersji, więc częściej mylił, niż pomagał. Przeszedł na zasłużoną emeryturę.",
+          "text": "Pierwsze uruchomienie bez przewodnika z dymkami."
+        },
+        {
+          "type": "fix",
+          "area": "Panel",
+          "title": "Naprawiono nieczytelne okno nowej wersji na stronach spoza Brand24",
+          "items": [
+            "Okno trzyma się strony wyników Brand24 i nie zwiedza innych stron."
+          ],
+          "text": "Naprawiono nieczytelne okno nowej wersji na stronach spoza Brand24. Okno trzyma się strony wyników Brand24 i nie zwiedza innych stron."
+        }
+      ]
+    },
     {
       "version": "0.36.9",
       "date": "2026-10-01",
-      "label": "feat",
+      "label": "improved",
       "changes": [
         {
-          "type": "feat",
-          "text": "**Przegląd sentymentu: powrót do przeglądu z karty ◐ Sentyment.** Karta pokazuje projekt, zakres dat i postęp („Do decyzji: załatwione 37 z 137 · Zgodna zmiana: 45 z 45”) z przyciskiem „↩ Wróć do przeglądu”. Zamknięcie okna nie kończy przeglądu, ocena i zapisy trwają dalej. Nowa ocena przy kafelkach bez decyzji pyta o potwierdzenie, bo zamyka bieżący przegląd; podjęte decyzje i werdykty modeli zostają, więc ponowna ocena tego samego zakresu nie wysyła zapytań do modeli. Przeładowanie strony nadal kończy przegląd."
+          "type": "improved",
+          "area": "Przegląd sentymentu",
+          "title": "Do przeglądu sentymentu można wrócić po zamknięciu okna",
+          "items": [
+            "Karta ◐ Sentyment pokazuje projekt, zakres dat i postęp przeglądu.",
+            "„↩ Wróć do przeglądu” otwiera okno w miejscu, w którym je zamknięto. Ocena i zapisywanie decyzji trwają przy zamkniętym oknie.",
+            "Nowa ocena przy niezałatwionych kafelkach wymaga potwierdzenia. Ponowna ocena tego samego zakresu jest bezpłatna.",
+            "Przeładowanie strony kończy przegląd."
+          ],
+          "text": "Do przeglądu sentymentu można wrócić po zamknięciu okna. Karta ◐ Sentyment pokazuje projekt, zakres dat i postęp przeglądu. „↩ Wróć do przeglądu” otwiera okno w miejscu, w którym je zamknięto. Ocena i zapisywanie decyzji trwają przy zamkniętym oknie. Nowa ocena przy niezałatwionych kafelkach wymaga potwierdzenia. Ponowna ocena tego samego zakresu jest bezpłatna. Przeładowanie strony kończy przegląd."
         }
       ]
     },
     {
       "version": "0.36.8",
       "date": "2026-10-01",
-      "label": "feat",
+      "label": "new",
       "changes": [
         {
-          "type": "feat",
-          "text": "**Przegląd sentymentu: przełącznik „Ukryj załatwione” w nagłówku okna.** Włączony ukrywa kafelki z decyzją, także te w trakcie zapisu. Ostatnio zdecydowany kafelek zostaje widoczny do następnej decyzji, z linkiem „cofnij”, a kafelek z błędem zapisu wraca na widok. Klawisze J/K przechodzą tylko po widocznych kafelkach. Wyłączenie przełącznika pokazuje wszystkie kafelki; jego stan jest zapamiętywany."
+          "type": "new",
+          "area": "Przegląd sentymentu",
+          "title": "Przełącznik „Ukryj załatwione” w oknie przeglądu sentymentu",
+          "items": [
+            "Ukrywa kafelki, przy których zapadła już decyzja.",
+            "Ostatnio zdecydowany kafelek zostaje widoczny do następnej decyzji, z możliwością cofnięcia.",
+            "Kafelek, którego nie udało się zapisać, wraca na widok.",
+            "Ustawienie przełącznika jest zapamiętywane."
+          ],
+          "text": "Przełącznik „Ukryj załatwione” w oknie przeglądu sentymentu. Ukrywa kafelki, przy których zapadła już decyzja. Ostatnio zdecydowany kafelek zostaje widoczny do następnej decyzji, z możliwością cofnięcia. Kafelek, którego nie udało się zapisać, wraca na widok. Ustawienie przełącznika jest zapamiętywane."
         }
       ]
     },
     {
       "version": "0.36.7",
       "date": "2026-10-01",
-      "label": "feat",
+      "label": "improved",
       "changes": [
         {
-          "type": "feat",
-          "text": "**Przegląd sentymentu ocenia do 16 partii naraz na model zamiast 8.** Ocena miesiąca Toyoty (ok. 1 100 wzmianek) trwa ok. 2 min zamiast ok. 3,7 min (szacunek z czasów partii w pomiarze). Przeglądy do ok. 160 wzmianek mieszczą się w jednej turze i trwają tyle co dotąd. Koszt się nie zmienia."
+          "type": "improved",
+          "area": "Przegląd sentymentu",
+          "title": "Ocena dużych projektów w przeglądzie sentymentu trwa o połowę krócej",
+          "items": [
+            "Mniejsze przeglądy trwają tyle samo. Koszt oceny się nie zmienia."
+          ],
+          "text": "Ocena dużych projektów w przeglądzie sentymentu trwa o połowę krócej. Mniejsze przeglądy trwają tyle samo. Koszt oceny się nie zmienia."
         }
       ]
     },
     {
       "version": "0.36.6",
       "date": "2026-10-01",
-      "label": "fix",
+      "label": "improved",
       "changes": [
         {
-          "type": "fix",
-          "text": "**Ustawienia AI są wspólne dla app.brand24.com i panel.brand24.pl.** Klucze, biblioteka promptów i wybrane modele leżą w pamięci Tampermonkeya zamiast w pamięci strony, osobnej dla każdego panelu, i nie znikają przy czyszczeniu danych strony. Przy pierwszym otwarciu każdego panelu jego dotychczasowe ustawienia przechodzą automatycznie. Drugi panel uzupełnia tylko to, czego brakuje (pusty klucz, nowy prompt); prompt o tej samej treści nie dubluje się."
+          "type": "improved",
+          "area": "Ustawienia AI",
+          "title": "Ustawienia AI są wspólne dla app.brand24.com i panel.brand24.pl",
+          "items": [
+            "Klucze API, prompty i wybrane modele są zapisane w Tampermonkeyu. Wyczyszczenie danych strony Brand24 ich nie usuwa.",
+            "Dotychczasowe ustawienia z obu paneli przechodzą automatycznie. Prompt o tej samej treści się nie dubluje."
+          ],
+          "text": "Ustawienia AI są wspólne dla app.brand24.com i panel.brand24.pl. Klucze API, prompty i wybrane modele są zapisane w Tampermonkeyu. Wyczyszczenie danych strony Brand24 ich nie usuwa. Dotychczasowe ustawienia z obu paneli przechodzą automatycznie. Prompt o tej samej treści się nie dubluje."
         }
       ]
     },
@@ -18949,7 +18592,14 @@ function showOnboarding(onComplete) {
       "changes": [
         {
           "type": "fix",
-          "text": "**Klucze Gemini w formacie „AQ.…” znów się zapisują i działają.** Sprawdzanie klucza nie wymaga już konkretnego początku: odrzucany jest tekst krótszy niż 30 znaków albo ze spacją lub polską literą oraz klucz innego dostawcy wklejony w nie to pole (np. klucz Gemini w polu Claude). Klucz Gemini zapisany przed 0.36.5 mógł zniknąć z ustawień przy zmianie innej opcji — wymaga ponownego wklejenia."
+          "area": "Ustawienia AI",
+          "title": "Naprawiono odrzucanie poprawnych kluczy Gemini",
+          "items": [
+            "Klucz Gemini zaczynający się od „AQ.” był uznawany za niepoprawny.",
+            "Pole klucza ostrzega, gdy wklejono klucz innego dostawcy, np. klucz Gemini w polu Claude."
+          ],
+          "action": "Jeśli klucz Gemini zniknął z ustawień, wklej go ponownie.",
+          "text": "Naprawiono odrzucanie poprawnych kluczy Gemini. Klucz Gemini zaczynający się od „AQ.” był uznawany za niepoprawny. Pole klucza ostrzega, gdy wklejono klucz innego dostawcy, np. klucz Gemini w polu Claude. Jeśli klucz Gemini zniknął z ustawień, wklej go ponownie."
         }
       ]
     },
@@ -18960,7 +18610,12 @@ function showOnboarding(onComplete) {
       "changes": [
         {
           "type": "fix",
-          "text": "**Przegląd sentymentu z zakresu dat znów pobiera negatywy.** Brand24 odrzucał zapytanie błędem „Enum \"Sentiment\" cannot represent non-string value: -1”: filtr sentymentu przyjmuje wartość „negative”, nie liczbę -1. Źródło „bieżący widok Brand24” bez zmian."
+          "area": "Przegląd sentymentu",
+          "title": "Naprawiono pobieranie negatywów z zakresu dat w przeglądzie sentymentu",
+          "items": [
+            "Źródło „Negatywy z zakresu dat” kończyło się błędem i ocena nie startowała. Źródło „Aktualny widok Brand24” działało poprawnie."
+          ],
+          "text": "Naprawiono pobieranie negatywów z zakresu dat w przeglądzie sentymentu. Źródło „Negatywy z zakresu dat” kończyło się błędem i ocena nie startowała. Źródło „Aktualny widok Brand24” działało poprawnie."
         }
       ]
     },
@@ -18971,754 +18626,1620 @@ function showOnboarding(onComplete) {
       "changes": [
         {
           "type": "fix",
-          "text": "**Pola kluczy API i tokenu GitHub nie są już polami hasła.** Przeglądarka nie proponuje zmiany hasła do konta Brand24 po wklejeniu klucza i nie wpisuje zapisanego hasła w pole klucza Claude. Wpis bez formatu klucza (Claude „sk-ant-…”, OpenAI „sk-…”, Gemini „AIza…”) nie zapisuje się, a pole wraca do zapisanego klucza. Hasło zapisane wcześniej w miejscu klucza jest pomijane: pole klucza jest puste i wymaga ponownego wklejenia klucza."
+          "area": "Ustawienia AI",
+          "title": "Naprawiono błąd, przez który przeglądarka brała pola kluczy API za pola hasła",
+          "items": [
+            "Po wklejeniu klucza przeglądarka proponowała zmianę hasła do Brand24, a zapisane hasło wpisywała w pole klucza.",
+            "To samo dotyczyło pola tokenu GitHub."
+          ],
+          "action": "Jeśli pole klucza jest puste, wklej klucz ponownie.",
+          "text": "Naprawiono błąd, przez który przeglądarka brała pola kluczy API za pola hasła. Po wklejeniu klucza przeglądarka proponowała zmianę hasła do Brand24, a zapisane hasło wpisywała w pole klucza. To samo dotyczyło pola tokenu GitHub. Jeśli pole klucza jest puste, wklej klucz ponownie."
         }
       ]
     },
     {
       "version": "0.36.2",
       "date": "2026-09-30",
-      "label": "feat",
+      "label": "new",
       "changes": [
         {
-          "type": "feat",
-          "text": "**Claude Sonnet 5.5 do wyboru w modelach AI** (News, kampanie, tłumaczenie, tagowanie). Sonnet 5.5 dostaje własny wariant zapytania: odrzuca sposób wyłączania myślenia i wymuszoną odpowiedź przez narzędzie, których wtyczka używa dla Haiku 4.5 i Sonneta 5; zapytania do tych dwóch modeli zostają bez zmian. Pomiar News na 25 stronach PL i HR: wszystkie trzy modele odpowiadają bez ucięć; Sonnet 5.5 zgodny z Sonnetem 5 na 24 z 25 stron; koszt na 1000 stron w sesji: Haiku 4.5 ok. 2,0 $, Sonnet 5 ok. 2,4 $, Sonnet 5.5 ok. 2,6 $ (dłuższe uzasadnienia); Sonnet 5.5 odpowiada ok. 10% szybciej od Sonneta 5."
+          "type": "new",
+          "area": "Ustawienia AI",
+          "title": "Model Claude Sonnet 5.5 do wyboru w funkcjach AI",
+          "items": [
+            "Dostępny w News, kampaniach H&M, tłumaczeniu i AI Tag.",
+            "Oceny stron w News są zbliżone do Sonneta 5.",
+            "Koszt oceny 1 000 stron w News: Haiku 4.5 ok. 2,0 $, Sonnet 5 ok. 2,4 $, Sonnet 5.5 ok. 2,6 $."
+          ],
+          "text": "Model Claude Sonnet 5.5 do wyboru w funkcjach AI. Dostępny w News, kampaniach H&amp;M, tłumaczeniu i AI Tag. Oceny stron w News są zbliżone do Sonneta 5. Koszt oceny 1 000 stron w News: Haiku 4.5 ok. 2,0 $, Sonnet 5 ok. 2,4 $, Sonnet 5.5 ok. 2,6 $."
         }
       ]
     },
     {
       "version": "0.36.1",
       "date": "2026-09-30",
-      "label": "feat",
+      "label": "improved",
       "changes": [
         {
-          "type": "feat",
-          "text": "**Przegląd sentymentu: podstawa werdyktu „ocena marki”.** Nowa wersja promptu sentymentu (v4) ocenia markę, gdy tekst ją ocenia: wzmianka pokazująca markę w dobrym świetle jest pozytywna mimo negatywnego tonu reszty wypowiedzi. Marka tylko wspomniana nie zmienia werdyktu. Wtyczka przyjmuje i wyświetla tę podstawę na kafelku. Nowy prompt trzeba wkleić do biblioteki promptów w miejsce poprzedniego; werdykty zapamiętane dla starego promptu przestają obowiązywać same."
-        }
-      ]
-    },
-    {
-      "version": "0.36.0",
-      "date": "2026-09-30",
-      "label": "feat",
-      "changes": [
-        {
-          "type": "feat",
-          "text": "**Przegląd sentymentu w oknie z kafelkami.** Nowa karta „◐ Sentyment” w panelu, włączana w Ustawienia → AI → Przegląd sentymentu. Pobiera negatywy projektu z zakresu dat albo bieżący widok Brand24 i ocenia je dwoma modelami AI (domyślnie gemini-3.8-flash i gpt-6-luna) promptem z biblioteki. Każdy kafelek pokazuje treść wzmianki oraz werdykt, uzasadnienie i wątpliwości obu modeli."
-        },
-        {
-          "type": "feat",
-          "text": "Kafelki są w trzech grupach: „Do decyzji” (modele się różnią, któryś nie ocenił albo zgłasza wątpliwość), „Zgodna zmiana” (oba proponują tę samą zmianę; zapis hurtowy jednym przyciskiem) i „Bez zmian” (zwinięta). Wybór sentymentu na kafelku zapisuje się w Brand24 od razu, bez pliku, 5 zmian naraz; każdą zmianę można cofnąć. Klawisze: J/K — następny / poprzedni kafelek, N/U/P — negatywny / neutralny / pozytywny, Z — cofnij, Esc — zamknij."
-        },
-        {
-          "type": "feat",
-          "text": "Werdykty są zapamiętywane dla wzmianki, modelu i promptu, więc ponowna ocena tego samego zakresu nie jest płatna drugi raz. Okno pokazuje koszt oceny i eksportuje do CSV dziennik decyzji z werdyktami modeli. W trybie Test Run zmiany sentymentu trafiają tylko do logu, a ocena modeli jest płatna jak zwykle. **Funkcja niesprawdzona jeszcze na żywym przebiegu.**"
+          "type": "improved",
+          "area": "Przegląd sentymentu",
+          "title": "Ocena sentymentu uwzględnia, jak wzmianka przedstawia markę",
+          "items": [
+            "Wzmianka pokazująca markę w dobrym świetle jest pozytywna, nawet gdy reszta tekstu ma negatywny ton. Samo wymienienie marki nie zmienia oceny.",
+            "Kafelek pokazuje wtedy podstawę oceny „ocena marki”."
+          ],
+          "action": "Zastąp prompt sentymentu w Ustawieniach → AI nową wersją. Wzmianki ocenione poprzednim promptem zostaną ocenione ponownie.",
+          "text": "Ocena sentymentu uwzględnia, jak wzmianka przedstawia markę. Wzmianka pokazująca markę w dobrym świetle jest pozytywna, nawet gdy reszta tekstu ma negatywny ton. Samo wymienienie marki nie zmienia oceny. Kafelek pokazuje wtedy podstawę oceny „ocena marki”. Zastąp prompt sentymentu w Ustawieniach → AI nową wersją. Wzmianki ocenione poprzednim promptem zostaną ocenione ponownie."
         }
       ]
     }
   ];
 
-  function _fetchChangelog(onDone) {
-    const CACHE_KEY = 'b24tagger_cl_cache_' + lsGet(LS.UPDATE_CHANNEL, 'stable');
-    const cached = (() => { try { return JSON.parse(sessionStorage.getItem(CACHE_KEY)); } catch(e) { return null; } })();
-    if (cached) { onDone(cached); return; }
-    GM_xmlhttpRequest({
-      method: 'GET',
-      url: getChangelogUrl(),
-      headers: { 'Cache-Control': 'no-cache' },
-      onload(r) {
-        try {
-          const data = JSON.parse(r.responseText);
-          sessionStorage.setItem(CACHE_KEY, JSON.stringify(data));
-          onDone(data);
-        } catch(e) { onDone(CHANGELOG_FALLBACK); }
-      },
-      onerror() { onDone(CHANGELOG_FALLBACK); }
-    });
-  }
-
-
-  // ───────────────────────────────────────────
-  // WHAT'S NEW - modal i przycisk
-  // ───────────────────────────────────────────
-
-  function showWelcomePanel() {
-    if (lsGet(LS.WELCOME_SHOWN, false)) return;
-
-    const prioMeta = {
-      ai:     { color: '#a855f7', label: 'AI' },
-      high:   { color: '#f87171', label: 'Krytyczne' },
-      medium: { color: '#facc15', label: 'Ważne' },
-      low:    { color: '#4ade80', label: 'Nice to have' },
-    };
-
-    let plannedHtml =
-      '<div style="font-size:13px;font-weight:600;color:#c0c0e0;margin-bottom:12px;line-height:1.6;">Roadmap — v1.0.0 i nowsze</div>';
-    PLANNED_FEATURES.forEach(function(f) {
-      var pm = prioMeta[f.priority] || { color: '#6060aa' };
-      plannedHtml +=
-        '<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid #1a1a22;">' +
-          '<span style="flex-shrink:0;width:8px;height:8px;border-radius:50%;background:' + pm.color + ';margin-top:5px;"></span>' +
-          '<span style="font-size:13px;color:#a0a0cc;line-height:1.6;flex:1;">' + f.text + '</span>' +
-        '</div>';
-    });
-    plannedHtml +=
-      '<div style="padding:10px 0 4px;font-size:12px;color:#4a4a66;line-height:1.6;font-style:italic;">' +
-        '...i inne funkcje zgłaszane przez użytkowników — masz pomysł lub coś nie działa? Napisz przez formularz Feedback.' +
-      '</div>' +
-      '<div style="margin-top:14px;padding:14px;background:#1a0d2e;border-radius:8px;border:1px solid #3d1a6e;">' +
-        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
-          '<span style="font-size:14px;">✨</span>' +
-          '<span style="font-size:11px;font-weight:600;color:#a855f7;letter-spacing:0.06em;">W PLANACH</span>' +
-        '</div>' +
-        '<div style="font-size:13px;color:#9060cc;line-height:1.6;">Automatyczna klasyfikacja AI — tłumaczenie wzmianek na bieżąco, automatyczna ocena sentymentu i klasyfikacja za pomocą modeli AI.</div>' +
-      '</div>';
-
-    var modal = document.createElement('div');
-    modal.id = 'b24t-welcome-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;';
-
-    modal.innerHTML =
-      '<div style="background:#0f0f13;border:1px solid #2a2a35;border-radius:14px;width:500px;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.9);">' +
-        // Header
-        '<div style="padding:20px 24px 0;flex-shrink:0;border-bottom:1px solid #1e1e28;">' +
-          '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">' +
-            '<div style="width:38px;height:38px;background:#6c6cff22;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;">🛠️</div>' +
-            '<div style="flex:1;">' +
-              '<div style="font-size:16px;font-weight:700;color:#e2e2e8;letter-spacing:-0.01em;">B24 Tagger <span style="font-size:11px;color:#6c6cff;letter-spacing:0.08em;font-weight:600;">BETA</span></div>' +
-              '<div style="font-size:12px;color:#3a3a55;margin-top:3px;">v' + VERSION + ' · ostatnia wersja przed stabilną</div>' +
-            '</div>' +
-          '</div>' +
-          '<div style="display:flex;gap:2px;margin-bottom:0;">' +
-            '<button class="b24t-wp-tab" data-tab="welcome" style="flex:1;background:none;border:none;border-bottom:2px solid #6c6cff;color:#6c6cff;font-size:11px;font-weight:600;padding:8px 4px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:5px;">👋 Witaj</button>' +
-            '<button class="b24t-wp-tab" data-tab="planned" style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:#4a4a66;font-size:11px;padding:8px 4px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:5px;">🗓 Planowane</button>' +
-          '</div>' +
-        '</div>' +
-        // Body
-        '<div style="overflow-y:auto;flex:1;min-height:0;">' +
-          // Tab: Witaj
-          '<div id="b24t-wp-welcome" style="padding:24px;">' +
-            '<p style="font-size:14px;color:#c0c0e0;line-height:1.8;margin:0 0 14px 0;">' +
-              'Wersja <strong style="color:#e2e2e8;">0.21.0</strong> to ostatnia oficjalna wersja przed wydaniem wersji <strong style="color:#6c6cff;">1.0.0 stabilnej</strong>.' +
-            '</p>' +
-            '<p style="font-size:14px;color:#c0c0e0;line-height:1.8;margin:0 0 14px 0;">' +
-              'Od poprzedniej wersji naprawiono kilka błędów związanych z tagowaniem za pomocą pliku.' +
-            '</p>' +
-            '<p style="font-size:13px;color:#4a4a66;line-height:1.7;margin:0;">' +
-              'To okienko pojawi się tylko raz. Co jest planowane na wersję 1.0.0 i nowsze — znajdziesz w zakładce <strong style="color:#6060aa;">Planowane</strong>.' +
-            '</p>' +
-          '</div>' +
-          // Tab: Planowane
-          '<div id="b24t-wp-planned" style="display:none;padding:20px 24px;">' + plannedHtml + '</div>' +
-        '</div>' +
-        // Footer z checkboxem
-        '<div style="padding:14px 24px;border-top:1px solid #1a1a22;flex-shrink:0;">' +
-          '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:12px;">' +
-            '<input type="checkbox" id="b24t-wp-checkbox" style="width:16px;height:16px;cursor:pointer;accent-color:#6c6cff;">' +
-            '<span style="font-size:13px;color:#6060aa;">Przeczytałem/am</span>' +
-          '</label>' +
-          '<button id="b24t-wp-close" disabled style="width:100%;background:#2a2a3a;color:#4a4a66;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:not-allowed;font-family:inherit;transition:background 0.2s,color 0.2s;">Zamknij</button>' +
-        '</div>' +
-      '</div>';
-
-    document.body.appendChild(modal);
-
-    // Tab switching
-    modal.querySelectorAll('.b24t-wp-tab').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        modal.querySelectorAll('.b24t-wp-tab').forEach(function(b) {
-          b.style.borderBottomColor = 'transparent';
-          b.style.color = '#4a4a66';
-          b.style.fontWeight = 'normal';
-        });
-        btn.style.borderBottomColor = '#6c6cff';
-        btn.style.color = '#6c6cff';
-        btn.style.fontWeight = '600';
-        document.getElementById('b24t-wp-welcome').style.display = btn.dataset.tab === 'welcome' ? 'block' : 'none';
-        document.getElementById('b24t-wp-planned').style.display = btn.dataset.tab === 'planned' ? 'block' : 'none';
-      });
-    });
-
-    // Checkbox enables close button
-    document.getElementById('b24t-wp-checkbox').addEventListener('change', function() {
-      var btn = document.getElementById('b24t-wp-close');
-      if (this.checked) {
-        btn.disabled = false;
-        btn.style.background = '#6c6cff';
-        btn.style.color = '#fff';
-        btn.style.cursor = 'pointer';
-      } else {
-        btn.disabled = true;
-        btn.style.background = '#2a2a3a';
-        btn.style.color = '#4a4a66';
-        btn.style.cursor = 'not-allowed';
-      }
-    });
-
-    document.getElementById('b24t-wp-close').addEventListener('click', function() {
-      if (!document.getElementById('b24t-wp-checkbox').checked) return;
-      lsSet(LS.WELCOME_SHOWN, true);
-      modal.remove();
-    });
-  }
-
-  // ───────────────────────────────────────────
-  // FEEDBACK & PLANNED FEATURES
-  // ───────────────────────────────────────────
-
-  // ───────────────────────────────────────────
-  // KONFIGURACJA — uzupełnij przed użyciem
-  // ───────────────────────────────────────────
-  // Slack Webhook URL — przechowywany w localStorage (klucz: b24tagger_slack_webhook)
-  // Ustaw raz w konsoli: localStorage.setItem('b24tagger_slack_webhook', 'https://hooks.slack.com/...')
-  const SLACK_WEBHOOK_URL = localStorage.getItem('b24tagger_slack_webhook') || '';
-  const RAW_URL_STABLE       = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/b24tagger.user.js';
-  const RAW_URL_EXPERIMENTAL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/experimental/b24tagger.user.js';
-  const CHANGELOG_URL_STABLE       = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/CHANGELOG.json';
-  const CHANGELOG_URL_EXPERIMENTAL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/experimental/CHANGELOG.json';
-  function getRawUrl() { return lsGet(LS.UPDATE_CHANNEL, 'stable') === 'experimental' ? RAW_URL_EXPERIMENTAL : RAW_URL_STABLE; }
-  function getChangelogUrl() { return lsGet(LS.UPDATE_CHANNEL, 'stable') === 'experimental' ? CHANGELOG_URL_EXPERIMENTAL : CHANGELOG_URL_STABLE; }
-
-  // Google Forms — bug report i feedback
-  const BUG_FORM_BASE = 'https://docs.google.com/forms/d/e/1FAIpQLSdfddWBtp-0ZiMP5u51vaQmNvIg423MyjOzQdMZb6BEyCe0GA/viewform';
-  const FEEDBACK_FORM_BASE = 'https://docs.google.com/forms/d/e/1FAIpQLSf4K3JMmR8vhFcs4DL14E91GpEd9YNCNm6uS0afbdm7kSBHpg/viewform';
-  const FEEDBACK_FORM_FIELDS = {
-    suggestion: 'entry.1001511860',
-    type:       'entry.2053499490',
-    version:    'entry.1295392049',
-    project:    'entry.1925108405',
+  // Stan dzielony między kartami i domenami trzymamy w GM: app.brand24.com i panel.brand24.pl
+  // mają osobne localStorage, a wynik sprawdzenia i powiadomienia mają obowiązywać w obu.
+  const REL_GM = {
+    lastRun: 'b24t_last_run_version',  // wersja ostatniego uruchomienia panelu
+    manual:  'b24t_manual_install',    // {version}: kliknięte „Zainstaluj w Tampermonkey”
+    notice:  'b24t_updated_notice',    // {from, to}: okienko „Wtyczka została zaktualizowana” czeka
+    clSeen:  'b24t_changelog_seen',    // ostatnio przeczytana wersja dziennika zmian
+    check:   'b24t_update_check_',     // + kanał: {t, remote, err}, wynik sprawdzenia wspólny dla kart
+    later:   'b24t_update_later',      // {until}: „Później”
+    opened:  'b24t_update_opened',     // wersja, dla której okienko już się otworzyło
+    running: 'b24t_latest_running',    // najnowsza wersja uruchomiona w którejkolwiek karcie
+    cache:   'b24t_rel_cache_',        // + plik: {t, data}
   };
+  const UPD_EVERY_MS = 30 * 60 * 1000;
+  const UPD_LATER_MS = 24 * 60 * 60 * 1000;
+  // Okno dużej zmiany liczy od tej wersji (CHANGELOG_STYLE.md §2.5).
+  const HIGHLIGHT_SINCE = '0.37.0';
+  // Kolejność filtra obszarów w dzienniku zmian; ta sama lista co AREAS w release.py (sprawdza release.py check).
+  // 📢: zmiana na prośbę użytkowników; w opisie stabilnym także przedrostek punktu (CHANGELOG_STYLE.md §2.2, §4.2).
+  const REL_REQ = '📢 ';
+  const REL_REQ_CHIP = '<span class="b24t-cl-req" title="Zmiana na prośbę użytkowników">📢 na prośbę</span>';
+  // Pożegnanie opisu wersji stabilnej bez własnego `outro` (§4.2).
+  const REL_OUTRO = 'Miłego tagowania!';
+  const CHANGELOG_AREAS = ["Tagowanie z pliku", "Quick Tag", "AI Tag", "Przegląd sentymentu", "Quick Delete", "Dodawanie wzmianek", "Kampanie H&M", "Powiadomienia", "Ustawienia AI", "Narzędzia annotatora", "Panel"];
+  const REL_MONTHS = ['styczeń', 'luty', 'marzec', 'kwiecień', 'maj', 'czerwiec', 'lipiec', 'sierpień', 'wrzesień',
+    'październik', 'listopad', 'grudzień'];
 
-  const BUG_FORM_FIELDS = {
-    version:   'entry.769760752',
-    project:   'entry.668506048',
-    url:       'entry.1459869471',
-    logs:      'entry.1505126804',
-    datetime:  'entry.1776456134',
-  };
-
-  // Planned features list
-  const PLANNED_FEATURES = [
-    { priority: 'high', text: 'Czyszczenie tagów plikiem — naprawa funkcji usuwania tagów na podstawie dostarczonego pliku CSV' },
-  ];
-
-  function sendToSlack(payload, onSuccess, onError) {
-    if (!SLACK_WEBHOOK_URL || SLACK_WEBHOOK_URL === 'TWOJ_SLACK_WEBHOOK_URL') {
-      addLog('⚠ Feedback nie skonfigurowany — brak Slack Webhook URL', 'warn');
-      onError('not configured');
-      return;
-    }
-    if (typeof GM_xmlhttpRequest !== 'undefined') {
-      GM_xmlhttpRequest({
-        method: 'POST', url: SLACK_WEBHOOK_URL,
-        headers: { 'Content-Type': 'application/json' },
-        data: JSON.stringify(payload),
-        onload: function(r) { r.status === 200 ? onSuccess() : onError(r.status); },
-        onerror: function() { onError('network'); }
-      });
-    } else {
-      fetch(SLACK_WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-        .then(function() { onSuccess(); }).catch(function() { onError('fetch'); });
-    }
+  function _relGm(key, fallback) {
+    try { var raw = GM_getValue(key, null); return raw === null ? fallback : JSON.parse(raw); }
+    catch (e) { return fallback; }
   }
-
-  function openFeedbackForm(suggestion) {
-    var project = (state.projectName || '') + (state.projectId ? ' (' + state.projectId + ')' : '');
-    var params = [
-      FEEDBACK_FORM_FIELDS.suggestion + '=' + encodeURIComponent(suggestion || ''),
-      FEEDBACK_FORM_FIELDS.version    + '=' + encodeURIComponent(VERSION),
-      FEEDBACK_FORM_FIELDS.project    + '=' + encodeURIComponent(project),
-    ].join('&');
-    window.open(FEEDBACK_FORM_BASE + '?' + params, '_blank');
+  function _relGmSet(key, val) {
+    try { GM_setValue(key, val === null ? null : JSON.stringify(val)); }
+    catch (e) { console.warn('[B24 Tagger] zapis ' + key + ' w GM nieudany', e); }
   }
-
-  function openBugReportForm(description) {
-    var data = buildBugReportData();
-    var logs = data.recentLogs.slice(-20).join('\n');
-    var project = (data.projectName || '') + (data.projectId ? ' (' + data.projectId + ')' : '');
-    var dt = data.localTime || new Date().toLocaleString('pl-PL');
-    var params = [
-      'entry.378076813'        + '=' + encodeURIComponent(description || ''),
-      BUG_FORM_FIELDS.version  + '=' + encodeURIComponent(data.version || VERSION),
-      BUG_FORM_FIELDS.project  + '=' + encodeURIComponent(project),
-      BUG_FORM_FIELDS.url      + '=' + encodeURIComponent(data.url || window.location.href),
-      BUG_FORM_FIELDS.logs     + '=' + encodeURIComponent(logs.substring(0, 2000)),
-      BUG_FORM_FIELDS.datetime + '=' + encodeURIComponent(dt),
-    ].join('&');
-    window.open(BUG_FORM_BASE + '?' + params, '_blank');
-  }
-
-  function sendBugReport(description, onDone) {
-    const data = buildBugReportData();
-    const logsText = data.recentLogs.join('\n');
-    const statsText = data.stats
-      ? 'Otagowane: ' + data.stats.tagged + ' | Pominięte: ' + data.stats.skipped + ' | Brak matcha: ' + data.stats.noMatch
-      : '—';
-    const blocks = [
-      { type: 'header', text: { type: 'plain_text', text: '🐛 B24 Tagger BETA — Bug Report', emoji: true } },
-      { type: 'section', fields: [
-        { type: 'mrkdwn', text: '*Wersja:*\n`' + data.version + '`' },
-        { type: 'mrkdwn', text: '*Czas:*\n' + data.localTime },
-        { type: 'mrkdwn', text: '*Projekt:*\n' + (data.projectName || '—') + (data.projectId ? ' (`' + data.projectId + '`)' : '') },
-        { type: 'mrkdwn', text: '*Status sesji:*\n`' + data.sessionStatus + '`' + (data.testRunMode ? ' (Test Run)' : '') },
-        { type: 'mrkdwn', text: '*Token:*\n' + (data.hasToken ? '✅ aktywny' : '❌ brak') },
-        { type: 'mrkdwn', text: '*Plik:*\n' + (data.fileName ? '`' + data.fileName + '`' : '—') + (data.fileRows ? ' (' + data.fileRows + ' wierszy)' : '') },
-      ]},
-      { type: 'section', fields: [
-        { type: 'mrkdwn', text: '*Statystyki:*\n' + statsText },
-        { type: 'mrkdwn', text: '*Mapa URL:*\n' + data.urlMapSize + ' wzmianek' },
-        { type: 'mrkdwn', text: '*URL:*\n`' + data.url.substring(0, 80) + '`' },
-        { type: 'mrkdwn', text: '*Screen:*\n' + data.screen },
-      ]},
-      { type: 'divider' },
-      { type: 'section', text: { type: 'mrkdwn', text: '*📝 Opis problemu:*\n' + (description || '_(brak opisu)_') } },
-      { type: 'section', text: { type: 'mrkdwn', text: '*📋 Ostatnie logi (30):*\n```' + (logsText.substring(0, 2800) || '—') + '```' } },
-    ];
-    if (data.crashLog) {
-      const cl = data.crashLog;
-      const sessionInfo = cl.session
-        ? 'Status: `' + cl.session.status + '` | Partycja: ' + (cl.session.currentPartitionIdx !== null ? cl.session.currentPartitionIdx + '/' + (cl.session.totalPartitions || '?') : '—') +
-          (cl.session.currentPartitionRange ? ' (' + cl.session.currentPartitionRange + ')' : '') +
-          '\nTest Run: ' + (cl.session.testRunMode ? 'tak' : 'nie') + ' | Mapa: ' + (cl.urlMapSize || 0) + ' wzmianek'
-        : '—';
-      blocks.push({ type: 'section', fields: [
-        { type: 'mrkdwn', text: '*💥 Typ błędu:*\n`' + (cl.errorType || '—') + '`' },
-        { type: 'mrkdwn', text: '*⏱ Czas crashu:*\n' + (cl.localTime || '—') },
-        { type: 'mrkdwn', text: '*🔧 Ostatnia akcja:*\n`' + (cl.lastAction || '—') + '`' },
-        { type: 'mrkdwn', text: '*🔄 Możliwe wznowienie:*\n' + (cl.recoverable ? '✅ tak' : '❌ nie') },
-      ]});
-      blocks.push({ type: 'section', text: { type: 'mrkdwn', text: '*📊 Stan sesji przy crashu:*\n' + sessionInfo } });
-      if (cl.lastMatchLog) {
-        blocks.push({ type: 'section', text: { type: 'mrkdwn', text: '*🔗 Ostatni wpis match:*\n`' + cl.lastMatchLog.substring(0, 200) + '`' } });
-      }
-      if (cl.stack) {
-        blocks.push({ type: 'section', text: { type: 'mrkdwn', text: '*📋 Stack trace:*\n```' + cl.stack + '```' } });
-      }
-    }
-    blocks.push({ type: 'divider' });
-    sendToSlack({ blocks }, onDone, function(err) { addLog('⚠ Błąd wysyłki Bug Report: ' + err, 'warn'); });
-  }
-
-  // What's New modal - extended with tabs (Co nowego / Planowane / Feedback)
-  function showWhatsNewExtended(forceShow) {
-    const seenVersion = lsGet('b24tagger_seen_version', '');
-    if (!forceShow && seenVersion === VERSION) return;
-
-    const typeIcon = { new: '✦', fix: '⚒', perf: '⚡', ui: '◈', feat: '✦' };
-    const typeColor = { new: '#6c6cff', fix: '#4ade80', perf: '#facc15', ui: '#b0b0cc', feat: '#06b6d4' };
-
-    const labelColorFallback = { ui: '#8b5cf6', fix: '#22c55e', feat: '#06b6d4', new: '#6c6cff', perf: '#facc15' };
-
-    function _buildChangelogHtml(entries) {
-      let html = '';
-      entries.forEach(function(v, idx) {
-        const isLatest = idx === 0;
-        const lc = v.labelColor || labelColorFallback[v.label] || '#8b5cf6';
-        const normalizedChanges = v.changes.map(function(c) {
-          return (typeof c === 'string') ? { type: v.label || 'new', text: c } : c;
-        });
-        html +=
-          '<div style="margin-bottom:' + (idx < entries.length - 1 ? '20' : '0') + 'px;">' +
-            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
-              '<span style="font-size:15px;font-weight:700;color:var(--b24t-text);font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;">v' + v.version + '</span>' +
-              '<span style="font-size:12px;font-weight:600;background:' + lc + '22;color:' + lc + ';padding:2px 10px;border-radius:99px;">' + v.label + '</span>' +
-              '<span style="font-size:11px;color:var(--b24t-text-faint);margin-left:auto;">' + v.date + '</span>' +
-            '</div>' +
-            '<div style="' + (isLatest ? '' : 'opacity:0.6;') + '">' +
-            normalizedChanges.map(function(ch) {
-              return '<div style="display:flex;gap:8px;align-items:flex-start;padding:3px 0;">' +
-                '<span style="flex-shrink:0;font-size:15px;color:' + (typeColor[ch.type] || '#9090aa') + ';width:18px;text-align:center;line-height:1;">' + (typeIcon[ch.type] || '•') + '</span>' +
-                '<span style="font-size:13px;color:var(--b24t-text-muted);line-height:1.6;">' + ch.text + '</span>' +
-              '</div>';
-            }).join('') +
-            '</div>' +
-          '</div>' +
-          (idx < entries.length - 1 ? '<div style="height:1px;background:var(--b24t-border-sub);margin:0 0 20px 0;"></div>' : '');
-      });
-      return html;
-    }
-
-    // Render with fallback, then update when fetch completes
-    let changelogHtml = _buildChangelogHtml(CHANGELOG_FALLBACK);
-
-    // Build planned features HTML
-    const prioMeta = {
-      ai:     { color: '#a855f7', label: 'AI',     desc: 'AI / flagowa' },
-      high:   { color: '#f87171', label: 'Wysoki', desc: 'priorytet wysoki' },
-      medium: { color: '#facc15', label: 'Średni', desc: 'priorytet średni' },
-      low:    { color: '#4ade80', label: 'Niski',  desc: 'priorytet niski' },
-    };
-    let plannedHtml =
-      '<div style="font-size:13px;font-weight:600;color:var(--b24t-text-muted);margin-bottom:12px;line-height:1.6;">Roadmap — v1.0.0 i nowsze</div>';
-    PLANNED_FEATURES.forEach(function(f) {
-      const pm = prioMeta[f.priority] || { color: '#6060aa' };
-      plannedHtml +=
-        '<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--b24t-border-sub);">' +
-          '<span style="flex-shrink:0;width:8px;height:8px;border-radius:50%;background:' + pm.color + ';margin-top:5px;"></span>' +
-          '<span style="font-size:13px;color:var(--b24t-text-muted);line-height:1.6;flex:1;">' + f.text + '</span>' +
-        '</div>';
-    });
-    plannedHtml +=
-      '<div style="padding:10px 0 4px;font-size:12px;color:var(--b24t-text-faint);line-height:1.6;font-style:italic;">' +
-        '...i inne funkcje zgłaszane przez użytkowników — masz pomysł lub coś nie działa? Napisz przez formularz Feedback.' +
-      '</div>' +
-      '<div style="margin-top:14px;padding:14px;background:rgba(168,85,247,0.08);border-radius:8px;border:1px solid rgba(168,85,247,0.25);">' +
-        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
-          '<span style="font-size:14px;">✨</span>' +
-          '<span style="font-size:11px;font-weight:600;color:#a855f7;letter-spacing:0.06em;">W PLANACH</span>' +
-        '</div>' +
-        '<div style="font-size:13px;color:#a855f7;opacity:0.75;line-height:1.6;">Automatyczna klasyfikacja AI — tłumaczenie wzmianek na bieżąco, automatyczna ocena sentymentu i klasyfikacja za pomocą modeli AI.</div>' +
-      '</div>';
-
-    const modal = document.createElement('div');
-    modal.id = 'b24t-whats-new-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;';
-
-    modal.innerHTML =
-      // Outer container - wider, flex column
-      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:520px;max-height:86vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);">' +
-
-        // ── HEADER (gradient) ─────────────────────────────────────────────
-        '<div style="padding:10px 14px;background:var(--b24t-accent-grad);border-radius:14px 14px 0 0;overflow:hidden;display:flex;align-items:center;flex-shrink:0;gap:10px;">' +
-          '<div style="width:32px;height:32px;background:rgba(255,255,255,0.18);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">🚀</div>' +
-          '<div style="flex:1;">' +
-            '<div style="font-size:14px;font-weight:700;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.2);">B24 Tagger <span style="font-size:10px;font-weight:600;letter-spacing:0.08em;opacity:0.85;">BETA</span></div>' +
-            '<div style="font-size:11px;color:rgba(255,255,255,0.65);margin-top:1px;">v' + VERSION + ' · Dziennik zmian</div>' +
-          '</div>' +
-          '<button id="b24t-wnm-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:15px;line-height:1;padding:2px 7px;border-radius:5px;flex-shrink:0;">\u00d7</button>' +
-        '</div>' +
-        // ── TABS ──────────────────────────────────────────────────────────
-        '<div style="display:flex;background:var(--b24t-bg-elevated);border-bottom:1px solid var(--b24t-border);padding:0 4px;flex-shrink:0;">' +
-          '<button class="b24t-wnm-tab" data-tab="news" ' +
-            'style="flex:1;background:none;border:none;border-bottom:2px solid var(--b24t-primary);color:var(--b24t-primary);' +
-            'font-size:11px;font-weight:600;padding:8px 4px;cursor:pointer;font-family:inherit;' +
-            'display:flex;align-items:center;justify-content:center;gap:5px;">📋 Historia zmian</button>' +
-          '<button class="b24t-wnm-tab" data-tab="planned" ' +
-            'style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:var(--b24t-text-faint);' +
-            'font-size:11px;padding:8px 4px;cursor:pointer;font-family:inherit;' +
-            'display:flex;align-items:center;justify-content:center;gap:5px;">🗓 Planowane</button>' +
-        '</div>' +
-
-        // ── BODY (scrollable) ─────────────────────────────────────────────
-        '<div style="overflow-y:auto;flex:1;min-height:0;background:var(--b24t-bg);" id="b24t-wnm-body">' +
-
-          // Tab: Co nowego
-          '<div id="b24t-wnm-news" style="padding:20px 24px;">' + changelogHtml + '</div>' +
-
-          // Tab: Planowane
-          '<div id="b24t-wnm-planned" style="display:none;padding:20px 24px;">' + plannedHtml + '</div>' +
-
-        '</div>' +
-
-        // ── FOOTER ────────────────────────────────────────────────────────
-        '<div style="padding:10px 20px;border-top:1px solid var(--b24t-border);flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:12px;">' +
-          // Lewa strona: legenda
-          '<div id="b24t-wnm-legend" style="display:flex;gap:8px;font-size:11px;color:var(--b24t-text-faint);">' +
-            '<span title="Nowa funkcja"><span style="color:#6c6cff;">✦</span> nowe</span>' +
-            '<span title="Naprawa błędu"><span style="color:#4ade80;">⚒</span> fix</span>' +
-            '<span title="Wydajność"><span style="color:#facc15;">⚡</span> perf</span>' +
-            '<span title="Interfejs"><span style="color:#8080aa;">◈</span> UI</span>' +
-          '</div>' +
-          // Prawa strona: Gotowe
-          '<button id="b24t-wnm-ok" ' +
-            'style="background:var(--b24t-primary);color:#fff;border:none;border-radius:7px;padding:8px 24px;' +
-            'font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;flex-shrink:0;">Gotowe</button>' +
-        '</div>' +
-
-      '</div>';
-
-    document.body.appendChild(modal);
-
-    // Fetch full changelog in background — update news tab if modal still open
-    _fetchChangelog(function(entries) {
-      const newsEl = document.getElementById('b24t-wnm-news');
-      if (newsEl && document.getElementById('b24t-whats-new-modal')) {
-        newsEl.innerHTML = _buildChangelogHtml(entries);
-      }
-    });
-
-    // Tab switching
-    const legend = document.getElementById('b24t-wnm-legend');
-    modal.querySelectorAll('.b24t-wnm-tab').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        modal.querySelectorAll('.b24t-wnm-tab').forEach(function(b) {
-          b.style.borderBottomColor = 'transparent';
-          b.style.color = 'var(--b24t-text-faint)';
-          b.style.fontWeight = 'normal';
-          b.style.fontSize = '13px';
-        });
-        btn.style.borderBottomColor = 'var(--b24t-primary)';
-        btn.style.color = 'var(--b24t-primary)';
-        btn.style.fontWeight = '600';
-        btn.style.fontSize = '13px';
-        ['news','planned'].forEach(function(t) {
-          document.getElementById('b24t-wnm-' + t).style.display = btn.dataset.tab === t ? 'block' : 'none';
-        });
-        if (legend) legend.style.display = btn.dataset.tab === 'news' ? 'flex' : 'none';
-      });
-    });
-
-    function closeWnm() {
-      lsSet('b24tagger_seen_version', VERSION);
-      modal.remove();
-    }
-    document.getElementById('b24t-wnm-close').addEventListener('click', closeWnm);
-    document.getElementById('b24t-wnm-ok').addEventListener('click', closeWnm);
-    modal.addEventListener('click', function(e) { if (e.target === modal) closeWnm(); });
-  }
-
-  function showFeedbackModal() {
-    if (document.getElementById('b24t-feedback-modal')) return;
-    const modal = document.createElement('div');
-    modal.id = 'b24t-feedback-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;animation:b24t-fadein 0.2s ease;';
-
-    modal.innerHTML =
-      '<div style="background:var(--b24t-bg);border:1px solid var(--b24t-border);border-radius:14px;width:440px;max-height:86vh;display:flex;flex-direction:column;box-shadow:var(--b24t-shadow-h);animation:b24t-slidein var(--b24t-dur-normal) var(--b24t-ease-out);">' +
-        '<div style="padding:10px 14px;background:var(--b24t-accent-grad);border-radius:14px 14px 0 0;display:flex;align-items:center;flex-shrink:0;gap:10px;">' +
-          '<div style="width:32px;height:32px;background:rgba(255,255,255,0.18);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">💬</div>' +
-          '<div style="flex:1;">' +
-            '<div style="font-size:14px;font-weight:700;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.2);">Feedback</div>' +
-            '<div style="font-size:11px;color:rgba(255,255,255,0.65);margin-top:1px;">B24 Tagger v' + VERSION + '</div>' +
-          '</div>' +
-          '<button id="b24t-fb-close" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);box-shadow:0 1px 4px rgba(0,0,0,0.3);color:#fff;cursor:pointer;font-size:15px;line-height:1;padding:2px 7px;border-radius:5px;flex-shrink:0;">\u00d7</button>' +
-        '</div>' +
-        '<div style="overflow-y:auto;flex:1;min-height:0;padding:20px 24px;">' +
-          '<div style="border:1px solid rgba(248,113,113,0.25);border-radius:10px;background:var(--b24t-bg-elevated);margin-bottom:12px;overflow:hidden;">' +
-            '<div style="padding:14px 16px;border-bottom:1px solid rgba(248,113,113,0.15);display:flex;align-items:center;gap:10px;">' +
-              '<div style="width:30px;height:30px;background:rgba(248,113,113,0.12);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">🐛</div>' +
-              '<div>' +
-                '<div style="font-size:13px;font-weight:700;color:#f87171;">Bug Report</div>' +
-                '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Wersja, projekt, URL i logi wypełniają się automatycznie</div>' +
-              '</div>' +
-            '</div>' +
-            '<div style="padding:12px 16px;">' +
-              '<div style="font-size:11px;color:var(--b24t-text-faint);margin-bottom:8px;">Opisz problem:</div>' +
-              '<textarea id="b24t-fb-bugs" placeholder="Co się stało? Kiedy wystąpił błąd? Jakie kroki doprowadziły do problemu?" style="width:100%;height:80px;background:var(--b24t-bg-deep);border:1px solid var(--b24t-border);border-radius:6px;color:var(--b24t-text-muted);font-family:inherit;font-size:12px;padding:8px 10px;resize:none;box-sizing:border-box;outline:none;line-height:1.5;"></textarea>' +
-              '<button id="b24t-fb-send-bug" style="width:100%;margin-top:8px;background:#f87171;color:#fff;border:none;border-radius:7px;padding:9px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Otwórz formularz Bug Report →</button>' +
-            '</div>' +
-          '</div>' +
-          '<div style="border:1px solid var(--b24t-border);border-radius:10px;background:var(--b24t-bg-elevated);overflow:hidden;">' +
-            '<div style="padding:14px 16px;border-bottom:1px solid var(--b24t-border-sub);display:flex;align-items:center;gap:10px;">' +
-              '<div style="width:30px;height:30px;background:rgba(108,108,255,0.12);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">💡</div>' +
-              '<div>' +
-                '<div style="font-size:13px;font-weight:700;color:var(--b24t-primary);">Suggestion</div>' +
-                '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:1px;">Pomysł na nową funkcję lub ulepszenie</div>' +
-              '</div>' +
-            '</div>' +
-            '<div style="padding:12px 16px;">' +
-              '<div style="font-size:11px;color:var(--b24t-text-faint);margin-bottom:8px;">Twój pomysł:</div>' +
-              '<textarea id="b24t-fb-ideas" placeholder="Jaka funkcja by Ci się przydała? Jak powinna działać?" style="width:100%;height:80px;background:var(--b24t-bg-deep);border:1px solid var(--b24t-border);border-radius:6px;color:var(--b24t-text-muted);font-family:inherit;font-size:12px;padding:8px 10px;resize:none;box-sizing:border-box;outline:none;line-height:1.5;"></textarea>' +
-              '<button id="b24t-fb-send-suggest" style="width:100%;margin-top:8px;background:var(--b24t-primary);color:#fff;border:none;border-radius:7px;padding:9px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Otwórz formularz Feedback →</button>' +
-            '</div>' +
-          '</div>' +
-          '<div id="b24t-fb-status" style="font-size:11px;min-height:14px;margin-top:10px;text-align:center;"></div>' +
-          '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--b24t-border-sub);text-align:center;">' +
-            '<button id="b24t-fb-reset-onboarding" style="background:none;border:none;color:var(--b24t-text-faint);font-size:10px;cursor:pointer;font-family:inherit;letter-spacing:0.03em;padding:4px 10px;border-radius:4px;transition:color 0.2s;opacity:0.5;">\u21ba Powtórz onboarding</button>' +
-          '</div>' +
-        '</div>' +
-      '</div>';
-
-    document.body.appendChild(modal);
-
-    function close() { modal.remove(); }
-    document.getElementById('b24t-fb-close').addEventListener('click', close);
-    modal.addEventListener('click', function(e) { if (e.target === modal) close(); });
-
-    document.getElementById('b24t-fb-send-bug').addEventListener('click', function() {
-      const statusEl = document.getElementById('b24t-fb-status');
-      const bugs = document.getElementById('b24t-fb-bugs').value.trim();
-      if (!bugs) { if (statusEl) { statusEl.textContent = '\u26a0 Opisz problem przed wysłaniem'; statusEl.style.color = '#facc15'; } return; }
-      openBugReportForm(bugs);
-      addLog('\u2713 Formularz Bug Report otwarty w nowej karcie', 'success');
-      if (statusEl) { statusEl.textContent = '\u2713 Formularz otwarty — opisz błąd i wyślij!'; statusEl.style.color = '#4ade80'; }
-      setTimeout(close, 2000);
-    });
-
-    document.getElementById('b24t-fb-send-suggest').addEventListener('click', function() {
-      const statusEl = document.getElementById('b24t-fb-status');
-      const ideas = document.getElementById('b24t-fb-ideas').value.trim();
-      if (!ideas) { if (statusEl) { statusEl.textContent = '\u26a0 Wpisz swój pomysł'; statusEl.style.color = '#facc15'; } return; }
-      openFeedbackForm(ideas);
-      addLog('\u2713 Formularz Feedback otwarty w nowej karcie', 'success');
-      if (statusEl) { statusEl.textContent = '\u2713 Formularz otwarty — opisz pomysł i wyślij!'; statusEl.style.color = '#4ade80'; }
-      setTimeout(close, 2000);
-    });
-
-    const fbResetOb = document.getElementById('b24t-fb-reset-onboarding');
-    if (fbResetOb) {
-      fbResetOb.addEventListener('mouseenter', function() { this.style.color = 'var(--b24t-primary)'; this.style.opacity = '1'; });
-      fbResetOb.addEventListener('mouseleave', function() { this.style.color = 'var(--b24t-text-faint)'; this.style.opacity = '0.5'; });
-      fbResetOb.addEventListener('click', function() {
-        close();
-        lsSet(LS.SETUP_DONE, false);
-        setTimeout(function() { showOnboarding(function() { addLog('\u2713 Onboarding zakończony ponownie.', 'success'); }); }, 300);
-      });
-    }
-  }
-
-
-  // ───────────────────────────────────────────
-  // AUTO UPDATE CHECK
-  // ───────────────────────────────────────────
-
-  function compareVersions(a, b) {
-    // Returns 1 if a > b, -1 if a < b, 0 if equal
-    const pa = a.split('.').map(Number);
-    const pb = b.split('.').map(Number);
-    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-      const na = pa[i] || 0, nb = pb[i] || 0;
-      if (na > nb) return 1;
-      if (na < nb) return -1;
-    }
+  function _relCmp(a, b) {
+    var x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
+    for (var i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0);
     return 0;
   }
+  function _relChannel() { return lsGet(LS.UPDATE_CHANNEL, 'stable') === 'experimental' ? 'experimental' : 'stable'; }
+  // Twarda spacja w grupach cyfr („1 000”), żeby liczba nie łamała się na końcu wiersza (CHANGELOG_STYLE.md §5).
+  function _relNb(s) { return String(s).replace(/(\d) (?=\d{3}(?!\d))/g, '$1 '); }
+  // Nazwy z ekranu w „…” pogrubione. Działa na tekście już escapowanym, więc nie wpuszcza HTML-a z pliku.
+  function _relUi(s) { return _escHtml(_relNb(s)).replace(/„([^„”]+)”/g, '<span class="b24t-cl-ui">„$1”</span>'); }
+  // Szuka w tekście surowym i escapuje każdy kawałek osobno: dopasowanie liczone na wersji escapowanej
+  // potrafi wypaść w środku encji („a” w „H&amp;M”).
+  function _relMark(text, q) {
+    var s = _relNb(text), e = q ? _relNb(q) : '', i = e ? s.toLowerCase().indexOf(e.toLowerCase()) : -1;
+    if (i < 0) return _escHtml(s);
+    return _escHtml(s.slice(0, i)) + '<mark>' + _escHtml(s.slice(i, i + e.length)) + '</mark>' + _escHtml(s.slice(i + e.length));
+  }
+  function _relPl(n, one, few, many) {
+    var d = n % 10, h = n % 100;
+    return n === 1 ? one : (d >= 2 && d <= 4 && (h < 12 || h > 14) ? few : many);
+  }
+  function _relDate(iso) { var p = String(iso).split('-'); return p.length === 3 ? p[2] + '.' + p[1] + '.' + p[0] : ''; }
+  function _relMonth(ym) { var p = String(ym).split('-'); return (REL_MONTHS[Number(p[1]) - 1] || '') + ' ' + p[0]; }
 
-  function checkForUpdate(manual) {
-    const _rawUrl = getRawUrl();
-    if (!_rawUrl) return;
-    addLog('→ Sprawdzam aktualizacje... (GM: ' + (typeof GM_xmlhttpRequest !== 'undefined' ? 'tak' : 'nie') + ')', 'info');
+  // ── Pliki z repo ──
+  // Ostatnia pobrana kopia leży w GM: okno otwiera się bez czekania, a bez sieci nadal ma treść.
+  function _relFetch(name, url, maxAgeMs, onDone) {
+    var key = REL_GM.cache + name, cached = _relGm(key, null);
+    if (cached && Date.now() - cached.t < maxAgeMs) { onDone(cached.data); return; }
+    var fail = function() { onDone(cached ? cached.data : null); };
+    GM_xmlhttpRequest({
+      method: 'GET', url: url + '?_=' + Date.now(), headers: { 'Cache-Control': 'no-cache' }, timeout: 15000,
+      onload: function(r) {
+        var data;
+        try { data = r.status === 200 ? JSON.parse(r.responseText) : null; } catch (e) { data = null; }
+        if (!Array.isArray(data)) { fail(); return; }
+        _relGmSet(key, { t: Date.now(), data: data });
+        onDone(data);
+      },
+      onerror: fail, ontimeout: fail
+    });
+  }
+  // Numer wersji i data trafiają też do atrybutów id, więc spoza formatu nie przechodzą wcale
+  // (format pilnuje release.py, to zabezpieczenie na plik wysłany z pominięciem walidatora).
+  const REL_VER = /^\d+\.\d+\.\d+$/;
+  // Dziennik zmian bez wpisów w poprzednim formacie: mogą zostać w kopii z GM sprzed 0.37.0.
+  function _relChangelog(maxAgeMs, onDone) {
+    _relFetch('changelog', CHANGELOG_URL, maxAgeMs, function(data) {
+      var list = (data || []).filter(function(v) { return v && REL_VER.test(v.version) && Array.isArray(v.changes); })
+        .map(function(v) {
+          return { version: v.version, date: /^\d{4}-\d{2}-\d{2}$/.test(v.date) ? v.date : '',
+            changes: v.changes.filter(function(c) { return c && typeof c.title === 'string'; }),
+            knownIssues: (Array.isArray(v.knownIssues) ? v.knownIssues : []).filter(function(t) { return typeof t === 'string'; }) };
+        });
+      onDone(list.length ? list : CHANGELOG_FALLBACK);
+    });
+  }
+  // null: nie udało się pobrać i nie ma kopii.
+  function _relNotes(maxAgeMs, onDone) {
+    _relFetch('notes', RELEASE_NOTES_URL, maxAgeMs, function(data) {
+      onDone(data ? data.filter(function(n) { return n && REL_VER.test(n.version) && /^\d{4}-\d{2}$/.test(n.date) && n.name; }) : null);
+    });
+  }
+  // Dane, które mają zawierać wersję `version`. Kopia z GM bywa sprzed jej wydania, np. gdy Tampermonkey
+  // zaktualizował wtyczkę kilka minut po otwarciu dziennika; wtedy jedno pobranie z pominięciem kopii.
+  function _relFor(load, version, onDone) {
+    load(10 * 60 * 1000, function(data) {
+      if ((data || []).some(function(v) { return v.version === version; })) onDone(data);
+      else load(0, onDone);
+    });
+  }
 
-    function handleResponse(text) {
-      const match = text.match(/\/\/ @version\s+([\d.]+)/);
-      if (!match) {
-        addLog('⚠ Update check: nie znaleziono @version w odpowiedzi (dł: ' + text.length + ')', 'warn');
+  // ── Okno dziennika (wspólna rama) ──
+  // Okna dzienników są modalne: żaden klawisz nie dochodzi do skrótów pod spodem. Przegląd sentymentu
+  // słucha na document w fazie przechwytywania (N/U/P zapisują sentyment w Brand24), więc nasłuch idzie
+  // na window: odpala się przed nim, a stopPropagation go pomija. Na document by nie wystarczył, bo
+  // kolejne nasłuchy tego samego węzła i tak się wykonują. Domyślna akcja zostaje: pole szukania przyjmuje tekst.
+  function _relTrapKeys(close) {
+    function onKey(e) { e.stopPropagation(); if (e.key === 'Escape') close(); }
+    window.addEventListener('keydown', onKey, true);
+    return function() { window.removeEventListener('keydown', onKey, true); };
+  }
+
+  // Zwraca ciało zakładki „news”.
+  function _relShell(stable) {
+    var ov = document.createElement('div');
+    ov.className = 'b24t-cl-overlay';
+    ov.id = 'b24t-cl-overlay';
+    ov.innerHTML =
+      '<div class="b24t-cl-win' + (stable ? ' wide' : '') + '" role="dialog" aria-modal="true" aria-labelledby="b24t-cl-title">' +
+        '<div class="b24t-cl-head"><div class="b24t-cl-ico" aria-hidden="true">🚀</div>' +
+          '<div><div class="b24t-cl-title" id="b24t-cl-title">B24 Tagger <small>BETA</small></div>' +
+          '<div class="b24t-cl-sub">v' + VERSION + ' · ' + (stable ? 'Dziennik aktualizacji' : 'Dziennik zmian') + '</div></div>' +
+          '<button class="b24t-cl-x" type="button" data-cl="close" aria-label="Zamknij">×</button></div>' +
+        '<div class="b24t-cl-tabs" role="tablist">' +
+          '<button type="button" role="tab" data-cl-tab="news" aria-selected="true">' + (stable ? '📰 Aktualizacje' : '📋 Historia zmian') + '</button>' +
+          '<button type="button" role="tab" data-cl-tab="plan" aria-selected="false">🗓 Planowane</button></div>' +
+        '<div class="b24t-cl-body" data-cl-body="news"></div>' +
+        '<div class="b24t-cl-body" data-cl-body="plan" hidden><div class="b24t-cl-plan">Na razie brak nowości w planach.</div></div>' +
+        // Stabilny to oficjalne wydanie: okno nie nazywa kanału, który czytelnik ma (CHANGELOG_STYLE.md §4.2).
+        '<div class="b24t-cl-foot">' + (stable ? '' : '<span class="b24t-cl-chan">Kanał Experimental</span>') +
+          '<button class="b24t-cl-ok" type="button" data-cl="close">Gotowe</button></div>' +
+      '</div>';
+    document.body.appendChild(ov);
+    var untrap = _relTrapKeys(close);
+    function close() { ov.remove(); untrap(); }
+    ov.addEventListener('click', function(e) {
+      if (e.target === ov || e.target.closest('[data-cl="close"]')) { close(); return; }
+      var tab = e.target.closest('[data-cl-tab]');
+      if (tab) {
+        ov.querySelectorAll('[data-cl-tab]').forEach(function(b) { b.setAttribute('aria-selected', String(b === tab)); });
+        ov.querySelectorAll('[data-cl-body]').forEach(function(b) { b.hidden = b.dataset.clBody !== tab.dataset.clTab; });
         return;
       }
-      const remoteVersion = match[1];
-      addLog('→ Update check: lokalna=' + VERSION + ' zdalna=' + remoteVersion, 'info');
-      if (compareVersions(remoteVersion, VERSION) > 0) {
-        addLog('✦ Dostępna aktualizacja: v' + remoteVersion, 'success');
-        showUpdateBanner(remoteVersion);
-      } else if (manual) {
-        showUpdateBanner(null);
-      }
-    }
-
-    // GM_xmlhttpRequest omija CSP Brand24 — działa zarówno w auto jak i manual
-    if (typeof GM_xmlhttpRequest !== 'undefined') {
-      GM_xmlhttpRequest({
-        method: 'GET',
-        url: _rawUrl + '?_=' + Date.now(),
-        headers: {
-          'Cache-Control': 'no-cache, no-store',
-          'Pragma': 'no-cache',
-        },
-        onload: function(r) {
-          if (r.status === 200) handleResponse(r.responseText);
-          else if (manual) addLog('⚠ Sprawdzanie aktualizacji: błąd ' + r.status, 'warn');
-        },
-        onerror: function() {
-          if (manual) addLog('⚠ Nie udało się sprawdzić aktualizacji', 'warn');
-        }
-      });
-    } else {
-      // Fallback: fetch (może być blokowany przez CSP)
-      fetch(_rawUrl + '?_=' + Date.now())
-        .then(function(r) { return r.text(); })
-        .then(handleResponse)
-        .catch(function() {
-          if (manual) addLog('⚠ Nie udało się sprawdzić aktualizacji', 'warn');
-        });
-    }
+      var jump = e.target.closest('[data-cl-jump]');
+      if (jump) { var t = document.getElementById(jump.dataset.clJump); if (t) t.scrollIntoView({ block: 'start' }); }
+    });
+    return ov.querySelector('[data-cl-body="news"]');
+  }
+  function _relFlash(el) {
+    el.classList.remove('b24t-cl-flash'); void el.offsetWidth; el.classList.add('b24t-cl-flash');
   }
 
-  function showUpdateBanner(newVersion) {
-    if (document.getElementById('b24t-update-banner')) return;
+  // Kanał Stabilny: dziennik aktualizacji, Experimental: dziennik zmian. `at` = {version, index}: zmiana,
+  // do której okno przewija (z okna dużej zmiany).
+  function showChangelog(at) {
+    if (document.getElementById('b24t-cl-overlay')) return;
+    // Dziennik otwarty z 📋 też załatwia powiadomienie, nawet gdy jego okienko jest akurat zamknięte.
+    if (_relGm(REL_GM.notice, null)) _updDismissNotice();
+    if (_relChannel() === 'stable') _relShowNotes();
+    else _relShowChangelogWin(at);
+  }
 
-    // Dodaj animację CSS (raz)
-    if (!document.getElementById('b24t-update-style')) {
-      const s = document.createElement('style');
-      s.id = 'b24t-update-style';
-      s.textContent = [
-        '@keyframes b24t-slide-in{from{opacity:0;transform:translateX(120%)}to{opacity:1;transform:translateX(0)}}',
-        '@keyframes b24t-slide-out{from{opacity:1;transform:translateX(0)}to{opacity:0;transform:translateX(120%)}}',
-      ].join('');
-      document.head.appendChild(s);
+  // ── Dziennik zmian (Experimental) ──
+  function _relShowChangelogWin(at) {
+    var seen = _relGm(REL_GM.clSeen, null);
+    // Karta ze starszą wersją nie cofa „przeczytane” zapisanego przez nowszą.
+    if (!seen || _relCmp(VERSION, seen) > 0) _relGmSet(REL_GM.clSeen, VERSION);
+    _relRenderClBtn();
+    var body = _relShell(false);
+    body.innerHTML =
+      '<div class="b24t-cl-tools"><input class="b24t-cl-search" id="b24t-cl-q" type="search" ' +
+        'placeholder="Szukaj w zmianach, np. „klucz” albo „duplikat”" aria-label="Szukaj w zmianach">' +
+        '<div class="b24t-cl-chips" role="group" aria-label="Obszar"></div></div>' +
+      '<div class="b24t-cl-list"></div>';
+    var st = { area: '', q: '', olderOpen: false, data: [] };
+    var chipsEl = body.querySelector('.b24t-cl-chips'), listEl = body.querySelector('.b24t-cl-list');
+
+    function matches(c) {
+      if (st.area && c.area !== st.area) return false;
+      if (!st.q) return true;
+      return [c.title, c.area, c.action || '', c.comment || ''].concat(c.items || []).join(' ').toLowerCase().indexOf(st.q.toLowerCase()) !== -1;
     }
+    function changeHtml(v, c, i) {
+      var items = c.items || [];
+      return '<div class="b24t-cl-chg" id="b24t-cl-c-' + v.version.replace(/\./g, '-') + '-' + i + '">' +
+        '<div class="b24t-cl-meta"><span class="b24t-cl-tag ' + _escHtml(c.type) + '">' + _escHtml(c.type) + '</span>' +
+          '<span class="b24t-cl-area">' + _escHtml(c.area) + '</span>' + (c.requested ? REL_REQ_CHIP : '') + '</div>' +
+        '<div class="b24t-cl-chg-t">' + _relMark(c.title, st.q) + '</div>' +
+        (items.length ? '<ul>' + items.map(function(t) { return '<li>' + _relMark(t, st.q) + '</li>'; }).join('') + '</ul>' : '') +
+        (c.action ? '<div class="b24t-cl-act"><b>Co zrobić:</b>' + _relMark(c.action, st.q) + '</div>' : '') +
+        (c.comment ? '<div class="b24t-cl-cmt">' + _relMark(c.comment, st.q) + '</div>' : '') +
+      '</div>';
+    }
+    function versionsHtml(list) {
+      var filtering = !!(st.area || st.q);
+      return list.map(function(v) {
+        var ch = v.changes.map(function(c, i) { return matches(c) ? changeHtml(v, c, i) : ''; }).join('');
+        if (!ch && (filtering || v.changes.length)) return '';
+        // Znane problemy nie mają obszaru: znikają przy filtrze obszaru, a wyszukiwanie przeszukuje ich treść.
+        var known = (st.area ? [] : v.knownIssues || []).filter(function(t) {
+          return !st.q || t.toLowerCase().indexOf(st.q.toLowerCase()) !== -1;
+        });
+        return '<div class="b24t-cl-ver"><div class="b24t-cl-ver-h"><span class="v">v' + _escHtml(v.version) + '</span>' +
+          '<span class="d">' + _relDate(v.date) + '</span></div>' +
+          (ch || '<div class="b24t-cl-ver-none">Zmiany wewnętrzne, bez wpływu na działanie wtyczki.</div>') +
+          (known.length ? '<div class="b24t-cl-known"><b>Znane problemy</b><ul>' +
+            known.map(function(t) { return '<li>' + _relMark(t, st.q) + '</li>'; }).join('') + '</ul></div>' : '') + '</div>';
+      }).join('');
+    }
+    function renderChips() {
+      var counts = {}, total = 0;
+      st.data.forEach(function(v) { v.changes.forEach(function(c) { counts[c.area] = (counts[c.area] || 0) + 1; total++; }); });
+      var areas = CHANGELOG_AREAS.filter(function(a) { return counts[a]; })
+        .concat(Object.keys(counts).filter(function(a) { return CHANGELOG_AREAS.indexOf(a) === -1; }));
+      chipsEl.innerHTML =
+        '<button type="button" class="b24t-cl-chip" data-area="" aria-pressed="' + !st.area + '">Wszystkie<span class="n">' + total + '</span></button>' +
+        areas.map(function(a) {
+          return '<button type="button" class="b24t-cl-chip" data-area="' + _escHtml(a) + '" aria-pressed="' + (st.area === a) + '">' +
+            _escHtml(a) + '<span class="n">' + counts[a] + '</span></button>';
+        }).join('');
+    }
+    function renderList() {
+      var fresh = seen ? st.data.filter(function(v) { return _relCmp(v.version, seen) > 0; }) : [];
+      var older = st.data.filter(function(v) { return fresh.indexOf(v) === -1; });
+      var filtering = !!(st.area || st.q), fh = versionsHtml(fresh), oh = versionsHtml(older), html = '';
+      if (fh) {
+        html += '<div class="b24t-cl-sec"><div class="b24t-cl-sec-h">Nowe od wersji <b>' + _escHtml(seen) + '</b> · ' +
+          fresh.length + ' ' + _relPl(fresh.length, 'wersja', 'wersje', 'wersji') + '</div>' + fh + '</div>';
+        if (oh) html += '<details class="b24t-cl-older"' + (st.olderOpen || filtering ? ' open' : '') + '><summary>Starsze wersje · ' +
+          older.length + ' ' + _relPl(older.length, 'wersja', 'wersje', 'wersji') + '</summary><div class="b24t-cl-sec" style="padding-top:0">' + oh + '</div></details>';
+      } else if (oh) {
+        html = '<div class="b24t-cl-sec">' + oh + '</div>';
+      }
+      listEl.innerHTML = html || '<div class="b24t-cl-empty">Brak zmian dla tego filtra. Wyczyść wyszukiwanie albo wybierz „Wszystkie”.</div>';
+      var det = listEl.querySelector('.b24t-cl-older');
+      if (det) det.addEventListener('toggle', function() { if (!(st.area || st.q)) st.olderOpen = det.open; });
+    }
+    chipsEl.addEventListener('click', function(e) {
+      var b = e.target.closest('[data-area]');
+      if (!b) return;
+      st.area = b.dataset.area;
+      renderChips(); renderList();
+    });
+    body.querySelector('#b24t-cl-q').addEventListener('input', function() { st.q = this.value.trim(); renderList(); });
 
-    const el = document.createElement('div');
-    el.id = 'b24t-update-banner';
+    _relFor(_relChangelog, VERSION, function(data) {
+      if (!body.isConnected) return;
+      st.data = data.filter(function(v) { return _relCmp(v.version, VERSION) <= 0; });
+      renderChips(); renderList();
+      if (!at) return;
+      st.olderOpen = true; renderList();
+      var el = document.getElementById('b24t-cl-c-' + at.version.replace(/\./g, '-') + '-' + at.index);
+      if (el) { el.scrollIntoView({ block: 'start' }); _relFlash(el); }
+    });
+  }
 
-    // Prawy górny róg — pod paskiem rozszerzeń (~60px od góry)
-    el.style.cssText = [
-      'position:fixed',
-      'top:60px',
-      'right:16px',
-      'width:300px',
-      'background:var(--b24t-bg)',
-      'border:1px solid ' + (newVersion ? 'var(--b24t-primary)' : '#4ade80'),
-      'border-radius:12px',
-      'padding:16px',
-      'box-shadow:var(--b24t-shadow-h)',
-      'z-index:2147483646',
-      'font-family:Geist,\'Segoe UI\',system-ui,sans-serif',
-      'animation:b24t-slide-in var(--b24t-dur-normal) var(--b24t-ease-out)',
-    ].join(';');
+  // ── Dziennik aktualizacji (Stabilny) ──
+  const REL_ICONS = {
+    new: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>',
+    improved: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>',
+    fix: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
+    known: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+  };
+  function _relList(items, cls) {
+    return '<ul class="' + cls + '">' + items.map(function(t) {
+      var req = typeof t === 'string' && t.indexOf(REL_REQ) === 0;
+      return '<li>' + (req ? '<span class="b24t-rn-req" title="Zmiana na prośbę użytkowników">📢</span>' + _relUi(t.slice(REL_REQ.length)) : _relUi(t)) + '</li>';
+    }).join('') + '</ul>';
+  }
+  function _relNoteHtml(n) {
+    var id = 'b24t-rn-' + n.version.replace(/\./g, '-');
+    var count = function(groups) { return (groups || []).reduce(function(s, g) { return s + (g.items || []).length; }, 0); };
+    var groups = function(list) {
+      return (list || []).map(function(g) {
+        return '<div class="b24t-rn-group"><h4>' + _escHtml(g.area) + '</h4>' + _relList(g.items || [], 'b24t-rn-list') + '</div>';
+      }).join('');
+    };
+    // Treść funkcji albo jej podsekcji; `h` = poziom etykiet („Jak zacząć”, „Szczegóły”): h5 w funkcji, h6 w podsekcji.
+    var body = function(x, h) {
+      var fig = x.figure && Object.prototype.hasOwnProperty.call(RELEASE_FIGURES, x.figure) && RELEASE_FIGURES[x.figure];
+      var lab = function(t) { return '<' + h + ' class="b24t-rn-lab">' + _escHtml(t) + '</' + h + '>'; };
+      return (x.lead || []).map(function(p) { return '<p>' + _relUi(p) + '</p>'; }).join('') +
+        (x.comment ? '<p class="b24t-rn-cmt">' + _relUi(x.comment) + '</p>' : '') +
+        (fig ? fig() : '') +
+        (fig && x.figureList ? lab(x.figureList.title) + _relList(x.figureList.items || [], 'b24t-rn-list') : '') +
+        (x.steps ? lab(x.stepsTitle || 'Jak zacząć') + '<ol class="b24t-rn-steps">' +
+          x.steps.map(function(t) { return '<li><span>' + _relUi(t) + '</span></li>'; }).join('') + '</ol>' : '') +
+        (x.details ? lab('Szczegóły') + _relList(x.details, 'b24t-rn-list') : '') +
+        (x.note ? '<div class="b24t-rn-note"><b>' + _escHtml(x.note.label) + '</b>' + _relUi(x.note.text) + '</div>' : '');
+    };
+    var feature = function(f) {
+      return '<section class="b24t-rn-feat">' +
+        '<div class="b24t-rn-fk"><span class="b24t-cl-tag new">Nowa funkcja</span><span class="b24t-cl-area">' + _escHtml(f.area) + '</span>' +
+          (f.requested ? REL_REQ_CHIP : '') + '</div>' +
+        '<h4>' + _escHtml(f.title) + '</h4>' + body(f, 'h5') +
+        (f.parts || []).map(function(x) {
+          return '<div class="b24t-rn-part"><h5 class="b24t-rn-pt">' + _escHtml(x.title) + '</h5>' + body(x, 'h6') + '</div>';
+        }).join('') +
+      '</section>';
+    };
+    var secs = [
+      { key: 'new', title: 'Nowe funkcje', n: (n.features || []).length, html: (n.features || []).map(feature).join('') },
+      { key: 'improved', title: 'Zmiany i usprawnienia', n: count(n.changes), html: groups(n.changes) },
+      { key: 'fix', title: 'Poprawki błędów', n: count(n.fixes), html: groups(n.fixes) },
+      { key: 'known', title: 'Znane problemy', n: (n.knownIssues || []).length, html: _relList(n.knownIssues || [], 'b24t-rn-list') }
+    ].filter(function(s) { return s.n; });
+    var req = (n.features || []).some(function(f) { return f.requested; }) ||
+      (n.changes || []).concat(n.fixes || []).some(function(g) { return (g.items || []).some(function(t) { return typeof t === 'string' && t.indexOf(REL_REQ) === 0; }); });
+    return '<article class="b24t-rn" id="' + id + '">' +
+      '<header><div class="b24t-rn-kick">Aktualizacja ' + _escHtml(n.version) + ' · ' + _relMonth(n.date) + '</div>' +
+        '<h2>' + _escHtml(n.name) + '</h2><p class="b24t-rn-lead">' + _relUi(n.summary || '') + '</p>' +
+        '<nav class="b24t-rn-toc" aria-label="Sekcje">' + secs.map(function(s) {
+          return '<button type="button" data-cl-jump="' + id + '-' + s.key + '"><span class="' + s.key + '">' + REL_ICONS[s.key] + '</span>' +
+            s.title + '<span class="n">' + s.n + '</span></button>';
+        }).join('') + '</nav>' +
+        (req ? '<p class="b24t-rn-legend"><span class="b24t-rn-req" aria-hidden="true">📢</span>zmiana na prośbę użytkowników</p>' : '') + '</header>' +
+      (n.afterUpdate && n.afterUpdate.length ? '<div class="b24t-rn-after"><b>Po aktualizacji</b>' + _relList(n.afterUpdate, '') + '</div>' : '') +
+      secs.map(function(s) {
+        return '<section class="b24t-rn-sec" id="' + id + '-' + s.key + '"><div class="b24t-rn-sh"><span class="b24t-rn-ic ' + s.key + '">' +
+          REL_ICONS[s.key] + '</span><h3>' + s.title + '</h3></div>' + s.html + '</section>';
+      }).join('') +
+      '<p class="b24t-rn-outro">' + _relUi(n.outro || REL_OUTRO) + '</p>' +
+    '</article>';
+  }
+  function _relShowNotes() {
+    var body = _relShell(true);
+    _relFor(_relNotes, VERSION, function(notes) {
+      if (!body.isConnected) return;
+      var list = (notes || []).filter(function(n) { return _relCmp(n.version, VERSION) <= 0; });
+      if (!list.length) {
+        body.innerHTML = '<div class="b24t-cl-empty">' + (notes
+          ? 'Dziennik aktualizacji obejmuje aktualizacje od wersji 0.37.0.'
+          : 'Nie udało się pobrać dziennika aktualizacji. Sprawdź połączenie i otwórz dziennik ponownie.') + '</div>';
+        return;
+      }
+      body.innerHTML = list.map(_relNoteHtml).join('<hr class="b24t-rn-sep">') +
+        '<p class="b24t-rn-end">Dziennik zawiera opisy aktualizacji od wersji 0.37.0.</p>';
+      _figSetup(body);
+    });
+  }
 
-    if (newVersion === null) {
-      // Brak aktualizacji — krótki zielony baner
-      el.innerHTML =
-        '<div style="display:flex;align-items:center;gap:10px;">' +
-          '<div style="font-size:22px;">✓</div>' +
-          '<div>' +
-            '<div style="font-size:13px;font-weight:700;color:#4ade80;">Masz najnowszą wersję</div>' +
-            '<div style="font-size:11px;color:var(--b24t-text-faint);margin-top:3px;">B24 Tagger BETA v' + VERSION + '</div>' +
-          '</div>' +
-        '</div>';
-      document.body.appendChild(el);
-      setTimeout(function() {
-        el.style.animation = 'b24t-slide-out 0.25s ease forwards';
-        setTimeout(function() { el.remove(); }, 260);
-      }, 3000);
+  // ── Schematy okien w opisach funkcji (CHANGELOG_STYLE.md §4.4) ──
+  // Klucz `figure` w RELEASE_NOTES.json musi istnieć tutaj; release.py check to sprawdza.
+  const RELEASE_FIGURES = { 'sentiment-review': _figSentimentReview };
+  const FIG_SENTIMENT_CALLOUTS = [
+    'Ukrywa kafelki z podjętą decyzją',
+    'Eksport decyzji z werdyktami modeli',
+    'Postęp i koszt oceny każdego modelu',
+    'Wzmianki, przy których modele się różnią',
+    'Obecny sentyment wzmianki w Brand24',
+    'Treść wzmianki; kliknięcie rozwija całość',
+    'Werdykt, podstawa, wątpliwość i uzasadnienie każdego modelu',
+    'Wybór sentymentu, także klawiszami N, U i P',
+    'Zapis całej grupy w Brand24',
+    'Zmiana proponowana przez oba modele',
+    'Skróty klawiszowe okna'
+  ];
+  // Okno przeglądu sentymentu na przykładowych danych, zbudowane z klas i etykiet prawdziwego okna
+  // (_sentEnsureWindow, _sentRenderAll, _sentTileHtml), więc zmiana wyglądu okna zmienia też schemat.
+  // Własna jest tylko ramka b24t-fw w miejscu #b24t-sent-win (ma stałą wysokość 92vh) i nadpisania w CSS
+  // „schemat okna”. Schemat jest aria-hidden, stąd tabindex="-1" na przyciskach.
+  // data-a = numer dymka, data-pt = punkt na górnej (t) albo dolnej (b) krawędzi elementu.
+  function _figSentimentReview() {
+    var a = function(n, pt) { return ' data-a="' + n + '"' + (pt ? ' data-pt="' + pt + '"' : ''); };
+    var btn = function(cls, at, html) { return '<button type="button" tabindex="-1"' + (cls ? ' class="' + cls + '"' : '') + (at || '') + '>' + html + '</button>'; };
+    var chip = function(s) { return '<span class="b24t-sent-chip s-' + s + '">' + SENT_LABEL[s] + '</span>'; };
+    var verdict = function(model, s, basis, doubt, reason) {
+      return '<div class="b24t-sent-v"><span class="m">' + model + '</span>' + chip(s) + '<span class="b">' + SENT_BASIS[basis] + '</span>' +
+        (doubt ? '<span class="b24t-sent-doubt">' + SENT_DOUBT[doubt] + '</span>' : '') + '<span class="r">' + reason + '</span></div>';
+    };
+    var acts = function(prop, n) {
+      return ['negative', 'neutral', 'positive'].map(function(sv) {
+        var at = n && sv === 'positive' ? a(n) : prop === sv ? a(10, 'b') : '';
+        return btn(prop === sv ? 'is-proposed' : '', at, '<kbd>' + SENT_KEY_OF[sv] + '</kbd>' + SENT_LABEL[sv]);
+      }).join('');
+    };
+    var tile = function(focus, src, author, date, cur, text, at, verdicts, prop, n) {
+      return '<div class="b24t-sent-tile' + (focus ? ' is-focus' : '') + '">' +
+        '<div class="b24t-sent-meta"><span class="src">' + src + '</span><span class="au">· ' + author + '</span><span>· ' + date + '</span>' +
+          '<a>↗</a><span class="cur"' + (at ? a(5) : '') + '>Brand24: ' + chip(cur) + '</span></div>' +
+        '<div class="b24t-sent-text"' + (at ? a(6) : '') + '>' + text + '</div>' +
+        '<div class="b24t-sent-verdicts"' + (at ? a(7) : '') + '>' + verdicts + '</div>' +
+        '<div class="b24t-sent-actions">' + acts(prop, n) + '</div></div>';
+    };
+    var group = function(id, count, action) {
+      var g = SENT_GROUPS.filter(function(x) { return x.id === id; })[0];
+      return '<div class="b24t-sent-group-h"' + (id === 'decide' ? a(4) : '') + '><span class="n">' + g.name + ' · ' + count + '</span>' +
+        '<span class="d">' + g.desc + '</span>' + (action || '') + '</div>';
+    };
+    var bar = function(model, cost, at) {
+      return '<div class="b24t-sent-bar"><span>' + model + '</span><div class="track"><div class="fill" style="width:100%"></div></div>' +
+        '<span' + (at || '') + '>1240/1240 · ≈ ' + cost + ' $</span></div>';
+    };
+    return '<figure class="b24t-fig"><div class="b24t-fig-stage">' +
+      '<div class="b24t-fw" aria-hidden="true">' +
+        '<div class="b24t-sent-head"><span style="font-size:18px;">◐</span>' +
+          '<div style="flex:1;min-width:0;"><div class="t">Przegląd sentymentu</div><div class="sub">Avenor PL · 2026-09-01 → 2026-09-30 · wszystkie sentymenty · 1240 wzmianek · marka w prompcie: Avenor</div></div>' +
+          '<label class="b24t-sent-hidedone"' + a(1, 't') + '><input type="checkbox" tabindex="-1"> Ukryj załatwione</label>' +
+          btn('', a(2, 't'), '⇩ Dziennik decyzji CSV') + btn('', '', '✕') + '</div>' +
+        '<div class="b24t-sent-summary">Do decyzji <b>96</b> (załatwione 3) · Zgodna zmiana <b>143</b> (załatwione 0) · Bez zmian <b>1001</b> · zapisane w Brand24: <b>3</b>' +
+          bar('gemini-3.8-flash', '1,71', a(3)) + bar('gpt-6-luna', '0,12') + '</div>' +
+        '<div class="b24t-sent-list">' +
+          group('decide', 96) +
+          '<div class="b24t-sent-grid">' + tile(true, 'facebook.com', 'Marek Kowalczyk', '2026-09-14', 'negative',
+            'Trzeci raz w tym roku czekam dwa tygodnie na część do Avenora. Doradca w salonie stanął na głowie, żeby załatwić mi auto zastępcze, ale dostępność części to porażka. Za obsługę 10/10, za serwis 2/10.', true,
+            verdict('gemini-3.8-flash', 'negative', 'problem', '', 'Główny wątek to długie oczekiwanie na części.') +
+            verdict('gpt-6-luna', 'neutral', 'balanced', 'mixed', 'Pochwała obsługi równoważy krytykę dostępności części.'), null, 8) + '</div>' +
+          group('change', 143, btn('primary', a(9), 'Zapisz wszystkie w Brand24 (143)')) +
+          '<div class="b24t-sent-grid">' + tile(false, 'instagram.com', '@ania.w.trasie', '2026-09-08', 'positive',
+            'Pierwszy dłuższy wyjazd nowym Avenorem za nami: 900 km bez przygód. Spalanie trochę wyższe niż w katalogu, ale tego się spodziewałam.', false,
+            verdict('gemini-3.8-flash', 'neutral', 'tone', '', 'Relacja z podróży bez wyraźnej oceny marki.') +
+            verdict('gpt-6-luna', 'neutral', 'dominant', '', 'Opis wyjazdu; uwaga o spalaniu bez negatywnego tonu.'), 'neutral') + '</div>' +
+          group('keep', 1001, btn('', '', 'Pokaż ▾')) +
+        '</div>' +
+        '<div class="b24t-sent-foot"' + a(11) + '><kbd>J</kbd><kbd>K</kbd>następna / poprzednia · <kbd>N</kbd>negatywny · <kbd>U</kbd>neutralny · <kbd>P</kbd>pozytywny · <kbd>Z</kbd>cofnij · <kbd>Esc</kbd>zamknij · każdy wybór inny niż obecny zapisuje się od razu w Brand24</div>' +
+      '</div>' +
+      '<svg class="b24t-fig-svg" aria-hidden="true"></svg><div aria-hidden="true"></div>' +
+      '<ol class="b24t-fig-cbs">' + FIG_SENTIMENT_CALLOUTS.map(function(t, i) {
+        return '<li data-for="' + (i + 1) + '"><i class="b24t-fig-mk">' + (i + 1) + '</i><span>' + _relUi(t) + '</span></li>';
+      }).join('') + '</ol>' +
+    '</div><figcaption>Okno przeglądu sentymentu na przykładowych danych</figcaption></figure>';
+  }
+  // Szeroko: kolumna dymków obok okna, każdy na wysokości swojego elementu, z linią do punktu na nim.
+  // Wąsko: numery na elementach i lista dymków pod oknem. Liczone z getBoundingClientRect, więc tylko
+  // dla widocznego schematu; ResizeObserver ponawia po pokazaniu i przy zmianie szerokości okna.
+  function _figLayout(fig) {
+    var stage = fig.querySelector('.b24t-fig-stage'), fw = fig.querySelector('.b24t-fw');
+    var W = stage.clientWidth;
+    if (!W || W === fig._w) return;
+    fig._w = W;
+    var GAP = 22, wide = W >= 640;
+    var bubW = wide ? Math.max(210, Math.min(290, W - GAP - 510)) : 0;
+    fig.classList.toggle('is-wide', wide);
+    fw.style.zoom = wide ? Math.min(1, (W - GAP - bubW) / 600) : Math.min(1, W / 600);
+    var sr = stage.getBoundingClientRect(), mr = fw.getBoundingClientRect();
+    var mRight = mr.right - sr.left;
+    var pts = Array.prototype.map.call(fig.querySelectorAll('.b24t-fig-cbs li'), function(li) {
+      var t = fw.querySelector('[data-a="' + li.dataset.for + '"]'), r = t.getBoundingClientRect(), pt = t.dataset.pt;
+      var cx = (r.left + r.right) / 2 - sr.left, cy = (r.top + r.bottom) / 2 - sr.top;
+      li.style.left = wide ? mRight + GAP + 'px' : ''; li.style.width = wide ? bubW + 'px' : ''; li.style.top = '';
+      if (pt === 't') return { li: li, n: li.dataset.for, x: cx, y: r.top - sr.top - 9, end: r.top - sr.top - 2, top: true };
+      if (pt === 'b') return { li: li, n: li.dataset.for, x: cx, y: r.bottom - sr.top + 9, end: r.bottom - sr.top + 2 };
+      return { li: li, n: li.dataset.for, x: r.right - sr.left + 4, y: cy };
+    });
+    var svg = '', pins = '';
+    if (wide) {
+      // Punkty na górnej krawędzi elementów nagłówka okna: linia biegnie torem nad oknem, a nie po przyciskach.
+      // Lewszy element dostaje wyższy dymek, wyższy tor i pion bliżej dymków, więc linie się nie krzyżują.
+      var prev = -Infinity, nTop = pts.filter(function(p) { return p.top; }).length, k = 0, winTop = mr.top - sr.top;
+      pts.slice().sort(function(p, q) {
+        if (!p.top !== !q.top) return p.top ? -1 : 1;
+        return p.top ? p.x - q.x : p.y - q.y;
+      }).forEach(function(p) {
+        var h = p.li.offsetHeight, top = Math.max(p.y - h / 2, prev + 6, 0), by = top + h / 2;
+        p.li.style.top = top + 'px'; prev = top + h;
+        var ey = p.end == null ? p.y : p.end;
+        if (p.top) {
+          var lane = winTop - 7 - (nTop - 1 - k) * 6, xv = mRight + 10 + (nTop - 1 - k) * 6;
+          k++;
+          svg += '<path d="M' + (mRight + GAP) + ' ' + by + ' H' + xv + ' V' + lane + ' H' + p.x + ' V' + ey + '"/>';
+        } else {
+          svg += '<path d="M' + (mRight + GAP) + ' ' + by + ' H' + (mRight + 10) + ' L' + p.x + ' ' + p.y + (p.end == null ? '' : ' V' + ey) + '"/>';
+        }
+        svg += '<circle cx="' + p.x + '" cy="' + ey + '" r="3.5"/>';
+      });
+      stage.style.minHeight = Math.max(mr.height, prev) + 'px';
+    } else {
+      stage.style.minHeight = '';
+      pts.forEach(function(p) {
+        pins += '<i class="b24t-fig-mk b24t-fig-pin" style="left:' + p.x + 'px;top:' + (p.end == null ? p.y : p.end) + 'px">' + p.n + '</i>';
+      });
+    }
+    fig.querySelector('.b24t-fig-svg').innerHTML = svg;
+    fig.querySelector('.b24t-fig-svg').nextElementSibling.innerHTML = pins;
+  }
+  function _figSetup(root) {
+    root.querySelectorAll('.b24t-fig').forEach(function(fig) {
+      var ro = new ResizeObserver(function() {
+        if (!fig.isConnected) { ro.disconnect(); return; }
+        _figLayout(fig);
+      });
+      ro.observe(fig.querySelector('.b24t-fig-stage'));
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(function() { fig._w = 0; _figLayout(fig); });
+      fig.addEventListener('mouseover', function(e) {
+        var li = e.target.closest('.b24t-fig-cbs li');
+        fig.querySelectorAll('.is-hot').forEach(function(el) { el.classList.remove('is-hot'); });
+        if (!li) return;
+        li.classList.add('is-hot');
+        var t = fig.querySelector('.b24t-fw [data-a="' + li.dataset.for + '"]');
+        if (t) t.classList.add('is-hot');
+      });
+      fig.addEventListener('mouseleave', function() { fig.querySelectorAll('.is-hot').forEach(function(el) { el.classList.remove('is-hot'); }); });
+    });
+  }
+
+  // ── Okno dużej zmiany (Experimental) ──
+  function _relShowHighlights(from) {
+    var since = _relCmp(from || HIGHLIGHT_SINCE, HIGHLIGHT_SINCE) > 0 ? from : HIGHLIGHT_SINCE;
+    _relChangelog(0, function(data) {
+      var list = [];
+      data.forEach(function(v) {
+        if (_relCmp(v.version, since) <= 0 || _relCmp(v.version, VERSION) > 0) return;
+        v.changes.forEach(function(c, i) { if (c.highlight) list.push({ v: v.version, c: c, i: i }); });
+      });
+      if (!list.length || document.getElementById('b24t-cl-overlay')) return;
+      var ov = document.createElement('div');
+      ov.className = 'b24t-cl-overlay';
+      ov.id = 'b24t-cl-overlay';
+      ov.innerHTML = '<div class="b24t-cl-hl" role="dialog" aria-modal="true" aria-labelledby="b24t-cl-hl-title">' +
+        '<div class="b24t-cl-head"><div class="b24t-cl-ico" aria-hidden="true">✨</div>' +
+          '<div><div class="b24t-cl-title" id="b24t-cl-hl-title">' + (list.length === 1 ? 'Nowość w B24 Tagger' : list.length + ' nowości w B24 Tagger') + '</div>' +
+          '<div class="b24t-cl-sub">Aktualizacja ' + (from ? 'z v' + _escHtml(from) + ' ' : '') + 'do v' + VERSION + '</div></div>' +
+          '<button class="b24t-cl-x" type="button" data-hl="close" aria-label="Zamknij">×</button></div>' +
+        '<div class="b24t-cl-hl-body">' + list.map(function(h) {
+          var items = h.c.items || [];
+          return '<div class="b24t-cl-hl-item"><div class="b24t-cl-meta"><span class="b24t-cl-tag new">' + _escHtml(h.c.type) + '</span>' +
+            '<span class="b24t-cl-area">' + _escHtml(h.c.area) + '</span>' + (h.c.requested ? REL_REQ_CHIP : '') +
+            '<span class="b24t-cl-vno">v' + _escHtml(h.v) + '</span></div>' +
+            '<h3>' + _escHtml(h.c.title) + '</h3>' +
+            (items.length ? '<ul>' + items.map(function(t) { return '<li>' + _relUi(t) + '</li>'; }).join('') + '</ul>' : '') +
+            (h.c.action ? '<div class="b24t-cl-act"><b>Co zrobić:</b>' + _relUi(h.c.action) + '</div>' : '') +
+            (h.c.comment ? '<div class="b24t-cl-cmt">' + _relUi(h.c.comment) + '</div>' : '') + '</div>';
+        }).join('') + '</div>' +
+        '<div class="b24t-cl-hl-foot"><button class="b24t-cl-ghost" type="button" data-hl="close">Zamknij</button>' +
+          '<button class="b24t-cl-ok" type="button" data-hl="log">Zobacz w dzienniku zmian</button></div>' +
+      '</div>';
+      document.body.appendChild(ov);
+      var untrap = _relTrapKeys(close);
+      function close() { ov.remove(); untrap(); }
+      ov.addEventListener('click', function(e) {
+        var b = e.target.closest('[data-hl]');
+        if (e.target !== ov && !b) return;
+        close();
+        if (b && b.dataset.hl === 'log') showChangelog({ version: list[0].v, index: list[0].i });
+      });
+    });
+  }
+
+  // ── Przycisk 📋 ──
+  // Kropka i połysk tylko na kanale Experimental: na Stabilnym o nowej wersji mówi okienko po aktualizacji.
+  function _relRenderClBtn() {
+    var btn = document.getElementById('b24t-btn-changelog');
+    if (!btn) return;
+    var exp = _relChannel() === 'experimental', name = exp ? 'Dziennik zmian' : 'Dziennik aktualizacji';
+    var unread = exp && _relCmp(VERSION, _relGm(REL_GM.clSeen, '0.0.0')) > 0;
+    btn.classList.toggle('b24t-cl-unread', unread);
+    btn.setAttribute('aria-label', name + (unread ? ', nieprzeczytana wersja' : ''));
+    var wrap = btn.parentNode, dot = wrap.querySelector('.b24t-cl-dot'), tip = wrap.querySelector('.b24t-meta-tooltip');
+    if (tip) tip.textContent = name;
+    if (unread && !dot) { dot = document.createElement('span'); dot.className = 'b24t-cl-dot'; wrap.appendChild(dot); }
+    else if (!unread && dot) dot.remove();
+  }
+
+  // ── Okienko aktualizacji ──
+  // Pod nagłówkiem panelu, jako osobny element: #b24t-panel ma overflow: hidden i przyciąłby je
+  // przy zwiniętym panelu. Pozycję liczy _updPlace z prostokąta panelu.
+  var _upd = { panel: null, card: null, remote: null, refresh: null, installFor: null, okUntil: 0, ready: false, checking: false };
+
+  // Numer wersji z pierwszego 1 KB pliku: jest w nagłówku, a cała wtyczka ma ok. 1,5 MB (TAMPERMONKEY.md §2.1).
+  // `done(null)`: brak odpowiedzi albo nagłówka.
+  function _relRemoteVersion(url, done) {
+    GM_xmlhttpRequest({
+      method: 'GET', url: url + '?_=' + Date.now(), timeout: 15000,
+      headers: { Range: 'bytes=0-1023', 'Cache-Control': 'no-cache' },
+      onload: function(r) {
+        var m = (r.status === 200 || r.status === 206) && /\/\/ @version\s+(\d+\.\d+\.\d+)/.exec(r.responseText || '');
+        done(m ? m[1] : null);
+      },
+      onerror: function() { done(null); },
+      ontimeout: function() { done(null); }
+    });
+  }
+
+  // Bez `manual` nie pyta, gdy którakolwiek karta sprawdzała w ciągu UPD_EVERY_MS.
+  function _updCheck(manual) {
+    var key = REL_GM.check + _relChannel(), prev = _relGm(key, null);
+    if (!manual && prev && Date.now() - prev.t < UPD_EVERY_MS) { _updApply(); return; }
+    // Znacznik czasu przed zapytaniem: inne karty widzą świeże sprawdzenie i nie pytają równolegle.
+    _relGmSet(key, { t: Date.now(), remote: prev ? prev.remote : null, err: false });
+    _upd.checking = manual;
+    _updRenderChip();
+    var done = function(remote) {
+      _relGmSet(key, { t: Date.now(), remote: remote || (prev ? prev.remote : null), err: !remote });
+      _upd.checking = false;
+      _updApply();
+      if (!manual) return;
+      if (!remote) _updOpenCard('error');
+      else if (_relCmp(remote, VERSION) > 0) _updOpenCard('new');
+      else { _upd.okUntil = Date.now() + 3000; _updRenderChip(); setTimeout(_updRenderChip, 3100); }
+    };
+    _relRemoteVersion(getRawUrl(), done);
+  }
+
+  // Znacznik, kropka na uchwycie i okienko z wyniku sprawdzenia i sygnałów z innych kart.
+  function _updApply() {
+    var st = _relGm(REL_GM.check + _relChannel(), null), running = _relGm(REL_GM.running, null);
+    _upd.remote = st && st.remote && _relCmp(st.remote, VERSION) > 0 ? st.remote : null;
+    _upd.refresh = running && _relCmp(running, VERSION) > 0 ? running : null;
+    var notice = _relGm(REL_GM.notice, null);
+    if (_upd.card === 'updated' && !(notice && notice.to === VERSION)) _updCloseCard();
+    _updRenderChip();
+    _updSideDot();
+    if (_upd.card) _updRenderCard();
+    else _updMaybeOpen();
+  }
+  // Odświeżenie strony przerwałoby przebieg, ocenę sentymentu albo zapisy z kolejki przeglądu.
+  function _updBusy() {
+    return state.status === 'running' || sentState.running || sentState.inFlight > 0 || sentState.queue.length > 0;
+  }
+  function _updSentOpen() {
+    var ov = document.getElementById('b24t-sent-overlay');
+    return !!ov && ov.style.display === 'flex';
+  }
+  function _updPanelReady() {
+    var p = _upd.panel;
+    return !!p && p.style.display !== 'none' && !p.classList.contains('collapsed') && !_updBusy() && !_updSentOpen() && !document.hidden;
+  }
+  // Samo otwiera się raz: najpierw okno odłożone z _relInit (dziennik po instalacji ręcznej, okno dużej
+  // zmiany), potem powiadomienie po aktualizacji, a bez niego okienko nowej wersji, której okienko
+  // jeszcze się nie otwierało, poza czasem „Później”.
+  function _updMaybeOpen() {
+    if (!_updPanelReady() || document.getElementById('b24t-cl-overlay')) return;
+    if (_upd.pending) { var open = _upd.pending; _upd.pending = null; open(); return; }
+    if (_upd.card) return;
+    var notice = _relGm(REL_GM.notice, null);
+    if (notice && notice.to === VERSION) { _updOpenCard('updated'); return; }
+    var later = _relGm(REL_GM.later, null);
+    if (_upd.remote && !_upd.refresh && _relGm(REL_GM.opened, null) !== _upd.remote && !(later && later.until > Date.now())) _updOpenCard('new');
+  }
+  // Wywoływane przy każdej zmianie panelu (przesunięcie, zwinięcie, schowanie) i stanu przebiegu.
+  function _updOnPanelChange() {
+    _updPlace();
+    var ready = _updPanelReady();
+    if (ready && !_upd.ready) _updMaybeOpen();
+    if (_upd.card === 'installed' || _upd.card === 'new') {
+      var btn = document.querySelector('#b24t-upd-card [data-upd="reload"]');
+      if (btn && btn.disabled !== _updBusy()) _updRenderCard();
+    }
+    _upd.ready = ready;
+  }
+  function _updOnStatus() { if (_upd.panel) _updOnPanelChange(); }
+  // Koniec oceny sentymentu i zapisów z kolejki nie przechodzi przez updateStatusUI, więc zablokowany
+  // „Odśwież stronę” sprawdza stan co sekundę, dopóki okienko jest otwarte.
+  function _updWatchBusy() {
+    if (_upd.busyTimer) return;
+    _upd.busyTimer = setTimeout(function() {
+      _upd.busyTimer = null;
+      if (_upd.card !== 'installed') return;
+      if (_updBusy()) _updWatchBusy(); else _updRenderCard();
+    }, 1000);
+  }
+
+  function _updRenderChip() {
+    var chip = document.getElementById('b24t-upd-chip'), ver = document.getElementById('b24t-version');
+    if (!chip || !ver) return;
+    var ok = Date.now() < _upd.okUntil;
+    ver.style.display = ok ? 'none' : '';
+    ver.style.opacity = _upd.checking ? '0.5' : '';
+    chip.className = '';
+    if (ok) {
+      chip.className = 'ok'; chip.textContent = '✓ Najnowsza wersja';
+      chip.removeAttribute('aria-label');
+    } else if (_upd.refresh) {
+      chip.textContent = '↻ Odśwież';
+      chip.setAttribute('aria-label', 'Zainstalowana wersja ' + _upd.refresh + ' działa po odświeżeniu strony');
+    } else if (_upd.remote) {
+      chip.innerHTML = '<span class="arr" aria-hidden="true">↑</span> ' + _escHtml(_upd.remote);
+      chip.setAttribute('aria-label', 'Dostępna wersja ' + _upd.remote);
+      if (_relGm(REL_GM.opened, null) !== _upd.remote) chip.classList.add('ping');
+    }
+    chip.style.display = ok || _upd.refresh || _upd.remote ? '' : 'none';
+    chip.classList.toggle('on', !!_upd.card && _upd.card !== 'updated');
+  }
+  function _updSideDot() {
+    var tab = document.getElementById('b24t-panel-side-tab');
+    if (!tab) return;
+    var dot = tab.querySelector('.b24t-upd-dot'), want = !!(_upd.remote || _upd.refresh);
+    if (want && !dot) { dot = document.createElement('span'); dot.className = 'b24t-upd-dot'; dot.setAttribute('aria-hidden', 'true'); tab.appendChild(dot); }
+    else if (!want && dot) dot.remove();
+    tab.title = want ? 'Otwórz B24 Tagger · dostępna nowa wersja' : 'Otwórz B24 Tagger';
+  }
+
+  function _updOpenCard(kind) {
+    _upd.card = kind;
+    if (kind === 'new' && _upd.remote) _relGmSet(REL_GM.opened, _upd.remote);
+    _updRenderCard();
+    _updRenderChip();
+  }
+  function _updCloseCard() {
+    _upd.card = null;
+    var el = document.getElementById('b24t-upd-card');
+    if (el) el.remove();
+    _updRenderChip();
+  }
+  function _updDismissNotice() {
+    _relGmSet(REL_GM.notice, null);
+    if (_upd.card === 'updated') _updCloseCard();
+  }
+
+  function _updHead(ic, title, sub, tone) {
+    return '<div class="b24t-upd-h"><span class="b24t-upd-ic' + (tone ? ' ' + tone : '') + '" aria-hidden="true">' + ic + '</span>' +
+      '<div><div class="b24t-upd-t">' + _escHtml(title) + '</div><div class="b24t-upd-s">' + _escHtml(sub) + '</div></div></div>';
+  }
+  function _updNoteSec(n, withFeatures) {
+    if (!n) return '';
+    var html = '<div class="b24t-upd-sec"><div class="b24t-upd-k">Aktualizacja · ' + _relMonth(n.date) + '</div>' +
+      '<div class="b24t-upd-name">' + _escHtml(n.name) + '</div><div class="b24t-upd-sum">' + _relUi(n.summary || '') + '</div>';
+    if (withFeatures && (n.features || []).length) {
+      var cnt = function(groups) { return (groups || []).reduce(function(s, g) { return s + (g.items || []).length; }, 0); };
+      var nCh = cnt(n.changes), nFx = cnt(n.fixes), extra = [];
+      if (nCh) extra.push(nCh + ' ' + _relPl(nCh, 'zmiana', 'zmiany', 'zmian'));
+      if (nFx) extra.push(nFx + ' ' + _relPl(nFx, 'poprawka', 'poprawki', 'poprawek'));
+      html += '<div class="b24t-upd-k" style="margin-top:4px">Nowe funkcje</div>' +
+        n.features.map(function(f) { return '<div class="b24t-upd-li"><span class="b24t-upd-b" aria-hidden="true">✦</span><span>' + _relUi(f.title) + '</span></div>'; }).join('') +
+        (extra.length ? '<div class="b24t-upd-more">Oprócz nowych funkcji: ' + extra.join(' i ') + '. Pełny opis otworzy się po aktualizacji.</div>' : '');
+    }
+    return html + '</div>';
+  }
+  function _updChangesSec(data, to) {
+    var all = [];
+    data.forEach(function(v) {
+      if (_relCmp(v.version, VERSION) > 0 && _relCmp(v.version, to) <= 0) all = all.concat(v.changes);
+    });
+    if (!all.length) return '';
+    var shown = all.slice(0, 4), rest = all.length - shown.length;
+    return '<div class="b24t-upd-sec"><div class="b24t-upd-k">Co się zmieni</div>' +
+      shown.map(function(c) {
+        return '<div class="b24t-upd-li"><span class="b24t-cl-tag ' + _escHtml(c.type) + '">' + _escHtml(c.type) + '</span><span>' + _relUi(c.title) + '</span></div>';
+      }).join('') +
+      (rest > 0 ? '<div class="b24t-upd-more">Jeszcze ' + rest + ' ' + _relPl(rest, 'zmiana', 'zmiany', 'zmian') + ' w dzienniku zmian.</div>' : '') + '</div>';
+  }
+
+  // Treść okienka zależy od danych z repo; wersja z pamięci GM jest od razu, świeża gdy brak w niej nowej wersji.
+  function _updRenderCard() {
+    var kind = _upd.card, stable = _relChannel() === 'stable';
+    if (!kind) return;
+    var draw = function(inner, label) {
+      if (_upd.card !== kind) return;
+      var el = document.getElementById('b24t-upd-card');
+      if (!el) {
+        el = document.createElement('div');
+        el.id = 'b24t-upd-card';
+        el.className = 'b24t-upd-card';
+        el.setAttribute('role', 'dialog');
+        el.addEventListener('mousedown', function(e) { e.stopPropagation(); });
+        el.addEventListener('click', _updOnCardClick);
+        document.body.appendChild(el);
+      }
+      el.setAttribute('aria-label', label);
+      el.innerHTML = inner;
+      _updPlace();
+    };
+    var run = _updBusy();
+    if (kind === 'error') {
+      draw(_updHead('!', 'Nie udało się sprawdzić aktualizacji', 'GitHub nie odpowiedział. Sprawdź połączenie i spróbuj ponownie za chwilę.', 'err') +
+        '<div class="b24t-upd-act"><button class="b24t-cl-ok" type="button" data-upd="retry">Spróbuj ponownie</button>' +
+        '<button class="b24t-cl-ghost" type="button" data-upd="close">Zamknij</button></div>', 'Sprawdzanie aktualizacji');
       return;
     }
-
-    // Jest aktualizacja — większy baner z przyciskami
-    el.innerHTML =
-      // Nagłówek
-      '<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;">' +
-        '<div style="width:36px;height:36px;background:var(--b24t-primary-bg);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">✦</div>' +
-        '<div style="flex:1;">' +
-          '<div style="font-size:14px;font-weight:700;color:var(--b24t-text);letter-spacing:-0.01em;">Dostępna aktualizacja</div>' +
-          '<div style="font-size:11px;color:var(--b24t-text-faint);margin-top:3px;">B24 Tagger BETA</div>' +
-        '</div>' +
-        '<button id="b24t-update-dismiss" style="background:none;border:none;color:var(--b24t-text-faint);cursor:pointer;font-size:18px;line-height:1;padding:2px;flex-shrink:0;">✕</button>' +
-      '</div>' +
-      // Wersje
-      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:8px 10px;background:var(--b24t-bg-elevated);border-radius:8px;border:1px solid var(--b24t-border-sub);">' +
-        '<span style="font-size:12px;color:var(--b24t-text-faint);font-family:monospace;">v' + VERSION + '</span>' +
-        '<span style="font-size:14px;color:var(--b24t-text-faint);">→</span>' +
-        '<span style="font-size:13px;font-weight:700;color:var(--b24t-primary);font-family:monospace;">v' + newVersion + '</span>' +
-        '<span style="margin-left:auto;font-size:10px;background:var(--b24t-primary-bg);color:var(--b24t-primary);padding:2px 7px;border-radius:99px;">nowa wersja</span>' +
-      '</div>' +
-      // Przycisk
-      '<button id="b24t-update-install" style="width:100%;background:var(--b24t-primary);color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;letter-spacing:0.02em;">Zainstaluj aktualizację →</button>';
-
-    document.body.appendChild(el);
-
-    function dismiss() {
-      el.style.animation = 'b24t-slide-out 0.25s ease forwards';
-      setTimeout(function() { el.remove(); }, 260);
+    if (kind === 'installed') {
+      var to = _upd.refresh || _upd.installFor || _upd.remote;
+      draw(_updHead('↻', 'Odśwież stronę, żeby uruchomić ' + to, 'Wersja zainstalowana w Tampermonkey zaczyna działać po odświeżeniu karty Brand24.') +
+        (run ? '<div class="b24t-upd-warn">' + (state.status === 'running'
+          ? 'Trwa przebieg. Odświeżenie strony by go przerwało, więc przycisk zadziała po zakończeniu przebiegu.'
+          : 'Trwa ocena albo zapis sentymentu. Odświeżenie strony by je przerwało, więc przycisk zadziała po ich zakończeniu.') + '</div>' : '') +
+        '<div class="b24t-upd-act"><button class="b24t-cl-ok" type="button" data-upd="reload"' + (run ? ' disabled' : '') + '>Odśwież stronę</button>' +
+        '<button class="b24t-cl-ghost" type="button" data-upd="close">Zamknij</button></div>', 'Odświeżenie strony');
+      if (run) _updWatchBusy();
+      return;
     }
-
-    document.getElementById('b24t-update-install').addEventListener('click', function() {
-      // Otwarcie raw .user.js URL — Tampermonkey automatycznie wykrywa i pokazuje ekran aktualizacji
+    if (kind === 'updated') {
+      var notice = _relGm(REL_GM.notice, null) || {};
+      // Wersje do 0.36.9 nie zapisywały numeru wersji, więc po przejściu z nich nie ma „z”.
+      var sub = (notice.from ? notice.from + ' → ' : 'Wersja ') + VERSION;
+      _relFor(_relNotes, VERSION, function(notes) {
+        var n = (notes || []).filter(function(x) { return x.version === VERSION; })[0];
+        draw(_updHead('✓', 'Wtyczka została zaktualizowana', sub, 'ok') + _updNoteSec(n, false) +
+          '<div class="b24t-upd-act"><button class="b24t-cl-ok" type="button" data-upd="log">Zobacz zmiany</button>' +
+          '<button class="b24t-cl-ghost" type="button" data-upd="dismiss">Zamknij</button></div>', 'Wtyczka została zaktualizowana');
+      });
+      return;
+    }
+    var remote = _upd.remote;
+    if (!remote) { _updCloseCard(); return; }
+    var head = _updHead('↑', 'Nowa wersja ' + remote, 'Zainstalowana wersja ' + VERSION + (stable ? '' : ' · kanał Experimental'));
+    var foot = '<div class="b24t-upd-act"><button class="b24t-cl-ok" type="button" data-upd="install">Zainstaluj w Tampermonkey</button>' +
+      '<button class="b24t-cl-ghost" type="button" data-upd="later">Później</button></div>' +
+      '<div class="b24t-upd-note">Instalacja otwiera się w nowej karcie. Nowa wersja działa po odświeżeniu tej strony.</div>';
+    if (stable) {
+      _relFor(_relNotes, remote, function(notes) {
+        draw(head + _updNoteSec((notes || []).filter(function(x) { return x.version === remote; })[0], true) + foot, 'Nowa wersja');
+      });
+    } else {
+      _relFor(_relChangelog, remote, function(data) { draw(head + _updChangesSec(data, remote) + foot, 'Nowa wersja'); });
+    }
+  }
+  function _updOnCardClick(e) {
+    var b = e.target.closest('[data-upd]');
+    if (!b || b.disabled) return;
+    var act = b.dataset.upd;
+    if (act === 'install') {
+      // Tampermonkey rozpoznaje adres .user.js i pokazuje stronę instalacji (TAMPERMONKEY.md §1.4).
+      // Znacznik mówi nowej wersji, że instalacja była ręczna, więc od razu otworzy dziennik.
       window.open(getRawUrl(), '_blank');
-      dismiss();
-    });
-    document.getElementById('b24t-update-dismiss').addEventListener('click', dismiss);
-
-    // Auto-ukryj po 20 sekundach
-    setTimeout(function() {
-      if (document.getElementById('b24t-update-banner')) dismiss();
-    }, 20000);
+      _relGmSet(REL_GM.manual, { version: _upd.remote });
+      _upd.installFor = _upd.remote;
+      _upd.card = 'installed';
+      _updRenderCard();
+    } else if (act === 'later') {
+      _relGmSet(REL_GM.later, { until: Date.now() + UPD_LATER_MS });
+      _updCloseCard();
+    } else if (act === 'reload') {
+      if (!_updBusy()) location.reload();
+    } else if (act === 'retry') {
+      _updCloseCard();
+      _updCheck(true);
+    } else if (act === 'log') {
+      _updDismissNotice();
+      showChangelog();
+    } else if (act === 'dismiss') {
+      _updDismissNotice();
+    } else {
+      _updCloseCard();
+    }
+  }
+  // Pod nagłówkiem panelu; gdy się tam nie mieści (zwinięty panel przy dolnej krawędzi), nad nim.
+  function _updPlace() {
+    var el = document.getElementById('b24t-upd-card'), p = _upd.panel;
+    if (!el || !p) return;
+    // Schowany panel zamyka okienko. Powiadomienie „zaktualizowano” zostaje w GM, więc _updMaybeOpen
+    // pokaże je znowu po otwarciu panelu; okienko nowej wersji już się otwierało i samo nie wraca.
+    if (p.style.display === 'none') { _updCloseCard(); return; }
+    var pr = p.getBoundingClientRect(), tb = p.querySelector('#b24t-topbar').getBoundingClientRect();
+    el.style.left = Math.max(8, pr.left + 10) + 'px';
+    el.style.width = Math.max(280, pr.width - 20) + 'px';
+    var h = el.offsetHeight, below = tb.bottom + 8;
+    el.style.top = (below + h <= window.innerHeight - 8 ? below : Math.max(8, tb.top - 8 - h)) + 'px';
   }
 
+  // Wersje do 0.36.9 nie zapisywały REL_GM.lastRun. Ślad po nich to klucze, które panel zapisywał na stronie
+  // wyników; nowa instalacja ich nie ma, bo od 0.37.0 żaden z nich nie jest zapisywany (SETUP_DONE zapisywał
+  // usunięty onboarding, reference/onboarding_v2.js).
+  function _relHadOldVersion() {
+    return [LS.SETUP_DONE, 'b24tagger_seen_version', 'b24tagger_welcome_shown_v0210'].some(function(k) {
+      return localStorage.getItem(k) !== null;
+    });
+  }
 
+  // Start na stronie wyników, po zbudowaniu panelu.
+  function _relInit(panel) {
+    if (window.top !== window.self) return;
+    _relInjectStyles();
+    _upd.panel = panel;
+
+    // Rozpoznanie aktualizacji. Ręczna instalacja (znacznik z „Zainstaluj w Tampermonkey”) otwiera od razu
+    // dziennik aktualizacji; automatyczna przez Tampermonkey zostawia okienko „Wtyczka została zaktualizowana”.
+    var prev = _relGm(REL_GM.lastRun, null);
+    var updated = prev ? _relCmp(VERSION, prev) > 0 : _relHadOldVersion();
+    var showHighlights = function() { _relShowHighlights(prev); };
+    _relGmSet(REL_GM.lastRun, VERSION);
+    var running = _relGm(REL_GM.running, null);
+    // Po powrocie do starszej wersji (reinstalacja) „najnowsza uruchomiona” też się cofa, inaczej
+    // znacznik „↻ Odśwież” zostałby na stałe.
+    if (!running || _relCmp(VERSION, running) > 0 || (prev && _relCmp(VERSION, prev) < 0)) _relGmSet(REL_GM.running, VERSION);
+    if (_relGm(REL_GM.clSeen, null) === null) {
+      var oldSeen = lsGet('b24tagger_seen_version', null);
+      if (oldSeen) _relGmSet(REL_GM.clSeen, oldSeen);
+    }
+    if (updated) {
+      var manual = _relGm(REL_GM.manual, null);
+      _relGmSet(REL_GM.manual, null);
+      // Okna czekają w _upd.pending na pierwsze otwarcie panelu (CHANGELOG_STYLE.md §1, §2.5):
+      // przy schowanym albo zwiniętym panelu wyskoczyłyby znikąd.
+      if (_relChannel() === 'experimental') _upd.pending = showHighlights;
+      else if (manual && manual.version === VERSION) {
+        // Bez opisu tej wersji (brak sieci) zostaje okienko „zaktualizowano”: wraca przy każdym otwarciu
+        // panelu, aż ktoś je zamknie, a „Zobacz zmiany” pobiera opis ponownie.
+        _relFor(_relNotes, VERSION, function(notes) {
+          if ((notes || []).some(function(n) { return n.version === VERSION; })) { _upd.pending = showChangelog; _updMaybeOpen(); }
+          else { _relGmSet(REL_GM.notice, { from: prev, to: VERSION }); _updApply(); }
+        });
+      }
+      else _relGmSet(REL_GM.notice, { from: prev, to: VERSION });
+    }
+    _relMoveToStable(function() {
+      // Aktualizacja, po której nastąpiło przełączenie, kończy się jak na kanale Stabilnym: okienkiem
+      // „Wtyczka została zaktualizowana” zamiast okna dużej zmiany, o ile tamto jeszcze się nie otworzyło.
+      if (updated && _upd.pending === showHighlights) {
+        _upd.pending = null;
+        _relGmSet(REL_GM.notice, { from: prev, to: VERSION });
+      }
+      _relOnChannel();
+    });
+
+    // Znacznik wersji w nagłówku; mousedown nie startuje przeciągania panelu.
+    var ver = panel.querySelector('#b24t-version'), chip = panel.querySelector('#b24t-upd-chip');
+    [ver, chip].forEach(function(el) { el.addEventListener('mousedown', function(e) { e.stopPropagation(); }); });
+    ver.addEventListener('click', function() { if (!_upd.checking) _updCheck(true); });
+    chip.addEventListener('click', function() {
+      if (chip.classList.contains('ok')) return;
+      if (_upd.card && _upd.card !== 'updated') { _updCloseCard(); return; }
+      _updOpenCard(_upd.refresh ? 'installed' : 'new');
+    });
+    _relRenderClBtn();
+
+    new MutationObserver(_updOnPanelChange).observe(panel, { attributes: true, attributeFilter: ['class', 'style'] });
+    window.addEventListener('resize', _updPlace);
+    document.addEventListener('visibilitychange', function() {
+      if (document.hidden) return;
+      _updCheck(false);
+      _updOnPanelChange();
+    });
+    [REL_GM.check + 'stable', REL_GM.check + 'experimental', REL_GM.running, REL_GM.notice, REL_GM.opened].forEach(function(k) {
+      GM_addValueChangeListener(k, function(name, oldV, newV, remote) { if (remote) _updApply(); });
+    });
+    _upd.ready = _updPanelReady();
+    setTimeout(_updApply, 1500);
+    setTimeout(function() { _updCheck(false); }, 5000);
+    setInterval(function() { if (!document.hidden) _updCheck(false); }, 5 * 60 * 1000);
+  }
+  // Jednorazowe przełączenie z Experimental na Stabilny: od 0.37.0 kanałem dla wszystkich jest Stabilny,
+  // a powrót na Experimental to wybór w ⚙, który zostaje na stałe. Zmienia wyłącznie kanał aktualizacji;
+  // funkcje, ustawienia i dane nie zależą od kanału.
+  // Rusza dopiero, gdy na main jest już ta wersja albo nowsza. Wcześniej Stabilny nie ma opisu tej wersji
+  // (RELEASE_NOTES.json leży na main), a użytkownik, który wziął wersję z Experimental przed wydaniem,
+  // straciłby dziennik. Kanał i znacznik leżą w localStorage, czyli osobno dla app.brand24.com
+  // i panel.brand24.pl: każdy panel przełącza się raz, a ręczny powrót na Experimental jest ostateczny.
+  function _relMoveToStable(onMoved) {
+    if (_relChannel() !== 'experimental' || lsGet(LS.CHANNEL_MOVED, null)) return;
+    _relRemoteVersion(RAW_URL_STABLE, function(stable) {
+      if (!stable || _relCmp(stable, VERSION) < 0) return;
+      // Ustawienia mogły zmienić kanał w trakcie zapytania.
+      if (_relChannel() !== 'experimental' || lsGet(LS.CHANNEL_MOVED, null)) return;
+      lsSet(LS.CHANNEL_MOVED, VERSION);
+      lsSet(LS.UPDATE_CHANNEL, 'stable');
+      addLog('ℹ Kanał aktualizacji przełączony na Stabilny. Powrót: ⚙ → Kanał aktualizacji → Eksperymentalny.', 'info');
+      onMoved();
+    });
+  }
+
+  // Zmiana kanału w ustawieniach: inny dziennik i inny plik do sprawdzania.
+  function _relOnChannel() {
+    if (!_upd.panel) return;
+    _relRenderClBtn();
+    _updCloseCard();
+    _updCheck(false);
+  }
+  function _relInjectStyles() {
+    if (document.getElementById('b24t-rel-styles')) return;
+    var style = document.createElement('style');
+    style.id = 'b24t-rel-styles';
+    style.textContent = `
+      /* Kolory typów zmian i okienek dzienników; reszta z tokenów panelu (--b24t-*). */
+      :root {
+        --b24t-cl-new: #0e7490; --b24t-cl-new-bg: rgba(8,145,178,0.12);
+        --b24t-cl-imp: #6d28d9; --b24t-cl-imp-bg: rgba(124,58,237,0.11);
+        --b24t-cl-fix: #15803d; --b24t-cl-fix-bg: rgba(22,163,74,0.12);
+        --b24t-cl-neg: #b91c1c; --b24t-cl-neg-bg: rgba(239,68,68,0.12);
+        --b24t-cl-warn: #92400e; --b24t-cl-warn-bg: rgba(245,158,11,0.16);
+        --b24t-cl-on-primary: #ffffff;
+        --b24t-cl-shine: rgba(37,99,235,0.38);
+        --b24t-cl-glow: rgba(37,99,235,0.20);
+        --b24t-cl-shadow: 0 18px 50px rgba(17,24,39,0.22);
+      }
+      [data-b24t-theme="dark"] {
+        --b24t-cl-new: #22d3ee; --b24t-cl-new-bg: rgba(34,211,238,0.12);
+        --b24t-cl-imp: #a78bfa; --b24t-cl-imp-bg: rgba(167,139,250,0.13);
+        --b24t-cl-fix: #4ade80; --b24t-cl-fix-bg: rgba(74,222,128,0.12);
+        --b24t-cl-neg: #f87171; --b24t-cl-neg-bg: rgba(248,113,113,0.13);
+        --b24t-cl-warn: #fbbf24; --b24t-cl-warn-bg: rgba(251,191,36,0.13);
+        --b24t-cl-on-primary: #04121a;
+        --b24t-cl-shine: rgba(255,255,255,0.6);
+        --b24t-cl-glow: oklch(65% 0.12 200 / 0.28);
+        --b24t-cl-shadow: 0 24px 64px rgba(0,0,0,0.7);
+      }
+
+      /* ── okna dzienników ── */
+      .b24t-cl-overlay { position: fixed; inset: 0; z-index: 2147483647; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; font-family: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif; animation: b24t-fadein 0.2s ease; }
+      .b24t-cl-overlay *, .b24t-upd-card, .b24t-upd-card * { box-sizing: border-box; }
+      .b24t-cl-overlay [hidden], .b24t-upd-card [hidden] { display: none !important; }
+      .b24t-cl-win { width: 520px; max-width: 100%; height: min(80vh, 780px); min-height: min(580px, 100%); background: var(--b24t-bg); color: var(--b24t-text); border: 1px solid var(--b24t-border); border-radius: 14px; box-shadow: var(--b24t-cl-shadow); display: flex; flex-direction: column; overflow: hidden; font-size: 14px; line-height: 1.55; text-align: left; }
+      .b24t-cl-win.wide { width: 860px; height: min(88vh, 960px); }
+      .b24t-cl-win button { font-family: inherit; }
+      .b24t-cl-win button:focus-visible, .b24t-cl-search:focus-visible, .b24t-cl-older > summary:focus-visible, .b24t-upd-card button:focus-visible, #b24t-upd-chip:focus-visible { outline: 2px solid var(--b24t-primary); outline-offset: 2px; }
+      .b24t-cl-head { background: var(--b24t-accent-grad); color: #fff; display: flex; align-items: center; gap: 10px; padding: 10px 14px; flex-shrink: 0; }
+      .b24t-cl-ico { width: 32px; height: 32px; border-radius: 8px; background: rgba(255,255,255,0.18); display: grid; place-items: center; font-size: 15px; flex-shrink: 0; }
+      .b24t-cl-title { font-weight: 700; font-size: 14px; text-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+      .b24t-cl-title small { font-size: 10px; letter-spacing: 0.08em; opacity: 0.85; font-weight: 600; }
+      .b24t-cl-sub { font-size: 11px; opacity: 0.8; font-variant-numeric: tabular-nums; }
+      .b24t-cl-x { margin-left: auto; background: rgba(255,255,255,0.25); border: 1px solid rgba(255,255,255,0.5); color: #fff; border-radius: 5px; padding: 1px 7px; font-size: 15px; line-height: 1.3; cursor: pointer; }
+      .b24t-cl-ok { background: var(--b24t-primary); color: var(--b24t-cl-on-primary); border: 0; border-radius: 7px; padding: 8px 18px; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+      .b24t-cl-ghost { background: transparent; color: var(--b24t-text-muted); border: 1px solid var(--b24t-border); border-radius: 7px; padding: 7px 16px; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+      .b24t-cl-tabs { display: flex; background: var(--b24t-bg-elevated); border-bottom: 1px solid var(--b24t-border); padding: 0 4px; flex-shrink: 0; }
+      .b24t-cl-tabs button { flex: 1; font-size: 12px; font-weight: 500; padding: 8px 4px; color: var(--b24t-text-faint); background: none; border: 0; border-bottom: 2px solid transparent; cursor: pointer; }
+      .b24t-cl-tabs button[aria-selected="true"] { color: var(--b24t-primary); border-bottom-color: var(--b24t-primary); font-weight: 600; }
+      .b24t-cl-body { flex: 1; min-height: 0; overflow-y: auto; }
+      .b24t-cl-foot { border-top: 1px solid var(--b24t-border); padding: 9px 16px; display: flex; align-items: center; gap: 12px; flex-shrink: 0; font-size: 11.5px; color: var(--b24t-text-faint); }
+      .b24t-cl-foot .b24t-cl-ok { margin-left: auto; padding: 7px 20px; }
+      .b24t-cl-chan { display: inline-flex; align-items: center; gap: 6px; }
+      .b24t-cl-chan::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--b24t-ok); }
+      .b24t-cl-plan, .b24t-cl-empty { display: grid; place-items: center; min-height: 240px; padding: 24px; text-align: center; color: var(--b24t-text-faint); font-size: 13.5px; }
+      .b24t-cl-empty { min-height: 0; padding: 30px 16px; font-size: 13px; }
+      .b24t-cl-win mark { background: var(--b24t-cl-warn-bg); color: inherit; border-radius: 3px; padding: 0 1px; }
+      .b24t-cl-tag { font-size: 10.5px; font-weight: 700; padding: 1px 8px; border-radius: 99px; letter-spacing: 0.02em; }
+      .b24t-cl-tag.new { color: var(--b24t-cl-new); background: var(--b24t-cl-new-bg); }
+      .b24t-cl-tag.improved { color: var(--b24t-cl-imp); background: var(--b24t-cl-imp-bg); }
+      .b24t-cl-tag.fix { color: var(--b24t-cl-fix); background: var(--b24t-cl-fix-bg); }
+      .b24t-cl-area { font-size: 11px; color: var(--b24t-text-faint); }
+      .b24t-cl-area::before { content: '·'; margin-right: 6px; }
+      .b24t-cl-vno { font-size: 11px; color: var(--b24t-text-faint); margin-left: auto; font-variant-numeric: tabular-nums; }
+      .b24t-cl-act { font-size: 12.5px; color: var(--b24t-text); background: var(--b24t-cl-warn-bg); border-radius: 7px; padding: 6px 9px; }
+      .b24t-cl-act b { color: var(--b24t-cl-warn); margin-right: 4px; }
+      .b24t-cl-req { font-size: 10.5px; font-weight: 600; color: var(--b24t-text-muted); background: var(--b24t-bg-input); border-radius: 99px; padding: 1px 8px; }
+      .b24t-cl-cmt { font-size: 12.5px; font-style: italic; color: var(--b24t-text-muted); border-left: 2px solid var(--b24t-border); padding-left: 9px; text-wrap: pretty; }
+      .b24t-cl-known { margin-top: 6px; font-size: 12.5px; color: var(--b24t-text); background: var(--b24t-cl-warn-bg); border-radius: 10px; padding: 8px 12px; }
+      .b24t-cl-known b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--b24t-cl-warn); margin-bottom: 2px; }
+      .b24t-cl-known ul { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+      .b24t-cl-ui { font-weight: 600; color: var(--b24t-text); }
+      .b24t-cl-flash { animation: b24t-cl-flash 1.8s ease-out; }
+      @keyframes b24t-cl-flash { 0%, 35% { box-shadow: 0 0 0 2px var(--b24t-primary); } 100% { box-shadow: 0 0 0 2px transparent; } }
+
+      /* dziennik zmian (Experimental) */
+      .b24t-cl-tools { position: sticky; top: 0; z-index: 2; background: var(--b24t-bg); padding: 12px 16px 10px; border-bottom: 1px solid var(--b24t-border-sub); display: grid; gap: 8px; }
+      .b24t-cl-search { width: 100%; font-family: inherit; font-size: 13px; color: var(--b24t-text); background: var(--b24t-bg-input); border: 1px solid var(--b24t-border-sub); border-radius: 8px; padding: 7px 10px; }
+      .b24t-cl-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+      .b24t-cl-chip { font-size: 11.5px; font-weight: 500; color: var(--b24t-text-muted); background: transparent; border: 1px solid var(--b24t-border); border-radius: 99px; padding: 3px 10px; cursor: pointer; }
+      .b24t-cl-chip[aria-pressed="true"] { background: var(--b24t-text); color: var(--b24t-bg); border-color: var(--b24t-text); }
+      .b24t-cl-chip .n { font-variant-numeric: tabular-nums; opacity: 0.6; margin-left: 4px; }
+      .b24t-cl-sec { padding: 14px 16px 4px; }
+      .b24t-cl-sec-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--b24t-text-faint); margin-bottom: 10px; }
+      .b24t-cl-sec-h b { color: var(--b24t-primary); font-variant-numeric: tabular-nums; }
+      .b24t-cl-older > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--b24t-text-faint); padding: 14px 16px 10px; border-top: 1px solid var(--b24t-border-sub); }
+      .b24t-cl-older > summary::-webkit-details-marker { display: none; }
+      .b24t-cl-older > summary::before { content: '▸'; }
+      .b24t-cl-older[open] > summary::before { content: '▾'; }
+      .b24t-cl-ver { margin-bottom: 16px; }
+      .b24t-cl-ver-h { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+      .b24t-cl-ver-h .v { font-weight: 700; font-size: 14.5px; font-variant-numeric: tabular-nums; }
+      .b24t-cl-ver-h .d { margin-left: auto; font-size: 11px; color: var(--b24t-text-faint); font-variant-numeric: tabular-nums; }
+      .b24t-cl-ver-none { font-size: 12.5px; color: var(--b24t-text-faint); padding: 2px 0 0; }
+      .b24t-cl-chg { padding: 9px 12px 10px; border: 1px solid var(--b24t-border-sub); border-radius: 10px; background: var(--b24t-bg-elevated); display: grid; gap: 5px; scroll-margin-top: 120px; }
+      .b24t-cl-chg + .b24t-cl-chg { margin-top: 6px; }
+      .b24t-cl-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+      .b24t-cl-chg-t { font-size: 13.5px; font-weight: 600; line-height: 1.4; text-wrap: pretty; }
+      .b24t-cl-chg ul, .b24t-cl-hl-item ul { margin: 0; padding-left: 18px; display: grid; gap: 2px; font-size: 12.5px; color: var(--b24t-text-muted); }
+
+      /* dziennik aktualizacji (Stabilny) */
+      .b24t-rn { container-type: inline-size; padding: 24px 28px 28px; color: var(--b24t-text-muted); font-size: 13.5px; line-height: 1.6; }
+      .b24t-rn p { margin: 0 0 10px; max-width: 66ch; }
+      .b24t-rn-kick { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--b24t-text-faint); font-variant-numeric: tabular-nums; }
+      .b24t-rn h2 { margin: 4px 0 10px; font-size: 24px; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; color: var(--b24t-text); text-wrap: balance; }
+      .b24t-rn-lead { font-size: 14.5px; }
+      .b24t-rn-toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 18px; }
+      .b24t-rn-toc button { font-size: 11.5px; font-weight: 600; color: var(--b24t-text-muted); background: var(--b24t-bg-elevated); border: 1px solid var(--b24t-border); border-radius: 99px; padding: 4px 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+      .b24t-rn-toc button .n { font-variant-numeric: tabular-nums; color: var(--b24t-text-faint); font-weight: 500; }
+      .b24t-rn-toc svg { width: 12px; height: 12px; }
+      .b24t-rn-after { border: 1px solid color-mix(in srgb, var(--b24t-cl-warn) 35%, transparent); background: var(--b24t-cl-warn-bg); border-radius: 10px; padding: 11px 14px; margin-bottom: 26px; color: var(--b24t-text); }
+      .b24t-rn-after b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--b24t-cl-warn); margin-bottom: 4px; }
+      .b24t-rn-after ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+      .b24t-rn-sec { margin-top: 30px; scroll-margin-top: 12px; }
+      .b24t-rn-sh { display: flex; align-items: center; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--b24t-border); margin-bottom: 18px; }
+      .b24t-rn-sh h3 { margin: 0; font-size: 15px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--b24t-text); }
+      .b24t-rn-ic { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; flex-shrink: 0; }
+      .b24t-rn-ic svg { width: 15px; height: 15px; }
+      .b24t-rn-ic.new, .b24t-rn-toc .new { color: var(--b24t-cl-new); } .b24t-rn-ic.new { background: var(--b24t-cl-new-bg); }
+      .b24t-rn-ic.improved, .b24t-rn-toc .improved { color: var(--b24t-cl-imp); } .b24t-rn-ic.improved { background: var(--b24t-cl-imp-bg); }
+      .b24t-rn-ic.fix, .b24t-rn-toc .fix { color: var(--b24t-cl-fix); } .b24t-rn-ic.fix { background: var(--b24t-cl-fix-bg); }
+      .b24t-rn-ic.known, .b24t-rn-toc .known { color: var(--b24t-cl-warn); } .b24t-rn-ic.known { background: var(--b24t-cl-warn-bg); }
+      .b24t-rn .b24t-rn-cmt { font-style: italic; border-left: 3px solid color-mix(in srgb, var(--b24t-primary) 45%, transparent); padding: 1px 0 1px 12px; margin: 4px 0 14px; }
+      .b24t-rn-req { margin-right: 6px; }
+      .b24t-rn .b24t-rn-legend { margin: -8px 0 18px; font-size: 12px; color: var(--b24t-text-faint); }
+      .b24t-rn .b24t-rn-outro { margin: 30px 0 0; font-size: 14.5px; font-weight: 600; color: var(--b24t-text); }
+      .b24t-rn-feat { padding-bottom: 22px; scroll-margin-top: 12px; border-radius: 8px; }
+      .b24t-rn-feat + .b24t-rn-feat { border-top: 1px solid var(--b24t-border-sub); padding-top: 22px; }
+      .b24t-rn-fk { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px; }
+      .b24t-rn-feat h4 { margin: 0 0 10px; font-size: 18px; line-height: 1.3; font-weight: 700; letter-spacing: -0.01em; color: var(--b24t-text); text-wrap: balance; }
+      .b24t-rn .b24t-rn-lab { margin: 16px 0 6px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--b24t-text-faint); }
+      .b24t-rn-part { margin-top: 22px; padding-left: 14px; border-left: 2px solid var(--b24t-border); }
+      .b24t-rn .b24t-rn-pt { margin: 0 0 8px; font-size: 15.5px; line-height: 1.35; font-weight: 700; color: var(--b24t-text); text-wrap: balance; }
+      .b24t-rn ul.b24t-rn-list { margin: 0; padding-left: 18px; display: grid; gap: 6px; max-width: 66ch; }
+      .b24t-rn-steps { list-style: none; counter-reset: b24t-st; margin: 0; padding: 0; display: grid; gap: 8px; max-width: 66ch; }
+      .b24t-rn-steps li { counter-increment: b24t-st; display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; }
+      .b24t-rn-steps li::before { content: counter(b24t-st); width: 22px; height: 22px; border-radius: 50%; background: var(--b24t-bg-input); color: var(--b24t-text); font-size: 11.5px; font-weight: 700; display: grid; place-items: center; margin-top: 1px; }
+      .b24t-rn-note { margin-top: 16px; border: 1px solid var(--b24t-border); border-left: 3px solid var(--b24t-primary); background: var(--b24t-bg-elevated); border-radius: 8px; padding: 10px 14px; font-size: 13px; max-width: 66ch; }
+      .b24t-rn-note b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--b24t-primary); margin-bottom: 2px; }
+      .b24t-rn-group + .b24t-rn-group { margin-top: 16px; }
+      .b24t-rn-group h4 { margin: 0 0 6px; font-size: 14px; font-weight: 700; color: var(--b24t-text); }
+      .b24t-rn-sep { border: 0; border-top: 2px solid var(--b24t-border); margin: 8px 28px; }
+      .b24t-rn-end { margin: 0 28px 28px !important; padding-top: 12px; border-top: 1px solid var(--b24t-border-sub); font-size: 12px; color: var(--b24t-text-faint); }
+
+      /* schemat okna w opisie funkcji: dymki obok okna, wąsko numery na elementach i lista pod oknem */
+      .b24t-fig { margin: 18px 0 8px; }
+      .b24t-fig-stage { position: relative; }
+      .b24t-fig-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+      .b24t-fig-svg path { fill: none; stroke: var(--b24t-primary); stroke-width: 1.25; opacity: 0.8; }
+      .b24t-fig-svg circle { fill: var(--b24t-primary); stroke: var(--b24t-bg); stroke-width: 2; }
+      .b24t-fig-cbs { list-style: none; margin: 0; padding: 0; }
+      .b24t-fig-cbs li { background: var(--b24t-bg-elevated); border: 1px solid var(--b24t-border); border-radius: 9px; padding: 6px 10px; font-size: 11.5px; line-height: 1.4; color: var(--b24t-text); box-shadow: 0 2px 8px rgba(0,0,0,0.08); display: flex; gap: 8px; align-items: flex-start; }
+      .b24t-fig-cbs li.is-hot { border-color: var(--b24t-primary); }
+      .b24t-fig.is-wide .b24t-fig-cbs li { position: absolute; }
+      .b24t-fig.is-wide .b24t-fig-mk, .b24t-fig.is-wide .b24t-fig-pin { display: none; }
+      .b24t-fig:not(.is-wide) .b24t-fig-cbs { display: grid; gap: 6px; margin-top: 12px; }
+      .b24t-fig-pin { position: absolute; transform: translate(-50%, -50%); pointer-events: none; box-shadow: 0 0 0 2px var(--b24t-bg); }
+      .b24t-fw .is-hot { outline: 2px solid var(--b24t-primary); outline-offset: 2px; border-radius: 6px; }
+      .b24t-fig figcaption { margin-top: 10px; font-size: 11.5px; color: var(--b24t-text-faint); }
+      .b24t-fig-mk { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--b24t-primary); color: var(--b24t-cl-on-primary); font-size: 9.5px; font-weight: 700; font-style: normal; flex-shrink: 0; }
+      /* Ramka schematu w miejscu #b24t-sent-win; wnętrze z klas okna przeglądu (b24t-sent-*). */
+      .b24t-fw { width: 600px; display: flex; flex-direction: column; background: var(--b24t-bg); color: var(--b24t-text); border: 1px solid var(--b24t-border); border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.18); overflow: hidden; user-select: none; pointer-events: none; line-height: 1.4; }
+      /* W oknie nagłówek grupy przykleja się do przewijanej listy; w schemacie przykleiłby się do dziennika. */
+      .b24t-fw .b24t-sent-group-h { position: static; }
+      .b24t-fw .b24t-sent-list { overflow: visible; }
+      /* content-visibility: auto nie rysuje kafelka poza ekranem, a dymki liczą pozycje z jego prostokąta. */
+      .b24t-fw .b24t-sent-tile { content-visibility: visible; }
+
+      /* okno dużej zmiany (Experimental) */
+      .b24t-cl-hl { width: 470px; max-width: 100%; max-height: min(620px, 100%); background: var(--b24t-bg); color: var(--b24t-text); border: 1px solid var(--b24t-border); border-radius: 14px; box-shadow: var(--b24t-cl-shadow); display: flex; flex-direction: column; overflow: hidden; font-size: 14px; line-height: 1.55; text-align: left; }
+      .b24t-cl-hl-body { overflow-y: auto; min-height: 0; padding: 4px 20px; }
+      .b24t-cl-hl-item { padding: 16px 0; display: grid; gap: 7px; scroll-margin-top: 12px; }
+      .b24t-cl-hl-item + .b24t-cl-hl-item { border-top: 1px solid var(--b24t-border-sub); }
+      .b24t-cl-hl-item h3 { margin: 0; font-size: 16px; line-height: 1.35; font-weight: 700; letter-spacing: -0.005em; text-wrap: balance; }
+      .b24t-cl-hl-foot { border-top: 1px solid var(--b24t-border); padding: 12px 20px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; flex-shrink: 0; }
+
+      /* przycisk 📋: kropka i połysk przy nieprzeczytanej wersji (Experimental). Połysk przelatuje przez
+         przycisk w ok. 0,6 s, potem ok. 3,9 s przerwy. Bez wyciszania pod prefers-reduced-motion: ruch
+         obejmuje 30 px i pojawia się tylko przy nieprzeczytanej wersji. */
+      #b24t-btn-changelog { position: relative; overflow: hidden; }
+      #b24t-btn-changelog.b24t-cl-unread::after { content: ''; position: absolute; top: -4px; bottom: -4px; left: 0; width: 55%; pointer-events: none; background: linear-gradient(90deg, transparent, var(--b24t-cl-shine), transparent); transform: translateX(-130%) skewX(-20deg); animation: b24t-cl-shine 4.5s cubic-bezier(0.4, 0, 0.2, 1) 0.8s infinite; }
+      @keyframes b24t-cl-shine { 0% { transform: translateX(-130%) skewX(-20deg); } 13%, 100% { transform: translateX(260%) skewX(-20deg); } }
+      .b24t-cl-dot { position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--b24t-primary); box-shadow: 0 0 0 2px var(--b24t-bg-deep); pointer-events: none; }
+
+      /* ── okienko aktualizacji pod nagłówkiem panelu ── */
+      .b24t-logo { overflow: visible; }
+      .b24t-logo-ver { display: flex; align-items: center; gap: 6px; min-height: 15px; }
+      #b24t-upd-chip { position: relative; display: inline-flex; align-items: center; gap: 3px; font: 700 10px 'Geist', 'Segoe UI', system-ui, sans-serif; color: #0b4a6e; background: rgba(255,255,255,0.95); border: 0; border-radius: 99px; padding: 1px 7px; cursor: pointer; font-variant-numeric: tabular-nums; letter-spacing: 0; text-transform: none; text-shadow: none; box-shadow: 0 1px 3px rgba(0,0,0,0.25); white-space: nowrap; line-height: 1.4; }
+      #b24t-upd-chip.on { box-shadow: 0 0 0 2px rgba(255,255,255,0.55), 0 1px 3px rgba(0,0,0,0.25); }
+      #b24t-upd-chip.ok { color: #14532d; cursor: default; }
+      /* Znacznik nowej wersji: co 5 s biała poświata rozchodzi się wokół i gaśnie w ok. 1,4 s, a strzałka
+         unosi się o 2 px. Działa, dopóki okienko dla tej wersji nie zostało otwarte. Bez wyciszania pod
+         prefers-reduced-motion, jak połysk na 📋. */
+      #b24t-upd-chip.ping::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; animation: b24t-upd-ping 5s cubic-bezier(0.23, 1, 0.32, 1) 1s infinite; }
+      @keyframes b24t-upd-ping { 0% { box-shadow: 0 0 0 0 rgba(255,255,255,0.8); } 28%, 100% { box-shadow: 0 0 0 7px rgba(255,255,255,0); } }
+      #b24t-upd-chip .arr { display: inline-block; }
+      #b24t-upd-chip.ping .arr { animation: b24t-upd-nudge 5s cubic-bezier(0.23, 1, 0.32, 1) 1s infinite; }
+      @keyframes b24t-upd-nudge { 0%, 14%, 100% { transform: translateY(0); } 6% { transform: translateY(-2px); } }
+      .b24t-upd-dot { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 2px #6366f1; pointer-events: none; }
+      .b24t-upd-card { position: fixed; z-index: 2147483647; background: var(--b24t-bg); color: var(--b24t-text); border: 1px solid var(--b24t-border); border-radius: 12px; box-shadow: 0 14px 36px rgba(17,24,39,0.28); padding: 14px 14px 12px; display: grid; gap: 12px; text-align: left; font: 12.5px/1.45 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif; animation: b24t-fadein 0.16s ease; }
+      .b24t-upd-card button { font-family: inherit; }
+      .b24t-upd-h { display: flex; gap: 10px; align-items: flex-start; }
+      .b24t-upd-ic { width: 32px; height: 32px; border-radius: 9px; background: color-mix(in srgb, var(--b24t-primary) 14%, transparent); color: var(--b24t-primary); display: grid; place-items: center; font-size: 16px; font-weight: 700; flex-shrink: 0; }
+      .b24t-upd-ic.err { background: var(--b24t-cl-neg-bg); color: var(--b24t-cl-neg); }
+      .b24t-upd-ic.ok { background: var(--b24t-cl-fix-bg); color: var(--b24t-cl-fix); }
+      .b24t-upd-t { font-weight: 700; font-size: 14px; letter-spacing: -0.005em; color: var(--b24t-text); }
+      .b24t-upd-s { font-size: 11.5px; color: var(--b24t-text-faint); font-variant-numeric: tabular-nums; margin-top: 1px; }
+      .b24t-upd-sec { border-top: 1px solid var(--b24t-border-sub); padding-top: 10px; display: grid; gap: 7px; }
+      .b24t-upd-k { font-size: 10.5px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--b24t-text-faint); }
+      .b24t-upd-li { display: flex; gap: 8px; align-items: baseline; color: var(--b24t-text-muted); }
+      .b24t-upd-li .b24t-cl-tag { flex-shrink: 0; }
+      .b24t-upd-b { color: var(--b24t-cl-new); flex-shrink: 0; width: 1em; text-align: center; }
+      .b24t-upd-more, .b24t-upd-note { font-size: 12px; color: var(--b24t-text-faint); }
+      .b24t-upd-note { font-size: 11.5px; }
+      .b24t-upd-name { font-size: 15px; font-weight: 700; color: var(--b24t-text); letter-spacing: -0.005em; }
+      .b24t-upd-sum { color: var(--b24t-text-muted); }
+      .b24t-upd-warn { font-size: 12px; color: var(--b24t-cl-warn); background: var(--b24t-cl-warn-bg); border-radius: 7px; padding: 6px 9px; }
+      .b24t-upd-act { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+      .b24t-upd-act .b24t-cl-ok { padding: 8px 14px; font-size: 12.5px; }
+      .b24t-upd-act .b24t-cl-ghost { padding: 7px 14px; font-size: 12.5px; }
+      .b24t-upd-act .b24t-cl-ok[disabled] { opacity: 0.45; cursor: not-allowed; }
+    `;
+    document.head.appendChild(style);
+  }
+
+  // ───────────────────────────────────────────
+  // ADRESY PLIKÓW WTYCZKI W REPOZYTORIUM
+  // ───────────────────────────────────────────
+  const RAW_URL_STABLE       = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/b24tagger.user.js';
+  const RAW_URL_EXPERIMENTAL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/experimental/b24tagger.user.js';
+  // Dziennik zmian zawsze z experimental, opisy wersji stabilnych z main (CHANGELOG_STYLE.md §1).
+  const CHANGELOG_URL     = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/experimental/CHANGELOG.json';
+  const RELEASE_NOTES_URL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/RELEASE_NOTES.json';
+  function getRawUrl() { return lsGet(LS.UPDATE_CHANNEL, 'stable') === 'experimental' ? RAW_URL_EXPERIMENTAL : RAW_URL_STABLE; }
+
+  // ───────────────────────────────────────────
+  // ZGŁOSZENIA BŁĘDÓW I POMYSŁÓW
+  // ───────────────────────────────────────────
+  // Zgłoszenie idzie do skrzynki w Google Apps Script, która zakłada issue w prywatnym repozytorium
+  // (Tagger/zgloszenia/README.md). Wtyczka zna tylko adres skrzynki: token GitHuba w publicznym pliku
+  // wtyczki dałby każdemu odczyt wszystkich zgłoszeń. Tytuł i nagłówki sekcji treści czyta Claude Code
+  // przy przeglądzie zgłoszeń; zmiana formatu wymaga zmiany opisu w README („Format zgłoszenia”).
+  const REPORT_INBOX_URL = 'https://script.google.com/macros/s/AKfycbxXPvFmnyx1rWrTrbg1SuHNvH960arGv7yWTrXTs6j4ppXyMri5V0ftGXgOwudTfSLQ/exec';
+  const REPORT_BODY_MAX = 58000;   // skrzynka tnie treść na 60 000 znaków, GitHub przyjmuje 65 536
+  const REPORT_KIND = { bug: 'błąd', idea: 'pomysł' };
+  const REPORT_TAB_AREA = { main: 'Tagowanie z pliku', quicktag: 'Quick Tag', aitag: 'AI Tag', sentiment: 'Przegląd sentymentu',
+    delete: 'Quick Delete', notify: 'Powiadomienia', history: 'Panel' };
+
+  function _reportPad(n, w) { return String(n).padStart(w || 2, '0'); }
+  function _reportTime(t) {
+    var d = new Date(t);
+    return _reportPad(d.getHours()) + ':' + _reportPad(d.getMinutes()) + ':' + _reportPad(d.getSeconds()) + '.' + _reportPad(d.getMilliseconds(), 3);
+  }
+
+  // Obszar wtyczki, w którym ktoś jest w chwili zgłoszenia: otwarte okno ma pierwszeństwo przed kartą panelu.
+  function _reportArea() {
+    var sent = document.getElementById('b24t-sent-overlay');
+    if (sent && sent.style.display === 'flex') return 'Przegląd sentymentu';
+    if (document.getElementById('b24t-campaign-modal') || document.getElementById('b24t-campaign-hub')) return 'Kampanie H&M';
+    if (newsState.panelsOpen) return 'Dodawanie wzmianek';
+    var tab = document.querySelector('#b24t-tabs .b24t-tab-active');
+    return (tab && REPORT_TAB_AREA[tab.dataset.tab]) || 'Panel';
+  }
+
+  function _reportEnv() {
+    var s = {};
+    try { s = _aiGetSettings(); } catch (e) {}
+    var feat = {};
+    try { feat = loadFeatures(); } catch (e) {}
+    var gm = typeof GM_info !== 'undefined' ? GM_info : null;
+    return {
+      wersja: VERSION,
+      kanal: _relChannel(),
+      strona: location.host + location.pathname,
+      projekt: state.projectId ? { id: state.projectId, nazwa: state.projectName || _pnResolve(state.projectId) } : null,
+      przegladarka: navigator.userAgent,
+      menedzer: gm ? gm.scriptHandler + ' ' + gm.version : null,
+      okno: window.innerWidth + '×' + window.innerHeight + (document.hidden ? ', karta w tle' : ''),
+      tokenBrand24: !!state.tokenHeaders,
+      przebieg: state.status + (state.testRunMode ? ' (Test Run)' : ''),
+      funkcje: Object.keys(feat).filter(function(k) { return feat[k]; }),
+      modele: { tagowanie: s.tagging && s.tagging.model, news: s.news && s.news.model, kampanie: s.campaign && s.campaign.model,
+        sentyment: s.sentiment ? [s.sentiment.modelA, s.sentiment.modelB] : null },
+      klucze: Object.keys(AI_KEY_FIELD).filter(function(p) { return !!s[AI_KEY_FIELD[p]]; }).map(function(p) { return AI_PROVIDER_LABEL[p]; }),
+    };
+  }
+
+  // Stan funkcji w chwili zgłoszenia: to, czego nie widać w dzienniku (ustawienia przebiegu, liczniki).
+  // Błąd odczytu stanu nie może zablokować zgłoszenia, stąd try.
+  function _reportState(area) {
+    try {
+      if (area === 'Tagowanie z pliku') {
+        var f = state.file, map = state.mapping || {}, crash = lsGet(LS.CRASHLOG, null);
+        return {
+          plik: f ? { nazwa: f.name, wiersze: (f.rows || []).length, kolumny: f.colMap } : null,
+          mapowanie: Object.keys(map).reduce(function(o, k) {
+            var m = map[k];
+            o[k] = m.type === 'sentiment' ? 'sentyment → ' + m.sentiment : m.type === 'delete' ? 'usuń' : m.tagName + ' (' + m.type + ')';
+            return o;
+          }, {}),
+          tryb: { mapa: state.mapMode, konflikty: state.conflictMode, testRun: state.testRunMode },
+          partycje: state.partitions ? { razem: state.partitions.length, biezaca: state.currentPartitionIdx } : null,
+          statystyki: state.stats, mapaUrl: Object.keys(state.urlMap || {}).length, untaggedId: state.untaggedId,
+          awaria: crash && Date.now() - (crash.timestamp || 0) < 24 * 3600000 ? {
+            czas: crash.localTime, blad: crash.errorType, akcja: crash.lastAction, stos: String(crash.stack || '').slice(0, 800) } : null,
+        };
+      }
+      if (area === 'Przegląd sentymentu') {
+        var r = sentState.run;
+        return {
+          trwa: sentState.running, zatrzymany: sentState.stop, zapisyWKolejce: sentState.queue.length, zapisyWLocie: sentState.inFlight,
+          przeglad: r ? {
+            projekt: r.projectId, zakres: r.dateFrom + ' → ' + r.dateTo, zrodlo: r.source, sentymenty: r.sentiments,
+            etap: r.phase, blad: r.error || null, wzmianki: r.items.length, ucieteZ: r.truncatedOf || null,
+            modele: ['a', 'b'].map(function(k) {
+              var m = r.models[k];
+              return { model: m.model, ocenione: m.done, doOceny: m.total, zPamieci: m.cached, odpowiedzi: m.answered,
+                odrzucone: m.rejected, blad: m.fatal || null, tokeny: [m.inTok, m.outTok] };
+            }),
+          } : null,
+        };
+      }
+      if (area === 'AI Tag') return { trwa: !!state._aitRunning, zatrzymany: !!state._aitStop };
+      if (area === 'Dodawanie wzmianek') {
+        return { tryb: newsState.mode, adresy: newsState.urls.length, aktywny: newsState.activeIdx, skan: newsState.scanning
+          ? newsState.scanDone + '/' + newsState.scanTotal : null, sortowanie: newsState.sortMode };
+      }
+    } catch (e) {
+      return { bladOdczytuStanu: e.message };
+    }
+    return null;
+  }
+
+  function _reportIsError(e) { return e.k === 'err' || e.ok === false || (e.k === 'log' && e.type === 'error'); }
+  // Błąd w słowach użytkownika: wpis logu albo wyjątek. Nieudane zapytanie niesie sam kod (np. TOKEN_NOT_READY),
+  // a jego opis i tak ląduje w logu tuż obok.
+  function _reportIsUserError(e) { return e.k === 'err' || (e.k === 'log' && e.type === 'error'); }
+  // Wpisy logu zaczynają się od własnego znaku stanu (✕, ⚠, ✓…), a pasek i dziennik dokładają swój.
+  function _reportBare(msg) { return String(msg || '').replace(/^\s*[✕✓⚠ℹ→⏹◐]\s*/, ''); }
+
+  // Jedna linia na zdarzenie, w stałym formacie: czas, rodzaj, treść (README, „Format zgłoszenia”).
+  function _reportLine(e) {
+    var ts = _reportTime(e.t);
+    if (e.k === 'log') {
+      var mark = { error: '✕', warn: '⚠', success: '✓', debug: '·', diag: '◇', info: 'ℹ' }[e.type] || ' ';
+      return ts + ' log     ' + mark + ' ' + _reportBare(e.msg).replace(/\s*\n\s*/g, ' ⏎ ');
+    }
+    if (e.k === 'gql') {
+      return ts + ' brand24 ' + e.op + (e.n ? ' ×' + e.n : '') + ' · ' + e.ms + ' ms · ' +
+        (e.ok ? 'ok' : 'BŁĄD: ' + e.err + (e.vars ? ' · zmienne ' + JSON.stringify(e.vars) : ''));
+    }
+    if (e.k === 'ai') {
+      return ts + ' ai      ' + e.op + (e.n ? ' ×' + e.n : '') + ' · ' + (e.status || 'brak odpowiedzi') + ' · ' + (e.ms / 1000).toFixed(1) + ' s' +
+        (e.tok ? ' · tokeny ' + e.tok[0] + '/' + e.tok[1] : '') + (e.ok ? '' : ' · BŁĄD: ' + e.err);
+    }
+    if (e.k === 'err') return ts + ' WYJĄTEK (' + e.src + '): ' + e.msg;
+    return ts + ' ' + JSON.stringify(e);
+  }
+
+  // Zgłoszenie: tytuł „[błąd][Obszar] …” i treść w Markdownie. Pomysł nie dostaje dziennika ani stanu:
+  // nie są do niego potrzebne, a każde zdarzenie to szansa na wyciek czegoś, czego maskowanie nie zna.
+  function _reportBuild(o) {
+    var secrets = _diagSecrets();
+    var errors = _diag.ev.filter(_reportIsError);
+    var lastErr = _diag.ev.filter(_reportIsUserError).pop() || errors[errors.length - 1];
+    var text = String(o.text || '').trim();
+    var summary = (text.split('\n')[0] || (o.kind === 'bug' && lastErr ? _reportBare(lastErr.msg || lastErr.err) : '') || 'bez opisu')
+      .replace(/\s+/g, ' ').slice(0, 80);
+    var title = _diagScrub('[' + REPORT_KIND[o.kind] + '][' + o.area + '] ' + summary, secrets);
+    var now = new Date(), offset = -now.getTimezoneOffset() / 60;
+    var head = '**Typ:** ' + REPORT_KIND[o.kind] + ' · **Obszar:** ' + o.area + ' · **Wersja:** ' + VERSION + ' (' + _relChannel() + ')' +
+      ' · **Czas:** ' + now.getFullYear() + '-' + _reportPad(now.getMonth() + 1) + '-' + _reportPad(now.getDate()) + ' ' +
+      _reportTime(now.getTime()).slice(0, 8) + ' (UTC' + (offset >= 0 ? '+' : '') + offset + ')';
+    var parts = [head, '### Opis\n\n' + (text || '_(bez opisu)_')];
+    if (o.kind === 'idea') {
+      parts.push('### Środowisko\n\n```json\n' + JSON.stringify({ wersja: VERSION, kanal: _relChannel(), strona: location.host + location.pathname }, null, 2) + '\n```');
+      return { title: title, body: _diagScrub(parts.join('\n\n'), secrets) };
+    }
+    if (errors.length) {
+      var lastExc = errors.filter(function(e) { return e.k === 'err'; }).pop();
+      parts.push('### Błędy (' + Math.min(errors.length, 8) + ' ostatnich z ' + errors.length + ')\n\n```\n' +
+        errors.slice(-8).map(_reportLine).join('\n') + '\n```' +
+        (lastExc ? '\n\nStos ostatniego wyjątku:\n\n```\n' + lastExc.stack + '\n```' : ''));
+    } else {
+      parts.push('### Błędy\n\n_(dziennik nie zawiera błędów)_');
+    }
+    parts.push('### Środowisko\n\n```json\n' + JSON.stringify(_reportEnv(), null, 2) + '\n```');
+    var st = _reportState(o.area);
+    if (st) parts.push('### Stan funkcji: ' + o.area + '\n\n```json\n' + JSON.stringify(st, null, 2) + '\n```');
+    // Dziennik na końcu: przy limicie treści odpadają najstarsze zdarzenia, nie opis ani stan.
+    var cur = _diag.ev.map(_reportLine), prev = _diagPrevious(), prevLines = prev ? prev.ev.map(_reportLine) : [];
+    var fixed = parts.join('\n\n');
+    var log = function() {
+      var s = '\n\n### Dziennik (' + cur.length + ' zdarzeń, od ' + (cur.length ? cur[0].slice(0, 8) : '—') + ')\n\n```\n' + cur.join('\n') + '\n```';
+      if (prevLines.length) {
+        s += '\n\n### Dziennik sprzed przeładowania (v' + prev.v + ', ' + prev.url + ', do ' + _reportTime(prev.t).slice(0, 8) + ')\n\n```\n' +
+          prevLines.join('\n') + '\n```';
+      }
+      return s;
+    };
+    var body = _diagScrub(fixed + log(), secrets);
+    while (body.length > REPORT_BODY_MAX && (prevLines.length || cur.length > 20)) {
+      if (prevLines.length) prevLines = prevLines.slice(Math.ceil(prevLines.length / 4) || 1);
+      else cur = cur.slice(Math.ceil(cur.length / 4));
+      body = _diagScrub(fixed + log(), secrets);
+    }
+    return { title: title, body: body.slice(0, REPORT_BODY_MAX) };
+  }
+
+  // `done(błąd, numer zgłoszenia)`. Skrzynka odpowiada przekierowaniem; GM_xmlhttpRequest idzie za nim sam.
+  function _reportSend(r, done) {
+    GM_xmlhttpRequest({
+      method: 'POST', url: REPORT_INBOX_URL, timeout: 30000,
+      headers: { 'Content-Type': 'application/json' },
+      data: JSON.stringify({ v: 1, title: r.title, body: r.body }),
+      onload: function(resp) {
+        var res = null;
+        try { res = JSON.parse(resp.responseText); } catch (e) {}
+        if (res && res.ok) done(null, res.number);
+        else done(res && res.error ? res.error : 'skrzynka odpowiedziała HTTP ' + resp.status);
+      },
+      onerror: function() { done('brak połączenia ze skrzynką zgłoszeń'); },
+      ontimeout: function() { done('skrzynka nie odpowiedziała w 30 s'); },
+      onabort: function() { done('wysyłka przerwana'); },
+    });
+  }
+
+  // Okienko zgłoszenia. `o.kind`: 'bug' | 'idea', `o.area`: obszar z CHANGELOG_AREAS (domyślnie wykryty).
+  function showReportModal(o) {
+    o = o || {};
+    if (document.getElementById('b24t-rep-ov')) return;
+    _reportInjectStyles();
+    var st = { kind: o.kind || 'bug', area: o.area || _reportArea(), sent: false };
+    var lastErr = _diag.ev.filter(_reportIsUserError).pop() || _diag.ev.filter(_reportIsError).pop();
+    var ov = document.createElement('div');
+    ov.id = 'b24t-rep-ov';
+    ov.className = 'b24t-rep-ov';
+    ov.innerHTML =
+      '<div class="b24t-rep" role="dialog" aria-modal="true" aria-labelledby="b24t-rep-t">' +
+        '<div class="b24t-rep-h"><span aria-hidden="true">🐞</span><div id="b24t-rep-t">Zgłoszenie do autora wtyczki</div>' +
+          '<button type="button" data-rep="close" aria-label="Zamknij">×</button></div>' +
+        '<div class="b24t-rep-b">' +
+          '<div class="b24t-rep-kinds" role="group" aria-label="Rodzaj zgłoszenia">' +
+            '<button type="button" data-kind="bug">🐞 Błąd</button><button type="button" data-kind="idea">💡 Pomysł</button></div>' +
+          '<label class="b24t-rep-l">Obszar<select id="b24t-rep-area">' +
+            CHANGELOG_AREAS.map(function(a) { return '<option>' + _escHtml(a) + '</option>'; }).join('') + '</select></label>' +
+          '<label class="b24t-rep-l">Opis<textarea id="b24t-rep-text" rows="5"></textarea></label>' +
+          '<div class="b24t-rep-last" id="b24t-rep-last"></div>' +
+          '<details class="b24t-rep-prev"><summary>Co zostanie wysłane</summary><pre id="b24t-rep-prev"></pre></details>' +
+          '<div class="b24t-rep-note" id="b24t-rep-note"></div>' +
+          '<div class="b24t-rep-st" id="b24t-rep-st" role="status"></div>' +
+        '</div>' +
+        '<div class="b24t-rep-f"><button type="button" class="b24t-rep-ghost" data-rep="copy">Kopiuj zgłoszenie</button>' +
+          '<button type="button" class="b24t-rep-ok" data-rep="send">Wyślij</button></div>' +
+      '</div>';
+    document.body.appendChild(ov);
+    var q = function(sel) { return ov.querySelector(sel); };
+    var untrap = _relTrapKeys(close);
+    function close() { ov.remove(); untrap(); }
+    function status(text, tone) { var el = q('#b24t-rep-st'); el.textContent = text; el.className = 'b24t-rep-st' + (tone ? ' ' + tone : ''); }
+    function build() { return _reportBuild({ kind: st.kind, area: st.area, text: q('#b24t-rep-text').value }); }
+    function render() {
+      ov.querySelectorAll('[data-kind]').forEach(function(b) { b.setAttribute('aria-pressed', String(b.dataset.kind === st.kind)); });
+      q('#b24t-rep-area').value = st.area;
+      q('#b24t-rep-text').placeholder = st.kind === 'bug'
+        ? 'Co się stało i co było robione tuż przed błędem. Opis nie jest wymagany, gdy wtyczka zapisała błąd.'
+        : 'Co dodać albo zmienić i do czego się to przyda.';
+      q('#b24t-rep-last').innerHTML = st.kind === 'bug' && lastErr
+        ? '<b>Ostatni błąd</b> (' + _reportTime(lastErr.t).slice(0, 5) + '): ' + _escHtml(_diagScrub(_reportBare(lastErr.msg || lastErr.err), _diagSecrets()).slice(0, 220)) : '';
+      q('#b24t-rep-note').textContent = st.kind === 'bug'
+        ? 'Do zgłoszenia dochodzą: ostatnie zdarzenia wtyczki, wersja, przeglądarka i stan wybranej funkcji. Klucze API, tokeny i treści wzmianek zostają w przeglądarce.'
+        : 'Do zgłoszenia dochodzi tylko wersja wtyczki i adres strony.';
+      if (q('.b24t-rep-prev').open) refreshPreview();
+    }
+    function refreshPreview() { var r = build(); q('#b24t-rep-prev').textContent = r.title + '\n\n' + r.body; }
+    function needsText() {
+      return st.kind === 'idea' || !lastErr ? !q('#b24t-rep-text').value.trim() : false;
+    }
+    // Bez zamykania kliknięciem w tło: przypadkowe kliknięcie obok kasowałoby wpisany opis.
+    ov.addEventListener('click', function(e) {
+      var k = e.target.closest('[data-kind]');
+      if (k && !st.sent) { st.kind = k.dataset.kind; render(); return; }
+      var b = e.target.closest('[data-rep]');
+      if (!b || b.disabled) return;
+      if (b.dataset.rep === 'close') { close(); return; }
+      if (b.dataset.rep === 'copy') {
+        var r = build();
+        navigator.clipboard.writeText(r.title + '\n\n' + r.body)
+          .then(function() { status('✓ Skopiowano. Zgłoszenie można wkleić Maksowi na Slacku.', 'ok'); })
+          .catch(function() { status('✗ Przeglądarka nie pozwoliła skopiować. Rozwiń „Co zostanie wysłane” i skopiuj tekst ręcznie.', 'err'); });
+        return;
+      }
+      if (b.dataset.rep === 'send') {
+        if (needsText()) { status(st.kind === 'idea' ? 'Opisz pomysł przed wysłaniem.' : 'Opisz, co się stało: wtyczka nie zapisała żadnego błędu.', 'err'); q('#b24t-rep-text').focus(); return; }
+        b.disabled = true;
+        status('Wysyłanie…');
+        _reportSend(build(), function(err, num) {
+          if (!ov.isConnected) return;
+          if (err) {
+            b.disabled = false;
+            status('✗ Nie udało się wysłać: ' + err + '. Zgłoszenie można skopiować i wysłać Maksowi na Slacku.', 'err');
+            addLog('⚠ Zgłoszenie nie zostało wysłane: ' + err, 'warn');
+            return;
+          }
+          st.sent = true;
+          b.textContent = 'Wysłano';
+          status('✓ Wysłano jako zgłoszenie nr ' + num + '. Dzięki!', 'ok');
+          addLog('✓ Zgłoszenie (' + REPORT_KIND[st.kind] + ', ' + st.area + ') wysłane jako nr ' + num, 'success');
+          if (st.kind === 'bug') _errBarHide();
+        });
+      }
+    });
+    q('#b24t-rep-area').addEventListener('change', function() { st.area = this.value; render(); });
+    q('.b24t-rep-prev').addEventListener('toggle', function() { if (this.open) refreshPreview(); });
+    var typing = null;
+    q('#b24t-rep-text').addEventListener('input', function() {
+      clearTimeout(typing);
+      typing = setTimeout(function() { if (q('.b24t-rep-prev').open) refreshPreview(); }, 400);
+    });
+    render();
+    q('#b24t-rep-text').focus();
+  }
+
+  // ── Pasek błędu w panelu ──
+  // Przy ukrytym logu to jedyny ślad błędu w panelu, dlatego pokazuje się niezależnie od ustawienia logu.
+  // Tylko wpisy logu z błędem i nieobsłużone wyjątki: nieudane zapytanie z ponowieniem (np. 429 w ocenie
+  // sentymentu) nie jest jeszcze błędem dla użytkownika, a jego wynik i tak trafia do logu.
+  var _errBar = { n: 0 };
+  function _errBarShow(e) {
+    if (!_reportIsUserError(e)) return;
+    var bar = document.getElementById('b24t-errbar');
+    if (!bar) return;
+    _errBar.n++;
+    bar.querySelector('.msg').textContent = _reportBare(e.msg).split('\n')[0].slice(0, 160);
+    bar.querySelector('.n').textContent = _errBar.n > 1 ? '+' + (_errBar.n - 1) : '';
+    bar.hidden = false;
+  }
+  function _errBarHide() {
+    var bar = document.getElementById('b24t-errbar');
+    if (bar) bar.hidden = true;
+    _errBar.n = 0;
+  }
+  function _errBarInit(panel) {
+    var actions = panel.querySelector('#b24t-actions');
+    if (!actions || document.getElementById('b24t-errbar')) return;
+    _reportInjectStyles();
+    var bar = document.createElement('div');
+    bar.id = 'b24t-errbar';
+    bar.hidden = true;
+    bar.setAttribute('role', 'alert');
+    bar.innerHTML = '<span class="ic" aria-hidden="true">✕</span><span class="msg"></span><span class="n"></span>' +
+      '<button type="button" data-eb="report">Zgłoś</button><button type="button" data-eb="close" aria-label="Ukryj">×</button>';
+    bar.addEventListener('click', function(e) {
+      var b = e.target.closest('[data-eb]');
+      if (!b) return;
+      if (b.dataset.eb === 'report') showReportModal({ kind: 'bug' });
+      else _errBarHide();
+    });
+    actions.parentNode.insertBefore(bar, actions);
+  }
+
+  function _reportInjectStyles() {
+    if (document.getElementById('b24t-rep-styles')) return;
+    var s = document.createElement('style');
+    s.id = 'b24t-rep-styles';
+    s.textContent = `
+      .b24t-rep-ov { position: fixed; inset: 0; z-index: 2147483647; display: flex; align-items: center; justify-content: center;
+        background: rgba(8, 12, 20, 0.45); font-family: 'Geist', 'Segoe UI', system-ui, sans-serif; }
+      .b24t-rep { width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 48px); display: flex; flex-direction: column;
+        background: var(--b24t-bg); color: var(--b24t-text); border: 1px solid var(--b24t-border); border-radius: 12px;
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35); overflow: hidden; }
+      .b24t-rep-h { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--b24t-accent-grad); color: #fff; font-weight: 700; font-size: 13px; }
+      .b24t-rep-h div { flex: 1; }
+      .b24t-rep-h button { background: rgba(255, 255, 255, 0.2); border: 1px solid rgba(255, 255, 255, 0.4); color: #fff; border-radius: 6px; cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 8px; }
+      .b24t-rep-b { padding: 12px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; font-size: 12px; }
+      .b24t-rep-kinds { display: flex; gap: 6px; }
+      .b24t-rep-kinds button { flex: 1; padding: 7px; border-radius: 8px; border: 1px solid var(--b24t-border); background: transparent; color: var(--b24t-text-muted); cursor: pointer; font: inherit; font-weight: 600; }
+      .b24t-rep-kinds button[aria-pressed="true"] { border-color: var(--b24t-primary); color: var(--b24t-primary); background: color-mix(in srgb, var(--b24t-primary) 10%, transparent); }
+      .b24t-rep-l { display: flex; flex-direction: column; gap: 4px; font-weight: 600; color: var(--b24t-text-muted); }
+      .b24t-rep-l select, .b24t-rep-l textarea { font: inherit; font-weight: 400; color: var(--b24t-text); background: var(--b24t-bg-card); border: 1px solid var(--b24t-border); border-radius: 7px; padding: 6px 8px; }
+      .b24t-rep-l textarea { resize: vertical; min-height: 80px; }
+      .b24t-rep-last { color: var(--b24t-err); background: var(--b24t-err-bg); border-radius: 6px; padding: 6px 8px; word-break: break-word; }
+      .b24t-rep-last:empty { display: none; }
+      .b24t-rep-prev summary { cursor: pointer; color: var(--b24t-text-muted); font-weight: 600; }
+      .b24t-rep-prev pre { max-height: 220px; overflow: auto; margin: 6px 0 0; padding: 8px; font-size: 10px; line-height: 1.45; white-space: pre-wrap; word-break: break-word;
+        background: var(--b24t-bg-deep); border: 1px solid var(--b24t-border-sub); border-radius: 6px; color: var(--b24t-text-muted); }
+      .b24t-rep-note { color: var(--b24t-text-faint); font-size: 11px; }
+      .b24t-rep-st:empty { display: none; }
+      .b24t-rep-st.ok { color: var(--b24t-ok); }
+      .b24t-rep-st.err { color: var(--b24t-err); }
+      .b24t-rep-f { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--b24t-border-sub); }
+      .b24t-rep-f button { font: inherit; font-size: 12px; font-weight: 600; padding: 7px 14px; border-radius: 8px; cursor: pointer; }
+      .b24t-rep-ok { background: var(--b24t-primary); color: #fff; border: 1px solid var(--b24t-primary); }
+      .b24t-rep-ok[disabled] { opacity: 0.55; cursor: default; }
+      .b24t-rep-ghost { background: transparent; color: var(--b24t-text-muted); border: 1px solid var(--b24t-border); }
+      #b24t-errbar { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; margin: 0 10px 6px; padding: 5px 8px; border-radius: 8px;
+        background: var(--b24t-err-bg); color: var(--b24t-err); font-size: 11px; }
+      #b24t-errbar[hidden] { display: none; }
+      #b24t-errbar .msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #b24t-errbar .n { font-weight: 700; }
+      #b24t-errbar button { background: transparent; border: 1px solid currentColor; color: inherit; border-radius: 6px; cursor: pointer; font: inherit; font-weight: 700; padding: 1px 7px; }
+      #b24t-errbar button[data-eb="close"] { border: 0; font-size: 14px; padding: 0 4px; }
+    `;
+    document.head.appendChild(s);
+  }
 
   // Dodatkowe funkcje — modal z checkboxami
   const OPTIONAL_FEATURES = [
+    {
+      id: 'show_log',
+      label: '📜 Log w panelu',
+      desc: 'Pokazuje log zdarzeń w karcie Plik i AI Tag. Bez logu błędy pokazuje pasek nad przyciskiem Start, a do zgłoszeń wtyczka i tak zapisuje ostatnie zdarzenia.',
+    },
     {
       id: 'annotator_tools',
       label: '🛠 Annotators Tab',
@@ -19765,6 +20286,13 @@ function showOnboarding(onComplete) {
 
   function applyFeatures() {
     const features = loadFeatures();
+    // Log domyślnie ukryty: na co dzień wystarcza postęp i pasek błędu, a log przydaje się przy szukaniu
+    // przyczyny. Sekcja logu jest jedynym rozciągliwym elementem karty Plik (LAYOUT CONTRACT), więc po
+    // ukryciu karta po prostu kończy się na statystykach.
+    ['b24t-log-section', 'b24t-ait-log-section'].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (el) el.style.display = features.show_log ? '' : 'none';
+    });
     // Pokaż opcję "Wszystkie projekty" w Quick Delete tylko gdy Annotators włączone
     const apLabel = document.getElementById('b24t-del-allprojects-label');
     if (apLabel) apLabel.style.display = features.annotator_tools ? 'flex' : 'none';
@@ -20380,6 +20908,7 @@ function showOnboarding(onComplete) {
       saveFeatures(newFeatures);
       const selectedChannel = (modal.querySelector('input[name="b24t-channel"]:checked') || {}).value || 'stable';
       lsSet(LS.UPDATE_CHANNEL, selectedChannel);
+      if (selectedChannel !== _currentChannel) _relOnChannel();
       applyFeatures();
       close();
       addLog('\u2713 Ustawienia zapisane (kanał: ' + selectedChannel + ')', 'success');
@@ -23974,7 +24503,7 @@ Tej operacji nie można cofnąć.`)) {
         </div>
 
         <!-- LOG -->
-        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--b24t-border-sub);">
+        <div id="b24t-ait-log-section" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--b24t-border-sub);">
           <div class="b24t-section-label tertiary" style="margin-bottom:6px;">
             Log
             <button class="b24t-log-clear" id="b24t-ait-log-clear">wyczyść</button>
@@ -24348,7 +24877,7 @@ Tej operacji nie można cofnąć.`)) {
   // nie treść jednej wzmianki.
   var SENT_MAX_REJECTED = 5;
   var SENT_TIMEOUT = 180000;        // najdłuższa partia Gemini z myśleniem w pomiarze: 114 s
-  var SENT_MAX_MENTIONS = 3000;     // Toyota ma ~1 100 negatywów w miesiącu (§3)
+  var SENT_MAX_MENTIONS = 5000;     // przegląd jednego zakresu do raportu, nie całego projektu (SENTIMENT.md §1)
   var SENT_TEXT_MAX = 3000;
   var SENT_VERDICTS_KEEP_DAYS = 60;
   var SENT_DECISIONS_KEEP_DAYS = 365;
@@ -24356,7 +24885,7 @@ Tej operacji nie można cofnąć.`)) {
   // (.com i .pl) mają osobne localStorage.
   var SENT_GM_VERDICTS = 'b24t_sent_verdicts';    // { "id|model|kontekst": { s, b, d, r, at } }
   var SENT_GM_DECISIONS = 'b24t_sent_decisions';  // { id: { at, pid, url, from, to, a, b } }
-  var SENT_LS_PROJECT = 'b24t_sent_project_cfg';  // { pid: { brand, source } }
+  var SENT_LS_PROJECT = 'b24t_sent_project_cfg';  // { pid: { brand, source, sentiments } }
   var SENT_LS_HIDE_DONE = 'b24t_sent_hide_done';  // przełącznik „Ukryj załatwione” w oknie
   // $ za mln tokenów wejścia i wyjścia, cennik z 2026-09-30. Model spoza listy — bez kwoty.
   var SENT_PRICE = { 'gemini-3.8-flash': [0.75, 3.75], 'gpt-6-luna': [0.10, 0.50] };
@@ -24378,6 +24907,8 @@ Tej operacji nie można cofnąć.`)) {
     } } },
   };
   var SENT_LABEL = { negative: 'negatywny', neutral: 'neutralny', positive: 'pozytywny' };
+  var SENT_PLURAL = { negative: 'negatywne', neutral: 'neutralne', positive: 'pozytywne' };
+  var SENT_ORDER = ['negative', 'neutral', 'positive'];
   var SENT_KEY_OF = { negative: 'N', neutral: 'U', positive: 'P' };
   var SENT_BY_KEY = { n: 'negative', u: 'neutral', p: 'positive' };
   var SENT_BASIS = { brand: 'ocena marki', comparison: 'porównanie z marką', problem: 'konkretny problem', event: 'negatywne zdarzenie',
@@ -24412,12 +24943,19 @@ Tej operacji nie można cofnąć.`)) {
     lsSet(SENT_LS_PROJECT, all);
   }
 
-  // Negatywy: `se` to lista enuma `Sentiment` (te same wartości co w setSentiment), nie liczb —
+  // `se` to lista enuma `Sentiment` (te same wartości co w setSentiment), nie liczb —
   // `[-1]` serwer odrzuca błędem „Enum "Sentiment" cannot represent non-string value: -1”
-  // (BRAND24_NETWORK.md §5). Reszta jak domyślny widok.
-  function _sentNegativeFilters() {
-    return { va: 1, rt: [], se: ['negative'], vi: null, gr: [], sq: '', do: '', au: '', lem: false,
+  // (BRAND24_NETWORK.md §5). Wszystkie trzy idą jako `[]`, czyli jak w domyślnym widoku. Reszta też jak domyślny widok.
+  function _sentRangeFilters(se) {
+    return { va: 1, rt: [], se: se.length === SENT_ORDER.length ? [] : se.slice(), vi: null, gr: [], sq: '', do: '', au: '', lem: false,
              ctr: [], nctr: false, is: [0, 10], tp: null, lang: [], nlang: false };
+  }
+  // Zakres przeglądu w nagłówku okna i w logu: „widok Brand24”, „wszystkie sentymenty” albo np. „negatywne i pozytywne”.
+  function _sentScopeLabel(r) {
+    if (r.source === 'view') return 'widok Brand24';
+    var se = r.sentiments || SENT_ORDER;
+    if (se.length === SENT_ORDER.length) return 'wszystkie sentymenty';
+    return se.map(function(s) { return SENT_PLURAL[s]; }).join(' i ');
   }
 
   // Tytuł bywa początkiem treści (X, Facebook) — wtedy idzie sama treść, bez powtórzenia.
@@ -24650,7 +25188,7 @@ Tej operacji nie można cofnąć.`)) {
   async function _sentStart(p) {
     var s = _aiGetSettings();
     var run = {
-      projectId: p.projectId, projectName: _pnResolve(p.projectId), brand: p.brand, source: p.source,
+      projectId: p.projectId, projectName: _pnResolve(p.projectId), brand: p.brand, source: p.source, sentiments: p.sentiments || null,
       dateFrom: p.dateFrom, dateTo: p.dateTo, items: [], byId: {}, phase: 'fetch', error: '', truncatedOf: 0,
       models: { a: _sentModelState(s.sentiment.modelA), b: _sentModelState(s.sentiment.modelB) },
     };
@@ -24659,7 +25197,7 @@ Tej operacji nie można cofnąć.`)) {
     _sentShow();
     _sentTabStatus();
     addLog('◐ Przegląd sentymentu — start: ' + run.projectName + ', ' + p.dateFrom + ' → ' + p.dateTo +
-      (p.source === 'view' ? ', widok Brand24' : ', negatywy') + ', modele ' + run.models.a.model + ' + ' + run.models.b.model, 'info');
+      ', ' + _sentScopeLabel(run) + ', modele ' + run.models.a.model + ' + ' + run.models.b.model, 'info');
     try {
       var fetched = await _aiTagFetchMentions(p.projectId, p.dateFrom, p.dateTo, p.filters, SENT_MAX_MENTIONS, { withSentiment: true });
       (fetched.results || []).forEach(function(m) {
@@ -24850,6 +25388,7 @@ Tej operacji nie można cofnąć.`)) {
           '<label class="b24t-sent-hidedone" title="Ukrywa kafelki z decyzją; błędy zapisu zostają widoczne">' +
             '<input type="checkbox" id="b24t-sent-hidedone"' + (sentState.hideDone ? ' checked' : '') + '> Ukryj załatwione</label>' +
           '<button id="b24t-sent-export" title="Wszystkie decyzje z werdyktami modeli, 12 miesięcy wstecz">⇩ Dziennik decyzji CSV</button>' +
+          '<button id="b24t-sent-report" title="Zgłoś błąd w przeglądzie sentymentu" aria-label="Zgłoś błąd">🐞</button>' +
           '<button id="b24t-sent-close" title="Zamknij (Esc) — ocena i zapisy trwają dalej">✕</button>' +
         '</div>' +
         '<div class="b24t-sent-summary" id="b24t-sent-summary"></div>' +
@@ -24860,6 +25399,7 @@ Tej operacji nie można cofnąć.`)) {
 
     ov.addEventListener('click', function(e) { if (e.target === ov) _sentHide(); });
     ov.querySelector('#b24t-sent-close').addEventListener('click', _sentHide);
+    ov.querySelector('#b24t-sent-report').addEventListener('click', function() { showReportModal({ kind: 'bug', area: 'Przegląd sentymentu' }); });
     ov.querySelector('#b24t-sent-export').addEventListener('click', _sentExportCsv);
     ov.querySelector('#b24t-sent-hidedone').addEventListener('change', function() {
       sentState.hideDone = this.checked;
@@ -24912,18 +25452,22 @@ Tej operacji nie można cofnąć.`)) {
   function _sentShow() {
     var ov = _sentEnsureWindow();
     ov.style.display = 'flex';
+    // Okienko aktualizacji leży nad wszystkim; powiadomienie „zaktualizowano” wraca po zamknięciu przeglądu.
+    _updCloseCard();
+    _updOnStatus();
     _sentRenderAll();
   }
   function _sentHide() {
     var ov = document.getElementById('b24t-sent-overlay');
     if (ov) ov.style.display = 'none';
     _sentTabStatus();
+    _updOnStatus();
   }
   function _sentRenderAll() {
     var run = sentState.run;
     var sub = document.getElementById('b24t-sent-sub');
     if (sub) sub.textContent = run
-      ? run.projectName + ' · ' + run.dateFrom + ' → ' + run.dateTo + ' · ' + (run.source === 'view' ? 'widok Brand24' : 'negatywy') +
+      ? run.projectName + ' · ' + run.dateFrom + ' → ' + run.dateTo + ' · ' + _sentScopeLabel(run) +
         (run.items.length ? ' · ' + run.items.length.toLocaleString('pl-PL') + ' wzmianek' : '') + ' · marka w prompcie: ' + run.brand
       : '';
     var test = document.getElementById('b24t-sent-test');
@@ -25143,13 +25687,21 @@ Tej operacji nie można cofnąć.`)) {
         '<div style="' + H + '">Wzmianki</div>' +
         '<div class="b24t-radio-group" style="flex-direction:column;gap:5px;margin-bottom:8px;">' +
           '<label class="b24t-radio" style="font-size:13px;"><input type="radio" name="b24t-sent-source" value="range" checked>' +
-            '<span style="font-size:13px;color:var(--b24t-text-muted);">Negatywy z zakresu dat</span></label>' +
+            '<span style="font-size:13px;color:var(--b24t-text-muted);">Wzmianki z zakresu dat</span></label>' +
           '<label class="b24t-radio" style="font-size:13px;"><input type="radio" name="b24t-sent-source" value="view">' +
             '<span style="font-size:13px;color:var(--b24t-text-muted);">Aktualny widok Brand24 (filtry i zakres)</span></label>' +
         '</div>' +
-        '<div id="b24t-sent-range" style="display:flex;gap:8px;margin-bottom:10px;">' +
-          '<input type="date" id="b24t-sent-from" class="b24t-select" style="flex:1;">' +
-          '<input type="date" id="b24t-sent-to" class="b24t-select" style="flex:1;">' +
+        '<div id="b24t-sent-range" style="margin-bottom:10px;">' +
+          '<div style="display:flex;gap:8px;margin-bottom:6px;">' +
+            '<input type="date" id="b24t-sent-from" class="b24t-select" style="flex:1;">' +
+            '<input type="date" id="b24t-sent-to" class="b24t-select" style="flex:1;">' +
+          '</div>' +
+          '<div id="b24t-sent-se" style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;font-size:12px;color:var(--b24t-text-muted);">' +
+            '<span>Sentyment w Brand24:</span>' + SENT_ORDER.map(function(s) {
+              return '<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;">' +
+                '<input type="checkbox" value="' + s + '" checked style="accent-color:var(--b24t-primary);cursor:pointer;margin:0;">' + SENT_PLURAL[s] + '</label>';
+            }).join('') +
+          '</div>' +
         '</div>' +
         '<div style="' + H + '">Marka w prompcie</div>' +
         '<input type="text" id="b24t-sent-brand" class="b24t-select" style="width:100%;box-sizing:border-box;margin-bottom:3px;" placeholder="np. Cupra">' +
@@ -25203,7 +25755,10 @@ Tej operacji nie można cofnąć.`)) {
     }
     function syncRange() {
       var src = (q('input[name="b24t-sent-source"]:checked') || {}).value;
-      q('#b24t-sent-range').style.display = src === 'view' ? 'none' : 'flex';
+      q('#b24t-sent-range').style.display = src === 'view' ? 'none' : '';
+    }
+    function checkedSentiments() {
+      return Array.prototype.map.call(tab.querySelectorAll('#b24t-sent-se input:checked'), function(cb) { return cb.value; });
     }
     function restore() {
       if (!state.projectId) return;
@@ -25211,6 +25766,8 @@ Tej operacji nie można cofnąć.`)) {
       q('#b24t-sent-brand').value = cfg.brand || _pnResolve(state.projectId);
       var r = q('input[name="b24t-sent-source"][value="' + (cfg.source === 'view' ? 'view' : 'range') + '"]');
       if (r) r.checked = true;
+      var se = Array.isArray(cfg.sentiments) ? cfg.sentiments : SENT_ORDER;
+      tab.querySelectorAll('#b24t-sent-se input').forEach(function(cb) { cb.checked = se.indexOf(cb.value) !== -1; });
       syncRange();
     }
     function refresh() { fillPrompts(); renderModels(); restore(); _sentTabStatus(); }
@@ -25231,6 +25788,11 @@ Tej operacji nie można cofnąć.`)) {
       r.addEventListener('change', function() {
         syncRange();
         if (state.projectId) _sentSetProjectCfg(state.projectId, { source: r.value });
+      });
+    });
+    tab.querySelectorAll('#b24t-sent-se input').forEach(function(cb) {
+      cb.addEventListener('change', function() {
+        if (state.projectId) _sentSetProjectCfg(state.projectId, { sentiments: checkedSentiments() });
       });
     });
     q('#b24t-sent-open').addEventListener('click', _sentShow);
@@ -25264,7 +25826,9 @@ Tej operacji nie można cofnąć.`)) {
       } else {
         p.dateFrom = q('#b24t-sent-from').value; p.dateTo = q('#b24t-sent-to').value;
         if (!p.dateFrom || !p.dateTo) { _sentTabStatus('✗ Ustaw zakres dat.', '#f87171'); return; }
-        p.filters = _sentNegativeFilters();
+        p.sentiments = checkedSentiments();
+        if (!p.sentiments.length) { _sentTabStatus('✗ Zaznacz co najmniej jeden sentyment.', '#f87171'); return; }
+        p.filters = _sentRangeFilters(p.sentiments);
       }
       _sentSetProjectCfg(p.projectId, { brand: brand, source: src });
       _sentStart(p);
@@ -28079,6 +28643,11 @@ Tej operacji nie można cofnąć.`)) {
 
     setupDragging(panel);
     setupCollapse(panel);
+    // Dzienniki i okienko aktualizacji zaraz po zbudowaniu panelu, przed resztą init(): błąd w dalszym
+    // kroku nie może odciąć użytkownika od okienka z wersją, która go naprawia. Z tego samego powodu
+    // pasek błędu ze zgłoszeniem.
+    _errBarInit(panel);
+    _relInit(panel);
     // Dopasuj domyślny rozmiar startowy do rozmiaru ekranu (tylko gdy użytkownik nie ma zapisanego)
     if (!lsGet(LS.UI_SIZE)) {
       if (_getScreenProfile() === 'compact') {
@@ -28144,15 +28713,6 @@ Tej operacji nie można cofnąć.`)) {
       if (!state.projectId) await detectProject();
     }, 3000);
 
-    // First run setup
-    if (!lsGet(LS.SETUP_DONE)) {
-      setTimeout(() => {
-        showOnboarding(() => {
-          addLog('✓ Setup zakończony. Możesz zaczynać!', 'success');
-        });
-      }, 1500);
-    }
-
     addLog(`B24 Tagger BETA v${VERSION} załadowany.`, 'info');
 
     // Annotator Tools — buduj floating panel
@@ -28171,10 +28731,6 @@ Tej operacji nie można cofnąć.`)) {
     // Zastosuj opcjonalne funkcje
     applyFeatures();
 
-    // Show What's New on version change
-    setTimeout(() => showWelcomePanel(), 2000);
-
-    // (checkForUpdate wywołane w głównym scope IIFE — ma dostęp do GM_xmlhttpRequest)
   }
 
   // Wait for DOM
@@ -28199,9 +28755,5 @@ Tej operacji nie można cofnąć.`)) {
   } else {
     setTimeout(safeInit, 500);
   }
-
-  // Sprawdź aktualizacje — wywołane bezpośrednio w scope IIFE gdzie GM jest dostępne
-  // Czekamy 6s żeby init() zdążył się wykonać i panel był gotowy
-  setTimeout(function() { checkForUpdate(false); }, 6000);
 
 })();

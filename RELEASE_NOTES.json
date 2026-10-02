@@ -1,0 +1,164 @@
+[
+  {
+    "version": "0.37.2",
+    "date": "2026-10",
+    "name": "Wydanie 0.37.2",
+    "summary": "Cześć! Od tej aktualizacji rekomendujemy trzymanie się kanału Stabilnego. Nowości są trzy: otwieramy dziennik aktualizacji, w którym każda kolejna aktualizacja przyjdzie z opisem takim jak ten, oddajemy w ręce naszych użytkowników dwa modele AI jako wsparcie przy analizie sentymentu, a błędy i pomysły można zgłaszać prosto z wtyczki.",
+    "afterUpdate": [
+      "Jeśli pole klucza Claude w Ustawieniach → AI jest puste, trzeba wkleić klucz ponownie.",
+      "Przed pierwszym przeglądem sentymentu trzeba dodać w Ustawieniach → AI klucze dostawców obu modeli i prompt przeglądu sentymentu.",
+      "Prompt ogólnego zastosowania do przeglądu sentymentu można dostać u Maksa."
+    ],
+    "features": [
+      {
+        "area": "Panel",
+        "highlight": true,
+        "title": "Dziennik aktualizacji z opisem każdej aktualizacji",
+        "lead": [
+          "Przycisk dziennika w panelu otwiera dziennik aktualizacji. Każda aktualizacja ma w nim jeden opis: nowe funkcje, zmiany, poprawki błędów i znane problemy, od najważniejszych.",
+          "O nowej wersji i o zakończonej aktualizacji informuje okno pod nagłówkiem panelu, więc nowości nie trzeba szukać samodzielnie."
+        ],
+        "comment": "Stary dziennik wypisywał każdą drobną wersję osobno, więc ważne nowości ginęły w tłumie. Przebudowaliśmy go od zera: jedno wydanie, jeden opis, zaczynający się od tego, co najważniejsze.",
+        "parts": [
+          {
+            "title": "Opis aktualizacji",
+            "lead": [
+              "Opis zaczyna się od nazwy wydania i wstępu. Spis sekcji pod wstępem przenosi do nowych funkcji, zmian, poprawek błędów albo znanych problemów."
+            ],
+            "details": [
+              "Sekcja „Po aktualizacji” na początku opisu wymienia czynności potrzebne po aktualizacji, np. ponowne wklejenie klucza API.",
+              "Duże funkcje mają podsekcje, kroki pierwszego użycia i schemat okna z opisem jego elementów.",
+              "Zmiany zgłoszone przez użytkowników wtyczki mają osobny znacznik, objaśniony pod spisem sekcji.",
+              "Dziennik zawiera opisy aktualizacji od wersji 0.37.2."
+            ]
+          },
+          {
+            "title": "Okno nowej wersji",
+            "lead": [
+              "Gdy jest dostępna nowa wersja, pod nagłówkiem panelu pojawia się okno z nazwą wydania, wstępem i listą nowych funkcji. Okno pokazuje się tylko na stronie wyników Brand24."
+            ],
+            "details": [
+              "„Zainstaluj w Tampermonkey” otwiera instalację w nowej karcie, a okno przypomina o odświeżeniu strony. W trakcie przebiegu, oceny albo zapisu sentymentu przycisk „Odśwież stronę” jest nieaktywny, bo odświeżenie by je przerwało.",
+              "„Później” zamyka okno na 24 godziny. Znacznik z numerem nowej wersji w nagłówku panelu otwiera je w każdej chwili.",
+              "Kliknięcie numeru wersji w nagłówku panelu sprawdza dostępność aktualizacji i pokazuje wynik."
+            ]
+          },
+          {
+            "title": "Po aktualizacji",
+            "lead": [
+              "Po automatycznej aktualizacji przez Tampermonkey pod nagłówkiem panelu pojawia się okno „Wtyczka została zaktualizowana” z numerem wersji i nazwą wydania. „Zobacz zmiany” otwiera opis aktualizacji, a „Zamknij” zamyka okno bez czytania.",
+              "Po instalacji przyciskiem „Zainstaluj w Tampermonkey” opis nowej wersji otwiera się sam przy pierwszym otwarciu panelu."
+            ]
+          }
+        ]
+      },
+      {
+        "area": "Przegląd sentymentu",
+        "title": "Praca z sentymentem: ocena dwóch modeli AI i zmiana z pliku",
+        "lead": [
+          "Sentyment wzmianek da się sprawdzić i poprawić bez wychodzenia z panelu. Dwa modele AI oceniają wzmianki z wybranego zakresu, a wybrany sentyment zapisuje się od razu w Brand24.",
+          "Sentyment zmienia też zwykły przebieg tagowania z pliku z ocenami."
+        ],
+        "comment": "Przejrzenie kilku tysięcy wzmianek pod kątem sentymentu to najbardziej żmudna część przygotowania raportu, więc oddaliśmy ją modelom. Sporne przypadki i ostatnie słowo zostają przy człowieku.",
+        "parts": [
+          {
+            "title": "Ocena dwóch modeli AI",
+            "lead": [
+              "Karta Sentyment pokazuje wzmianki z wybranego zakresu ocenione przez dwa modele AI, bez względu na sentyment nadany przez Brand24. Kafelek wzmianki zawiera jej treść oraz werdykt, uzasadnienie i wątpliwości każdego z modeli.",
+              "Wybrany sentyment zapisuje się od razu w Brand24, bez pliku i bez osobnego przebiegu. Każdą decyzję można cofnąć."
+            ],
+            "figure": "sentiment-review",
+            "figureList": {
+              "title": "Okno przeglądu",
+              "items": [
+                "„Do decyzji”: modele różnią się w ocenie albo mają wątpliwość. Sentyment wybiera się na kafelku albo klawiszami N, U i P.",
+                "„Zgodna zmiana”: oba modele proponują tę samą zmianę. „Zapisz wszystkie w Brand24” zapisuje całą grupę.",
+                "„Bez zmian”: oba modele potwierdzają sentyment z Brand24. Grupa jest zwinięta.",
+                "„Ukryj załatwione” ukrywa kafelki z podjętą decyzją.",
+                "„Dziennik decyzji” eksportuje decyzje z werdyktami modeli z ostatnich 12 miesięcy."
+              ]
+            },
+            "stepsTitle": "Jak zacząć",
+            "steps": [
+              "Kartę włącza się w Ustawienia → AI → Przegląd sentymentu, gdzie wybiera się też dwa modele. Domyślne to gemini-3.8-flash i gpt-6-luna.",
+              "Na karcie Sentyment wybiera się wzmianki: „Wzmianki z zakresu dat” z zaznaczonymi sentymentami z Brand24 albo „Aktualny widok Brand24 (filtry i zakres)”.",
+              "„Oceń i otwórz przegląd” uruchamia ocenę. Kafelki trafiają do grup „Do decyzji”, „Zgodna zmiana” i „Bez zmian”.",
+              "O kafelkach z grupy „Do decyzji” decyduje się pojedynczo, a grupę „Zgodna zmiana” zapisuje przycisk „Zapisz wszystkie w Brand24”."
+            ],
+            "details": [
+              "Ocena uwzględnia, jak wzmianka przedstawia markę: wzmianka pokazująca markę w dobrym świetle jest pozytywna mimo negatywnego tonu reszty tekstu. Samo wymienienie marki nie zmienia oceny.",
+              "Jeden przegląd obejmuje do 5 000 wzmianek.",
+              "Skróty klawiszowe: J i K — następny i poprzedni kafelek, N, U i P — sentyment negatywny, neutralny i pozytywny, Z — cofnij, Esc — zamknij okno.",
+              "Zamknięcie okna nie przerywa oceny ani zapisu. Przycisk „Wróć do przeglądu” na karcie otwiera okno w tym samym miejscu. Przeładowanie strony kończy przegląd.",
+              "Werdykty są zapamiętywane, więc ponowna ocena tego samego zakresu tym samym promptem jest bezpłatna. Okno pokazuje koszt oceny."
+            ],
+            "note": {
+              "label": "Wymagania",
+              "text": "Klucze API dostawców obu wybranych modeli i prompt przeglądu sentymentu w bibliotece promptów. Ocena jest płatna według cennika dostawcy, także w trybie Test Run, w którym sentyment w Brand24 się nie zmienia."
+            }
+          },
+          {
+            "title": "Zmiana sentymentu z pliku z ocenami",
+            "lead": [
+              "Przebieg tagowania z pliku może zmieniać sentyment wzmianek. Po włączeniu opcji zmiany sentymentu po ocenie w ustawieniach mapowanie ocen ma trzy akcje: „Sentyment → negatywny”, „Sentyment → neutralny” i „Sentyment → pozytywny”."
+            ],
+            "details": [
+              "Sentyment zmienia się w zwykłym przebiegu Start, razem z tagowaniem i usuwaniem. Jedna ocena może łączyć tag i sentyment, np. „RELEVANT|NEUTRALNY”.",
+              "Okno potwierdzenia przed startem podaje liczbę wierszy dla każdej oceny. Przebieg testowy niczego nie zapisuje.",
+              "Wzmianki z docelowym sentymentem są pomijane. Wzmianka, której plik przypisuje dwa różne sentymenty, jest pomijana i zgłaszana w logu.",
+              "Brand24 przyjmuje zmiany sentymentu pojedynczo, dlatego przebieg ze zmianą sentymentu trwa dłużej niż samo tagowanie."
+            ]
+          }
+        ]
+      },
+      {
+        "area": "Panel",
+        "title": "Zgłaszanie błędów i pomysłów prosto z wtyczki",
+        "lead": [
+          "Przycisk zgłoszenia w panelu otwiera okienko zgłoszenia błędu albo pomysłu. Zgłoszenie trafia prosto do autora wtyczki.",
+          "Do zgłoszenia błędu wtyczka sama dołącza ostatnie zdarzenia, wersję i stan funkcji, w której wystąpił błąd, więc opis może być krótki."
+        ],
+        "comment": "Najtrudniej naprawić błąd, którego nikt nie umie opisać. Teraz wtyczka opisuje go sama, a my dostajemy wszystko, czego potrzeba do poprawki.",
+        "details": [
+          "Błąd pokazuje się na pasku nad przyciskiem Start, razem z przyciskiem „Zgłoś”. Okna przeglądu sentymentu i News mają własny przycisk zgłoszenia.",
+          "Podgląd „Co zostanie wysłane” pokazuje całą treść zgłoszenia przed wysłaniem. Klucze API, tokeny i treści wzmianek nie trafiają do zgłoszenia.",
+          "Gdy wysyłka się nie uda, „Kopiuj zgłoszenie” kopiuje treść do schowka."
+        ]
+      }
+    ],
+    "changes": [
+      {
+        "area": "Ustawienia AI",
+        "items": [
+          "Klucze API, biblioteka promptów i wybór modeli są wspólne dla app.brand24.com i panel.brand24.pl i nie znikają po wyczyszczeniu danych strony Brand24. Dotychczasowe ustawienia z obu paneli są przenoszone automatycznie.",
+          "Do wyboru jest model Claude Sonnet 5.5 w News, kampaniach H&M, tłumaczeniu i AI Tag. Szacunkowy koszt oceny 1 000 stron w News: Haiku 4.5 — ok. 2,0 $, Sonnet 5 — ok. 2,4 $, Sonnet 5.5 — ok. 2,6 $.",
+          "Pole klucza API nie przyjmuje klucza innego dostawcy, np. klucza Gemini w polu Claude, ani tekstu ze spacją."
+        ]
+      },
+      {
+        "area": "Panel",
+        "items": [
+          "Przewodnik z dymkami przy pierwszym uruchomieniu wtyczki jest wyłączony: opisywał panel sprzed kilkunastu wersji i częściej mylił, niż pomagał.",
+          "Log zdarzeń w panelu jest domyślnie ukryty i włącza się w ustawieniach opcją „Log w panelu”. Błędy pokazuje pasek nad przyciskiem Start."
+        ]
+      }
+    ],
+    "fixes": [
+      {
+        "area": "Panel",
+        "items": [
+          "Naprawiono błąd, przez który strony spoza Brand24 miały dostęp do funkcji wtyczki, w tym do tokenu Brand24.",
+          "Naprawiono błąd, przez który panel wtyczki uruchamiał się na stronach spoza Brand24 z adresem podobnym do strony wyników i wysyłał im token Brand24.",
+          "Naprawiono okno nowej wersji, które na stronach spoza Brand24 wyświetlało się bez tła i z nieczytelnym przyciskiem. Okno trzyma się Brand24 i nie zwiedza innych stron."
+        ]
+      },
+      {
+        "area": "Ustawienia AI",
+        "items": [
+          "Naprawiono błąd, przez który przeglądarka traktowała pola kluczy API i tokenu GitHub jak pola hasła: proponowała zmianę hasła do Brand24, a zapisane hasło wpisywała w pole klucza Claude."
+        ]
+      }
+    ],
+    "outro": "Miłego tagowania! A gdy modele znów się pokłócą, ostatnie słowo i tak należy do człowieka."
+  }
+]

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.37.1
+// @version      0.37.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -173,7 +173,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.37.1';
+  const VERSION = '0.37.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4263,7 +4263,7 @@
         <div style="margin-top:10px;border:1px solid rgba(99,102,241,0.35);border-radius:6px;overflow:hidden">
           <div style="background:rgba(99,102,241,0.1);padding:7px 10px;display:flex;align-items:center;justify-content:space-between">
             <div style="font-size:13px">${reasonRows}</div>
-            <button onclick="window.B24Tagger.exportSkippedMentions()" style="background:rgba(99,102,241,0.2);color:#818cf8;border:1px solid rgba(99,102,241,0.4);border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">Pobierz CSV z powodami</button>
+            <button type="button" data-rep="skipped" style="background:rgba(99,102,241,0.2);color:#818cf8;border:1px solid rgba(99,102,241,0.4);border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">Pobierz CSV z powodami</button>
           </div>
           <div style="padding:6px 10px;font-size:11px;color:#64748b">
             Plik CSV zawiera oryginalne wiersze z pliku + kolumny: <em>powód_pominięcia</em>, <em>szczegóły</em>, <em>url_znormalizowany</em>
@@ -4288,7 +4288,7 @@
         <div style="margin-top:12px;border:1px solid rgba(239,68,68,0.35);border-radius:6px;overflow:hidden">
           <div style="background:rgba(239,68,68,0.12);padding:7px 10px;display:flex;align-items:center;justify-content:space-between">
             <strong style="color:#ef4444;font-size:13px">⚠ ${failed.length} wzmianki nie mogły być otagowane</strong>
-            <button onclick="window.B24Tagger.exportFailedMentions()" style="background:rgba(239,68,68,0.2);color:#ef4444;border:1px solid rgba(239,68,68,0.4);border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">Eksportuj CSV</button>
+            <button type="button" data-rep="failed" style="background:rgba(239,68,68,0.2);color:#ef4444;border:1px solid rgba(239,68,68,0.4);border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">Eksportuj CSV</button>
           </div>
           <div style="overflow-x:auto;max-height:220px;overflow-y:auto">
             <table style="width:100%;border-collapse:collapse;font-size:12px">
@@ -4317,10 +4317,19 @@
       ${skippedHtml}
       ${failedHtml}
       <div style="display:flex;gap:8px;margin-top:10px">
-        <button onclick="window.B24Tagger.exportReport()" class="b24t-btn-secondary" style="flex:1">Eksportuj logi CSV</button>
-        <button onclick="document.getElementById('b24t-report-modal').style.display='none'" class="b24t-btn-primary" style="flex:1">Zamknij</button>
+        <button type="button" data-rep="logs" class="b24t-btn-secondary" style="flex:1">Eksportuj logi CSV</button>
+        <button type="button" data-rep="close" class="b24t-btn-primary" style="flex:1">Zamknij</button>
       </div>
     `;
+    // Bez onclick w atrybutach: taki kod wykonuje się w świecie strony, a B24Tagger żyje w piaskownicy skryptu.
+    // Przypisanie zamiast addEventListener, bo raport przy każdym otwarciu buduje treść od nowa w tym samym węźle.
+    content.onclick = function(e) {
+      const b = e.target.closest('[data-rep]');
+      if (!b) return;
+      const act = { skipped: exportSkippedMentions, failed: exportFailedMentions, logs: exportReport }[b.dataset.rep];
+      if (act) act();
+      else modal.style.display = 'none';
+    };
   }
 
   async function showConflictDialog(conflict) {
@@ -4441,7 +4450,11 @@
   // DEBUG BRIDGE
   // ───────────────────────────────────────────
 
-  _win.B24Tagger = window.B24Tagger = {
+  // Obiekt żyje w piaskownicy skryptu. Na stronę (konsola DevTools) wychodzi tylko w Brand24 i tylko z flagą
+  // `b24tagger_debug` = 1 w localStorage: ma token Brand24, zapytania GM z ciasteczkami do dowolnego hosta
+  // (`@connect *`) i masowe tagowanie, a skrypt działa na każdej stronie (`@match *://*/*`), więc wystawiony
+  // zawsze dawał to każdej odwiedzanej stronie.
+  window.B24Tagger = {
     state,
     version: VERSION,
     exportFailedMentions,
@@ -4676,7 +4689,9 @@
       a.click(); URL.revokeObjectURL(url);
     },
   };
-  _win.b24tagger = _win.B24Tagger; // lowercase alias dla wygody konsoli
+  try {
+    if (_isBrand24Host && localStorage.getItem('b24tagger_debug') === '1') _win.B24Tagger = _win.b24tagger = window.B24Tagger;
+  } catch (e) {}
 
   // ───────────────────────────────────────────
   // UI - STYLES
@@ -13502,7 +13517,7 @@
     // workiem chipow, promptem AI i naglowkiem — patrz `newsState.campaign`.
     newsState.campaign = (mode === 'campaign');
     newsState.mode = (mode === 'custom') ? 'custom' : 'news';
-    var _isExternal = !window.location.pathname.includes('/panel/results/');
+    var _isExternal = !_isBrand24Host || !window.location.pathname.includes('/panel/results/');
     var overlay = document.getElementById('b24t-news-overlay');
     if (overlay) {
       overlay.style.display = 'flex';
@@ -18394,6 +18409,31 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.37.2",
+      "date": "2026-10-03",
+      "label": "fix",
+      "changes": [
+        {
+          "type": "fix",
+          "area": "Panel",
+          "title": "Naprawiono błąd, przez który strony spoza Brand24 miały dostęp do funkcji wtyczki",
+          "items": [
+            "Skrypt odwiedzanej strony mógł odczytać token Brand24 i wysyłać przez wtyczkę zapytania z danymi logowania użytkownika."
+          ],
+          "text": "Naprawiono błąd, przez który strony spoza Brand24 miały dostęp do funkcji wtyczki. Skrypt odwiedzanej strony mógł odczytać token Brand24 i wysyłać przez wtyczkę zapytania z danymi logowania użytkownika."
+        },
+        {
+          "type": "fix",
+          "area": "Panel",
+          "title": "Naprawiono uruchamianie panelu na stronach spoza Brand24",
+          "items": [
+            "Na stronie z adresem podobnym do strony wyników Brand24 panel wysyłał token Brand24 na serwer tej strony."
+          ],
+          "text": "Naprawiono uruchamianie panelu na stronach spoza Brand24. Na stronie z adresem podobnym do strony wyników Brand24 panel wysyłał token Brand24 na serwer tej strony."
+        }
+      ]
+    },
+    {
       "version": "0.37.1",
       "date": "2026-10-02",
       "label": "fix",
@@ -18653,24 +18693,6 @@
           ],
           "action": "Jeśli pole klucza jest puste, wklej klucz ponownie.",
           "text": "Naprawiono błąd, przez który przeglądarka brała pola kluczy API za pola hasła. Po wklejeniu klucza przeglądarka proponowała zmianę hasła do Brand24, a zapisane hasło wpisywała w pole klucza. To samo dotyczyło pola tokenu GitHub. Jeśli pole klucza jest puste, wklej klucz ponownie."
-        }
-      ]
-    },
-    {
-      "version": "0.36.2",
-      "date": "2026-09-30",
-      "label": "new",
-      "changes": [
-        {
-          "type": "new",
-          "area": "Ustawienia AI",
-          "title": "Model Claude Sonnet 5.5 do wyboru w funkcjach AI",
-          "items": [
-            "Dostępny w News, kampaniach H&M, tłumaczeniu i AI Tag.",
-            "Oceny stron w News są zbliżone do Sonneta 5.",
-            "Koszt oceny 1 000 stron w News: Haiku 4.5 ok. 2,0 $, Sonnet 5 ok. 2,4 $, Sonnet 5.5 ok. 2,6 $."
-          ],
-          "text": "Model Claude Sonnet 5.5 do wyboru w funkcjach AI. Dostępny w News, kampaniach H&amp;M, tłumaczeniu i AI Tag. Oceny stron w News są zbliżone do Sonneta 5. Koszt oceny 1 000 stron w News: Haiku 4.5 ok. 2,0 $, Sonnet 5 ok. 2,4 $, Sonnet 5.5 ok. 2,6 $."
         }
       ]
     }
@@ -28518,8 +28540,10 @@ Tej operacji nie można cofnąć.`)) {
     // i nie ma powodu go zabierać.
     if (_gsIsGoogleSearch()) _gsInit();
 
-    // Na stronach poza /panel/results/ — tylko floating mini-button do dodawania wzmianek
-    if (!window.location.pathname.includes('/panel/results/')) {
+    // Poza stroną wyników Brand24 — tylko floating mini-button do dodawania wzmianek. Sama ścieżka nie wystarcza:
+    // na obcej domenie z /panel/results/ panel wysyłał token Brand24 względnym fetch('/api/graphql') na jej serwer
+    // i zapisywał do B24Bridge nazwę projektu i tagi z jej odpowiedzi (SECURITY.md §3.7).
+    if (!_isBrand24Host || !window.location.pathname.includes('/panel/results/')) {
       _initMiniMentionButton();
       _wireBridgeReactiveRefresh();
       _wireAccessOnFocus();

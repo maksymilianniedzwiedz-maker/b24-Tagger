@@ -1,5 +1,23 @@
 [
   {
+    "version": "0.38.12",
+    "date": "2026-10-03",
+    "label": "new",
+    "changes": [
+      {
+        "type": "new",
+        "area": "Powiadomienia",
+        "title": "Nowa wersja wtyczki widoczna także poza panelem",
+        "items": [
+          "Gdy wyjdzie nowa wersja, wtyczka wysyła powiadomienie systemowe; kliknięcie przenosi do karty Brand24 i pokazuje okienko instalacji.",
+          "Tytuł karty Brand24 w tle miga, dopóki ktoś do niej nie zajrzy, a z włączonym ntfy powiadomienie przychodzi też na telefon.",
+          "Przełącznik „Powiadomienie poza panelem” w Ustawieniach → Powiadomienia: bez własnego wyboru włączony na Stabilnym, wyłączony na Experimental."
+        ],
+        "text": "Nowa wersja wtyczki widoczna także poza panelem. Gdy wyjdzie nowa wersja, wtyczka wysyła powiadomienie systemowe; kliknięcie przenosi do karty Brand24 i pokazuje okienko instalacji. Tytuł karty Brand24 w tle miga, dopóki ktoś do niej nie zajrzy, a z włączonym ntfy powiadomienie przychodzi też na telefon. Przełącznik „Powiadomienie poza panelem” w Ustawieniach → Powiadomienia: bez własnego wyboru włączony na Stabilnym, wyłączony na Experimental."
+      }
+    ]
+  },
+  {
     "version": "0.38.11",
     "date": "2026-10-03",
     "label": "new",

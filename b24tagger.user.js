@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.11
+// @version      0.38.12
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -15,6 +15,7 @@
 // @grant        GM_setValue
 // @grant        GM_addValueChangeListener
 // @grant        GM_removeValueChangeListener
+// @grant        GM_notification
 // @connect       script.google.com
 // @connect       script.googleusercontent.com
 // @connect       raw.githubusercontent.com
@@ -173,7 +174,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.11';
+  const VERSION = '0.38.12';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -219,6 +220,7 @@
     SOUNDS:         'b24t_sounds',              // Powiadomienia → Dźwięki: { done, error, captcha: true | false }
     RAIL_ORDER:     'b24tagger_rail_order',     // kolejność kart górnej grupy paska: [main, quicktag, …]
     EXP_ACCESS:     'b24t_exp_access',          // dostęp do kanału Experimental: { by: code | channel, v: wersja } (_expGrant)
+    UPD_LOUD:       'b24t_update_loud',         // Powiadomienia → nowa wersja poza panelem: true | false; bez zapisu według kanału (_updLoud)
   };
   const MAX_BATCH_SIZE = 50;
   const DEL_BATCH_DEFAULT = 25; // domyślny batch równoległych deletów (edytowalny w UI)
@@ -478,6 +480,7 @@
     { id: 'czeka',  label: 'Coś czeka na Ciebie', opis: 'Robota stoi, dopóki nie wrócisz. Wysyłane jako pilne — telefon zawibruje.' },
     { id: 'koniec', label: 'Skończone',           opis: 'Długie operacje. Podlegają progowi czasu ustawionemu niżej.' },
     { id: 'blad',   label: 'Błędy',               opis: 'Coś się wywróciło i czeka na decyzję.' },
+    { id: 'wersja', label: 'Wtyczka',             opis: 'Przychodzi przy włączonym „Powiadomieniu poza panelem” w sekcji Nowa wersja wtyczki.' },
   ];
   var NTFY_EVENTS = {
     captcha:      { grupa: 'czeka',  prio: 5, prog: false, label: 'CAPTCHA zatrzymała wyszukiwanie',   opis: 'Google prosi o weryfikację — wyszukiwanie stoi do odklikania' },
@@ -487,6 +490,7 @@
     scanDone:     { grupa: 'koniec', prio: 3, prog: true,  label: 'Skan newsów zakończony',            opis: 'Strony przeskanowane i ocenione' },
     tagError:     { grupa: 'blad',   prio: 4, prog: false, label: 'Błąd tagowania',                    opis: 'Tagowanie przerwane — z podpowiedzią, co zrobić' },
     collectError: { grupa: 'blad',   prio: 4, prog: false, label: 'Błąd wyszukiwania kampanii',        opis: 'Wyszukiwanie zaawansowane Google przerwane błędem' },
+    update:       { grupa: 'wersja', prio: 3, prog: false, label: 'Nowa wersja wtyczki',               opis: 'Wersja z Twojego kanału czeka na instalację' },
   };
 
   function _ntfyDefaultEvents() {
@@ -11844,11 +11848,13 @@
     } catch(e) {}
   }
 
-  // Koniec: trzy rosnące tony; błąd: dwa opadające; captcha: 1,5 s alarmu z wyszukiwania kampanii (podgląd).
+  // Koniec: trzy rosnące tony; błąd: dwa opadające; captcha: 1,5 s alarmu z wyszukiwania kampanii (podgląd);
+  // nowa wersja: dwa rosnące tony, gdy powiadomienie systemowe jest niedostępne (_updNotify).
   function _sndPlay(kind) {
     if (kind === 'done') _sndTones([523.25, 659.25, 783.99], 'sine', 0.13, 0.45);
     else if (kind === 'error') _sndTones([493.88, 349.23], 'triangle', 0.22, 0.5);
     else if (kind === 'captcha' && !_gsAlarm.on) { _gsAlarmSound(); setTimeout(_gsAlarmSilence, 1500); }
+    else if (kind === 'update') _sndTones([659.25, 987.77], 'sine', 0.16, 0.6);
   }
 
   // ───────────────────────────────────────────
@@ -20661,6 +20667,24 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.12",
+      "date": "2026-10-03",
+      "label": "new",
+      "changes": [
+        {
+          "type": "new",
+          "area": "Powiadomienia",
+          "title": "Nowa wersja wtyczki widoczna także poza panelem",
+          "items": [
+            "Gdy wyjdzie nowa wersja, wtyczka wysyła powiadomienie systemowe; kliknięcie przenosi do karty Brand24 i pokazuje okienko instalacji.",
+            "Tytuł karty Brand24 w tle miga, dopóki ktoś do niej nie zajrzy, a z włączonym ntfy powiadomienie przychodzi też na telefon.",
+            "Przełącznik „Powiadomienie poza panelem” w Ustawieniach → Powiadomienia: bez własnego wyboru włączony na Stabilnym, wyłączony na Experimental."
+          ],
+          "text": "Nowa wersja wtyczki widoczna także poza panelem. Gdy wyjdzie nowa wersja, wtyczka wysyła powiadomienie systemowe; kliknięcie przenosi do karty Brand24 i pokazuje okienko instalacji. Tytuł karty Brand24 w tle miga, dopóki ktoś do niej nie zajrzy, a z włączonym ntfy powiadomienie przychodzi też na telefon. Przełącznik „Powiadomienie poza panelem” w Ustawieniach → Powiadomienia: bez własnego wyboru włączony na Stabilnym, wyłączony na Experimental."
+        }
+      ]
+    },
+    {
       "version": "0.38.11",
       "date": "2026-10-03",
       "label": "new",
@@ -21060,76 +21084,6 @@
           "text": "Naprawiono szarą kropkę tokenu Brand24 po przeładowaniu strony. Kropka zielenieje przy pierwszym zapytaniu Brand24 z tokenem, także gdy strona wysłała je przed otwarciem panelu."
         }
       ]
-    },
-    {
-      "version": "0.38.2",
-      "date": "2026-10-03",
-      "label": "new",
-      "changes": [
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Samouczki funkcji i okno „Pomoc i samouczki” zamiast trybu pomocy",
-          "items": [
-            "Samouczki pokazują nowy wygląd, tagowanie z pliku, przegląd sentymentu i AI Tag. Każdy krok wskazuje element panelu i daje jedno zadanie do wykonania.",
-            "Przy pierwszym użyciu funkcji wtyczka raz proponuje jej samouczek. Wszystkie są też pod znakiem zapytania w nagłówku panelu i w palecie poleceń.",
-            "Krok przechodzi dalej sam po wykonaniu zadania, ale czeka, dopóki kursor albo fokus jest w dymku. „Wstecz” wraca do poprzedniego kroku.",
-            "Opisy pól i przycisków są w dymkach i w okienkach (i) obok pól."
-          ],
-          "comment": "Tryb pomocy pokazywał opisy całego panelu naraz. Samouczek zjawia się przy funkcji, której ktoś właśnie zaczyna używać, i pozwala ją wypróbować na miejscu.",
-          "text": "Samouczki funkcji i okno „Pomoc i samouczki” zamiast trybu pomocy. Samouczki pokazują nowy wygląd, tagowanie z pliku, przegląd sentymentu i AI Tag. Każdy krok wskazuje element panelu i daje jedno zadanie do wykonania. Przy pierwszym użyciu funkcji wtyczka raz proponuje jej samouczek. Wszystkie są też pod znakiem zapytania w nagłówku panelu i w palecie poleceń. Krok przechodzi dalej sam po wykonaniu zadania, ale czeka, dopóki kursor albo fokus jest w dymku. „Wstecz” wraca do poprzedniego kroku. Opisy pól i przycisków są w dymkach i w okienkach (i) obok pól."
-        },
-        {
-          "type": "improved",
-          "area": "Narzędzia annotatora",
-          "title": "Plakietka szybkości Brand24 porównuje zapytania z ich zwykłym czasem",
-          "items": [
-            "Każde zapytanie jest mierzone względem swojego zwykłego czasu, więc z natury wolne zapytanie nie podnosi alarmu.",
-            "Stan wynika z ostatnich 9 zapytań z minuty: „Brand24 wolniej” przy dwukrotnie dłuższym czasie, „Brand24 bardzo wolno” przy czterokrotnie, „Brand24: błędy” przy 3 błędach serwera albo braku odpowiedzi.",
-            "Lepszy stan wraca po 15 s bez spowolnień. Kliknięcie plakietki otwiera Network Monitor.",
-            "Network Monitor pokazuje w dymku czasu, ile razy wolniej od zwykłego poszło zapytanie."
-          ],
-          "comment": "Jedno wolniejsze zapytanie raz na jakiś czas wystarczało, żeby plakietka ogłaszała wolne zapytania. Mierzymy więc każde zapytanie jego własną miarą.",
-          "text": "Plakietka szybkości Brand24 porównuje zapytania z ich zwykłym czasem. Każde zapytanie jest mierzone względem swojego zwykłego czasu, więc z natury wolne zapytanie nie podnosi alarmu. Stan wynika z ostatnich 9 zapytań z minuty: „Brand24 wolniej” przy dwukrotnie dłuższym czasie, „Brand24 bardzo wolno” przy czterokrotnie, „Brand24: błędy” przy 3 błędach serwera albo braku odpowiedzi. Lepszy stan wraca po 15 s bez spowolnień. Kliknięcie plakietki otwiera Network Monitor. Network Monitor pokazuje w dymku czasu, ile razy wolniej od zwykłego poszło zapytanie."
-        },
-        {
-          "type": "improved",
-          "area": "Quick Delete",
-          "title": "Brak dostępu do projektów innych kont opisany zamiast błędu",
-          "items": [
-            "Okno „Wszystkie projekty” rozróżnia niezalogowany CMS, przy którym jest przycisk „Otwórz CMS”, i konto bez uprawnień do projektu mimo zalogowania.",
-            "Błędy z wielu projektów zbierają się w jedno powiadomienie zamiast serii błędów w logu."
-          ],
-          "text": "Brak dostępu do projektów innych kont opisany zamiast błędu. Okno „Wszystkie projekty” rozróżnia niezalogowany CMS, przy którym jest przycisk „Otwórz CMS”, i konto bez uprawnień do projektu mimo zalogowania. Błędy z wielu projektów zbierają się w jedno powiadomienie zamiast serii błędów w logu."
-        },
-        {
-          "type": "fix",
-          "area": "Panel",
-          "title": "Naprawiono poziomy suwak strony przy panelu przyklejonym z prawej",
-          "items": [
-            "Strona Brand24 zwęża się o szerokość przyklejonego panelu."
-          ],
-          "text": "Naprawiono poziomy suwak strony przy panelu przyklejonym z prawej. Strona Brand24 zwęża się o szerokość przyklejonego panelu."
-        },
-        {
-          "type": "fix",
-          "area": "Panel",
-          "title": "Naprawiono kropkę przy „⋯”, po której w menu nie było widać nowości",
-          "items": [
-            "Kropka i zielony dopisek „nowa wersja” stoją przy pozycji „Dziennik zmian”."
-          ],
-          "text": "Naprawiono kropkę przy „⋯”, po której w menu nie było widać nowości. Kropka i zielony dopisek „nowa wersja” stoją przy pozycji „Dziennik zmian”."
-        },
-        {
-          "type": "fix",
-          "area": "Panel",
-          "title": "Naprawiono linię, która przy niskim panelu przecinała tekst nad stopką",
-          "items": [
-            "Gdy treść ciągnie się pod stopką, stopka rzuca cień w górę. Napis „Gotowy do startu” nie wygląda więc na odwołany."
-          ],
-          "text": "Naprawiono linię, która przy niskim panelu przecinała tekst nad stopką. Gdy treść ciągnie się pod stopką, stopka rzuca cień w górę. Napis „Gotowy do startu” nie wygląda więc na odwołany."
-        }
-      ]
     }
   ];
 
@@ -21145,6 +21099,7 @@
     running: 'b24t_latest_running',    // najnowsza wersja uruchomiona w którejkolwiek karcie
     pending: 'b24t_update_pending',    // {kind: highlights|changelog, from, to}: okno czeka na pierwsze otwarcie panelu
     cache:   'b24t_rel_cache_',        // + plik: {t, data}
+    announced: 'b24t_update_announced', // {version, seen}: nowa wersja ogłoszona poza panelem (_updAnnounce), seen: któraś karta ją widziała
   };
   const UPD_EVERY_MS = 30 * 60 * 1000;
   const UPD_LATER_MS = 24 * 60 * 60 * 1000;
@@ -21765,6 +21720,7 @@
       _relGmSet(key, { t: Date.now(), remote: remote || (prev ? prev.remote : null), err: !remote });
       _upd.checking = false;
       _updApply();
+      _updAnnounce(manual);
       if (!manual) return;
       if (!remote) _updOpenCard('error');
       else if (_relCmp(remote, VERSION) > 0) _updOpenCard('new');
@@ -21782,6 +21738,7 @@
     if (_upd.card === 'updated' && !(notice && notice.to === VERSION)) _updCloseCard();
     _connRender();
     _updSideDot();
+    _updTitleSync();
     if (_upd.card) _updRenderCard();
     else _updMaybeOpen();
   }
@@ -21853,6 +21810,64 @@
     var at = d.toLocaleString('pl-PL', today ? { hour: '2-digit', minute: '2-digit' } : { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
     return { state: 'ok', label: 'Wersja ' + VERSION + ', najnowsza', hint: chan + ', sprawdzono ' + at };
   }
+  // ── Nowa wersja poza panelem ──
+  // Wersje stabilne wychodzą rzadko i mają dotrzeć także do osób, które nie patrzą na panel: powiadomienie systemowe
+  // (bez niego sygnał), ntfy i migający tytuł kart Brand24 w tle. Ogłoszenie raz na wersję dla wszystkich kart
+  // (REL_GM.announced) i tylko z karty, która sama sprawdziła wersję (_updCheck). Tytuł miga, dopóki któraś karta
+  // Brand24 nie stanie się widoczna.
+  var UPD_TITLE = '● Nowa wersja B24 Tagger';
+  var _updBlink = { iv: null, base: '' };
+  function _updLoud() {
+    var v = gmGet(PREF.UPD_LOUD, null);
+    return typeof v === 'boolean' ? v : _relChannel() === 'stable';
+  }
+  // quiet: sprawdzenie ręczne. Wynik widać od razu w powiadomieniu w panelu, więc wersja liczy się jako ogłoszona.
+  function _updAnnounce(quiet) {
+    var r = _upd.remote, a = _relGm(REL_GM.announced, null);
+    if (!r || _upd.refresh || (a && a.version === r)) return;
+    if (quiet || !_updLoud()) { _relGmSet(REL_GM.announced, { version: r, seen: true }); return; }
+    _relGmSet(REL_GM.announced, { version: r, seen: !document.hidden });
+    _updNotify('B24 Tagger ' + r, 'Nowa wersja wtyczki. Kliknij, żeby przejść do Brand24 i ją zainstalować.');
+    _ntfySend({ ev: 'update', title: 'B24 Tagger ' + r, message: 'Nowa wersja wtyczki czeka na instalację w panelu Brand24.',
+      tags: ['arrow_up'], click: location.href });
+    _updTitleSync();
+  }
+  // Powiadomienie systemowe Tampermonkeya (@grant GM_notification), a bez tego uprawnienia sygnał dźwiękowy.
+  // Kliknięcie przenosi do karty, z której wyszło, i pokazuje panel z powiadomieniem nowej wersji (próbne nic nie otwiera).
+  function _updNotify(title, text) {
+    if (typeof GM_notification !== 'function') { _sndPlay('update'); return; }
+    GM_notification({ title: title, text: text, onclick: function () {
+      window.focus();
+      var w = Win.get('panel');
+      if (w && w.hidden) _panelHide(false);
+      else if (w && w.collapsed) Win.expand('panel');
+      // Kliknięcie to wyraźna prośba, więc powiadomienie w panelu pokazuje się mimo wcześniejszego „Później”.
+      if (_upd.remote && !_upd.refresh && !_upd.card) _updOpenCard(_upd.installFor === _upd.remote ? 'installed' : 'new');
+    } });
+  }
+  // Brand24 zmienia tytuł przy nawigacji, więc tytuł strony zapamiętuje się przy każdym takcie.
+  function _updTitleSync() {
+    var a = _relGm(REL_GM.announced, null);
+    var want = !!(a && !a.seen && a.version === _upd.remote && document.hidden);
+    if (want === !!_updBlink.iv) return;
+    if (want) {
+      _updBlink.base = document.title;
+      _updBlink.iv = setInterval(function () {
+        var t = document.title;
+        if (t !== UPD_TITLE) _updBlink.base = t;
+        document.title = t === UPD_TITLE ? _updBlink.base : UPD_TITLE;
+      }, 1000);
+      return;
+    }
+    clearInterval(_updBlink.iv);
+    _updBlink.iv = null;
+    if (document.title === UPD_TITLE) document.title = _updBlink.base;
+  }
+  function _updSeen() {
+    var a = _relGm(REL_GM.announced, null);
+    if (a && !a.seen) _relGmSet(REL_GM.announced, { version: a.version, seen: true });
+  }
+
   function _updSideDot() {
     var tab = _$('b24t-panel-side-tab');
     if (!tab) return;
@@ -22061,17 +22076,22 @@
 
     new MutationObserver(_updOnPanelChange).observe(panel, { attributes: true, attributeFilter: ['class', 'style', 'hidden'] });
     document.addEventListener('visibilitychange', function() {
-      if (document.hidden) return;
-      _updCheck(false);
-      _updOnPanelChange();
+      if (!document.hidden) {
+        _updSeen();
+        _updCheck(false);
+        _updOnPanelChange();
+      }
+      _updTitleSync();
     });
-    [REL_GM.check + 'stable', REL_GM.check + 'experimental', REL_GM.running, REL_GM.notice].forEach(function(k) {
+    [REL_GM.check + 'stable', REL_GM.check + 'experimental', REL_GM.running, REL_GM.notice, REL_GM.announced].forEach(function(k) {
       GM_addValueChangeListener(k, function(name, oldV, newV, remote) { if (remote) _updApply(); });
     });
     _upd.ready = _updPanelReady();
     setTimeout(_updApply, 1500);
     setTimeout(function() { _updCheck(false); }, 5000);
-    setInterval(function() { if (!document.hidden) _updCheck(false); }, 5 * 60 * 1000);
+    // Także w karcie w tle: nowa wersja ma dotrzeć do osoby, która nie patrzy na Brand24. Zapytanie i tak idzie
+    // najwyżej raz na UPD_EVERY_MS ze wszystkich kart (_updCheck).
+    setInterval(function() { _updCheck(false); }, 5 * 60 * 1000);
   }
   // Okno odłożone do pierwszego otwarcia panelu leży też w GM: lastRun ma już bieżącą wersję, więc przeładowanie
   // strony przed otwarciem panelu gubiło okno dużej zmiany i dziennik po ręcznej instalacji na zawsze.
@@ -23224,6 +23244,13 @@
     }).join('');
     var ntfyOn = _ntfyGetCfg().enabled;
     pane.innerHTML =
+      '<section class="b-set-sec"><h3 class="b-set-sec__title">Nowa wersja wtyczki</h3>' +
+        _setRow('Powiadomienie poza panelem', 'Powiadomienie systemowe, telefon przez ntfy i migający tytuł karty Brand24 w tle. ' +
+          'Bez własnego wyboru włączone na Stabilnym, wyłączone na Experimental. Powiadomienie systemowe wymaga zgody ' +
+          'na powiadomienia dla przeglądarki w ustawieniach systemu (Windows albo macOS).',
+          '<div class="b-row"><button type="button" class="b-ibtn b-ibtn--sm" id="b24t-set-upd-try" aria-label="Wypróbuj powiadomienie o nowej wersji" data-tip="Wypróbuj">' + _icon('play') + '</button>' +
+          '<span class="b-switch"><input type="checkbox" role="switch" id="b24t-set-upd-loud" aria-label="Powiadomienie poza panelem"' + (_updLoud() ? ' checked' : '') + '></span></div>') +
+      '</section>' +
       '<section class="b-set-sec"><h3 class="b-set-sec__title">Dźwięki</h3>' +
         SND_ROWS.map(function (r) {
           return _setRow(r[1], r[2], '<div class="b-row">' +
@@ -23271,6 +23298,13 @@
     pane.addEventListener('click', function (e) {
       var b = e.target.closest('[data-snd-play]');
       if (b) _sndPlay(b.dataset.sndPlay);
+    });
+    pane.querySelector('#b24t-set-upd-loud').addEventListener('change', function (e) {
+      gmSet(PREF.UPD_LOUD, e.target.checked);
+      ctx.saved();
+    });
+    pane.querySelector('#b24t-set-upd-try').addEventListener('click', function () {
+      _updNotify('B24 Tagger: próbne powiadomienie', 'Tak wygląda powiadomienie o nowej wersji wtyczki.');
     });
     _ntfyWire(pane, ctx);
   }

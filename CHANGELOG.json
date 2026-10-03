@@ -1,5 +1,42 @@
 [
   {
+    "version": "0.38.10",
+    "date": "2026-10-03",
+    "label": "new",
+    "changes": [
+      {
+        "type": "improved",
+        "area": "Tagowanie z pliku",
+        "title": "Log pokazuje się razem z przebiegiem",
+        "items": [
+          "Karta logu w Plik i AI Tag pojawia się po kliknięciu Start albo „Taguj przez AI” i pokazuje wpisy tego przebiegu.",
+          "Po zakończeniu bez uwag karta zwija się do jednego wiersza z czasem i wynikiem; „Log” otwiera pełny log.",
+          "Po zakończeniu z uwagą albo błędem karta zostaje rozwinięta, a nagłówek podaje liczbę uwag; ✕ ją zamyka."
+        ],
+        "text": "Log pokazuje się razem z przebiegiem. Karta logu w Plik i AI Tag pojawia się po kliknięciu Start albo „Taguj przez AI” i pokazuje wpisy tego przebiegu. Po zakończeniu bez uwag karta zwija się do jednego wiersza z czasem i wynikiem; „Log” otwiera pełny log. Po zakończeniu z uwagą albo błędem karta zostaje rozwinięta, a nagłówek podaje liczbę uwag; ✕ ją zamyka."
+      },
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "Logi programistyczne w Ustawieniach → Aktualizacje",
+        "items": [
+          "Przełącznik pokazuje w logu wpisy techniczne: odświeżanie w tle, ponowienia zapytań i błędy przed ponowieniem.",
+          "Na kanale Experimental jest domyślnie włączony, na Stabilnym wyłączony; własny wybór zostaje przy zmianie kanału."
+        ],
+        "text": "Logi programistyczne w Ustawieniach → Aktualizacje. Przełącznik pokazuje w logu wpisy techniczne: odświeżanie w tle, ponowienia zapytań i błędy przed ponowieniem. Na kanale Experimental jest domyślnie włączony, na Stabilnym wyłączony; własny wybór zostaje przy zmianie kanału."
+      },
+      {
+        "type": "fix",
+        "area": "Panel",
+        "title": "Naprawiono pasek błędu po chwilowym błędzie Brand24, który ponowienie już naprawiło",
+        "items": [
+          "Pasek błędu pokazuje się dopiero, gdy zapytanie nie przejdzie po wszystkich ponowieniach."
+        ],
+        "text": "Naprawiono pasek błędu po chwilowym błędzie Brand24, który ponowienie już naprawiło. Pasek błędu pokazuje się dopiero, gdy zapytanie nie przejdzie po wszystkich ponowieniach."
+      }
+    ]
+  },
+  {
     "version": "0.38.9",
     "date": "2026-10-03",
     "label": "new",

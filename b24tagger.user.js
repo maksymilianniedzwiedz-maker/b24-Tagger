@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.9
+// @version      0.38.10
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -173,7 +173,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.9';
+  const VERSION = '0.38.10';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2108,7 +2108,8 @@
         504: '[BRAND24] Brand24 timeout (504) — spróbuj ponownie.',
       };
       const desc = _statusLabels[res.status] || `[BRAND24] Nieoczekiwany błąd HTTP ${res.status}`;
-      addLog(`✕ ${desc}\n  Operacja: ${operationName} | Odpowiedź: "${bodySnippet}"`, 'error');
+      // Błąd chwilowy: gqlRetry ponawia, a błąd użytkowy powstaje dopiero po wyczerpaniu ponowień (LOG.md §5.4).
+      addLog(`✕ ${desc}\n  Operacja: ${operationName} | Odpowiedź: "${bodySnippet}"`, 'error', { tech: true, key: 'gql.http' });
       throw new Error(`GRAPHQL_HTTP_ERROR_${res.status}`);
     }
     const data = await res.json();
@@ -2204,7 +2205,7 @@
         if (e.message === 'GRAPHQL_AUTH_ERROR' || e.message === 'GRAPHQL_PERMISSION_DENIED' || e.message === 'TOKEN_NOT_READY') throw e;
         if (i < retries - 1) {
           const ctx = _errContext(e.message);
-          addLog(`⚠ [${ctx.src}] Retry ${i + 1}/${retries - 1} dla ${operationName}: ${e.message}`, 'warn');
+          addLog(`⚠ [${ctx.src}] Retry ${i + 1}/${retries - 1} dla ${operationName}: ${e.message}`, 'warn', { tech: true, key: 'gql.retry' });
           await sleep(RETRY_DELAYS[i]);
         } else {
           const ctx = _errContext(e.message);
@@ -3655,6 +3656,8 @@
     if (_projectMoved()) return;
     if (_runConfirmKey() !== _runConfirmedKey && !(await _runConfirm())) return;
     state.status = 'running';
+    // Pauza nie kończy operacji w logu, błąd (pasek awarii → Wznów) kończy.
+    if (!_logRunLive('main')) _logRunStart('main', true);
     updateStatusUI();
     if (_runActive) return;
     const p = state.partitions[state.currentPartitionIdx];
@@ -4096,7 +4099,7 @@
       _diag.ev.push(e);
       if (_diag.ev.length > DIAG_MAX) _diag.ev.splice(0, _diag.ev.length - DIAG_MAX);
     }
-    var bad = e.k === 'err' || e.ok === false || (e.k === 'log' && e.type === 'error');
+    var bad = e.k === 'err' || e.ok === false || (e.k === 'log' && e.type === 'error' && !e.tech);
     if (bad) {
       _diag.errors++;
       _errBarShow(e);
@@ -4189,18 +4192,127 @@
   // LOGGING
   // ───────────────────────────────────────────
 
-  // type: info, success, warn, error, diag (panel loga), debug (tylko dziennik diagnostyczny).
+  // type: info, success, warn, error, diag (warstwa techniczna), debug (tylko dziennik diagnostyczny).
+  // extra (design/LOG.md §4): { tech: warstwa techniczna, key: rodzaj wpisu, run: operacja, details: szczegóły }.
+  // Wpis bez `run` należy do biegnącej operacji (_logRunStart). Wpisy techniczne widać tylko przy logach
+  // programistycznych (_devLogs); obie warstwy trafiają do dziennika diagnostycznego.
+  var LOG_MAX = 500;   // na warstwę: wpisy tła nie wypychają historii pracy
   function addLog(message, type = 'info', extra = null) {
-    _diagPush({ k: 'log', type: type, msg: String(message).slice(0, 2000) });
+    const x = extra || {}, tech = !!x.tech || type === 'diag';
+    _diagPush({ k: 'log', type: type, tech: tech || undefined, msg: String(message).slice(0, 2000) });
     if (type === 'debug') return;
     const now = new Date();
     const time = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
-    const entry = { time, message, type, timestamp: Date.now(), extra, seq: ++_logSeq };
+    const entry = { time, message, type, timestamp: Date.now(), tech: tech, key: x.key || null, run: x.run || _logRun.id,
+      details: x.details || null, seq: ++_logSeq };
     state.logs.push(entry);
-    if (state.logs.length > 500) state.logs.shift(); // keep last 500 in memory
+    if (state.logs.length > LOG_MAX) state.logs = _logCap(state.logs);
     state.lastActionTime = Date.now();
 
     _logQueue(entry);
+  }
+  // Najnowsze LOG_MAX wpisów każdej warstwy, w kolejności.
+  function _logCap(list) {
+    var n = { u: 0, t: 0 }, keep = [];
+    for (var i = list.length - 1; i >= 0; i--) {
+      var k = list[i].tech ? 't' : 'u';
+      if (n[k] < LOG_MAX) { n[k]++; keep.push(list[i]); }
+    }
+    return keep.reverse();
+  }
+
+  // Logi programistyczne (LOG.md §6): wpisy techniczne w logu i karta logu na stałe. Bez wyboru użytkownika wartość
+  // idzie za kanałem: włączone na Experimental, wyłączone na Stabilnym. Czytane przy każdym wierszu logu, więc
+  // w pamięci, czyszczone przy zmianie ustawień i kanału.
+  var _logDevCache = null;
+  function _devLogs() {
+    if (_logDevCache === null) {
+      var f = loadFeatures();
+      _logDevCache = typeof f.dev_logs === 'boolean' ? f.dev_logs : _relChannel() === 'experimental';
+    }
+    return _logDevCache;
+  }
+  function _logShown(e) { return !e.tech || _devLogs(); }
+
+  // ── Karta logu z operacją (LOG.md §5.1) ──
+  // Przy logach programistycznych karta stoi na stałe ze wszystkimi wpisami. Bez nich pojawia się z operacją swojej
+  // karty (Start w Plik, „Taguj przez AI” w AI Tag) i pokazuje tylko jej wpisy użytkowe; po zakończeniu bez uwag
+  // zwija się do wiersza podsumowania z „Log”, z uwagą albo błędem zostaje rozwinięta z ich liczbą w nagłówku.
+  // Znika po ✕, przy kolejnym starcie i przy wczytaniu kolejnego pliku.
+  var LOG_CARDS = { main: ['b24t-log-section', 'b24t-log', 'b24t-log-title'], aitag: ['b24t-ait-log-section', 'b24t-ait-log', 'b24t-ait-log-title'] };
+  var _logRun = { id: null, kind: null }, _logRunN = 0, _logCard = {};
+  function _logHHMM() { var d = new Date(); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+  // resume: wznowienie po błędzie — dalsze wpisy należą do tej samej operacji, karta wraca do trybu przebiegu.
+  function _logRunStart(kind, resume) {
+    var c = _logCard[kind];
+    if (resume && c) {
+      c.to = null;
+      c.closed = false;
+    } else {
+      c = _logCard[kind] = { run: kind + '-' + (++_logRunN), from: _logHHMM(), to: null, summary: '', issues: 0, closed: false };
+    }
+    c.live = true;
+    _logRun = { id: c.run, kind: kind };
+    _logCardsSync(kind, true);
+  }
+  function _logRunLive(kind) { return !!(_logCard[kind] && _logCard[kind].live); }
+  // Plik i AI Tag mogą biec naraz: wpisy bez `run` idą do później rozpoczętej operacji, a po jej końcu do drugiej.
+  function _logRunEnd(kind, summary) {
+    var c = _logCard[kind];
+    if (!_logRunLive(kind)) return;
+    c.live = false;
+    c.to = _logHHMM();
+    c.summary = summary || '';
+    c.issues = state.logs.filter(function (e) { return e.run === c.run && !e.tech && (e.type === 'warn' || e.type === 'error'); }).length;
+    if (_logRun.kind === kind) {
+      var other = Object.keys(_logCard).filter(_logRunLive)[0];
+      _logRun = other ? { id: _logCard[other].run, kind: other } : { id: null, kind: null };
+    }
+    _logCardsSync(kind);
+  }
+  function _logCardClose(kind) {
+    if (_logCard[kind]) _logCard[kind].closed = true;
+    _logCardsSync(kind);
+  }
+  // Wpisy karty: przy logach programistycznych wszystkie widoczne, inaczej wpisy użytkowe operacji karty.
+  function _logCardPred(kind) {
+    if (_devLogs()) return _logShown;
+    var c = _logCard[kind];
+    return function (e) { return !!c && !e.tech && e.run === c.run; };
+  }
+  function _logCardMode(kind) {
+    var c = _logCard[kind];
+    if (_devLogs()) return 'all';
+    if (!c || c.closed) return 'off';
+    return c.to && !c.issues ? 'summary' : 'run';
+  }
+  // redraw: lista od nowa (zmiana operacji albo trybu).
+  function _logCardsSync(only, redraw) {
+    Object.keys(LOG_CARDS).forEach(function (kind) {
+      if (only && kind !== only) return;
+      var ids = LOG_CARDS[kind], sec = _$(ids[0]), list = _$(ids[1]), title = _$(ids[2]);
+      if (!sec) return;
+      var c = _logCard[kind], mode = _logCardMode(kind), key = mode + ':' + (c ? c.run : '');
+      sec.hidden = mode === 'off';
+      sec.dataset.mode = mode;
+      title.textContent = mode === 'run' && c.to && c.issues ? 'Log · ' + _plPl(c.issues, 'uwaga', 'uwagi', 'uwag') : 'Log';
+      var sum = sec.querySelector('.b-logcard__sum'), close = sec.querySelector('[data-logcard-close]');
+      sum.hidden = mode !== 'summary';
+      // Wynik przed godzinami: w wąskim panelu tekst się zawija, a wynik ma zostać w pierwszej linii. Twarda spacja
+      // po liczbie i nierozdzielne godziny przenoszą łamanie na „·”.
+      if (mode === 'summary') {
+        sum.querySelector('[data-sum-res]').textContent = c.summary ? c.summary.replace(/(\d) /g, '$1\u00a0') + ' · ' : '';
+        sum.querySelector('.b-logcard__time').textContent = c.from === c.to ? c.from : c.from + '–' + c.to;
+      }
+      close.hidden = !(mode === 'run' && c.to);
+      if (redraw || sec.dataset.key !== key) {
+        sec.dataset.key = key;
+        list.textContent = '';
+        list.__logSeq = 0;
+        _appendLogRows(list, state.logs.filter(_logCardPred(kind)));
+        list.scrollTop = list.scrollHeight;
+      }
+    });
   }
 
   // Wpisy trafiają do logów kart (Plik, AI Tag) i do okna logu raz na klatkę. Odczyt położenia przewinięcia przy
@@ -4219,11 +4331,12 @@
   function _logFlush() {
     var batch = _logPending;
     _logPending = [];
-    var tabs = [_$('b24t-log'), _$('b24t-ait-log')].filter(Boolean), w = Win.get('log');
+    var kinds = Object.keys(LOG_CARDS).filter(function(k) { return _$(LOG_CARDS[k][1]); }), w = Win.get('log');
+    var tabs = kinds.map(function(k) { return _$(LOG_CARDS[k][1]); });
     // Najpierw wszystkie odczyty, potem zapisy.
     var ends = tabs.map(_logAtEnd), wEnd = w && _logAtEnd(w.main);
     tabs.forEach(function(log, i) {
-      _appendLogRows(log, batch);
+      _appendLogRows(log, batch.filter(_logCardPred(kinds[i])));
       if (ends[i]) log.scrollTop = log.scrollHeight;
     });
     if (w) _syncLogPanel(w, batch, wEnd);
@@ -4337,6 +4450,11 @@
     if (stopBtn) stopBtn.hidden = state.status !== 'running' && state.status !== 'paused';
     _panelPill();
     _updOnStatus();
+    // Koniec przebiegu z pliku: zakończony, błąd albo Stop (pauza go nie kończy).
+    if (_logRunLive('main') && (state.status === 'done' || state.status === 'error' || state.status === 'idle')) {
+      var ls = state.stats || {};
+      _logRunEnd('main', _plPl(ls.tagged || 0, 'otagowana', 'otagowane', 'otagowanych') + ' · ' + _plPl(ls.skipped || 0, 'pominięta', 'pominięte', 'pominiętych'));
+    }
   }
 
   // Pigułka zwiniętego panelu (SURFACES.md §4.1): w trakcie przebiegu „37 z 108” z paskiem, po zakończeniu
@@ -5725,6 +5843,13 @@
 
       /* Log w karcie: rośnie do wysokości panelu, przewija się sam. */
       .b-logcard { flex: 1 1 auto; min-height: 13em; }
+      /* Po czystym zakończeniu operacji karta to jeden wiersz podsumowania (LOG.md §5.1) i przestaje się rozciągać. */
+      .b-logcard[data-mode="summary"] { flex: 0 0 auto; min-height: 0; }
+      .b-logcard[data-mode="summary"] > :is(.b-card__head, .b-log) { display: none; }
+      .b-logcard__sum { display: flex; align-items: center; gap: 0.5em; min-width: 0; }
+      .b-logcard__sum > svg { width: 1.1em; height: 1.1em; color: var(--c-ok); flex-shrink: 0; }
+      .b-logcard__text { min-width: 0; color: var(--c-text2); }
+      .b-logcard__time { white-space: nowrap; }
       .b-log {
         flex: 1 1 0; min-height: 6em; display: flex; flex-direction: column; gap: 0.35em; margin: 0 -0.25em; padding: 0 0.25em;
         font-size: max(12px, 0.923em); --b-fade: var(--c-card);
@@ -9594,7 +9719,11 @@
             <span class="b-sp"></span>
             <button type="button" class="b-ibtn b-ibtn--sm" id="b24t-log-clear" aria-label="Wyczyść log" data-tip="Wyczyść log">${_icon('del')}</button>
             <button type="button" class="b-ibtn b-ibtn--sm" id="b24t-log-expand" aria-label="Otwórz okno logu" data-tip="Otwórz okno logu">${_icon('external')}</button>
+            <button type="button" class="b-ibtn b-ibtn--sm" data-logcard-close="main" aria-label="Zamknij log przebiegu" data-tip="Zamknij" hidden>${_icon('x')}</button>
           </div>
+          <div class="b-logcard__sum" hidden>${_icon('okCircle')}<span class="b-logcard__text"><span data-sum-res></span><span class="b-logcard__time"></span></span><span class="b-sp"></span>
+            <button type="button" class="b-btn b-btn--quiet b-btn--sm" data-logcard-open>Log</button>
+            <button type="button" class="b-ibtn b-ibtn--sm" data-logcard-close="main" aria-label="Zamknij podsumowanie" data-tip="Zamknij">${_icon('x')}</button></div>
           <ol id="b24t-log" class="b-log b-scroll" aria-live="polite"></ol>
         </section>
 
@@ -10104,6 +10233,11 @@
     panel.querySelector('#b24t-btn-palette').addEventListener('click', () => Palette.open());
 
     panel.querySelector('#b24t-conn').addEventListener('click', _connMenu);
+    panel.addEventListener('click', function(e) {
+      var x = e.target.closest('[data-logcard-close]');
+      if (x) { _logCardClose(x.dataset.logcardClose); return; }
+      if (e.target.closest('[data-logcard-open]')) openLogPanel();
+    });
     // Wydatki AI z innej karty (drugi panel Brand24, News) zmieniają stan limitu.
     try { GM_addValueChangeListener(AI_SPEND_GM, function(n, o, v, remote) { if (remote) { _conn.ai = null; _connRender(); } }); } catch (e) {}
 
@@ -10243,6 +10377,7 @@
 
   async function handleFileUpload(file) {
     if (!file) return;
+    if (state.status !== 'running' && state.status !== 'paused') _logCardClose('main');
     // Wznowienie nie przechodzi przez potwierdzenia z initRun (usuwanie, sentyment), więc plik podmieniony w pauzie
     // ruszał po „Wznów” bez nich. Jak przy usuwaniu pliku: najpierw Stop.
     if (state.status === 'running' || state.status === 'paused') {
@@ -10966,6 +11101,7 @@
     state.stats = { tagged: 0, skipped: 0, noMatch: 0, conflicts: 0 };
     state.conflictSticky = null;
     state.currentPartitionIdx = 0;
+    _logRunStart('main');
     updateStatusUI();
 
     addLog(`▶ Start ${state.testRunMode ? '[TEST RUN]' : '[WŁAŚCIWY]'} — projekt ${state.projectName}`, 'success');
@@ -20518,6 +20654,43 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.10",
+      "date": "2026-10-03",
+      "label": "new",
+      "changes": [
+        {
+          "type": "improved",
+          "area": "Tagowanie z pliku",
+          "title": "Log pokazuje się razem z przebiegiem",
+          "items": [
+            "Karta logu w Plik i AI Tag pojawia się po kliknięciu Start albo „Taguj przez AI” i pokazuje wpisy tego przebiegu.",
+            "Po zakończeniu bez uwag karta zwija się do jednego wiersza z czasem i wynikiem; „Log” otwiera pełny log.",
+            "Po zakończeniu z uwagą albo błędem karta zostaje rozwinięta, a nagłówek podaje liczbę uwag; ✕ ją zamyka."
+          ],
+          "text": "Log pokazuje się razem z przebiegiem. Karta logu w Plik i AI Tag pojawia się po kliknięciu Start albo „Taguj przez AI” i pokazuje wpisy tego przebiegu. Po zakończeniu bez uwag karta zwija się do jednego wiersza z czasem i wynikiem; „Log” otwiera pełny log. Po zakończeniu z uwagą albo błędem karta zostaje rozwinięta, a nagłówek podaje liczbę uwag; ✕ ją zamyka."
+        },
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Logi programistyczne w Ustawieniach → Aktualizacje",
+          "items": [
+            "Przełącznik pokazuje w logu wpisy techniczne: odświeżanie w tle, ponowienia zapytań i błędy przed ponowieniem.",
+            "Na kanale Experimental jest domyślnie włączony, na Stabilnym wyłączony; własny wybór zostaje przy zmianie kanału."
+          ],
+          "text": "Logi programistyczne w Ustawieniach → Aktualizacje. Przełącznik pokazuje w logu wpisy techniczne: odświeżanie w tle, ponowienia zapytań i błędy przed ponowieniem. Na kanale Experimental jest domyślnie włączony, na Stabilnym wyłączony; własny wybór zostaje przy zmianie kanału."
+        },
+        {
+          "type": "fix",
+          "area": "Panel",
+          "title": "Naprawiono pasek błędu po chwilowym błędzie Brand24, który ponowienie już naprawiło",
+          "items": [
+            "Pasek błędu pokazuje się dopiero, gdy zapytanie nie przejdzie po wszystkich ponowieniach."
+          ],
+          "text": "Naprawiono pasek błędu po chwilowym błędzie Brand24, który ponowienie już naprawiło. Pasek błędu pokazuje się dopiero, gdy zapytanie nie przejdzie po wszystkich ponowieniach."
+        }
+      ]
+    },
+    {
       "version": "0.38.9",
       "date": "2026-10-03",
       "label": "new",
@@ -20948,256 +21121,6 @@
             "Krok czeka, aż przycisk myszy zostanie puszczony."
           ],
           "text": "Naprawiono samouczek, który przechodził dalej w trakcie przeciągania panelu. Krok czeka, aż przycisk myszy zostanie puszczony."
-        }
-      ]
-    },
-    {
-      "version": "0.38.0",
-      "date": "2026-10-03",
-      "label": "new",
-      "changes": [
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Nowy wygląd całej wtyczki",
-          "items": [
-            "Panel, przegląd sentymentu, News, Dashboard Annotatora, ustawienia i dzienniki mają jeden wygląd w jasnym i ciemnym motywie.",
-            "Okna przeciąga się, zmienia im rozmiar i przyciąga do krawędzi przeglądarki. Położenie jest zapamiętane osobno dla każdej szerokości ekranu.",
-            "Panel zwija się do pigułki, która w trakcie przebiegu pokazuje postęp.",
-            "Samouczek nowego wyglądu w kilku krokach pokazuje najważniejsze zmiany. Uruchamia się go z tego okna albo z menu „⋯” → Pomoc."
-          ],
-          "comment": "Wtyczka rosła przez kilkadziesiąt wersji i każde okno dostawało własny wygląd. Przebudowaliśmy wszystkie od zera w jednym systemie, żeby cały dzień pracy z nią mniej męczył oczy i ręce.",
-          "highlight": true,
-          "text": "Nowy wygląd całej wtyczki. Panel, przegląd sentymentu, News, Dashboard Annotatora, ustawienia i dzienniki mają jeden wygląd w jasnym i ciemnym motywie. Okna przeciąga się, zmienia im rozmiar i przyciąga do krawędzi przeglądarki. Położenie jest zapamiętane osobno dla każdej szerokości ekranu. Panel zwija się do pigułki, która w trakcie przebiegu pokazuje postęp. Samouczek nowego wyglądu w kilku krokach pokazuje najważniejsze zmiany. Uruchamia się go z tego okna albo z menu „⋯” → Pomoc."
-        },
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Paleta poleceń pod Ctrl+K i ściągawka skrótów pod „?”",
-          "items": [
-            "Paleta wyszukuje akcje i okna wtyczki po nazwie, także bez polskich znaków. Przycisk palety jest w menu „⋯”, a przy szerszym panelu także w nagłówku.",
-            "Klawisz „?” pokazuje skróty wszystkich otwartych okien."
-          ],
-          "text": "Paleta poleceń pod Ctrl+K i ściągawka skrótów pod „?”. Paleta wyszukuje akcje i okna wtyczki po nazwie, także bez polskich znaków. Przycisk palety jest w menu „⋯”, a przy szerszym panelu także w nagłówku. Klawisz „?” pokazuje skróty wszystkich otwartych okien."
-        },
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "„Cofnij” w powiadomieniu zamiast pytania przy akcjach odwracalnych",
-          "items": [
-            "Usunięcie grupy albo promptu i wyczyszczenie historii albo logu działają od razu, a powiadomienie przez 8 s pozwala je cofnąć.",
-            "Pytanie zostaje przy operacjach nieodwracalnych, np. usunięciu wzmianek w Brand24.",
-            "Powiadomienie o błędzie zostaje na ekranie do zamknięcia, a „Szczegóły” otwierają log."
-          ],
-          "text": "„Cofnij” w powiadomieniu zamiast pytania przy akcjach odwracalnych. Usunięcie grupy albo promptu i wyczyszczenie historii albo logu działają od razu, a powiadomienie przez 8 s pozwala je cofnąć. Pytanie zostaje przy operacjach nieodwracalnych, np. usunięciu wzmianek w Brand24. Powiadomienie o błędzie zostaje na ekranie do zamknięcia, a „Szczegóły” otwierają log."
-        },
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Okno logu z wyszukiwaniem i filtrem problemów",
-          "items": [
-            "Log otwiera się w osobnym oknie obok panelu. Przełącznik „Tylko problemy” zostawia ostrzeżenia i błędy.",
-            "„Kopiuj” i eksport CSV biorą wpisy widoczne po filtrze."
-          ],
-          "text": "Okno logu z wyszukiwaniem i filtrem problemów. Log otwiera się w osobnym oknie obok panelu. Przełącznik „Tylko problemy” zostawia ostrzeżenia i błędy. „Kopiuj” i eksport CSV biorą wpisy widoczne po filtrze."
-        },
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Ustawienia w jednym oknie, zapisywane od razu",
-          "items": [
-            "Zakładki Ogólne, AI, Prompty i Analityka. Zmiana zapisuje się od razu ze znacznikiem „Zapisano”.",
-            "Biblioteka promptów jest zakładką ustawień, a edytor promptu rozwija się do pełnego okna."
-          ],
-          "text": "Ustawienia w jednym oknie, zapisywane od razu. Zakładki Ogólne, AI, Prompty i Analityka. Zmiana zapisuje się od razu ze znacznikiem „Zapisano”. Biblioteka promptów jest zakładką ustawień, a edytor promptu rozwija się do pełnego okna."
-        },
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Dziennik zmian: „Co nowego” na żądanie i pomijanie wersji",
-          "items": [
-            "Przycisk w dzienniku zmian otwiera okno dużej zmiany w każdej chwili.",
-            "Powiadomienie o nowej wersji ma przycisk „Pomiń tę wersję” i wraca dopiero przy następnej wersji.",
-            "Znane problemy są widoczne przy każdym filtrze obszaru."
-          ],
-          "text": "Dziennik zmian: „Co nowego” na żądanie i pomijanie wersji. Przycisk w dzienniku zmian otwiera okno dużej zmiany w każdej chwili. Powiadomienie o nowej wersji ma przycisk „Pomiń tę wersję” i wraca dopiero przy następnej wersji. Znane problemy są widoczne przy każdym filtrze obszaru."
-        },
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Zgłoszenie błędu zachowuje szkic i wysyła się skrótem Ctrl+Enter",
-          "items": [
-            "Szkic zgłoszenia zostaje po zamknięciu okna i po przeładowaniu strony, a znika po wysłaniu.",
-            "Pasek błędu pokazuje pełną treść w dymku, a kliknięcie kopiuje ją do schowka."
-          ],
-          "text": "Zgłoszenie błędu zachowuje szkic i wysyła się skrótem Ctrl+Enter. Szkic zgłoszenia zostaje po zamknięciu okna i po przeładowaniu strony, a znika po wysłaniu. Pasek błędu pokazuje pełną treść w dymku, a kliknięcie kopiuje ją do schowka."
-        },
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Log nie spowalnia strony przy długich przebiegach",
-          "items": [
-            "Wpisy trafiają do logu raz na klatkę obrazu, więc seria setek wpisów nie blokuje strony."
-          ],
-          "text": "Log nie spowalnia strony przy długich przebiegach. Wpisy trafiają do logu raz na klatkę obrazu, więc seria setek wpisów nie blokuje strony."
-        },
-        {
-          "type": "improved",
-          "area": "Tagowanie z pliku",
-          "title": "Konflikt tagu rozstrzygany klawiszami 1–3, także dla całej sesji",
-          "items": [
-            "Okno konfliktu pokazuje do 160 znaków treści wzmianki.",
-            "„Zastosuj do kolejnych konfliktów w tej sesji” zapamiętuje decyzję do końca przebiegu."
-          ],
-          "text": "Konflikt tagu rozstrzygany klawiszami 1–3, także dla całej sesji. Okno konfliktu pokazuje do 160 znaków treści wzmianki. „Zastosuj do kolejnych konfliktów w tej sesji” zapamiętuje decyzję do końca przebiegu."
-        },
-        {
-          "type": "improved",
-          "area": "Tagowanie z pliku",
-          "title": "Komunikaty i lista wzmianek bez dopasowania w oknach wtyczki",
-          "items": [
-            "Błędy pokazują się w powiadomieniu wtyczki, a lista wzmianek bez dopasowania w jej oknie, zamiast okienek przeglądarki, które blokowały stronę."
-          ],
-          "text": "Komunikaty i lista wzmianek bez dopasowania w oknach wtyczki. Błędy pokazują się w powiadomieniu wtyczki, a lista wzmianek bez dopasowania w jej oknie, zamiast okienek przeglądarki, które blokowały stronę."
-        },
-        {
-          "type": "improved",
-          "area": "Quick Delete",
-          "title": "Usuwanie: jedno potwierdzenie z kompletem danych i przycisk „Zatrzymaj”",
-          "items": [
-            "Okno potwierdzenia podaje liczbę wzmianek, tag, zakres dat i projekt.",
-            "„Zatrzymaj” przerywa usuwanie po bieżącej partii, także przy usuwaniu ze wszystkich projektów."
-          ],
-          "text": "Usuwanie: jedno potwierdzenie z kompletem danych i przycisk „Zatrzymaj”. Okno potwierdzenia podaje liczbę wzmianek, tag, zakres dat i projekt. „Zatrzymaj” przerywa usuwanie po bieżącej partii, także przy usuwaniu ze wszystkich projektów."
-        },
-        {
-          "type": "improved",
-          "area": "Przegląd sentymentu",
-          "title": "Przegląd sentymentu: filtr, nowe skróty i zapis widocznych z „Cofnij”",
-          "items": [
-            "Nad kafelkami jest wyszukiwanie po treści i autorze oraz wybór źródła.",
-            "Spacja rozwija treść, O otwiera źródło wzmianki, a Z cofa ostatnią decyzję.",
-            "„Zapisz widoczne” zapisuje grupę „Zgodna zmiana” bez pytania, a powiadomienie pozwala cofnąć całą grupę.",
-            "Po ostatnim kafelku pojawia się „Wszystkie załatwione” z pobraniem dziennika decyzji."
-          ],
-          "text": "Przegląd sentymentu: filtr, nowe skróty i zapis widocznych z „Cofnij”. Nad kafelkami jest wyszukiwanie po treści i autorze oraz wybór źródła. Spacja rozwija treść, O otwiera źródło wzmianki, a Z cofa ostatnią decyzję. „Zapisz widoczne” zapisuje grupę „Zgodna zmiana” bez pytania, a powiadomienie pozwala cofnąć całą grupę. Po ostatnim kafelku pojawia się „Wszystkie załatwione” z pobraniem dziennika decyzji."
-        },
-        {
-          "type": "improved",
-          "area": "Narzędzia annotatora",
-          "title": "Dashboard Annotatora: wyszukiwanie projektów i Overall bez ponownego liczenia",
-          "items": [
-            "Zakładka Tagi i edytor grupy mają wyszukiwanie projektów. W edytorze Enter zapisuje grupę, a Esc zamyka okno.",
-            "Overall pamięta policzone miesiące: wynik sprzed 5 minut pokazuje się bez liczenia, starszy od razu i liczy się w tle.",
-            "Network Monitor ma pole wyszukiwania obok wyboru typu zapytań."
-          ],
-          "text": "Dashboard Annotatora: wyszukiwanie projektów i Overall bez ponownego liczenia. Zakładka Tagi i edytor grupy mają wyszukiwanie projektów. W edytorze Enter zapisuje grupę, a Esc zamyka okno. Overall pamięta policzone miesiące: wynik sprzed 5 minut pokazuje się bez liczenia, starszy od razu i liczy się w tle. Network Monitor ma pole wyszukiwania obok wyboru typu zapytań."
-        },
-        {
-          "type": "improved",
-          "area": "Dodawanie wzmianek",
-          "title": "News w nowym oknie z wyszukiwaniem po domenie i tytule",
-          "items": [
-            "Lista adresów ma pole wyszukiwania po domenie i tytule.",
-            "Lista tagów ma filtr po nazwie."
-          ],
-          "text": "News w nowym oknie z wyszukiwaniem po domenie i tytule. Lista adresów ma pole wyszukiwania po domenie i tytule. Lista tagów ma filtr po nazwie."
-        },
-        {
-          "type": "improved",
-          "area": "Kampanie H&M",
-          "title": "Zbieranie adresów w pływającym oknie z podglądem koszyka",
-          "items": [
-            "Okno zwija się do pigułki z liczbą adresów w koszyku i stanem przebiegu.",
-            "Przy captchy okno rozwija się w alarm w rogu, który nie zasłania testu.",
-            "Podgląd koszyka pozwala usunąć adres, a „Cofnij” przywraca go przez 8 s."
-          ],
-          "text": "Zbieranie adresów w pływającym oknie z podglądem koszyka. Okno zwija się do pigułki z liczbą adresów w koszyku i stanem przebiegu. Przy captchy okno rozwija się w alarm w rogu, który nie zasłania testu. Podgląd koszyka pozwala usunąć adres, a „Cofnij” przywraca go przez 8 s."
-        },
-        {
-          "type": "fix",
-          "area": "Tagowanie z pliku",
-          "title": "Naprawiono wznowienie po pauzie, które pomijało resztę przerwanej partycji",
-          "items": [
-            "Start po pauzie powtarza przerwaną partycję od początku, a otagowane wzmianki są pomijane."
-          ],
-          "text": "Naprawiono wznowienie po pauzie, które pomijało resztę przerwanej partycji. Start po pauzie powtarza przerwaną partycję od początku, a otagowane wzmianki są pomijane."
-        },
-        {
-          "type": "fix",
-          "area": "Tagowanie z pliku",
-          "title": "Naprawiono tryb nadpisywania, w którym Stop zostawiał wzmianki bez tagu",
-          "items": [
-            "Po Stop wzmianki, z których zdjęto stary tag, dostają nowy, a pozostałe zostają nietknięte."
-          ],
-          "text": "Naprawiono tryb nadpisywania, w którym Stop zostawiał wzmianki bez tagu. Po Stop wzmianki, z których zdjęto stary tag, dostają nowy, a pozostałe zostają nietknięte."
-        },
-        {
-          "type": "fix",
-          "area": "Tagowanie z pliku",
-          "title": "Naprawiono wznowienie bez potwierdzeń po zmianie mapowania w pauzie",
-          "items": [
-            "Zmiana mapowania albo trybu w pauzie wymaga przy wznowieniu tych samych potwierdzeń co przy starcie.",
-            "Wgranie innego pliku w trakcie przebiegu wymaga jego zatrzymania przyciskiem Stop."
-          ],
-          "text": "Naprawiono wznowienie bez potwierdzeń po zmianie mapowania w pauzie. Zmiana mapowania albo trybu w pauzie wymaga przy wznowieniu tych samych potwierdzeń co przy starcie. Wgranie innego pliku w trakcie przebiegu wymaga jego zatrzymania przyciskiem Stop."
-        },
-        {
-          "type": "fix",
-          "area": "Tagowanie z pliku",
-          "title": "Naprawiono usuwanie po tagowaniu poza zakresem dat pliku",
-          "items": [
-            "Gdy w zakresie pliku nie było wzmianek z wybranym tagiem, druga próba obejmowała okres od początku poprzedniego miesiąca. Druga próba obejmuje ten sam zakres co plik."
-          ],
-          "text": "Naprawiono usuwanie po tagowaniu poza zakresem dat pliku. Gdy w zakresie pliku nie było wzmianek z wybranym tagiem, druga próba obejmowała okres od początku poprzedniego miesiąca. Druga próba obejmuje ten sam zakres co plik."
-        },
-        {
-          "type": "fix",
-          "area": "AI Tag",
-          "title": "Naprawiono „Zatrzymaj”, po którym AI Tag nadal nakładał tagi i usuwał wzmianki",
-          "text": "Naprawiono „Zatrzymaj”, po którym AI Tag nadal nakładał tagi i usuwał wzmianki."
-        },
-        {
-          "type": "fix",
-          "area": "Przegląd sentymentu",
-          "title": "Naprawiono przytrzymany klawisz decyzji, który zapisywał sentyment kolejnym kafelkom",
-          "text": "Naprawiono przytrzymany klawisz decyzji, który zapisywał sentyment kolejnym kafelkom."
-        },
-        {
-          "type": "fix",
-          "area": "Panel",
-          "title": "Naprawiono zapis do poprzedniego projektu po przejściu na inny bez przeładowania",
-          "items": [
-            "Start, wznowienie, Usuwanie i AI Tag proszą wtedy o odświeżenie strony."
-          ],
-          "text": "Naprawiono zapis do poprzedniego projektu po przejściu na inny bez przeładowania. Start, wznowienie, Usuwanie i AI Tag proszą wtedy o odświeżenie strony."
-        },
-        {
-          "type": "fix",
-          "area": "Panel",
-          "title": "Naprawiono powrót na kanał Stabilny po ręcznym wyborze Eksperymentalnego",
-          "text": "Naprawiono powrót na kanał Stabilny po ręcznym wyborze Eksperymentalnego."
-        },
-        {
-          "type": "fix",
-          "area": "Panel",
-          "title": "Naprawiono znikanie okna dużej zmiany po przeładowaniu strony przed otwarciem panelu",
-          "text": "Naprawiono znikanie okna dużej zmiany po przeładowaniu strony przed otwarciem panelu."
-        },
-        {
-          "type": "fix",
-          "area": "Panel",
-          "title": "Naprawiono pasek błędu po nieudanych zapytaniach samego Brand24",
-          "items": [
-            "Pasek błędu i przycisk „Zgłoś” pokazują się tylko przy błędach wtyczki."
-          ],
-          "text": "Naprawiono pasek błędu po nieudanych zapytaniach samego Brand24. Pasek błędu i przycisk „Zgłoś” pokazują się tylko przy błędach wtyczki."
-        },
-        {
-          "type": "fix",
-          "area": "Panel",
-          "title": "Naprawiono błędy bezpieczeństwa",
-          "text": "Naprawiono błędy bezpieczeństwa."
         }
       ]
     }
@@ -22154,6 +22077,8 @@
 
   // Zmiana kanału w ustawieniach: inny dziennik i inny plik do sprawdzania.
   function _relOnChannel() {
+    _logDevCache = null;
+    _logRedraw();
     if (!_upd.panel) return;
     _relRenderClBtn();
     _updCloseCard();
@@ -22276,7 +22201,7 @@
   function _reportIsError(e) { return e.k === 'err' || e.ok === false || (e.k === 'log' && e.type === 'error'); }
   // Błąd w słowach użytkownika: wpis logu albo wyjątek. Nieudane zapytanie niesie sam kod (np. TOKEN_NOT_READY),
   // a jego opis i tak ląduje w logu tuż obok.
-  function _reportIsUserError(e) { return e.k === 'err' || (e.k === 'log' && e.type === 'error'); }
+  function _reportIsUserError(e) { return e.k === 'err' || (e.k === 'log' && e.type === 'error' && !e.tech); }
   // Wpisy logu zaczynają się od własnego znaku stanu (✕, ⚠, ✓…), a pasek i dziennik dokładają swój.
   function _reportBare(msg) { return String(msg || '').replace(/^\s*[✕✓⚠ℹ→⏹◐]\s*/, ''); }
 
@@ -22596,7 +22521,7 @@
   // AI Tag i Sentyment zapisują się w ustawieniach AI (`tagging.enabled`, `sentiment.enabled`), reszta w PREF.FEATURES.
   var SET_TOOLS = [
     ['W pasku panelu', [
-      { id: 'tab_main', icon: 'file', name: 'Plik', loc: 'Pliku', run: true, subs: ['show_log', 'delete_by_assessment', 'sentiment_by_assessment'],
+      { id: 'tab_main', icon: 'file', name: 'Plik', loc: 'Pliku', run: true, subs: ['delete_by_assessment', 'sentiment_by_assessment'],
         desc: 'Tagowanie wzmianek według pliku z ocenami: CSV, JSON albo XLSX.' },
       { id: 'tab_quicktag', icon: 'quick', name: 'Quick Tag', desc: 'Tagowanie wzmianek z bieżącego widoku Brand24 jednym tagiem.' },
       { id: 'ai_tagging', icon: 'ai', name: 'AI Tag', run: true, desc: 'Tagowanie wzmianek promptem przez model AI, bez pliku.' },
@@ -22626,10 +22551,9 @@
     ['Dźwięki', 'notify', '[data-snd]'], ['Powiadomienia na telefon (ntfy)', 'notify', '#b24t-ntfy-on'],
     ['Odśwież listę projektów', 'projects', '#b24t-pn-refresh'],
     ['Kanał aktualizacji', 'updates', '[name="b24t-channel"]:checked'], ['Sprawdź aktualizacje', 'updates', '#b24t-set-upd-check'],
-    ['Analityka News', 'analytics', '#b24t-na-enabled']
+    ['Analityka News', 'analytics', '#b24t-na-enabled'], ['Logi programistyczne', 'updates', '#b24t-set-devlogs']
   ];
   var SET_SUBS = {
-    show_log: { name: 'Log w karcie', desc: 'Zdarzenia przebiegu w kartach Plik i AI Tag; błąd pokazuje też pasek błędu.' },
     delete_by_assessment: { name: 'Usuwanie po ocenie', tag: ['Nieodwracalne', 'danger'],
       desc: 'Opcja „Usuń wzmiankę” w mapowaniu ocen; wzmianka znika z Brand24 w przebiegu.',
       info: 'Usuwanie następuje tylko w trybie Właściwy, po potwierdzeniu przebiegu; Brand24 nie ma kosza.' },
@@ -22696,10 +22620,8 @@
     // Log domyślnie ukryty: na co dzień wystarcza postęp i pasek błędu, a log przydaje się przy szukaniu
     // przyczyny. Sekcja logu jest jedynym rozciągliwym elementem karty Plik (LAYOUT CONTRACT), więc po
     // ukryciu karta po prostu kończy się na statystykach.
-    ['b24t-log-section', 'b24t-ait-log-section'].forEach(function(id) {
-      var el = _$(id);
-      if (el) el.hidden = !features.show_log;
-    });
+    _logDevCache = null;
+    _logRedraw();
     const apLabel = _$('b24t-del-allprojects-label');
     if (apLabel) apLabel.hidden = !_featOn('delete_all_projects', features);
 
@@ -23038,6 +22960,10 @@
         _setRow('Zainstalowana wersja ' + VERSION, '<span id="b24t-set-upd-state"></span>',
           '<div class="b-row b-row--wrap"><button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-set-upd-check">' + _icon('refresh') + 'Sprawdź aktualizacje</button>' +
           '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-set-upd-log">' + _icon('notes') + 'Dziennik</button></div>') +
+      '</section>' +
+      '<section class="b-set-sec"><h3 class="b-set-sec__title">Testowanie</h3>' +
+        _setRow('Logi programistyczne', 'Log pokazuje też wpisy techniczne: odświeżanie w tle, ponowienia zapytań, partie, kontrole danych. ' +
+          'Karta logu stoi wtedy na stałe w kartach Plik i AI Tag.', _setSwitch('b24t-set-devlogs', _devLogs()), { label: true }) +
       '</section>';
     var stEl = pane.querySelector('#b24t-set-upd-state'), checkBtn = pane.querySelector('#b24t-set-upd-check');
     function say() {
@@ -23057,6 +22983,15 @@
       }, 300);
     });
     pane.querySelector('#b24t-set-upd-log').addEventListener('click', function () { showChangelog(); });
+    // Wybór zapisany przełącznikiem zostaje przy zmianie kanału (LOG.md §6).
+    var devEl = pane.querySelector('#b24t-set-devlogs');
+    devEl.addEventListener('change', function () {
+      var f = loadFeatures();
+      f.dev_logs = devEl.checked;
+      saveFeatures(f);
+      applyFeatures();
+      ctx.saved();
+    });
     pane.addEventListener('change', function (e) {
       if (e.target.name !== 'b24t-channel') return;
       // Wybór kanału jest ostateczny: bez znacznika jednorazowe przełączenie (_relMoveToStable) cofało
@@ -23910,8 +23845,8 @@
     var projects = getKnownProjects();
     if (!projects.length) return;
     var dates = getAnnotatorDates();
-    addLog('📅 Zakres: ' + dates.label + ' (' + dates.dateFrom + ' → ' + dates.dateTo + ')', 'info');
-    addLog('⟳ [BG] prefetch tagstats (' + projects.length + ' projektów)...', 'info');
+    addLog('📅 Zakres: ' + dates.label + ' (' + dates.dateFrom + ' → ' + dates.dateTo + ')', 'info', { tech: true, key: 'bg' });
+    addLog('⟳ [BG] prefetch tagstats (' + projects.length + ' projektów)...', 'info', { tech: true, key: 'bg' });
     // count-only query — nie pobiera results{...}, drastycznie mniejszy payload
     var _GQL_COUNT = 'query getMentions($projectId:Int!,$dateRange:DateRangeInput!,$filters:MentionFilterInput,$page:Int,$order:Int){getMentions(projectId:$projectId,dateRange:$dateRange,filters:$filters,page:$page,order:$order){count}}';
     var _doCount = function(pid, gr) {
@@ -23964,7 +23899,7 @@
     var dateFrom = dates.dateFrom;
     var dateTo   = dates.dateTo;
     var tagName = Object.entries(state.tags || {}).find(function(e){ return e[1] === tagId; })?.[0] || String(tagId);
-    addLog('⟳ [BG] prefetch allProjects[' + tagName + '] (' + projects.length + ' projektów)...', 'info');
+    addLog('⟳ [BG] prefetch allProjects[' + tagName + '] (' + projects.length + ' projektów)...', 'info', { tech: true, key: 'bg' });
     var results = [];
     for (var i = 0; i < projects.length; i += BG_CONCURRENCY) {
       var chunk = projects.slice(i, i + BG_CONCURRENCY);
@@ -23988,7 +23923,7 @@
     bgCache.allProjects[tagId] = { results: results, ts: Date.now(), groupId: groupId };
     var withData = results.filter(function(r){ return r.count > 0; });
     if (withData.length) {
-      addLog('✓ [BG] allProjects[' + tagName + ']: ' + withData.length + ' projektów z tagiem', 'success');
+      addLog('✓ [BG] allProjects[' + tagName + ']: ' + withData.length + ' projektów z tagiem', 'success', { tech: true, key: 'bg' });
     }
     return bgCache.allProjects[tagId];
   }
@@ -24061,8 +23996,8 @@
   // Cicha wersja — tylko wypełnia bgCache.project, nie dotyka DOM
   async function _bgFetchProject() {
     if (!state.tokenHeaders || !state.projectId) return;
-    addLog('⟳ [BG] prefetch project stats...', 'info');
-    try { return await _fetchProjectStats(); } catch(e) { addLog('[BG] project prefetch error: ' + e.message, 'warn'); }
+    addLog('⟳ [BG] prefetch project stats...', 'info', { tech: true, key: 'bg' });
+    try { return await _fetchProjectStats(); } catch(e) { addLog('[BG] project prefetch error: ' + e.message, 'warn', { tech: true, key: 'bg' }); }
   }
 
   // Master scheduler — odpala się raz, gdy Dashboard Annotatora jest włączony i token gotowy
@@ -24202,7 +24137,7 @@
         _bgFetchTagstats().then(function(fresh) {
           var el = _$('b24t-ann-tagstats-content');
           if (fresh && el) renderAnnotatorTagStats(el, fresh);
-        }).catch(function(e){ addLog('[BG] tagstats refresh error: ' + e.message, 'warn'); });
+        }).catch(function(e){ addLog('[BG] tagstats refresh error: ' + e.message, 'warn', { tech: true, key: 'bg' }); });
       } else if (annotatorData.tagstats) {
         renderAnnotatorTagStats(tsEl, annotatorData.tagstats);
       } else {
@@ -24287,7 +24222,7 @@
       _bgFetchProject().then(function(fresh) {
         var cur = _$('b24t-ann-project-content');
         if (fresh) { annotatorData.project = fresh; if (cur) renderAnnotatorProject(cur, fresh); }
-      }).catch(function(e){ addLog('[BG] project refresh error: ' + e.message, 'warn'); });
+      }).catch(function(e){ addLog('[BG] project refresh error: ' + e.message, 'warn', { tech: true, key: 'bg' }); });
       return;
     }
     addLog('→ [zakładka Projekt] ' + (state.projectName || 'projekt') + ': pobieranie danych...', 'info');
@@ -24368,7 +24303,7 @@
       _bgFetchTagstats().then(function(fresh) {
         var cur = _$('b24t-ann-tagstats-content');
         if (fresh && cur) renderAnnotatorTagStats(cur, fresh);
-      }).catch(function(e){ addLog('[BG] tagstats refresh error: ' + e.message, 'warn'); });
+      }).catch(function(e){ addLog('[BG] tagstats refresh error: ' + e.message, 'warn', { tech: true, key: 'bg' }); });
       return;
     }
 
@@ -24692,6 +24627,7 @@
   var LOGP_PROBLEMS = { warn: 1, error: 1, diag: 1 };
 
   function _logpMatch(e) {
+    if (!_logShown(e)) return false;
     if (_logp.problems && !LOGP_PROBLEMS[e.type]) return false;
     return !_logp.ql || (e.time + ' ' + e.message).toLowerCase().indexOf(_logp.ql) >= 0;
   }
@@ -24705,7 +24641,7 @@
 
   // Liczba w nagłówku, pusty stan i dostępność „Kopiuj” i CSV.
   function _logpCount(w) {
-    var total = state.logs.length, n = state.logs.filter(_logpMatch).length;
+    var total = state.logs.filter(_logShown).length, n = state.logs.filter(_logpMatch).length;
     Win.setTitle('log', 'Log sesji', (_logp.ql || _logp.problems) ? n + ' z ' + total : _plPl(total, 'wpis', 'wpisy', 'wpisów'));
     var empty = w.main.querySelector('.b-empty');
     empty.hidden = n > 0;
@@ -24807,18 +24743,11 @@
     if (!prev.length) return;
     state.logs = [];
     _logRedraw();
-    Toast.show('Log wyczyszczony.', 'ok', { undo: function () { state.logs = prev.concat(state.logs).slice(-500); _logRedraw(); } });
+    Toast.show('Log wyczyszczony.', 'ok', { undo: function () { state.logs = _logCap(prev.concat(state.logs)); _logRedraw(); } });
   }
 
   function _logRedraw() {
-    ['b24t-log', 'b24t-ait-log'].forEach(function (id) {
-      var log = _$(id);
-      if (!log) return;
-      log.textContent = '';
-      state.logs.slice(-200).forEach(function (e) { log.appendChild(_logRowEl('li', e.time, e.message, e.type)); });
-      log.__logSeq = _logSeq;
-      log.scrollTop = log.scrollHeight;
-    });
+    _logCardsSync(null, true);
     _logpRender();
   }
 
@@ -26315,7 +26244,7 @@
       // Prefetch w tle dla nowego tagu — dane będą gotowe gdy użytkownik wybierze "Wszystkie projekty"
       const newTagId = parseInt(_$('b24t-del-tag')?.value);
       if (newTagId && !_bgCacheFresh(bgCache.allProjects[newTagId])) {
-        _bgFetchAllProjects(newTagId).catch(function(e){ addLog('[BG] prefetch allProjects error: ' + e.message, 'warn'); });
+        _bgFetchAllProjects(newTagId).catch(function(e){ addLog('[BG] prefetch allProjects error: ' + e.message, 'warn', { tech: true, key: 'bg' }); });
       }
     });
 
@@ -26840,7 +26769,11 @@
           <span class="b-sp"></span>
           <button type="button" class="b-ibtn b-ibtn--sm" id="b24t-ait-log-clear" aria-label="Wyczyść log" data-tip="Wyczyść log">${_icon('del')}</button>
           <button type="button" class="b-ibtn b-ibtn--sm" id="b24t-ait-log-expand" aria-label="Otwórz okno logu" data-tip="Otwórz okno logu">${_icon('external')}</button>
+          <button type="button" class="b-ibtn b-ibtn--sm" data-logcard-close="aitag" aria-label="Zamknij log przebiegu" data-tip="Zamknij" hidden>${_icon('x')}</button>
         </div>
+        <div class="b-logcard__sum" hidden>${_icon('okCircle')}<span class="b-logcard__text"><span data-sum-res></span><span class="b-logcard__time"></span></span><span class="b-sp"></span>
+          <button type="button" class="b-btn b-btn--quiet b-btn--sm" data-logcard-open>Log</button>
+          <button type="button" class="b-ibtn b-ibtn--sm" data-logcard-close="aitag" aria-label="Zamknij podsumowanie" data-tip="Zamknij">${_icon('x')}</button></div>
         <ol id="b24t-ait-log" class="b-log b-scroll" role="log"></ol>
       </section>
     `;
@@ -27056,6 +26989,7 @@
     }
 
     state._aitRunning = true; state._aitStop = false;
+    _logRunStart('aitag');
     if (runBtn) { runBtn.innerHTML = _icon('stop', 'b-ico-stop') + 'Zatrzymaj'; runBtn.classList.replace('b-btn--primary', 'b-btn--neutral'); }
     setStatus('Pobieram wzmianki…', 'busy'); setBar(0);
     addLog('🤖 AI Tagowanie — start (projekt ' + _pnResolve(projectId) + ', ' + dateFrom + '→' + dateTo + ', źródło: ' + source + ')', 'info');
@@ -27193,6 +27127,7 @@
       addLog('✕ AI Tagowanie błąd: ' + (e && e.message || e), 'error');
     } finally {
       state._aitRunning = false;
+      _logRunEnd('aitag', statusEl ? statusEl.textContent : '');
       if (runBtn) { runBtn.innerHTML = _icon('ai') + 'Taguj przez AI'; runBtn.classList.replace('b-btn--neutral', 'b-btn--primary'); }
     }
   }

@@ -1,5 +1,41 @@
 [
   {
+    "version": "0.38.6",
+    "date": "2026-10-03",
+    "label": "improved",
+    "changes": [
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Kropla listwy po słabym rzucie wraca na krawędź, z której wyszła",
+        "items": [
+          "Krawędź, z której kropla wyszła, przyciąga ją z powrotem, więc lekkie machnięcie w bok nie przerzuca listwy na drugą stronę.",
+          "Im dalej do drugiej krawędzi, tym mocniej trzeba rzucić; kropla puszczona w miejscu przy krawędzi zostaje przy niej."
+        ],
+        "text": "Kropla listwy po słabym rzucie wraca na krawędź, z której wyszła. Krawędź, z której kropla wyszła, przyciąga ją z powrotem, więc lekkie machnięcie w bok nie przerzuca listwy na drugą stronę. Im dalej do drugiej krawędzi, tym mocniej trzeba rzucić; kropla puszczona w miejscu przy krawędzi zostaje przy niej."
+      },
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Okna Annotators, Network Monitor i Niestandardowe otwierają się przy listwie",
+        "items": [
+          "Okno staje obok listwy, po jej stronie ekranu i na wysokości uchwytu, w zapamiętanym rozmiarze."
+        ],
+        "text": "Okna Annotators, Network Monitor i Niestandardowe otwierają się przy listwie. Okno staje obok listwy, po jej stronie ekranu i na wysokości uchwytu, w zapamiętanym rozmiarze."
+      },
+      {
+        "type": "fix",
+        "area": "Dodawanie wzmianek",
+        "title": "Naprawiono listwę zasłaniającą brzeg okien News i Kampanie H&M",
+        "items": [
+          "Okno News i okna kampanii odsuwają się od listwy, a na pełnym ekranie ich treść kończy się przed listwą.",
+          "Uchwyt „Wzmianki” jest zaznaczony także przy oknach kampanii i zamyka je drugim kliknięciem."
+        ],
+        "text": "Naprawiono listwę zasłaniającą brzeg okien News i Kampanie H&amp;M. Okno News i okna kampanii odsuwają się od listwy, a na pełnym ekranie ich treść kończy się przed listwą. Uchwyt „Wzmianki” jest zaznaczony także przy oknach kampanii i zamyka je drugim kliknięciem."
+      }
+    ]
+  },
+  {
     "version": "0.38.5",
     "date": "2026-10-03",
     "label": "new",
@@ -40,6 +76,7 @@
           "Gdy opis najbliższej wersji stabilnej jest gotowy, dziennik zmian ma przycisk „Podgląd dziennika aktualizacji”.",
           "Podgląd pokazuje opis w oknie, które po wydaniu zobaczą użytkownicy kanału Stabilnego."
         ],
+        "experimental": true,
         "text": "Podgląd dziennika aktualizacji przed wydaniem wersji na kanale Stabilnym. Gdy opis najbliższej wersji stabilnej jest gotowy, dziennik zmian ma przycisk „Podgląd dziennika aktualizacji”. Podgląd pokazuje opis w oknie, które po wydaniu zobaczą użytkownicy kanału Stabilnego."
       }
     ]

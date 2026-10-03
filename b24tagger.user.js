@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.5
+// @version      0.38.6
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -173,7 +173,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.5';
+  const VERSION = '0.38.6';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5767,8 +5767,9 @@
       .b-win[data-kind="dialog"], .b-win[data-kind="notice"] {
         z-index: 401; background: var(--c-chrome); inset: 0; margin: auto; height: fit-content; max-height: calc(100vh - 48px);
       }
-      .b-win[data-kind="work"] { inset: 24px; }
+      .b-win[data-kind="work"] { inset: 24px calc(24px + var(--b-edge-right, 0px)) 24px calc(24px + var(--b-edge-left, 0px)); }
       .b-win[data-kind="work"].is-full { inset: 0; border-radius: 0; border-width: 0; }
+      .b-win[data-kind="work"].is-full > .b-clip { padding-left: var(--b-edge-left, 0px); padding-right: var(--b-edge-right, 0px); }
       .b-win[data-kind="dialog"] .b-head, .b-win[data-kind="notice"] .b-head { border-bottom-color: transparent; }
       .b-dlg-body { padding: 0.25em calc(1.25em - 10px) 1.25em 1.25em; --b-fade: var(--c-chrome); }
       .b-win[data-width="26"] { width: min(26em, calc(100vw - 24px)); }
@@ -6690,6 +6691,20 @@
       return { x: _clamp(x, 0, VW - w), y: _clamp(y, 0, VH - h), w: w, h: h };
     }
 
+    // Okno otwierane z uchwytu staje przy listwie: po jej stronie, na wysokości uchwytu, w zapisanym rozmiarze.
+    // Zapisane położenie się nie liczy, bo listwa mogła od tamtej pory zmienić krawędź albo wysokość, a okno
+    // wyskakiwało wtedy w prawym górnym rogu daleko od listwy (uwaga właściciela 2026-10-03). Od krawędzi odsuwa je
+    // place(): odstęp WIN_GAP nachodzi na listwę, więc okno staje tuż za nią.
+    function besideEdge(w, handle) {
+      var r = handle.getBoundingClientRect(), VH = _vh();
+      if (!r.height) return;
+      var h = WIN_SIZABLE[w.kind] ? fit(w.geo.h, w.min[1], VH) : 0;
+      w.geo.a = 't' + (Edge.side() === 'left' ? 'l' : 'r');
+      w.geo.dx = WIN_GAP;
+      // Wysokość okna z treścią nie jest jeszcze znana: górna krawędź równo z uchwytem, place() pilnuje dołu.
+      w.geo.dy = Math.round(h ? _clamp(r.top + r.height / 2 - h / 2, WIN_GAP, Math.max(WIN_GAP, VH - h - WIN_GAP)) : Math.max(WIN_GAP, r.top));
+    }
+
     // Prostokąt → najbliższy róg i odstęp od niego; tak okno zapisuje położenie (§2.6).
     function toAnchor(r) {
       var VW = _vw(), VH = _vh();
@@ -7316,6 +7331,8 @@
         w.full = !!saved.full && kind === 'work';
       }
       if (w.full) { el.classList.add('is-full'); toggleFullIcon(w); }
+      var beside = spec.beside || (spec.edge && spec.from);
+      if (beside && WIN_MOVABLE[kind] && !w.max) besideEdge(w, beside);
 
       if (kind === 'work') {
         w.scrim = document.createElement('div');
@@ -7513,13 +7530,18 @@
   // Uchwyty okien (B24 Tagger po schowaniu panelu, Annotators, Wzmianki, Network Monitor, „Dodaj wzmiankę”) stoją
   // w jednej listwie przy krawędzi: ikona, a nazwa w dymku obok listwy. Kliknięcie otwiera albo chowa okno uchwytu.
   // Listwa przesuwa się wzdłuż krawędzi. Wyciągnięta dalej niż EDGE_DETACH od krawędzi odrywa się w kroplę, którą
-  // się rzuca: rzut szybszy niż EDGE_FLING przykleja ją do krawędzi w swoim kierunku, wolniejszy oddaje ją krawędzi,
-  // przy której ją puszczono (pas EDGE_SNAP), a dalej od obu krawędzi wraca tam, skąd wyszła. Krawędź i wysokość
-  // zapisują się jak układ okna.
+  // się rzuca. Krawędź, z której kropla wyszła, przyciąga ją ze stałym przyspieszeniem EDGE_PULL, więc rzut w drugą
+  // stronę doleci tylko z energią na całą drogę (Edge.landSide), a słabszy zawraca w powietrzu. Puszczona prawie
+  // w miejscu zostaje przy krawędzi, w której pasie EDGE_SNAP ją puszczono, a dalej od obu wraca tam, skąd wyszła.
+  // Krawędź i wysokość zapisują się jak układ okna.
   var EDGE_ORDER = { panel: 0, annotator: 1, news: 2, nm: 3, mini: 4 };
   var EDGE_DETACH = 72;   // px od wewnętrznej krawędzi listwy
-  var EDGE_FLING = 0.6;   // px/ms w poziomie, z ostatnich 100 ms ruchu
   var EDGE_SNAP = 0.18;   // ułamek szerokości okna przy każdej krawędzi
+  var EDGE_SETTLE = 0.25; // px/ms: wolniej to puszczenie w miejscu, nie rzut
+  // Przyspieszenie lotu (px/ms²) i najwyższa prędkość rzutu (px/ms). Przy tej parze ze środka ekranu 1366 px
+  // trzeba rzucić z ok. 2,0 px/ms, a od krawędzi do krawędzi z ok. 2,9 px/ms (szybki ruch myszą to kilka px/ms).
+  // Przy dawnym progu 0,6 px/ms machnięcie rzucało kroplę na drugą krawędź (uwaga właściciela 2026-10-03).
+  var EDGE_PULL = 0.003, EDGE_MAX_V = 4;
 
   var Edge = (function () {
     var items = {}, bar = null, pos = null, drag = null, suppress = false;
@@ -7571,6 +7593,7 @@
       if (!bar) return;
       var any = list().some(function (it) { return !it.el.hidden; });
       bar.hidden = !any;
+      inset();
       if (any && !drag) {
         var VH = _vh();
         bar.style.top = _clamp(Math.round(pos.y * VH), 0, Math.max(0, VH - bar.offsetHeight)) + 'px';
@@ -7600,6 +7623,18 @@
       it.el.classList.toggle('is-open', it.open);
       it.el.setAttribute('aria-expanded', String(it.open));
       bar.classList.toggle('is-raised', list().some(function (o) { return o.open; }));
+      inset();
+    }
+
+    // Listwa nad oknem roboczym (is-raised) przykrywała jego brzeg, a na pełnym ekranie News także treść przy
+    // krawędzi (uwaga właściciela 2026-10-03). Okno robocze odsuwa się o szerokość listwy (--b-edge-left/right w CSS).
+    // Listwa pod oknem (bez otwartego uchwytu) jest zasłonięta, więc wtedy odstępu nie ma.
+    function inset() {
+      var app = _uiEnsure().app, on = bar && !bar.hidden && bar.classList.contains('is-raised');
+      ['left', 'right'].forEach(function (side) {
+        if (on && pos.side === side) app.style.setProperty('--b-edge-' + side, bar.offsetWidth + 'px');
+        else app.style.removeProperty('--b-edge-' + side);
+      });
     }
 
     // Błysk uchwytu, do którego wróciło okno.
@@ -7690,12 +7725,20 @@
       Drop.release(v, side, edgeX(side), attach);
     }
 
+    // Rzut ku drugiej krawędzi doleci, gdy v² ≥ 2·EDGE_PULL·d: tyle energii trzeba, żeby pokonać drogę d wbrew
+    // przyciąganiu krawędzi `from`. Lot w Drop ciągnie kroplę z tym samym EDGE_PULL do krawędzi wybranej tutaj, więc
+    // kropla odesłana do `from` zawraca przed drugą krawędzią. Zmiana progu bez EDGE_PULL rozjechałaby decyzję z lotem.
     function landSide(x, vx, from) {
-      if (Math.abs(vx) >= EDGE_FLING) return vx < 0 ? 'left' : 'right';
-      var VW = _vw();
-      if (x < VW * EDGE_SNAP) return 'left';
-      if (x > VW * (1 - EDGE_SNAP)) return 'right';
-      return from;
+      var VW = _vw(), v = _clamp(vx, -EDGE_MAX_V, EDGE_MAX_V);
+      if (Math.abs(v) < EDGE_SETTLE) {
+        if (x < VW * EDGE_SNAP) return 'left';
+        if (x > VW * (1 - EDGE_SNAP)) return 'right';
+        return from;
+      }
+      var to = v < 0 ? 'left' : 'right';
+      if (to === from) return from;
+      var d = to === 'left' ? x : edgeX('right') - x;
+      return v * v >= 2 * EDGE_PULL * d ? to : from;
     }
 
     // Kropla dotarła do krawędzi `side` na wysokości `y`: listwa wyrasta w tym miejscu.
@@ -7703,6 +7746,7 @@
       pos.side = side;
       bar.setAttribute('data-side', side);
       bar.classList.remove('is-detached');
+      inset();
       var VH = _vh(), h = bar.offsetHeight, top = _clamp(Math.round(y - h / 2), 0, Math.max(0, VH - h));
       pos.y = top / VH;
       save();
@@ -7714,7 +7758,7 @@
     }
 
     return { add: add, layout: layout, rects: rects, setVisible: setVisible, setOpen: setOpen, ping: ping, remove: remove,
-      get: function (id) { return items[id] ? items[id].el : null; } };
+      get: function (id) { return items[id] ? items[id].el : null; }, side: function () { return pos ? pos.side : 'right'; } };
   })();
 
   // ── Kropla listwy (Edge) ──
@@ -7724,7 +7768,7 @@
   // Zestaw ograniczony: kropka idzie dokładnie za wskaźnikiem, a listwa pojawia się od razu przy krawędzi.
   var Drop = (function () {
     var NS = 'http://www.w3.org/2000/svg';
-    var R = 20, SPRING = 0.00042, DAMP = 0.0225, PULL = 0.005, FRICTION = 0.0025, MAX_V = 3, OUT_MS = 260, IN_MS = 240;
+    var R = 20, SPRING = 0.00042, DAMP = 0.0225, FRICTION = 0.0025, OUT_MS = 260, IN_MS = 240;
     var svg = null, st = null, raf = 0;
 
     function el(tag, cls) { var n = document.createElementNS(NS, tag); if (cls) n.setAttribute('class', cls); return n; }
@@ -7790,8 +7834,8 @@
       st.side = side;
       st.edge = edge;
       st.done = done;
-      st.vx = _clamp(v.x, -MAX_V, MAX_V);
-      st.vy = _clamp(v.y, -MAX_V, MAX_V);
+      st.vx = _clamp(v.x, -EDGE_MAX_V, EDGE_MAX_V);
+      st.vy = _clamp(v.y, -EDGE_MAX_V, EDGE_MAX_V);
       st.t0 = performance.now();
     }
 
@@ -7811,11 +7855,12 @@
         s.r = R * (0.6 + 0.4 * ease((now - s.t0) / OUT_MS));
         s.a.r = s.a0 * (1 - ease((now - s.t0) / OUT_MS));
       } else if (s.mode === 'fly') {
+        // Kropla, która ma wrócić, hamuje i zawraca; ta, która doleci (Edge.landSide), przyspiesza ku celowi.
         var dir = s.side === 'left' ? -1 : 1, edge = s.edge;
-        s.vx += PULL * dir * dt;
+        s.vx += EDGE_PULL * dir * dt;
         s.vy *= Math.max(0, 1 - FRICTION * dt);
         s.a.r = 0;
-        if ((dir > 0 && s.x + s.r >= edge) || (dir < 0 && s.x - s.r <= edge) || now - s.t0 > 2000) {
+        if ((dir > 0 && s.x + s.r >= edge) || (dir < 0 && s.x - s.r <= edge) || now - s.t0 > 2500) {
           s.mode = 'land';
           s.t0 = now;
           s.x = dir > 0 ? edge - s.r : edge + s.r;
@@ -16232,7 +16277,7 @@
     Win.open({
       id: 'news-custom', kind: 'float', elId: 'b24t-news-custom', title: 'Niestandardowe', icon: 'pencil',
       winClass: 'b-nwin-custom', mainClass: 'b-nfloat', body: _newsUi.form,
-      anchor: { a: 'tr', dx: 56, dy: 20 }, remember: 'news-custom', menuLabel: 'Więcej',
+      anchor: { a: 'tr', dx: 56, dy: 20 }, remember: 'news-custom', menuLabel: 'Więcej', beside: _newsEdgeHandle(),
       menu: function() {
         return [{ label: 'Zgłoś błąd albo pomysł', icon: 'chat', onSelect: function() { showReportModal({ kind: 'bug', area: 'Dodawanie wzmianek' }); } }];
       },
@@ -16278,6 +16323,17 @@
       Edge.setOpen(id, on);
       if (!on) Edge.ping(id);
     });
+  }
+  // Widoczny uchwyt modułu: „Dodaj wzmiankę” poza Brand24, „Wzmianki” w Brand24.
+  function _newsEdgeHandle() {
+    var h = ['mini', 'news'].map(function(id) { return Edge.get(id); }).filter(function(el) { return el && !el.hidden; })[0];
+    return h || null;
+  }
+  var CAMP_WINS = ['campaign-hub', 'campaign-search'];
+  // Okna kampanii też należą do uchwytu „Wzmianki”. Wyszukiwanie otwiera się przed zamknięciem centrum kampanii,
+  // więc stan liczy się ze wszystkich okien modułu naraz; onClose woła to już po usunięciu zamykanego okna z Win.
+  function _newsEdgeSync() {
+    _newsEdgePressed(!!newsState.panelsOpen || CAMP_WINS.some(function(id) { return !!Win.get(id); }));
   }
 
   function openNewsPanels(mode) {
@@ -16617,8 +16673,9 @@
         }).join('') + '</div>' +
         '<section class="b-card" id="b24t-hub-cart" aria-label="Koszyk"></section>' +
       '</div>',
-      onClose: function() { if (unwatch) unwatch(); }
+      onClose: function() { if (unwatch) unwatch(); _newsEdgeSync(); }
     });
+    _newsEdgeSync();
     var addTile = w.el.querySelector('[data-hub-tile="add"]');
     var cartBox = w.el.querySelector('#b24t-hub-cart');
     function render() {
@@ -16748,7 +16805,7 @@
         '<button type="button" class="b-btn b-btn--neutral" id="b24t-camp-rss" data-tip="Jedno zapytanie do Google News zamiast serii zapytań wyszukiwania zaawansowanego, bez ryzyka CAPTCHA">' + _icon('news') + 'Dołóż z Google News</button>' +
         '<span class="b-sp"></span>' +
         '<button type="button" class="b-btn b-btn--primary" id="b24t-camp-start">' + _icon('play') + 'Uruchom wyszukiwanie</button>',
-      onClose: function() { clearTimeout(vars.timer); if (unwatch) unwatch(); }
+      onClose: function() { clearTimeout(vars.timer); if (unwatch) unwatch(); _newsEdgeSync(); }
     });
     var root = w.el;
     var q = function(id) { return root.querySelector('#' + id); };
@@ -20076,6 +20133,42 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.6",
+      "date": "2026-10-03",
+      "label": "improved",
+      "changes": [
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Kropla listwy po słabym rzucie wraca na krawędź, z której wyszła",
+          "items": [
+            "Krawędź, z której kropla wyszła, przyciąga ją z powrotem, więc lekkie machnięcie w bok nie przerzuca listwy na drugą stronę.",
+            "Im dalej do drugiej krawędzi, tym mocniej trzeba rzucić; kropla puszczona w miejscu przy krawędzi zostaje przy niej."
+          ],
+          "text": "Kropla listwy po słabym rzucie wraca na krawędź, z której wyszła. Krawędź, z której kropla wyszła, przyciąga ją z powrotem, więc lekkie machnięcie w bok nie przerzuca listwy na drugą stronę. Im dalej do drugiej krawędzi, tym mocniej trzeba rzucić; kropla puszczona w miejscu przy krawędzi zostaje przy niej."
+        },
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Okna Annotators, Network Monitor i Niestandardowe otwierają się przy listwie",
+          "items": [
+            "Okno staje obok listwy, po jej stronie ekranu i na wysokości uchwytu, w zapamiętanym rozmiarze."
+          ],
+          "text": "Okna Annotators, Network Monitor i Niestandardowe otwierają się przy listwie. Okno staje obok listwy, po jej stronie ekranu i na wysokości uchwytu, w zapamiętanym rozmiarze."
+        },
+        {
+          "type": "fix",
+          "area": "Dodawanie wzmianek",
+          "title": "Naprawiono listwę zasłaniającą brzeg okien News i Kampanie H&M",
+          "items": [
+            "Okno News i okna kampanii odsuwają się od listwy, a na pełnym ekranie ich treść kończy się przed listwą.",
+            "Uchwyt „Wzmianki” jest zaznaczony także przy oknach kampanii i zamyka je drugim kliknięciem."
+          ],
+          "text": "Naprawiono listwę zasłaniającą brzeg okien News i Kampanie H&amp;M. Okno News i okna kampanii odsuwają się od listwy, a na pełnym ekranie ich treść kończy się przed listwą. Uchwyt „Wzmianki” jest zaznaczony także przy oknach kampanii i zamyka je drugim kliknięciem."
+        }
+      ]
+    },
+    {
       "version": "0.38.5",
       "date": "2026-10-03",
       "label": "new",
@@ -20116,6 +20209,7 @@
             "Gdy opis najbliższej wersji stabilnej jest gotowy, dziennik zmian ma przycisk „Podgląd dziennika aktualizacji”.",
             "Podgląd pokazuje opis w oknie, które po wydaniu zobaczą użytkownicy kanału Stabilnego."
           ],
+          "experimental": true,
           "text": "Podgląd dziennika aktualizacji przed wydaniem wersji na kanale Stabilnym. Gdy opis najbliższej wersji stabilnej jest gotowy, dziennik zmian ma przycisk „Podgląd dziennika aktualizacji”. Podgląd pokazuje opis w oknie, które po wydaniu zobaczą użytkownicy kanału Stabilnego."
         }
       ]
@@ -20750,25 +20844,6 @@
             "Okno trzyma się strony wyników Brand24 i nie zwiedza innych stron."
           ],
           "text": "Naprawiono nieczytelne okno nowej wersji na stronach spoza Brand24. Okno trzyma się strony wyników Brand24 i nie zwiedza innych stron."
-        }
-      ]
-    },
-    {
-      "version": "0.36.9",
-      "date": "2026-10-01",
-      "label": "improved",
-      "changes": [
-        {
-          "type": "improved",
-          "area": "Przegląd sentymentu",
-          "title": "Do przeglądu sentymentu można wrócić po zamknięciu okna",
-          "items": [
-            "Karta Sentyment pokazuje projekt, zakres dat i postęp przeglądu.",
-            "„Wróć do przeglądu” otwiera okno w miejscu, w którym je zamknięto. Ocena i zapisywanie decyzji trwają przy zamkniętym oknie.",
-            "Nowa ocena przy niezałatwionych kafelkach wymaga potwierdzenia. Ponowna ocena tego samego zakresu jest bezpłatna.",
-            "Przeładowanie strony kończy przegląd."
-          ],
-          "text": "Do przeglądu sentymentu można wrócić po zamknięciu okna. Karta Sentyment pokazuje projekt, zakres dat i postęp przeglądu. „Wróć do przeglądu” otwiera okno w miejscu, w którym je zamknięto. Ocena i zapisywanie decyzji trwają przy zamkniętym oknie. Nowa ocena przy niezałatwionych kafelkach wymaga potwierdzenia. Ponowna ocena tego samego zakresu jest bezpłatna. Przeładowanie strony kończy przegląd."
         }
       ]
     }
@@ -30869,7 +30944,12 @@
     // Uchwyt krawędziowy (powierzchnia nr 70, §1.11); widoczność ustawia _newsApplyFeatures.
     Edge.add({
       id: 'news', elId: 'b24t-news-side-tab', side: 'right', label: 'Wzmianki', icon: 'news', remember: 'edge-news', y: 0.5,
-      onClick: function() { if (newsState.panelsOpen) closeNewsPanels(); else _openMentionsLauncher(); }
+      onClick: function() {
+        var camp = CAMP_WINS.filter(function(id) { return Win.get(id); });
+        if (newsState.panelsOpen) closeNewsPanels();
+        else if (camp.length) camp.forEach(function(id) { Win.close(id); });
+        else _openMentionsLauncher();
+      }
     });
     Edge.setVisible('news', false);
 

@@ -1,5 +1,22 @@
 [
   {
+    "version": "0.38.14",
+    "date": "2026-10-03",
+    "label": "improved",
+    "changes": [
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Log bez wpisów technicznych przy pracy z plikiem i w Annotators",
+        "items": [
+          "Postęp pobierania mapy wzmianek, partie tagowania, wykryte kolumny pliku, kontrole danych i odczyty zakładek Annotators trafiają do logów programistycznych.",
+          "Log pokazuje start, wynik i uwagi operacji; resztę widać po włączeniu „Logi programistyczne” w Ustawieniach → Aktualizacje."
+        ],
+        "text": "Log bez wpisów technicznych przy pracy z plikiem i w Annotators. Postęp pobierania mapy wzmianek, partie tagowania, wykryte kolumny pliku, kontrole danych i odczyty zakładek Annotators trafiają do logów programistycznych. Log pokazuje start, wynik i uwagi operacji; resztę widać po włączeniu „Logi programistyczne” w Ustawieniach → Aktualizacje."
+      }
+    ]
+  },
+  {
     "version": "0.38.13",
     "date": "2026-10-03",
     "label": "improved",

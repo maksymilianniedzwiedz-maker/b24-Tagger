@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.13
+// @version      0.38.14
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -174,7 +174,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.13';
+  const VERSION = '0.38.14';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1921,7 +1921,7 @@
           `[SNIFF/UI_TAG] Operacja UI: ${parsed.operationName || '?'}\n` +
           `  variables: ${JSON.stringify(parsed.variables || {}).substring(0, 300)}\n` +
           `  query snippet: ${(parsed.query || '').substring(0, 200)}`,
-          'info'
+          'info', { tech: true, key: 'debug' }
         );
         state._sniffUiTag = false; // loguj tylko raz
       } catch(e) {}
@@ -1968,7 +1968,7 @@
                 `  openUrl: "${(m.openUrl || '').substring(0, 60)}"
 ` +
                 `  id: ${m.id} | date: ${m.createdDate}`,
-                'info'
+                'info', { tech: true, key: 'debug' }
               );
               state._netMonitor.found.add(hit);
             }
@@ -2717,7 +2717,7 @@
   // `opts.failed`, a liczba stron z błędem do `opts.pageErrors`.
   async function buildUrlMap(dateFrom, dateTo, untaggedOnly, withSentiment, opts) {
     opts = opts || {};
-    const log = opts.quiet ? function (msg, type) { addLog(msg, type === 'warn' || type === 'error' ? type : 'debug'); } : addLog;
+    const log = opts.quiet ? function (msg, type, extra) { addLog(msg, type === 'warn' || type === 'error' ? type : 'debug', extra); } : addLog;
     const alive = opts.alive || function () { return state.status === 'running'; };
     const progress = opts.onPage || function (n, total) { updateProgress('map', n, total); };
     const gr = (untaggedOnly && state.untaggedId) ? [state.untaggedId] : [];
@@ -2740,7 +2740,7 @@
     const isInvalidDate = function(d) { return !d || d === '9999' || d === '0000' || !RX_ISO_DATE.test(d); };
     if (isInvalidDate(dateFrom) || isInvalidDate(dateTo)) {
       const fallback = getAnnotatorDates();
-      log(`⚠ [DIAG/DATY] Brak dat w pliku — używam fallback: ${fallback.dateFrom} → ${fallback.dateTo}`, 'warn');
+      log(`⚠ [DIAG/DATY] Brak dat w pliku — używam fallback: ${fallback.dateFrom} → ${fallback.dateTo}`, 'warn', { tech: true, key: 'map' });
       dateFrom = fallback.dateFrom;
       dateTo   = fallback.dateTo;
       diag.dateFrom = dateFrom; diag.dateTo = dateTo;
@@ -2753,14 +2753,14 @@
     diag.step = 'untagged_id';
     if (untaggedOnly) {
       if (!state.untaggedId) {
-        log(`⚠ [DIAG/UNTAGGED] untaggedId=${state.untaggedId} — wartość domyślna, możliwe że tag "Untagged" nie został poprawnie wykryty.`, 'warn');
+        log(`⚠ [DIAG/UNTAGGED] untaggedId=${state.untaggedId} — wartość domyślna, możliwe że tag "Untagged" nie został poprawnie wykryty.`, 'warn', { tech: true, key: 'map' });
       } else {
         log(`ℹ [DIAG/UNTAGGED] Filtr Untagged aktywny, gr=[${state.untaggedId}]`, 'debug');
       }
     }
 
     progress(0, '?');
-    log(`→ Budowanie mapy URL (${untaggedOnly ? 'Untagged' : 'pełny zakres'}) | projekt=${state.projectId} | ${dateFrom}→${dateTo}`, 'info');
+    log(`→ Budowanie mapy URL (${untaggedOnly ? 'Untagged' : 'pełny zakres'}) | projekt=${state.projectId} | ${dateFrom}→${dateTo}`, 'info', { tech: true, key: 'map' });
 
     // ── KROK 3: pierwsza strona — sprawdź count i pageSize ───────────────
     diag.step = 'page1_fetch';
@@ -2804,7 +2804,7 @@
     });
     if (openUrlOnly > 0 || bothEmpty > 0) {
       log(`⚠ [DIAG/URL_FIELD] Strona 1: url=${urlPresent} present, openUrl-only=${openUrlOnly}, oba puste=${bothEmpty}
-  Jeśli openUrl-only > 0, Brand24 zmienił format — używamy openUrl jako fallback.`, 'warn');
+  Jeśli openUrl-only > 0, Brand24 zmienił format — używamy openUrl jako fallback.`, 'warn', { tech: true, key: 'map' });
     }
 
     // ── KROK 5: buduj mapę ze strony 1 ───────────────────────────────────
@@ -2874,13 +2874,13 @@
           }
         });
         if (pageDupeIds > 0) {
-          log(`⚠ [DIAG/PAGINATION] Strona ${p}: ${pageDupeIds} duplikatów ID — Brand24 niestabilna paginacja`, 'warn');
+          log(`⚠ [DIAG/PAGINATION] Strona ${p}: ${pageDupeIds} duplikatów ID — Brand24 niestabilna paginacja`, 'warn', { tech: true, key: 'map' });
         }
         fetched++;
         diag.fetchedPages = fetched;
         progress(fetched, totalPages);
         if (fetched % 10 === 0 || fetched >= totalPages) {
-          log(`→ Mapa: ${fetched}/${totalPages} stron (${Object.keys(map).length} wzmianek)`, 'info');
+          log(`→ Mapa: ${fetched}/${totalPages} stron (${Object.keys(map).length} wzmianek)`, 'info', { tech: true, key: 'map' });
         }
         await sleep(0); // yield do UI między stronami
       }
@@ -2915,7 +2915,7 @@
       log(`⚠ [DIAG/API] ${pageErrors} stron z błędem — mapa może być niekompletna!`, 'warn');
     }
     if (diag.urlFieldEmpty > 0) {
-      log(`⚠ [DIAG/URL_FIELD] ${diag.urlFieldEmpty} wzmianek bez url i openUrl — pominięte w mapie. Brand24 może mieć wzmianki bez URL.`, 'warn');
+      log(`⚠ [DIAG/URL_FIELD] ${diag.urlFieldEmpty} wzmianek bez url i openUrl — pominięte w mapie. Brand24 może mieć wzmianki bez URL.`, 'warn', { tech: true, key: 'map' });
     }
 
     log(`✓ Mapa zbudowana: ${diag.mentionsInMap} wzmianek w ${totalPages} stronach`, 'success');
@@ -2972,9 +2972,9 @@
       var _freshTags = await _tagsFetchFreshAsync(projectId);
       if (_freshTags) {
         projectData.tagIds = _freshTags;
-        addLog('↻ Tagi projektu odświeżone z Brand24 (' + Object.keys(_freshTags).length + ')', 'info');
+        addLog('↻ Tagi projektu odświeżone z Brand24 (' + Object.keys(_freshTags).length + ')', 'info', { tech: true, key: 'multi' });
       } else {
-        addLog('⚠ Nie udało się odświeżyć tagów projektu ' + projectName + ' — używam zapisanych z pamięci', 'warn');
+        addLog('⚠ Nie udało się odświeżyć tagów projektu ' + projectName + ' — używam zapisanych z pamięci', 'warn', { tech: true, key: 'multi' });
       }
       var projectTags = projectData.tagIds || {};
       var projectMapping = {};
@@ -2997,7 +2997,7 @@
       state.tags = projectTags;
       state.mapping = projectMapping;
       if (!projectData.untaggedId) {
-        addLog('⚠ Projekt ' + projectName + ': brak untaggedId w localStorage — używam fallback=' + savedUntaggedId + '. Odwiedź ten projekt w Brand24 aby zaktualizować konfigurację.', 'warn');
+        addLog('⚠ Projekt ' + projectName + ': brak untaggedId w localStorage — używam fallback=' + savedUntaggedId + '. Odwiedź ten projekt w Brand24 aby zaktualizować konfigurację.', 'warn', { tech: true, key: 'multi' });
       }
       state.untaggedId = projectData.untaggedId || savedUntaggedId;
 
@@ -3012,7 +3012,7 @@
       var projectDateTo = projectDates.length
         ? projectDates.reduce(function(m, d) { return d > m ? d : m; })
         : partition.dateTo;
-      addLog('ℹ Zakres dat projektu ' + projectName + ': ' + projectDateFrom + ' → ' + projectDateTo, 'info');
+      addLog('ℹ Zakres dat projektu ' + projectName + ': ' + projectDateFrom + ' → ' + projectDateTo, 'info', { tech: true, key: 'multi' });
 
       var statsBefore = { tagged: state.stats.tagged, skipped: state.stats.skipped };
       try {
@@ -3066,11 +3066,11 @@
       if (urlsSeen.has(url)) { dupUrls++; } else { urlsSeen.add(url); }
     });
 
-    if (emptyUrls) addLog(`[SCHEMA WARN] ${emptyUrls} pustych URL-i w pliku`, 'warn');
+    if (emptyUrls) addLog(`[SCHEMA WARN] ${emptyUrls} pustych URL-i w pliku`, 'warn', { tech: true, key: 'schema' });
     if (sciUrls) addLog(`[SCHEMA ERROR] ${sciUrls} URL-i wygląda jak sci notation — prawdopodobnie uszkodzone ID!`, 'error');
-    if (dupUrls) addLog(`[SCHEMA WARN] ${dupUrls} zduplikowanych URL-i w pliku (możliwe duplikaty wzmianek)`, 'warn');
+    if (dupUrls) addLog(`[SCHEMA WARN] ${dupUrls} zduplikowanych URL-i w pliku (możliwe duplikaty wzmianek)`, 'warn', { tech: true, key: 'schema' });
 
-    addLog(`[SCHEMA OK] ${rows.length} rekordów, ${urlsSeen.size} unikalnych URL-i`, 'info');
+    addLog(`[SCHEMA OK] ${rows.length} rekordów, ${urlsSeen.size} unikalnych URL-i`, 'info', { tech: true, key: 'schema' });
     return sciUrls === 0;
   }
 
@@ -3088,7 +3088,7 @@
     const _forceFullMap = state.conflictMode === 'overwrite' || state.conflictMode === 'multitag' || _hasDeleteMappings || _hasSentimentMappings;
     if (_forceFullMap && state.mapMode === 'untagged') {
       const _fullMapWhy = _hasDeleteMappings ? 'Usuwanie po assessmencie' : _hasSentimentMappings ? 'Zmiana sentymentu' : 'Tryb overwrite/multitag';
-      addLog('ℹ ' + _fullMapWhy + ': buduje mapę ze WSZYSTKICH wzmianek (ignoruje filtr Untagged)', 'info');
+      addLog('ℹ ' + _fullMapWhy + ': buduje mapę ze WSZYSTKICH wzmianek (ignoruje filtr Untagged)', 'info', { tech: true, key: 'run' });
     }
     state.urlMap = await buildUrlMap(dateFrom, dateTo, !_forceFullMap && state.mapMode === 'untagged', _hasSentimentMappings);
     if (state.status !== 'running') return;
@@ -3169,7 +3169,7 @@
 
       if (!entry) {
         if (longFuzzyKey) {
-          addLog(`[MATCH WARN] Długi fuzzy match (>5 znaków diff) — pomijam tagowanie. URL z pliku: "${normalizedUrl.substring(0, 70)}" → mapa: "${longFuzzyKey.substring(0, 70)}"`, 'warn');
+          addLog(`[MATCH WARN] Długi fuzzy match (>5 znaków diff) — pomijam tagowanie. URL z pliku: "${normalizedUrl.substring(0, 70)}" → mapa: "${longFuzzyKey.substring(0, 70)}"`, 'warn', { tech: true, key: 'match' });
           skipped.push({ row, reason: 'FUZZY_LONG_SKIPPED', url: urlRaw, candidate: longFuzzyKey });
           matchDiag.noMatch++;
           state.stats.noMatch++;
@@ -3417,7 +3417,7 @@
       for (let i = 0; i < batch.ids.length; i += MAX_BATCH_SIZE) {
         if (state.status !== 'running') break;
         const slice = batch.ids.slice(i, i + MAX_BATCH_SIZE);
-        addLog(`→ Odtagowuję ${slice.length} wzmianek (tag ${batch.oldTagId})`, 'info');
+        addLog(`→ Odtagowuję ${slice.length} wzmianek (tag ${batch.oldTagId})`, 'info', { tech: true, key: 'tag.batch' });
         try {
           await bulkUntagMentions(slice.map(String), batch.oldTagId);
           slice.forEach(id => rewrite.add(id));
@@ -3446,7 +3446,7 @@
         if (!concSlices.length) continue;
         batchNum += concSlices.length;
         updateProgress('tag', batchNum, tagIds.length);
-        addLog(`→ bulkTag: ${concSlices.reduce((s, sl) => s + sl.length, 0)} → ${tagName} (${concSlices.length}× równolegle)`, 'info');
+        addLog(`→ bulkTag: ${concSlices.reduce((s, sl) => s + sl.length, 0)} → ${tagName} (${concSlices.length}× równolegle)`, 'info', { tech: true, key: 'tag.batch' });
         // retries=1 → brak powtórek na bulku; przy błędzie (np. Internal server error) od razu fallback per-wzmianka
         const results = await Promise.allSettled(concSlices.map(slice => bulkTagMentions(slice.map(String), parseInt(tagId), 1)));
         let batchSuccessCount = 0;
@@ -3537,7 +3537,7 @@
     let _sentOk = 0, _sentFail = 0;
     if (sentimentTargets.size > 0 && state.status === 'running') {
       const _sentJobs = Array.from(sentimentTargets, ([id, t]) => ({ id, sentiment: t.sentiment }));
-      addLog(`→ Zmiana sentymentu: ${_sentJobs.length} wzmianek (${SENTIMENT_CONCURRENCY}× równolegle, ~2 s na wywołanie)...`, 'info');
+      addLog(`→ Zmiana sentymentu: ${_sentJobs.length} wzmianek (${SENTIMENT_CONCURRENCY}× równolegle, ~2 s na wywołanie)...`, 'info', { tech: true, key: 'sent' });
       updateProgress('sentiment', 0, _sentJobs.length);
       for (let _si = 0; _si < _sentJobs.length; _si += SENTIMENT_CONCURRENCY) {
         if (state.status !== 'running') break;
@@ -3580,7 +3580,7 @@
       ...(matchDiag.sentimentUnchanged > 0 ? [`Sentyment zgodny:   ${matchDiag.sentimentUnchanged}`] : []),
       `════════════════════════`,
     ].join('\n');
-    addLog(_report, 'info');
+    addLog(_report, 'info', { tech: true, key: 'run.report' });
 
     addLog(`✓ Partycja zakończona: ${state.stats.tagged} otagowane, ${state.stats.skipped} pominięte${_sentOk > 0 ? `, ${_sentOk} zmian sentymentu` : ''}${totalTagFailed > 0 ? `, ${totalTagFailed} błędy fallback` : ''}`, 'success');
   }
@@ -3691,7 +3691,7 @@
     if (dateFrom && dateTo) {
       const currentUrl = window.location.href;
       if (!currentUrl.includes(`d1=${dateFrom}`) || !currentUrl.includes(`d2=${dateTo}`)) {
-        addLog(`→ Ustawiam zakres dat: ${dateFrom} → ${dateTo}`, 'info');
+        addLog(`→ Ustawiam zakres dat: ${dateFrom} → ${dateTo}`, 'info', { tech: true, key: 'run.nav' });
         navigateToDateRange(dateFrom, dateTo);
         // Polling zamiast hardkodowanego sleep — czekaj max 4s na zmianę URL
         for (let _w = 0; _w < 8; _w++) {
@@ -3702,7 +3702,7 @@
     }
 
     // Activate Untagged filter
-    addLog('→ Aktywuję filtr Untagged', 'info');
+    addLog('→ Aktywuję filtr Untagged', 'info', { tech: true, key: 'run.nav' });
     activateUntaggedFilter();
     await sleep(500);
 
@@ -3737,7 +3737,7 @@
       // Between partitions
       if (idx < state.partitions.length - 1) {
         if (state.autoPartition) {
-          addLog(`⏱ Przerwa 10s przed następną partycją...`, 'info');
+          addLog(`⏱ Przerwa 10s przed następną partycją...`, 'info', { tech: true, key: 'run.part' });
           await sleep(10000);
         } else {
           state.status = 'paused';
@@ -3786,7 +3786,7 @@
 
       // Switch view if configured
       if (state.switchViewOnDone && state.switchViewTagId) {
-        addLog(`→ Przełączam widok na tag ${state.switchViewTagId}`, 'info');
+        addLog(`→ Przełączam widok na tag ${state.switchViewTagId}`, 'info', { tech: true, key: 'run.nav' });
         await sleep(500);
         navigateToTag(state.switchViewTagId);
       }
@@ -3852,14 +3852,14 @@
     const chips = Array.from(document.querySelectorAll('.MuiChip-root.MuiChip-clickable'));
     const untaggedActive = chips.find(c => c.textContent.trim() === 'Untagged' && c.classList.contains('Mui-active'));
     if (untaggedActive) {
-      addLog('ℹ Filtr Untagged już aktywny — pomijam klik.', 'info');
+      addLog('ℹ Filtr Untagged już aktywny — pomijam klik.', 'info', { tech: true, key: 'run.nav' });
       return;
     }
     const untaggedChip = chips.find(c => c.textContent.trim() === 'Untagged');
     if (untaggedChip) {
       untaggedChip.click();
     } else {
-      addLog('ℹ Chip Untagged nie znaleziony w DOM — filtr UI nie aktywowany. Mapa URL budowana przez API (gr=[untaggedId]) — tagowanie działa normalnie.', 'info');
+      addLog('ℹ Chip Untagged nie znaleziony w DOM — filtr UI nie aktywowany. Mapa URL budowana przez API (gr=[untaggedId]) — tagowanie działa normalnie.', 'info', { tech: true, key: 'run.nav' });
     }
   }
 
@@ -4768,7 +4768,7 @@
 
   function exportFailedMentions() {
     const failed = state.failedMentions || [];
-    if (!failed.length) { addLog('ℹ Brak wadliwych wzmianek do eksportu.', 'info'); return; }
+    if (!failed.length) { addLog('ℹ Brak wadliwych wzmianek do eksportu.', 'info', { tech: true, key: 'export' }); return; }
     const rows = [['id_wzmianki', 'tag', 'tagId', 'zrodlo_bledu', 'komunikat', 'co_zrobic']];
     failed.forEach(f => rows.push([f.id, f.tagName, f.tagId, f.src, f.error, f.hint]));
     const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -4777,12 +4777,12 @@
     const a = document.createElement('a');
     a.href = url; a.download = `b24tagger_failed_${Date.now()}.csv`;
     a.click(); URL.revokeObjectURL(url);
-    addLog(`✓ Eksport: ${failed.length} wadliwych wzmianek → b24tagger_failed_*.csv`, 'success');
+    addLog(`✓ Eksport: ${failed.length} wadliwych wzmianek → b24tagger_failed_*.csv`, 'success', { tech: true, key: 'export' });
   }
 
   function exportSkippedMentions() {
     const skipped = state.skippedRows || [];
-    if (!skipped.length) { addLog('ℹ Brak pominiętych wierszy do eksportu.', 'info'); return; }
+    if (!skipped.length) { addLog('ℹ Brak pominiętych wierszy do eksportu.', 'info', { tech: true, key: 'export' }); return; }
 
     // Zbierz wszystkie kolumny z oryginalnych wierszy pliku
     const allCols = new Set();
@@ -4817,7 +4817,7 @@
     const a = document.createElement('a');
     a.href = url; a.download = `b24tagger_skipped_${Date.now()}.csv`;
     a.click(); URL.revokeObjectURL(url);
-    addLog(`✓ Eksport: ${skipped.length} pominiętych wierszy → b24tagger_skipped_*.csv`, 'success');
+    addLog(`✓ Eksport: ${skipped.length} pominiętych wierszy → b24tagger_skipped_*.csv`, 'success', { tech: true, key: 'export' });
   }
 
   function exportPartitions() {
@@ -4847,7 +4847,7 @@
     exportSkippedMentions,
     debug: {
       getState: () => JSON.parse(JSON.stringify({ ...state, urlMap: `[${Object.keys(state.urlMap).length} entries]`, logs: `[${state.logs.length} entries]` })),
-      sniffUiTag: () => { state._sniffUiTag = true; addLog('[SNIFF] Aktywny — otaguj teraz wzmiankę ręcznie w UI Brand24', 'info'); },
+      sniffUiTag: () => { state._sniffUiTag = true; addLog('[SNIFF] Aktywny — otaguj teraz wzmiankę ręcznie w UI Brand24', 'info', { tech: true, key: 'debug' }); },
       getLogs: () => state.logs,
       getCrashLog: () => lsGet(LS.CRASHLOG),
       // Dziennik diagnostyczny i zgłoszenie bez wysyłania: B24Tagger.debug.getDiag(), B24Tagger.debug.buildReport('bug').
@@ -4856,8 +4856,8 @@
       getUrlMap: () => ({ size: Object.keys(state.urlMap).length, sample: Object.entries(state.urlMap).slice(0, 3) }),
       testGraphQL: async () => { try { await getNotifications(); return 'OK'; } catch (e) { return `FAIL: ${e.message}`; } },
       retryLastAction: () => { if (state.status === 'paused' || state.status === 'error') { state.status = 'running'; updateStatusUI(); startRun(); } },
-      forceStop: () => { state.status = 'idle'; updateStatusUI(); stopHealthCheck(); addLog('⏹ Awaryjne zatrzymanie.', 'warn'); },
-      clearCheckpoint: () => { clearCheckpoint(); addLog('🗑 Checkpoint wyczyszczony.', 'info'); },
+      forceStop: () => { state.status = 'idle'; updateStatusUI(); stopHealthCheck(); addLog('⏹ Awaryjne zatrzymanie.', 'warn', { tech: true, key: 'debug' }); },
+      clearCheckpoint: () => { clearCheckpoint(); addLog('🗑 Checkpoint wyczyszczony.', 'info', { tech: true, key: 'debug' }); },
       getToken: () => state.tokenHeaders,
       checkForUpdate: (manual) => _updCheck(!!manual),
       // ── Kolektor Google (GOOGLE_COLLECTOR.md) ──
@@ -4875,62 +4875,62 @@
       gsVariants: (phrase) => _gsVariants(phrase),
       stressTestBulk: async function(tagId, dateFrom, dateTo) {
         // Stress test batch size: [300, 500, 1000, 1500, 2000] z sleep=500ms między parami tag/untag
-        if (!tagId) { addLog('[STRESS/BULK] Użycie: stressTestBulk(tagId, dateFrom?, dateTo?)', 'warn'); return; }
+        if (!tagId) { addLog('[STRESS/BULK] Użycie: stressTestBulk(tagId, dateFrom?, dateTo?)', 'warn', { tech: true, key: 'debug' }); return; }
         const dFrom = dateFrom || getAnnotatorDates().dateFrom;
         const dTo   = dateTo   || getAnnotatorDates().dateTo;
         const batchSizes = [300, 500, 1000, 1500, 2000];
         const results = [];
-        addLog(`[STRESS/BULK] Zbieram ID z projektu ${state.projectId} (${dFrom}→${dTo})...`, 'info');
+        addLog(`[STRESS/BULK] Zbieram ID z projektu ${state.projectId} (${dFrom}→${dTo})...`, 'info', { tech: true, key: 'debug' });
         state.status = 'running';
         const map = await buildUrlMap(dFrom, dTo, false);
         state.status = 'idle';
         const allIds = Object.values(map).map(function(v) { return String(v.id); });
-        addLog(`[STRESS/BULK] Zebrano ${allIds.length} ID. Testuję batch sizes: ${batchSizes.join(', ')}`, 'info');
+        addLog(`[STRESS/BULK] Zebrano ${allIds.length} ID. Testuję batch sizes: ${batchSizes.join(', ')}`, 'info', { tech: true, key: 'debug' });
         for (const bs of batchSizes) {
           const testIds = allIds.slice(0, Math.min(bs, allIds.length));
-          addLog(`[STRESS/BULK] batch=${testIds.length} — tagowanie...`, 'info');
+          addLog(`[STRESS/BULK] batch=${testIds.length} — tagowanie...`, 'info', { tech: true, key: 'debug' });
           const tTag = Date.now();
           try {
             await bulkTagMentions(testIds, tagId);
             const tagMs = Date.now() - tTag;
-            addLog(`[STRESS/BULK] batch=${testIds.length}: TAG OK ${tagMs}ms`, 'info');
+            addLog(`[STRESS/BULK] batch=${testIds.length}: TAG OK ${tagMs}ms`, 'info', { tech: true, key: 'debug' });
             await sleep(500);
             const tUntag = Date.now();
             await bulkUntagMentions(testIds, tagId);
             const untagMs = Date.now() - tUntag;
-            addLog(`[STRESS/BULK] batch=${testIds.length}: UNTAG OK ${untagMs}ms`, 'info');
+            addLog(`[STRESS/BULK] batch=${testIds.length}: UNTAG OK ${untagMs}ms`, 'info', { tech: true, key: 'debug' });
             results.push({ bs: testIds.length, tagMs, untagMs, ok: true });
           } catch(e) {
-            addLog(`[STRESS/BULK] batch=${testIds.length}: FAIL — ${e.message}`, 'warn');
+            addLog(`[STRESS/BULK] batch=${testIds.length}: FAIL — ${e.message}`, 'warn', { tech: true, key: 'debug' });
             results.push({ bs: testIds.length, ok: false, error: e.message });
             try { await bulkUntagMentions(testIds, tagId); } catch(_) {}
           }
           if (bs !== batchSizes[batchSizes.length - 1]) await sleep(2000);
         }
-        addLog('[STRESS/BULK] ═══ WYNIKI BATCH SIZE ═══', 'info');
+        addLog('[STRESS/BULK] ═══ WYNIKI BATCH SIZE ═══', 'info', { tech: true, key: 'debug' });
         results.forEach(function(r) {
-          if (r.ok) addLog(`  batch=${r.bs}: tag=${r.tagMs}ms | untag=${r.untagMs}ms`, 'info');
-          else addLog(`  batch=${r.bs}: FAIL — ${r.error}`, 'warn');
+          if (r.ok) addLog(`  batch=${r.bs}: tag=${r.tagMs}ms | untag=${r.untagMs}ms`, 'info', { tech: true, key: 'debug' });
+          else addLog(`  batch=${r.bs}: FAIL — ${r.error}`, 'warn', { tech: true, key: 'debug' });
         });
         return results;
       },
       stressTestBulkSleep: async function(tagId, batchSize, dateFrom, dateTo) {
         // Stress test sleep: jak długo trzeba czekać między requestami bulk?
         // Uruchamia pary tag→untag z różnymi sleep między nimi: 0, 100, 200, 500ms
-        if (!tagId) { addLog('[STRESS/SLEEP] Użycie: stressTestBulkSleep(tagId, batchSize?, dateFrom?, dateTo?)', 'warn'); return; }
+        if (!tagId) { addLog('[STRESS/SLEEP] Użycie: stressTestBulkSleep(tagId, batchSize?, dateFrom?, dateTo?)', 'warn', { tech: true, key: 'debug' }); return; }
         const bs = batchSize || 200;
         const dFrom = dateFrom || getAnnotatorDates().dateFrom;
         const dTo   = dateTo   || getAnnotatorDates().dateTo;
         const sleepValues = [0, 100, 200, 500];
         const results = [];
-        addLog(`[STRESS/SLEEP] Zbieram ID z projektu ${state.projectId}...`, 'info');
+        addLog(`[STRESS/SLEEP] Zbieram ID z projektu ${state.projectId}...`, 'info', { tech: true, key: 'debug' });
         state.status = 'running';
         const map = await buildUrlMap(dFrom, dTo, false);
         state.status = 'idle';
         const allIds = Object.values(map).map(function(v) { return String(v.id); }).slice(0, bs);
-        addLog(`[STRESS/SLEEP] Testuję sleep: ${sleepValues.join(', ')}ms | batch=${allIds.length}`, 'info');
+        addLog(`[STRESS/SLEEP] Testuję sleep: ${sleepValues.join(', ')}ms | batch=${allIds.length}`, 'info', { tech: true, key: 'debug' });
         for (const sleepMs of sleepValues) {
-          addLog(`[STRESS/SLEEP] sleep=${sleepMs}ms — tag...`, 'info');
+          addLog(`[STRESS/SLEEP] sleep=${sleepMs}ms — tag...`, 'info', { tech: true, key: 'debug' });
           try {
             const t0 = Date.now();
             await bulkTagMentions(allIds, tagId);
@@ -4939,56 +4939,56 @@
             const t1 = Date.now();
             await bulkUntagMentions(allIds, tagId);
             const untagMs = Date.now() - t1;
-            addLog(`[STRESS/SLEEP] sleep=${sleepMs}ms: TAG ${tagMs}ms | UNTAG ${untagMs}ms — OK`, 'info');
+            addLog(`[STRESS/SLEEP] sleep=${sleepMs}ms: TAG ${tagMs}ms | UNTAG ${untagMs}ms — OK`, 'info', { tech: true, key: 'debug' });
             results.push({ sleepMs, tagMs, untagMs, ok: true });
           } catch(e) {
-            addLog(`[STRESS/SLEEP] sleep=${sleepMs}ms: FAIL — ${e.message}`, 'warn');
+            addLog(`[STRESS/SLEEP] sleep=${sleepMs}ms: FAIL — ${e.message}`, 'warn', { tech: true, key: 'debug' });
             results.push({ sleepMs, ok: false, error: e.message });
             try { await bulkUntagMentions(allIds, tagId); } catch(_) {}
           }
           if (sleepMs !== sleepValues[sleepValues.length - 1]) await sleep(3000);
         }
-        addLog('[STRESS/SLEEP] ═══ WYNIKI SLEEP TEST ═══', 'info');
+        addLog('[STRESS/SLEEP] ═══ WYNIKI SLEEP TEST ═══', 'info', { tech: true, key: 'debug' });
         results.forEach(function(r) {
-          if (r.ok) addLog(`  sleep=${r.sleepMs}ms: tag=${r.tagMs}ms | untag=${r.untagMs}ms`, 'info');
-          else addLog(`  sleep=${r.sleepMs}ms: FAIL — ${r.error}`, 'warn');
+          if (r.ok) addLog(`  sleep=${r.sleepMs}ms: tag=${r.tagMs}ms | untag=${r.untagMs}ms`, 'info', { tech: true, key: 'debug' });
+          else addLog(`  sleep=${r.sleepMs}ms: FAIL — ${r.error}`, 'warn', { tech: true, key: 'debug' });
         });
         return results;
       },
       stressTestBuildUrlMap: async function(dateFrom, dateTo) {
         const levels = [1, 2, 3, 5];
         const results = [];
-        addLog('[STRESS] Rozpoczynam stress test buildUrlMap — concurrency: ' + levels.join('→'), 'info');
+        addLog('[STRESS] Rozpoczynam stress test buildUrlMap — concurrency: ' + levels.join('→'), 'info', { tech: true, key: 'debug' });
         const prevStatus = state.status;
         for (const c of levels) {
           MAP_FETCH_CONCURRENCY = c;
           state.status = 'running';
           const dates = (dateFrom && dateTo) ? { dateFrom, dateTo } : getAnnotatorDates();
-          addLog(`[STRESS] concurrency=${c} — start (${dates.dateFrom} → ${dates.dateTo})`, 'info');
+          addLog(`[STRESS] concurrency=${c} — start (${dates.dateFrom} → ${dates.dateTo})`, 'info', { tech: true, key: 'debug' });
           const t0 = Date.now();
           let mapResult = {};
-          try { mapResult = await buildUrlMap(dates.dateFrom, dates.dateTo, false); } catch(e) { addLog(`[STRESS] concurrency=${c} BŁĄD: ${e.message}`, 'warn'); }
+          try { mapResult = await buildUrlMap(dates.dateFrom, dates.dateTo, false); } catch(e) { addLog(`[STRESS] concurrency=${c} BŁĄD: ${e.message}`, 'warn', { tech: true, key: 'debug' }); }
           state.status = 'idle';
           const elapsed = Date.now() - t0;
           const size = Object.keys(mapResult).length;
           results.push({ concurrency: c, elapsed, size });
-          addLog(`[STRESS] concurrency=${c}: ${elapsed}ms | wzmianek=${size}`, 'info');
+          addLog(`[STRESS] concurrency=${c}: ${elapsed}ms | wzmianek=${size}`, 'info', { tech: true, key: 'debug' });
           if (c !== levels[levels.length - 1]) await sleep(3000);
         }
         MAP_FETCH_CONCURRENCY = 3;
         state.status = prevStatus;
-        addLog('[STRESS] ═══ WYNIKI STRESS TEST buildUrlMap ═══', 'info');
-        results.forEach(r => addLog(`  concurrency=${r.concurrency}: ${r.elapsed}ms | ${r.size} wzmianek`, 'info'));
+        addLog('[STRESS] ═══ WYNIKI STRESS TEST buildUrlMap ═══', 'info', { tech: true, key: 'debug' });
+        results.forEach(r => addLog(`  concurrency=${r.concurrency}: ${r.elapsed}ms | ${r.size} wzmianek`, 'info', { tech: true, key: 'debug' }));
         return results;
       },
       netMonitor: function(shortcodes) {
         const sc = Array.isArray(shortcodes) ? shortcodes : [shortcodes];
         state._netMonitor = { targetShortcodes: sc, found: new Set() };
-        addLog('[NET_MONITOR] Aktywny — monitoruję: ' + sc.join(', '), 'info');
+        addLog('[NET_MONITOR] Aktywny — monitoruję: ' + sc.join(', '), 'info', { tech: true, key: 'debug' });
       },
       netMonitorStop: function() {
         state._netMonitor = null;
-        addLog('[NET_MONITOR] Wyłączony.', 'info');
+        addLog('[NET_MONITOR] Wyłączony.', 'info', { tech: true, key: 'debug' });
       },
       // Skanuje URL tak samo jak News moduł — zwraca status, score, matched chips i snippet
       testUrlScan: function(url, chips) {
@@ -10440,7 +10440,7 @@
       Toast.show('Przed wgraniem innego pliku trzeba zatrzymać przebieg przyciskiem Stop', 'warn');
       return;
     }
-    addLog(`→ Wczytuję plik: ${file.name}`, 'info');
+    addLog(`→ Wczytuję plik: ${file.name}`, 'info', { tech: true, key: 'file' });
 
     try {
       let rows;
@@ -10473,7 +10473,7 @@
       );
       if (urlFallback) {
         colMap.url = urlFallback;
-        addLog(`→ Kolumna URL wykryta jako fallback: "${urlFallback}"`, 'warn');
+        addLog(`→ Kolumna URL wykryta jako fallback: "${urlFallback}"`, 'warn', { tech: true, key: 'file' });
       }
     }
 
@@ -10517,11 +10517,11 @@
       renderAssessmentColBar(rows, colMap);
       updateStatsUI();
       addLog(`✓ Plik załadowany: ${meta.totalRows} wierszy, ${Object.keys(meta.assessments).length} typów labelek`, 'success');
-      addLog(`→ Wykryte kolumny: url="${colMap.url || 'BRAK!'}" | assessment="${colMap.assessment || 'BRAK!'}" | date="${colMap.date || 'BRAK!'}"`+ (colMap.projectId ? ` | project_id="${colMap.projectId}"` : ''), 'info');
+      addLog(`→ Wykryte kolumny: url="${colMap.url || 'BRAK!'}" | assessment="${colMap.assessment || 'BRAK!'}" | date="${colMap.date || 'BRAK!'}"`+ (colMap.projectId ? ` | project_id="${colMap.projectId}"` : ''), 'info', { tech: true, key: 'file' });
       Toast.show('Wczytano plik: ' + meta.totalRows + ' ' + _relPl(meta.totalRows, 'wiersz', 'wiersze', 'wierszy'), 'ok');
 
       if (colMap.projectId) {
-        addLog(`→ Multi-projekt: wykryto kolumnę projektów "${colMap.projectId}"`, 'info');
+        addLog(`→ Multi-projekt: wykryto kolumnę projektów "${colMap.projectId}"`, 'info', { tech: true, key: 'file' });
         renderMultiProjectWidget(rows, colMap);
       } else {
         const mpEl = _$('b24t-multiproject-section');
@@ -10586,7 +10586,7 @@
     if (mappingRows) mappingRows.innerHTML = '';
 
     updateStatsUI();
-    addLog('🗑 Plik usunięty. Wgraj nowy plik.', 'info');
+    addLog('🗑 Plik usunięty. Wgraj nowy plik.', 'info', { tech: true, key: 'file' });
   }
 
   async function _autoResolveUnknownProjects(unknownPids) {
@@ -10624,9 +10624,9 @@
         // Nazwa ze strony projektu jest potwierdzona przez Brand24, nie zgadnięta z tytułu karty.
         if (!_isFallbackProjectName(projName)) _pnSetVerified(pid, projName, PN_SRC_CMS, _b24HostBase());
         resolved.push(label);
-        addLog('✓ Auto-załadowano: ' + label + ' (' + Object.keys(tagIds).length + ' tagów)', 'success');
+        addLog('✓ Auto-załadowano: ' + label + ' (' + Object.keys(tagIds).length + ' tagów)', 'success', { tech: true, key: 'file' });
       } catch(e) {
-        addLog('⚠ Auto-resolve ' + pid + ': ' + (e && e.message || e), 'warn');
+        addLog('⚠ Auto-resolve ' + pid + ': ' + (e && e.message || e), 'warn', { tech: true, key: 'file' });
       }
     }
     if (resolved.length === 0 && unknownPids.length > 0) {
@@ -11056,7 +11056,7 @@
       // Update column override UI if visible
       const override = _$('b24t-column-override');
       if (override && !override.hidden) buildColumnOverrideUI(rows);
-      addLog(`→ Kolumna labelek zmieniona na: "${chosen}" (${Object.keys(state.file.meta.assessments).length} typów)`, 'info');
+      addLog(`→ Kolumna labelek zmieniona na: "${chosen}" (${Object.keys(state.file.meta.assessments).length} typów)`, 'info', { tech: true, key: 'file' });
       refreshBar();
     };
 
@@ -11144,7 +11144,7 @@
     }
 
     if (!(await _runConfirm())) {
-      addLog('⏹ Sesja anulowana przez użytkownika.', 'info');
+      addLog('⏹ Sesja anulowana przez użytkownika.', 'info', { tech: true, key: 'run' });
       return;
     }
 
@@ -11355,7 +11355,7 @@
       // Zapisz nazwę do trwałego resolvera — _pnSet ignoruje fallbacki
       _pnSet(projectId, state.projectName);
 
-      addLog(`✓ Projekt załadowany: ${state.projectName} (${Object.keys(state.tags).length} tagów)`, 'success');
+      addLog(`✓ Projekt załadowany: ${state.projectName} (${Object.keys(state.tags).length} tagów)`, 'success', { tech: true, key: 'project' });
 
       // Update mapping if file already loaded
       if (state.file) renderMappingRows();
@@ -20711,6 +20711,23 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.14",
+      "date": "2026-10-03",
+      "label": "improved",
+      "changes": [
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Log bez wpisów technicznych przy pracy z plikiem i w Annotators",
+          "items": [
+            "Postęp pobierania mapy wzmianek, partie tagowania, wykryte kolumny pliku, kontrole danych i odczyty zakładek Annotators trafiają do logów programistycznych.",
+            "Log pokazuje start, wynik i uwagi operacji; resztę widać po włączeniu „Logi programistyczne” w Ustawieniach → Aktualizacje."
+          ],
+          "text": "Log bez wpisów technicznych przy pracy z plikiem i w Annotators. Postęp pobierania mapy wzmianek, partie tagowania, wykryte kolumny pliku, kontrole danych i odczyty zakładek Annotators trafiają do logów programistycznych. Log pokazuje start, wynik i uwagi operacji; resztę widać po włączeniu „Logi programistyczne” w Ustawieniach → Aktualizacje."
+        }
+      ]
+    },
+    {
       "version": "0.38.13",
       "date": "2026-10-03",
       "label": "improved",
@@ -21020,59 +21037,6 @@
           ],
           "experimental": true,
           "text": "Podgląd dziennika aktualizacji przed wydaniem wersji na kanale Stabilnym. Gdy opis najbliższej wersji stabilnej jest gotowy, dziennik zmian ma przycisk „Podgląd dziennika aktualizacji”. Podgląd pokazuje opis w oknie, które po wydaniu zobaczą użytkownicy kanału Stabilnego."
-        }
-      ]
-    },
-    {
-      "version": "0.38.4",
-      "date": "2026-10-03",
-      "label": "improved",
-      "changes": [
-        {
-          "type": "improved",
-          "area": "Tagowanie z pliku",
-          "title": "Dopasowanie pliku do Brand24 liczone samo po wgraniu pliku",
-          "items": [
-            "Karta „Dopasowanie do Brand24” pod plikiem pokazuje, ile wierszy z oceną ma wzmiankę w projekcie, ile z nich ma tag z mapowania, a ile inny tag.",
-            "„Pokaż adresy bez wzmianki” rozwija listę adresów, których nie ma wśród wzmianek projektu, a „Przelicz” pobiera wzmianki od nowa.",
-            "Dopasowanie liczy się samo także po zmianie kolumn i po każdym przebiegu, więc po tagowaniu karta pokazuje, ile wzmianek ma już swój tag.",
-            "Stopka karty Plik ma sam „Start” i eksport logu: wyniki „Match” i „Audit” są w karcie dopasowania."
-          ],
-          "comment": "Match liczył dopasowanie z pierwszych ok. 60 wzmianek, więc przy większych plikach wynik wychodził zaniżony, a Audit liczył prawie to samo w osobnym oknie. Jedna karta robi obie rzeczy bez klikania.",
-          "text": "Dopasowanie pliku do Brand24 liczone samo po wgraniu pliku. Karta „Dopasowanie do Brand24” pod plikiem pokazuje, ile wierszy z oceną ma wzmiankę w projekcie, ile z nich ma tag z mapowania, a ile inny tag. „Pokaż adresy bez wzmianki” rozwija listę adresów, których nie ma wśród wzmianek projektu, a „Przelicz” pobiera wzmianki od nowa. Dopasowanie liczy się samo także po zmianie kolumn i po każdym przebiegu, więc po tagowaniu karta pokazuje, ile wzmianek ma już swój tag. Stopka karty Plik ma sam „Start” i eksport logu: wyniki „Match” i „Audit” są w karcie dopasowania."
-        },
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Wspólne ustawienia dla app.brand24.com i panel.brand24.pl",
-          "items": [
-            "Motyw, rozmiar tekstu, animacje, włączone funkcje, kanał aktualizacji i analityka mają jedną wartość dla obu paneli Brand24.",
-            "Po aktualizacji obowiązują ustawienia panelu otwartego jako pierwszy, a z drugiego dochodzą tylko te, których brakowało.",
-            "Zmiana motywu, rozmiaru tekstu, animacji albo funkcji w jednej karcie przeglądarki działa od razu w pozostałych."
-          ],
-          "text": "Wspólne ustawienia dla app.brand24.com i panel.brand24.pl. Motyw, rozmiar tekstu, animacje, włączone funkcje, kanał aktualizacji i analityka mają jedną wartość dla obu paneli Brand24. Po aktualizacji obowiązują ustawienia panelu otwartego jako pierwszy, a z drugiego dochodzą tylko te, których brakowało. Zmiana motywu, rozmiaru tekstu, animacji albo funkcji w jednej karcie przeglądarki działa od razu w pozostałych."
-        },
-        {
-          "type": "improved",
-          "area": "Dodawanie wzmianek",
-          "title": "„Odśwież listę projektów” w Ustawieniach zamiast „Odbuduj listę” i „Sprawdź nazwy”",
-          "items": [
-            "Projekt otwarty w Brand24 trafia na listę formularza „Dodaj wzmiankę” sam, a odświeżenie poprawia w Brand24 nazwy niepotwierdzone i przywraca projekty, które znów są dostępne."
-          ],
-          "text": "„Odśwież listę projektów” w Ustawieniach zamiast „Odbuduj listę” i „Sprawdź nazwy”. Projekt otwarty w Brand24 trafia na listę formularza „Dodaj wzmiankę” sam, a odświeżenie poprawia w Brand24 nazwy niepotwierdzone i przywraca projekty, które znów są dostępne."
-        },
-        {
-          "type": "fix",
-          "area": "Dodawanie wzmianek",
-          "title": "Naprawiono błąd, przez który poprawiona nazwa projektu wracała do starej na drugim panelu Brand24",
-          "text": "Naprawiono błąd, przez który poprawiona nazwa projektu wracała do starej na drugim panelu Brand24."
-        },
-        {
-          "type": "improved",
-          "area": "Dodawanie wzmianek",
-          "title": "Panel Niestandardowe bez okna ustawień z nieużywanymi opcjami",
-          "comment": "Opcje w tym oknie nie zmieniały działania panelu, więc okno zniknęło razem z przyciskiem w nagłówku i znacznikiem „Niestandardowe” w bibliotece promptów.",
-          "text": "Panel Niestandardowe bez okna ustawień z nieużywanymi opcjami."
         }
       ]
     }
@@ -23047,7 +23011,7 @@
       _relOnChannel();
       // Bez własnego wyboru logi programistyczne idą za kanałem (_devLogs).
       devEl.checked = _devLogs();
-      addLog('ℹ Kanał aktualizacji: ' + (value === 'experimental' ? 'Eksperymentalny' : 'Stabilny') + '.', 'info');
+      addLog('ℹ Kanał aktualizacji: ' + (value === 'experimental' ? 'Eksperymentalny' : 'Stabilny') + '.', 'info', { tech: true, key: 'settings' });
       say();
       ctx.saved();
     }
@@ -23183,7 +23147,7 @@
         // Bez tej podpowiedzi wynik wygląda jak awaria, a wystarczy się gdzieś zalogować.
         if (unknown) text += '. Niesprawdzone projekty są na drugim panelu Brand24: zaloguj się tam i sprawdź ponownie';
         _setSay(pnStatusEl, text.charAt(0).toUpperCase() + text.slice(1) + '.', found || renamed ? 'ok' : (unknown ? 'warn' : ''));
-        addLog('✓ Nazwy projektów: ' + (parts.join(', ') || 'brak zmian'), 'success');
+        addLog('✓ Nazwy projektów: ' + (parts.join(', ') || 'brak zmian'), 'success', { tech: true, key: 'settings' });
       }
 
       // Sekwencyjnie, nie równolegle: fallback na Django waży 100–230 kB na projekt,
@@ -23204,7 +23168,7 @@
           else if (res.name === prev) found++;
           else {
             renamed++;
-            addLog('↻ Projekt ' + pid + ': "' + prev + '" → "' + res.name + '" (' + res.src + ')', 'info');
+            addLog('↻ Projekt ' + pid + ': "' + prev + '" → "' + res.name + '" (' + res.src + ')', 'info', { tech: true, key: 'settings' });
           }
         }
         _finish();
@@ -24322,7 +24286,7 @@
     if (projectCacheFresh) {
       var age = Math.round((Date.now() - bgCache.project.ts) / 1000);
       var ageStr = age < 60 ? age + 's' : Math.round(age / 60) + 'm ' + (age % 60) + 's';
-      addLog('[CACHE] project: gorący (' + ageStr + ' temu), renderuję od razu', 'info');
+      addLog('[CACHE] project: gorący (' + ageStr + ' temu), renderuję od razu', 'info', { tech: true, key: 'ann.tab' });
       annotatorData.project = bgCache.project;
       renderAnnotatorProject(el, bgCache.project);
       _bgFetchProject().then(function(fresh) {
@@ -24331,12 +24295,12 @@
       }).catch(function(e){ addLog('[BG] project refresh error: ' + e.message, 'warn', { tech: true, key: 'bg' }); });
       return;
     }
-    addLog('→ [zakładka Projekt] ' + (state.projectName || 'projekt') + ': pobieranie danych...', 'info');
+    addLog('→ [zakładka Projekt] ' + (state.projectName || 'projekt') + ': pobieranie danych...', 'info', { tech: true, key: 'ann.tab' });
     el.innerHTML = _annEmpty('spin', '', 'Liczę wzmianki projektu…');
     try {
       var data = await _fetchProjectStats();
       annotatorData.project = data;
-      addLog('✓ [zakładka Projekt] ' + (state.projectName || 'projekt') + ': ALL:' + data.total + ' REQ:' + data.reqVer + ' DEL:' + data.toDelete + ' (' + data.pct + '% otagowane)', 'success');
+      addLog('✓ [zakładka Projekt] ' + (state.projectName || 'projekt') + ': ALL:' + data.total + ' REQ:' + data.reqVer + ' DEL:' + data.toDelete + ' (' + data.pct + '% otagowane)', 'success', { tech: true, key: 'ann.tab' });
       var cur = _$('b24t-ann-project-content');
       if (cur) renderAnnotatorProject(cur, annotatorData.project);
     } catch(e) {
@@ -24402,7 +24366,7 @@
     if (_bgCacheFresh(bgCache.tagstats)) {
       var age = Math.round((Date.now() - bgCache.tagstats.ts) / 1000);
       var ageStr = age < 60 ? age + 's' : Math.round(age/60) + 'm ' + (age%60) + 's';
-      addLog('[CACHE] tagstats: gorący (' + ageStr + ' temu), renderuję od razu', 'info');
+      addLog('[CACHE] tagstats: gorący (' + ageStr + ' temu), renderuję od razu', 'info', { tech: true, key: 'ann.tab' });
       annotatorData.tagstats = bgCache.tagstats;
       renderAnnotatorTagStats(el, bgCache.tagstats);
       // Cichy background refresh — nie resetuj DOM
@@ -24413,7 +24377,7 @@
       return;
     }
 
-    addLog('→ [zakładka Tagi] pobieranie danych (' + projects.length + ' projektów)...', 'info');
+    addLog('→ [zakładka Tagi] pobieranie danych (' + projects.length + ' projektów)...', 'info', { tech: true, key: 'ann.tab' });
 
     // ── Cache zimny — pokaż spinner, pobierz, renderuj ──
     var dates = getAnnotatorDates();
@@ -24440,7 +24404,7 @@
 
     bgCache.tagstats = { results: results, dates: dates, ts: Date.now() };
     annotatorData.tagstats = bgCache.tagstats;
-    addLog('✓ [zakładka Tagi] załadowano dane (' + projects.length + ' projektów, ' + results.length + ' z tagami)', 'success');
+    addLog('✓ [zakładka Tagi] załadowano dane (' + projects.length + ' projektów, ' + results.length + ' z tagami)', 'success', { tech: true, key: 'ann.tab' });
     var cur = _$('b24t-ann-tagstats-content');
     if (cur) renderAnnotatorTagStats(cur, bgCache.tagstats);
   }
@@ -24668,7 +24632,7 @@
       return 0;
     }
 
-    addLog(`→ Znaleziono ${allIds.length} wzmianek do usunięcia`, 'warn');
+    addLog(`→ Znaleziono ${allIds.length} wzmianek do usunięcia`, 'warn', { tech: true, key: 'del' });
 
     // Delete in parallel batches (_deleteBatch, domyślnie DEL_BATCH_DEFAULT)
     const BATCH = _deleteBatch;
@@ -24680,7 +24644,7 @@
       deleted += chunk.length;
       if (onProgress) onProgress('delete', deleted, allIds.length);
       if (deleted % 25 === 0 || deleted === allIds.length) {
-        addLog(`→ Usunięto ${deleted}/${allIds.length}...`, 'info');
+        addLog(`→ Usunięto ${deleted}/${allIds.length}...`, 'info', { tech: true, key: 'del' });
       }
       if (i + BATCH < allIds.length) await sleep(50);
     }
@@ -24710,7 +24674,7 @@
         // Indeks Brand24 mógł jeszcze nie widzieć tagów nadanych przed chwilą: druga próba po 5 s w tym samym zakresie.
         // Zakres zostaje zakresem pliku. Szersze okno (od początku poprzedniego miesiąca) usuwało bez pytania wzmianki
         // z tym tagiem spoza pliku, a Brand24 nie ma kosza.
-        addLog(`⚠ Auto-Delete: 0 wzmianek w ${dateFrom}→${dateTo}. Druga próba za 5 s w tym samym zakresie...`, 'warn');
+        addLog(`⚠ Auto-Delete: 0 wzmianek w ${dateFrom}→${dateTo}. Druga próba za 5 s w tym samym zakresie...`, 'warn', { tech: true, key: 'del' });
         setStatus(`Brak w ${dateFrom}→${dateTo}, druga próba za 5 s...`);
         await sleep(5000);
         deleted = await runDeleteByTag(tagId, tagName, dateFrom, dateTo, onProgress);
@@ -25012,7 +24976,7 @@
     if (groupSel) groupSel.addEventListener('change', function() {
       _apGroupId = groupSel.value;
       _$('b24t-ap-run').hidden = true;
-      addLog('🗂 [Cross-delete] wybrano zakres: ' + (groupSel.options[groupSel.selectedIndex] || {}).text, 'info');
+      addLog('🗂 [Cross-delete] wybrano zakres: ' + (groupSel.options[groupSel.selectedIndex] || {}).text, 'info', { tech: true, key: 'xdel' });
       refreshAllProjectsPanel();
     });
     w.el.addEventListener('click', function(e) {
@@ -25167,7 +25131,7 @@
           function(pg) { return getMentions(p.id, p._dateFrom, p._dateTo, [tag.id], pg); },
           function(cur, pages) { _apStatus(p.name + ': zbieram, strona ' + cur + ' z ' + pages + '…'); }
         );
-        addLog('→ Usuwam "' + tag.name + '" z projektu ' + p.name + ' (' + ids.length + ' wzmianek)...', 'warn');
+        addLog('→ Usuwam "' + tag.name + '" z projektu ' + p.name + ' (' + ids.length + ' wzmianek)...', 'warn', { tech: true, key: 'xdel' });
         var pDeleted = 0;
         for (var i = 0; i < ids.length && !run.stop; i += _deleteBatch) {
           var chunk = ids.slice(i, i + _deleteBatch);
@@ -25561,7 +25525,7 @@
     selEl.addEventListener('change', function() {
       var gid = selEl.value;
       var gName = (selEl.options[selEl.selectedIndex] || {}).text || '';
-      if (gid) addLog('🗂 [Grupy] wybrano grupę "' + gName.replace(/\s*\(\d+.*$/, '') + '" w Overall Stats', 'info');
+      if (gid) addLog('🗂 [Grupy] wybrano grupę "' + gName.replace(/\s*\(\d+.*$/, '') + '" w Overall Stats', 'info', { tech: true, key: 'ann' });
       var cfg = getStatsConfig();
       cfg.selectedGroupId = gid || null;
       saveStatsConfig(cfg);
@@ -25587,7 +25551,7 @@
     if (_ovLoading[key]) return;
     _ovLoading[key] = true;
     _ovBusy(true);
-    addLog('📊 [Overall] Pobieranie: ' + group.name + ' (' + group.projectIds.length + ' proj.)', 'info');
+    addLog('📊 [Overall] Pobieranie: ' + group.name + ' (' + group.projectIds.length + ' proj.)', 'info', { tech: true, key: 'ann' });
     // Rysuje tylko wtedy, gdy na ekranie jest nadal ta grupa i ten miesiąc (w trakcie liczenia można przejść dalej).
     var current = function() {
       var g = _ovSelectedGroup();
@@ -26000,7 +25964,7 @@
     }
     var run = _aiAccRun = { stop: false };
     _aiAccRunState();
-    addLog('🤖 [AI-Acc] Liczenie trafności: ' + group.name + (cfg.aiScopeCurrent ? ' (bieżący projekt)' : ' (' + pidList.length + ' proj.)'), 'info');
+    addLog('🤖 [AI-Acc] Liczenie trafności: ' + group.name + (cfg.aiScopeCurrent ? ' (bieżący projekt)' : ' (' + pidList.length + ' proj.)'), 'info', { tech: true, key: 'ann' });
     try {
       var fresh = await _fetchAiAccStats(group, pidList, function(partial, dates) {
         var _e = _$('b24t-aiacc-data');
@@ -31624,7 +31588,7 @@
       if (!state.projectId) await detectProject();
     }, 3000);
 
-    addLog(`B24 Tagger BETA v${VERSION} załadowany.`, 'info');
+    addLog(`B24 Tagger BETA v${VERSION} załadowany.`, 'info', { tech: true, key: 'boot' });
 
     // Uchwyty krawędziowe Dashboardu Annotatora i Network Monitora; widoczność ustawia applyFeatures() niżej.
     _annInit();

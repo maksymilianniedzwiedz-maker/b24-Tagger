@@ -1,5 +1,85 @@
 [
   {
+    "version": "0.38.3",
+    "date": "2026-10-03",
+    "label": "new",
+    "changes": [
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "Listwa uchwytów przy krawędzi zamiast pionowych zakładek",
+        "items": [
+          "Annotators, Wzmianki, Network Monitor i schowany panel mają ikony w jednej listwie, a nazwa pokazuje się w dymku obok niej.",
+          "Kliknięcie uchwytu otwiera okno, drugie je chowa. Okno wyrasta z uchwytu i do niego wraca, a uchwyt otwartego okna świeci się kolorem akcentu.",
+          "Listwę przesuwa się w górę i w dół. Wyciągnięta od krawędzi zmienia się w kroplę: mocny rzut przykleja ją do krawędzi, w którą poleciała, a słaby oddaje ją z powrotem.",
+          "Wzmianki da się zamknąć uchwytem także przy otwartym oknie News."
+        ],
+        "comment": "Pionowe napisy czytało się z głową przechyloną o 90 stopni. Listwa zajmuje jedno miejsce przy krawędzi i można ją odłożyć tam, gdzie nie przeszkadza w pracy.",
+        "highlight": true,
+        "text": "Listwa uchwytów przy krawędzi zamiast pionowych zakładek. Annotators, Wzmianki, Network Monitor i schowany panel mają ikony w jednej listwie, a nazwa pokazuje się w dymku obok niej. Kliknięcie uchwytu otwiera okno, drugie je chowa. Okno wyrasta z uchwytu i do niego wraca, a uchwyt otwartego okna świeci się kolorem akcentu. Listwę przesuwa się w górę i w dół. Wyciągnięta od krawędzi zmienia się w kroplę: mocny rzut przykleja ją do krawędzi, w którą poleciała, a słaby oddaje ją z powrotem. Wzmianki da się zamknąć uchwytem także przy otwartym oknie News."
+      },
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Szara rama okien w jasnym motywie",
+        "items": [
+          "Nagłówek, pasek funkcji i stopka mają szary odcień, a karty zostają białe, więc panel odcina się od białej strony Brand24."
+        ],
+        "text": "Szara rama okien w jasnym motywie. Nagłówek, pasek funkcji i stopka mają szary odcień, a karty zostają białe, więc panel odcina się od białej strony Brand24."
+      },
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Powiadomienia przy panelu i ochrona przed przypadkowym kliknięciem",
+        "items": [
+          "Powiadomienia pojawiają się obok panelu albo pigułki, a nie zawsze w prawym dolnym rogu.",
+          "Świeże powiadomienie, okno albo dymek samouczka przez pół sekundy nie reagują na kliknięcie, więc klik przeznaczony dla strony nie trafia w ich przycisk."
+        ],
+        "text": "Powiadomienia przy panelu i ochrona przed przypadkowym kliknięciem. Powiadomienia pojawiają się obok panelu albo pigułki, a nie zawsze w prawym dolnym rogu. Świeże powiadomienie, okno albo dymek samouczka przez pół sekundy nie reagują na kliknięcie, więc klik przeznaczony dla strony nie trafia w ich przycisk."
+      },
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Powiadomienie o nowej wersji także przy panelu zwiniętym do pigułki",
+        "items": [
+          "Przycisk instalacji nazywa się „Zainstaluj”, a „Pomiń tę wersję” zniknęło.",
+          "Na kanale Stabilnym z włączoną automatyczną aktualizacją powiadomienie mówi, że Tampermonkey zainstaluje wersję sam, zwykle w ciągu doby."
+        ],
+        "text": "Powiadomienie o nowej wersji także przy panelu zwiniętym do pigułki. Przycisk instalacji nazywa się „Zainstaluj”, a „Pomiń tę wersję” zniknęło. Na kanale Stabilnym z włączoną automatyczną aktualizacją powiadomienie mówi, że Tampermonkey zainstaluje wersję sam, zwykle w ciągu doby."
+      },
+      {
+        "type": "improved",
+        "area": "Kampanie H&M",
+        "title": "Wyszukiwanie zaawansowane Google z wariantami frazy układanymi z nazwy",
+        "items": [
+          "Warianty frazy układają się same przy zmianie nazwy kampanii. Po ręcznej zmianie przycisk „Z nazwy” wraca do automatycznych, a „Przywróć ręczne” do własnej listy.",
+          "Wyszukiwanie zawsze zaczyna od pełnej nazwy, a warianty to jej skrócone wersje.",
+          "Gdy z nazwy nie da się utworzyć wariantów, pole zostaje puste z informacją, że wyszukiwana jest sama nazwa.",
+          "Okno, przyciski i okienko przebiegu mówią o wyszukiwaniu zaawansowanym Google."
+        ],
+        "text": "Wyszukiwanie zaawansowane Google z wariantami frazy układanymi z nazwy. Warianty frazy układają się same przy zmianie nazwy kampanii. Po ręcznej zmianie przycisk „Z nazwy” wraca do automatycznych, a „Przywróć ręczne” do własnej listy. Wyszukiwanie zawsze zaczyna od pełnej nazwy, a warianty to jej skrócone wersje. Gdy z nazwy nie da się utworzyć wariantów, pole zostaje puste z informacją, że wyszukiwana jest sama nazwa. Okno, przyciski i okienko przebiegu mówią o wyszukiwaniu zaawansowanym Google."
+      },
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Ustawienie „Animacje” z opisem każdej opcji",
+        "items": [
+          "Opcje „Jak w systemie”, „Pełne” i „Ograniczone” mają opis tego, co zmieniają na ekranie."
+        ],
+        "text": "Ustawienie „Animacje” z opisem każdej opcji. Opcje „Jak w systemie”, „Pełne” i „Ograniczone” mają opis tego, co zmieniają na ekranie."
+      },
+      {
+        "type": "fix",
+        "area": "Panel",
+        "title": "Naprawiono szarą kropkę tokenu Brand24 po przeładowaniu strony",
+        "items": [
+          "Kropka zielenieje przy pierwszym zapytaniu Brand24 z tokenem, także gdy strona wysłała je przed otwarciem panelu."
+        ],
+        "text": "Naprawiono szarą kropkę tokenu Brand24 po przeładowaniu strony. Kropka zielenieje przy pierwszym zapytaniu Brand24 z tokenem, także gdy strona wysłała je przed otwarciem panelu."
+      }
+    ]
+  },
+  {
     "version": "0.38.2",
     "date": "2026-10-03",
     "label": "new",

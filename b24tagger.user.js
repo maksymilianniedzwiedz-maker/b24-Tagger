@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.2
+// @version      0.38.3
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -173,7 +173,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.2';
+  const VERSION = '0.38.3';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -261,6 +261,7 @@
     matchPreview: null,      // match preview result
     soundEnabled: false,     // play sound on done
     tokenHeaders: null,
+    tokenSeen: false,        // strona wysłała zapytanie z tokenem (kropka tokenu); token z B24Bridge tego nie ustawia
     tknB24: null,             // CSRF token for legacy Django endpoints
     tknB24Base: null,         // panel, z którego pochodzi tknB24 — token z .com nie przejdzie na .pl
     projectId: null,
@@ -401,14 +402,14 @@
     { id: 'blad',   label: 'Błędy',               opis: 'Coś się wywróciło i czeka na decyzję.' },
   ];
   var NTFY_EVENTS = {
-    captcha:      { grupa: 'czeka',  prio: 5, prog: false, label: 'CAPTCHA zatrzymała zbieranie',      opis: 'Google prosi o weryfikację — przebieg stoi do odklikania' },
+    captcha:      { grupa: 'czeka',  prio: 5, prog: false, label: 'CAPTCHA zatrzymała wyszukiwanie',   opis: 'Google prosi o weryfikację — wyszukiwanie stoi do odklikania' },
     partPause:    { grupa: 'czeka',  prio: 5, prog: false, label: 'Partycja gotowa, tagowanie czeka',  opis: 'Tryb „Pauza" po partycji — czeka na kliknięcie Start' },
     tagDone:      { grupa: 'koniec', prio: 3, prog: true,  label: 'Tagowanie z pliku zakończone',      opis: 'Wszystkie partycje przerobione' },
-    collectDone:  { grupa: 'koniec', prio: 3, prog: true,  label: 'Zbieranie adresów zakończone',      opis: 'Przebieg po wynikach Google doszedł do końca' },
+    collectDone:  { grupa: 'koniec', prio: 3, prog: true,  label: 'Wyszukiwanie kampanii zakończone',  opis: 'Wyszukiwanie zaawansowane Google przeszło wszystkie zapytania' },
     scanDone:     { grupa: 'koniec', prio: 3, prog: true,  label: 'Skan newsów zakończony',            opis: 'Strony przeskanowane i ocenione' },
     auditDone:    { grupa: 'koniec', prio: 3, prog: true,  label: 'Audyt zakończony',                  opis: 'Porównanie pliku z Brand24 gotowe' },
     tagError:     { grupa: 'blad',   prio: 4, prog: false, label: 'Błąd tagowania',                    opis: 'Tagowanie przerwane — z podpowiedzią, co zrobić' },
-    collectError: { grupa: 'blad',   prio: 4, prog: false, label: 'Błąd zbierania',                    opis: 'Przebieg po wynikach Google przerwany' },
+    collectError: { grupa: 'blad',   prio: 4, prog: false, label: 'Błąd wyszukiwania kampanii',        opis: 'Wyszukiwanie zaawansowane Google przerwane błędem' },
   };
 
   function _ntfyDefaultEvents() {
@@ -1681,11 +1682,14 @@
       var _b24tBase = window.location.hostname === 'panel.brand24.pl' ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
       if (_authChanged) {
         B24Bridge.token.save(state.tokenHeaders, _b24tBase);
-        updateTokenUI(true);
       } else if (!B24Bridge.token.touch(_b24tBase)) {
         // Slot zniknął (wyczyszczone storage / inny profil) — zapisz od nowa
         B24Bridge.token.save(state.tokenHeaders, _b24tBase);
       }
+      // Przy każdym zapytaniu, nie tylko przy zmianie tokenu: pierwsze zapytania strony idą przed zbudowaniem panelu,
+      // a token przejęty z innej karty (B24Bridge) ma ten sam nagłówek, więc „zmiana” nigdy by nie nastąpiła.
+      state.tokenSeen = true;
+      updateTokenUI(true);
     }
     // Capture last organic getMentions variables for Quick Tag filter mirroring
     if (url.includes('graphql') && bodyStr.includes('getMentions') && bodyStr.includes('"filters"')) {
@@ -4063,10 +4067,11 @@
 
 
 
+  // Wołane przy każdym zapytaniu GraphQL strony, więc DOM zmienia się tylko przy zmianie stanu.
   function updateTokenUI(found) {
-    const el = _$('b24t-token-status');
-    if (!el) return;
-    el.dataset.state = found ? 'ok' : 'pending';
+    const el = _$('b24t-token-status'), st = found ? 'ok' : 'pending';
+    if (!el || el.dataset.state === st) return;
+    el.dataset.state = st;
     el.textContent = found ? 'Token Brand24 aktywny' : 'Czekam na token Brand24';
   }
 
@@ -4848,11 +4853,11 @@
 
   const UI_CSS = `
       /* TOKENS:BEGIN — generowane przez design/palette.py; zmiany w palette.py, nie tutaj */
-      .b24t-app, [data-b24t-theme="light"] { --c-chrome: #ffffff; --c-main: #f4f6f8; --c-card: #ffffff; --c-inset: #f1f4f7; --c-text: #1e2534; --c-text2: #3d4756; --c-text3: #5f6b7a; --c-border: #e3e7ec; --c-borderStrong: #8a94a3; --c-accent: #1f71d6; --c-accentText: #ffffff; --c-accentSoft: #e8f1fc; --c-accentInk: #1a5fb4; --c-focus: #1f71d6; --c-brand: #0fb36c; --c-brandText: #ffffff; --c-bar: #079455; --c-track: #e6eaef; --c-ok: #067647; --c-okSoft: #e6f6ee; --c-warn: #b93815; --c-warnSoft: #fff1e6; --c-danger: #b42318; --c-dangerSoft: #fdecea; --c-dangerIcon: #d92d20; --c-ai: #6d4fe0; --c-neg: #b42318; --c-negSoft: #fef3f2; --c-neu: #475467; --c-neuSoft: #f2f4f7; --c-pos: #067647; --c-posSoft: #ecfdf3; --c-onPicked: #ffffff; --c-thumb: rgba(30,37,52,0.5); --c-thumbHover: rgba(30,37,52,0.66); --c-hover: rgba(30,37,52,0.06); --c-press: rgba(30,37,52,0.11); --c-accentHover: #0661c5; --c-accentPress: #0052b4; --c-dangerFill: #b42318; --c-dangerFillText: #ffffff; --c-dangerHover: #a30601; --c-dangerPress: #910000; --c-borderHover: #c3cad4; --c-textDisabled: #9aa3af; }
-      [data-b24t-theme="dark"] { --c-chrome: #171b22; --c-main: #11151b; --c-card: #1c212a; --c-inset: #232933; --c-text: #e9edf2; --c-text2: #cad1da; --c-text3: #b0b8c3; --c-border: #272d37; --c-borderStrong: #7d8796; --c-accent: #2f6fd0; --c-accentText: #ffffff; --c-accentSoft: rgba(77,143,240,0.16); --c-accentInk: #8cbcff; --c-focus: #8cbcff; --c-brand: #0fb36c; --c-brandText: #ffffff; --c-bar: #2bd48a; --c-track: #2a313c; --c-ok: #6ce9a6; --c-okSoft: rgba(18,183,106,0.16); --c-warn: #fdba74; --c-warnSoft: rgba(251,146,60,0.12); --c-danger: #fda29b; --c-dangerSoft: rgba(240,68,56,0.16); --c-dangerIcon: #f97066; --c-ai: #c4b5fd; --c-neg: #fda29b; --c-negSoft: rgba(240,68,56,0.16); --c-neu: #d0d5dd; --c-neuSoft: rgba(255,255,255,0.08); --c-pos: #6ce9a6; --c-posSoft: rgba(18,183,106,0.16); --c-onPicked: #11151b; --c-thumb: rgba(233,237,242,0.5); --c-thumbHover: rgba(233,237,242,0.66); --c-hover: rgba(233,237,242,0.07); --c-press: rgba(233,237,242,0.12); --c-accentHover: #1f60bf; --c-accentPress: #0c50af; --c-dangerFill: #d03a2e; --c-dangerFillText: #ffffff; --c-dangerHover: #be261d; --c-dangerPress: #ad0a08; --c-borderHover: #3a414d; --c-textDisabled: #646d7a; }
+      .b24t-app, [data-b24t-theme="light"] { --c-chrome: #ffffff; --c-frame: #e9edf2; --c-main: #f4f6f8; --c-card: #ffffff; --c-inset: #f1f4f7; --c-text: #1e2534; --c-text2: #3d4756; --c-text3: #5f6b7a; --c-border: #e3e7ec; --c-borderStrong: #7a8493; --c-accent: #1f71d6; --c-accentText: #ffffff; --c-accentSoft: #e8f1fc; --c-accentInk: #1a5fb4; --c-focus: #1f71d6; --c-brand: #0fb36c; --c-brandText: #ffffff; --c-bar: #079455; --c-track: #e6eaef; --c-ok: #067647; --c-okSoft: #e6f6ee; --c-warn: #b93815; --c-warnSoft: #fff1e6; --c-danger: #b42318; --c-dangerSoft: #fdecea; --c-dangerIcon: #d92d20; --c-ai: #6d4fe0; --c-neg: #b42318; --c-negSoft: #fef3f2; --c-neu: #475467; --c-neuSoft: #f2f4f7; --c-pos: #067647; --c-posSoft: #ecfdf3; --c-onPicked: #ffffff; --c-thumb: rgba(30,37,52,0.5); --c-thumbHover: rgba(30,37,52,0.66); --c-hover: rgba(30,37,52,0.06); --c-press: rgba(30,37,52,0.11); --c-accentHover: #0661c5; --c-accentPress: #0052b4; --c-dangerFill: #b42318; --c-dangerFillText: #ffffff; --c-dangerHover: #a30601; --c-dangerPress: #910000; --c-borderHover: #c3cad4; --c-textDisabled: #9aa3af; }
+      [data-b24t-theme="dark"] { --c-chrome: #171b22; --c-frame: #171b22; --c-main: #11151b; --c-card: #1c212a; --c-inset: #232933; --c-text: #e9edf2; --c-text2: #cad1da; --c-text3: #b0b8c3; --c-border: #272d37; --c-borderStrong: #7d8796; --c-accent: #2f6fd0; --c-accentText: #ffffff; --c-accentSoft: rgba(77,143,240,0.16); --c-accentInk: #8cbcff; --c-focus: #8cbcff; --c-brand: #0fb36c; --c-brandText: #ffffff; --c-bar: #2bd48a; --c-track: #2a313c; --c-ok: #6ce9a6; --c-okSoft: rgba(18,183,106,0.16); --c-warn: #fdba74; --c-warnSoft: rgba(251,146,60,0.12); --c-danger: #fda29b; --c-dangerSoft: rgba(240,68,56,0.16); --c-dangerIcon: #f97066; --c-ai: #c4b5fd; --c-neg: #fda29b; --c-negSoft: rgba(240,68,56,0.16); --c-neu: #d0d5dd; --c-neuSoft: rgba(255,255,255,0.08); --c-pos: #6ce9a6; --c-posSoft: rgba(18,183,106,0.16); --c-onPicked: #11151b; --c-thumb: rgba(233,237,242,0.5); --c-thumbHover: rgba(233,237,242,0.66); --c-hover: rgba(233,237,242,0.07); --c-press: rgba(233,237,242,0.12); --c-accentHover: #1f60bf; --c-accentPress: #0c50af; --c-dangerFill: #d03a2e; --c-dangerFillText: #ffffff; --c-dangerHover: #be261d; --c-dangerPress: #ad0a08; --c-borderHover: #3a414d; --c-textDisabled: #646d7a; }
       /* TOKENS:END */
       .b24t-app, [data-b24t-theme="light"] {
-        --c-panelLine: rgba(16,24,40,0.08); --c-cardLine: transparent;
+        --c-panelLine: rgba(16,24,40,0.14); --c-cardLine: transparent;
         --c-tipBg: #1e2534; --c-tipText: #ffffff; --c-keyBg: #ffffff; --c-keyLine: #c3cad4;
         --c-scrim: rgba(16,24,40,0.32); --c-outline: rgba(31,113,214,0.14);
         --sh-win: 0 24px 48px -12px rgba(16,24,40,0.24), 0 6px 16px rgba(16,24,40,0.08);
@@ -4933,7 +4938,7 @@
       .b-win.is-dragging { user-select: none; }
       .b-head {
         flex-shrink: 0; height: 3.5em; display: flex; align-items: center; gap: 0.5em; min-width: 0;
-        padding: 0 0.5em 0 0.875em; background: var(--c-chrome); border-bottom: 1px solid var(--c-border);
+        padding: 0 0.5em 0 0.875em; background: var(--c-frame); border-bottom: 1px solid var(--c-border);
         user-select: none; position: relative; z-index: 2;
         /* cień nagłówka, gdy główna treść okna jest przewinięta (animacja sterowana przewijaniem, bez JS) */
         animation: b-head-shadow linear both; animation-timeline: --b-lead; animation-range: 0 24px;
@@ -4953,12 +4958,12 @@
       .b-main { flex: 1 1 auto; min-width: 0; padding: 1em calc(1em - 10px) 1em 1em; --b-fade: var(--c-main); }
       .b-foot {
         flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5em;
-        padding: 0.625em 0.875em; background: var(--c-chrome); border-top: 1px solid var(--c-border);
+        padding: 0.625em 0.875em; background: var(--c-frame); border-top: 1px solid var(--c-border);
       }
       .b-win__plain { background: var(--c-chrome); --b-fade: var(--c-chrome); }
       .b-bar {
         flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5em; min-width: 0;
-        padding: 0.5em 0.875em; background: var(--c-chrome); border-bottom: 1px solid var(--c-border);
+        padding: 0.5em 0.875em; background: var(--c-frame); border-bottom: 1px solid var(--c-border);
         position: relative; z-index: 2;
         animation: b-head-shadow linear both; animation-timeline: --b-lead; animation-range: 0 24px;
       }
@@ -5359,7 +5364,7 @@
       /* ── Pasek funkcji (panel): tryb według szerokości panelu, progi w em rosną z tekstem ── */
       .b-rail {
         flex-shrink: 0; display: flex; flex-direction: column; gap: 0.25em; width: 5.75em; padding: 0.5em 0.375em;
-        background: var(--c-chrome); border-right: 1px solid var(--c-border); overflow-x: hidden; --b-fade: var(--c-chrome);
+        background: var(--c-frame); border-right: 1px solid var(--c-border); overflow-x: hidden; --b-fade: var(--c-frame);
       }
       .b-rail__item {
         border: 0; cursor: pointer; position: relative; flex-shrink: 0; display: flex; flex-direction: column; align-items: center;
@@ -5377,7 +5382,7 @@
       .b-rail__item[aria-disabled="true"] { color: var(--c-textDisabled); cursor: not-allowed; }
       .b-rail__item .b-rail__dot {
         position: absolute; top: 0.6em; right: 1.45em; width: 0.5em; height: 0.5em; border-radius: 50%;
-        background: var(--c-bar); box-shadow: 0 0 0 2px var(--c-chrome);
+        background: var(--c-bar); box-shadow: 0 0 0 2px var(--c-frame);
       }
       .b-panel { container: b-panel / inline-size; }
       @container b-panel (width < 25em) {
@@ -5516,9 +5521,9 @@
       /* Kropka nowości na przycisku ikony i na uchwycie krawędziowym. */
       .b-ibtn.has-dot::after {
         content: ""; position: absolute; top: 0.3em; right: 0.3em; width: 0.5em; height: 0.5em; border-radius: 50%;
-        background: var(--c-bar); box-shadow: 0 0 0 2px var(--c-chrome);
+        background: var(--c-bar); box-shadow: 0 0 0 2px var(--c-frame);
       }
-      .b-edge__dot { position: absolute; top: 6px; left: 50%; margin-left: -4px; width: 8px; height: 8px; border-radius: 50%; background: var(--c-bar); }
+      .b-edge__dot { position: absolute; top: 0.3em; right: 0.3em; width: 8px; height: 8px; border-radius: 50%; background: var(--c-bar); box-shadow: 0 0 0 2px var(--c-frame); }
 
 
       /* ── Zmiana rozmiaru, obrys magnesu, pigułka ── */
@@ -5540,7 +5545,7 @@
       .b-win > .b-clip { flex: 1 1 auto; min-height: 0; border-radius: inherit; overflow: hidden; display: flex; flex-direction: column; }
       /* Pigułka panelu (176 × 36 px, 16 px nad dolną krawędzią, warstwa nad oknami) ma własne miejsce pod oknem roboczym:
          okno kończy się nad nią, a na pełnym ekranie treść kończy się nad pasem z pigułką. Bez tego zakrywa prawy dolny
-         róg okna, w którym stoją główne przyciski (dodanie wzmianki, „Uruchom przebieg”). */
+         róg okna, w którym stoją główne przyciski (dodanie wzmianki, „Uruchom wyszukiwanie”). */
       .b24t-app[data-pill] .b-win[data-kind="work"]:not(.is-full) { bottom: 68px; }
       .b24t-app[data-pill] .b-win[data-kind="work"].is-full > .b-clip { padding-bottom: 60px; background: var(--c-chrome); }
       .b-win.is-docked .b-rz:not([data-rz="w"]), .b-win.is-max .b-rz { display: none; }
@@ -5552,7 +5557,7 @@
       .b-outline.is-dock { border-radius: 0; }
       .b-pill {
         position: fixed; z-index: 399; width: 176px; height: 36px; padding: 0 14px; border: 0; border-radius: 99px; cursor: pointer;
-        display: flex; align-items: center; gap: 8px; overflow: hidden; background: var(--c-chrome); color: var(--c-text);
+        display: flex; align-items: center; gap: 8px; overflow: hidden; background: var(--c-frame); color: var(--c-text);
         font-family: var(--font); font-size: 13px; font-weight: 600; box-shadow: var(--sh-pop);
         transition: background-color 200ms var(--ease-in), color 200ms var(--ease-in);
       }
@@ -5561,22 +5566,73 @@
       .b-pill.is-done { background: var(--c-okSoft); color: var(--c-ok); }
       .b-pill__ok { display: flex; }
       .b-pill__ok svg { width: 18px; height: 18px; }
-      .b-ghost { position: fixed; z-index: 399; pointer-events: none; background: var(--c-chrome); box-shadow: var(--sh-pop); }
+      .b-ghost { position: fixed; z-index: 399; pointer-events: none; background: var(--c-frame); box-shadow: var(--sh-pop); }
 
-      /* ── Uchwyt krawędziowy ── */
-      .b-edge {
-        position: fixed; z-index: 100; display: flex; flex-direction: column; align-items: center; gap: 0.4em;
-        padding: 0.7em 0.35em; border: 1px solid var(--c-panelLine); background: var(--c-chrome); color: var(--c-text2);
-        box-shadow: var(--sh-pop); cursor: pointer; user-select: none; touch-action: none; font-family: var(--font);
-        font-size: max(12px, 0.923em); font-weight: 600; transition: color 120ms var(--ease-in), background-color 120ms var(--ease-in);
+      /* ── Listwa uchwytów (§1.11) ── */
+      .b-edgebar {
+        position: fixed; z-index: 100; display: flex; flex-direction: column; gap: 0.25em; padding: 0.3125em;
+        background: var(--c-frame); border: 1px solid var(--c-panelLine); box-shadow: var(--sh-pop);
+        touch-action: none; user-select: none; font-family: var(--font); font-size: max(12px, 0.923em);
+        transition: box-shadow 160ms var(--ease-in);
       }
-      .b-edge[data-side="left"] { left: 0; border-left: 0; border-radius: 0 10px 10px 0; }
-      .b-edge[data-side="right"] { right: var(--b-dock, 0px); border-right: 0; border-radius: 10px 0 0 10px; }
-      .b-edge:hover { color: var(--c-accentInk); background-image: linear-gradient(var(--c-hover), var(--c-hover)); }
+      .b-edgebar[data-side="right"] { right: var(--b-dock, 0px); border-right: 0; border-radius: 14px 0 0 14px; }
+      .b-edgebar[data-side="left"] { left: 0; border-left: 0; border-radius: 0 14px 14px 0; }
+      /* Nad oknami: z otwartym oknem (tło okna roboczego), pod kursorem i z fokusem (dymek z nazwą wychodzi na panel). */
+      .b-edgebar:is(.is-raised, :hover, :focus-within) { z-index: 399; }
+      .b-edgebar.is-dragging { cursor: grabbing; box-shadow: var(--sh-lift); }
+      .b-edgebar.is-detached { visibility: hidden; }
+      .b-edge {
+        position: relative; display: grid; place-items: center; width: 2.75em; height: 2.75em; padding: 0; border: 0;
+        border-radius: 9px; background: transparent; color: var(--c-text2); cursor: pointer; font: inherit;
+        transition: color 120ms var(--ease-in), background-color 120ms var(--ease-in);
+      }
+      .b-edge:hover { color: var(--c-accentInk); background-color: var(--c-hover); }
       .b-edge:focus-visible { outline: 2px solid var(--c-focus); outline-offset: -2px; }
-      .b-edge > svg { width: 1.25em; height: 1.25em; }
-      .b-edge__label { writing-mode: vertical-rl; text-orientation: mixed; letter-spacing: 0.04em; white-space: nowrap; }
-      .b-edge.is-dragging { cursor: grabbing; }
+      .b-edge.is-open { color: var(--c-accentInk); background-color: var(--c-accentSoft); }
+      /* Otwarty uchwyt: ikona okna obraca się w strzałkę do krawędzi („schowaj”). */
+      .b-edge__ico, .b-edge__chev { display: grid; }
+      .b-edge__ico > * { grid-area: 1 / 1; }
+      .b-edge__ico svg { width: 1.25em; height: 1.25em; transition: opacity 160ms var(--ease-in), transform 220ms var(--ease-in); }
+      .b-edge__chev svg, .b-edge.is-open .b-edge__ico > svg { opacity: 0; }
+      .b-edge.is-open .b-edge__chev svg { opacity: 1; }
+      [data-b24t-motion="full"] .b-edge__chev svg { transform: rotate(-90deg) scale(0.6); }
+      [data-b24t-motion="full"] .b-edge.is-open .b-edge__ico > svg { transform: rotate(90deg) scale(0.6); }
+      [data-b24t-motion="full"] .b-edge.is-open .b-edge__chev svg { transform: none; }
+      .b-edgebar[data-side="left"] .b-edge__chev { transform: scaleX(-1); }
+      /* Pasek po stronie strony łączy otwarty uchwyt z jego oknem. */
+      .b-edge::before {
+        content: ""; position: absolute; top: 0.6em; bottom: 0.6em; width: 3px; border-radius: 2px; background: var(--c-accent);
+        opacity: 0; transition: opacity 160ms var(--ease-in), transform 220ms var(--ease-in);
+      }
+      .b-edgebar[data-side="right"] .b-edge::before { left: -0.25em; }
+      .b-edgebar[data-side="left"] .b-edge::before { right: -0.25em; }
+      [data-b24t-motion="full"] .b-edge::before { transform: scaleY(0); }
+      .b-edge.is-open::before { opacity: 1; transform: none; }
+      /* Nazwa uchwytu w dymku po stronie strony, przy najechaniu i fokusie klawiatury; schowana w trakcie przeciągania. */
+      .b-edge__label {
+        position: absolute; top: 50%; padding: 0.45em 0.75em; border-radius: 8px; background: var(--c-tipBg); color: var(--c-tipText);
+        font-size: 12px; font-weight: 600; white-space: nowrap; pointer-events: none; opacity: 0; transform: translateY(-50%);
+        transition: opacity 140ms var(--ease-in), transform 160ms var(--ease-in);
+      }
+      .b-edgebar[data-side="right"] .b-edge__label { right: calc(100% + 0.75em); }
+      .b-edgebar[data-side="left"] .b-edge__label { left: calc(100% + 0.75em); }
+      [data-b24t-motion="full"] .b-edgebar[data-side="right"] .b-edge__label { transform: translate(6px, -50%); }
+      [data-b24t-motion="full"] .b-edgebar[data-side="left"] .b-edge__label { transform: translate(-6px, -50%); }
+      [data-b24t-motion] .b-edgebar[data-side] .b-edge:is(:hover, :focus-visible) .b-edge__label { opacity: 1; transform: translateY(-50%); }
+      .b-edgebar.is-dragging .b-edge__label { visibility: hidden; }
+      .b-edge.is-caught { animation: b-edge-catch 480ms var(--ease-in); }
+      [data-b24t-motion="lite"] .b-edge.is-caught { animation-name: b-edge-catch-lite; }
+      @keyframes b-edge-catch { from { box-shadow: 0 0 0 0 var(--c-accent); } to { box-shadow: 0 0 0 9px transparent; } }
+      @keyframes b-edge-catch-lite { from { color: var(--c-accentInk); background-color: var(--c-accentSoft); } }
+      /* Kropla oderwanej listwy (Drop): rysunek SVG w zestawie pełnym, kropka w ograniczonym. */
+      .b-drop { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; z-index: 450; pointer-events: none; overflow: visible; }
+      .b-drop :is(path, circle, ellipse) { fill: var(--c-accent); }
+      .b-drop .b-drop__ico { fill: none; stroke: var(--c-accentText); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+      .b-drop-dot {
+        position: fixed; z-index: 450; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%; display: grid;
+        place-items: center; background: var(--c-accent); color: var(--c-accentText); box-shadow: var(--sh-pop); pointer-events: none;
+      }
+      .b-drop-dot svg { width: 18px; height: 18px; }
 
       /* ── Powiadomienia ── */
       .b-toasts {
@@ -6005,8 +6061,6 @@
       /* koniec obszaru sentyment */
 
       /* ── OBSZAR news: style powierzchni tego obszaru wyłącznie pod tym znacznikiem ── */
-      /* Uchwyt „Wzmianki” przy otwartym oknie modułu */
-      .b-edge[aria-pressed="true"] { color: var(--c-accentInk); background-color: var(--c-accentSoft); }
 
       /* Kafelki wyboru: launcher „Dodawanie wzmianek”, hub kampanii */
       .b-ntiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13em), 1fr)); gap: 0.75em; }
@@ -6035,7 +6089,7 @@
       .b-nwork-in { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
       .b-nhead { flex-wrap: nowrap; gap: 0.25em; }
       .b-nhead > .b-btn { margin: 0 0.25em; }
-      .b-ntabs { flex-shrink: 0; padding: 0.5em 0.875em; background: var(--c-chrome); border-bottom: 1px solid var(--c-border); }
+      .b-ntabs { flex-shrink: 0; padding: 0.5em 0.875em; background: var(--c-frame); border-bottom: 1px solid var(--c-border); }
       .b-ncols { flex: 1 1 auto; min-height: 0; display: flex; }
       .b-ncol { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
       #b24t-news-col-list { flex: 0 0 calc(var(--b-nl, 0.26) * 100%); min-width: 16em; max-width: 45%; background: var(--c-main); }
@@ -6062,7 +6116,7 @@
       .b-nlist > .b-empty { margin-block: auto; }
       .b-nlist-foot {
         flex-shrink: 0; display: flex; flex-direction: column; gap: 0.375em; padding: 0.625em 0.75em;
-        background: var(--c-chrome); border-top: 1px solid var(--c-border);
+        background: var(--c-frame); border-top: 1px solid var(--c-border);
       }
       .b-nlist-foot:not(:has(> :not([hidden]):not(:empty))) { display: none; }
       .b24t-news-url-row {
@@ -6137,7 +6191,7 @@
       .b-nform__body { display: flex; flex-direction: column; gap: 0.75em; padding: 1em calc(1em - 10px) 0.875em 1em; }
       .b-nform__foot {
         position: sticky; bottom: 0; z-index: 4; margin-top: auto; display: flex; flex-direction: column; gap: 0.375em;
-        padding: 0.625em 1em 0.75em; background: var(--c-chrome); border-top: 1px solid var(--c-border);
+        padding: 0.625em 1em 0.75em; background: var(--c-frame); border-top: 1px solid var(--c-border);
       }
       .b-nform__foot > .b-row > .b-nsubmit { flex: 1 1 auto; }
       .b-nform .b-field > .b-hint:empty { display: none; }
@@ -6299,6 +6353,10 @@
       }
       .b-cmarket { grid-template-columns: minmax(0, 0.72fr) minmax(0, 0.72fr) minmax(0, 1.28fr) minmax(0, 1.28fr); }
       #b24t-camp-market-hint:empty { display: none; }
+      /* Wiersz etykiety wariantów ma wysokość małego przycisku, więc zamiana podpisu „Z nazwy kampanii” na przycisk
+         nie przesuwa pola. Komunikat w pustym polu ma krój interfejsu, nie krój pola (b-mono). */
+      .b-cvars { min-height: calc(2 * max(12px, 0.923em)); }
+      #b24t-camp-variants::placeholder { font-family: var(--font); }
       .b-ccart { display: flex; align-items: center; gap: 0.75em; min-width: 0; }
       .b-ccart > svg { width: 1.6em; height: 1.6em; flex-shrink: 0; color: var(--c-accentInk); }
       .b-ccart__text { flex: 1 1 auto; min-width: 0; }
@@ -6433,6 +6491,26 @@
   }
   function _uiFull() { return _uiEnsure().app.getAttribute('data-b24t-motion') !== 'lite'; }
 
+  // Ochrona przed przypadkowym kliknięciem: element, który właśnie się pojawił albo zmienił treść w miejscu
+  // (powiadomienie, okno, dymek samouczka), przez UI_ARM_MS nie przyjmuje wskaźnika na swoich kontrolkach.
+  // Kliknięcie przeznaczone dla tego, co było pod spodem, albo drugie kliknięcie dwukliku trafiałoby w jego przycisk.
+  // Ten sam próg ma Chrome dla okien uprawnień (InputEventActivationProtector). Chwytanie nagłówka i zaznaczanie
+  // tekstu działa od razu, bo niczego nie wykonuje; klawiatura też, bo click z klawisza ma detail 0.
+  var UI_ARM_MS = 500, _uiArmed = new WeakMap();
+  var UI_ARM_TARGETS = 'button, a[href], input, select, textarea, label, summary, [role="button"], [role="tab"], [role="menuitem"], [role="option"], [role="switch"]';
+  function _uiArm(el) {
+    if (!_uiArmed.has(el)) {
+      var stop = function (e) {
+        if (performance.now() >= _uiArmed.get(el) || (e.type === 'click' && e.detail === 0)) return;
+        if (!(e.target instanceof Element) || !e.target.closest(UI_ARM_TARGETS)) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      };
+      ['pointerdown', 'mousedown', 'click', 'dblclick'].forEach(function (t) { el.addEventListener(t, stop, true); });
+    }
+    _uiArmed.set(el, performance.now() + UI_ARM_MS);
+  }
+
   // Wymiary okna przeglądarki bez pasków przewijania; w trybie quirks clientWidth <html> to wymiar dokumentu.
   function _vw() { return document.compatMode === 'CSS1Compat' ? document.documentElement.clientWidth : window.innerWidth; }
   function _vh() { return document.compatMode === 'CSS1Compat' ? document.documentElement.clientHeight : window.innerHeight; }
@@ -6552,7 +6630,7 @@
     // zostają na miejscu. Brand24 trzyma <html> na pełnej szerokości okna (pomiar na żywo 2026-10-03: html 1426 px
     // przy marginesie 527 px, scrollWidth 1953), więc sam margines dokłada poziomy suwak; width: auto i min-width: 0
     // pozwalają <html> zwęzić się o margines.
-    // Uchwyty prawej krawędzi stają przy lewej krawędzi zadokowanego panelu (--b-dock w .b-edge).
+    // Listwa uchwytów przy prawej krawędzi staje przy lewej krawędzi zadokowanego panelu (--b-dock w .b-edgebar).
     function dockPage(w) {
       var st = document.getElementById('b24t-dock-page'), app = _uiEnsure().app;
       if (!(w.dock && w.open && !w.collapsed && !w.hidden)) {
@@ -6887,16 +6965,36 @@
 
     // Panel ↔ pigułka: pusty kształt przechodzi między prostokątami, treść celu pojawia się na końcu;
     // w zestawie ograniczonym przenikanie (§5).
+    function ghostFrame(r, rad) { return { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px', borderRadius: rad }; }
+
     function morph(from, to, toEl) {
       if (!_uiFull()) { toEl.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160 }); return; }
       var g = document.createElement('div');
       g.className = 'b-ghost';
       _uiMount(g);
-      var kf = function (r, rad) { return { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px', borderRadius: rad }; };
       var toPill = to.w === WIN_PILL[0];
-      g.animate([kf(from, toPill ? '14px' : '99px'), kf(to, toPill ? '99px' : '14px')], { duration: 260, easing: WIN_EASE_IN })
+      g.animate([ghostFrame(from, toPill ? '14px' : '99px'), ghostFrame(to, toPill ? '99px' : '14px')], { duration: 260, easing: WIN_EASE_IN })
         .onfinish = function () { g.remove(); };
       toEl.animate([{ opacity: 0 }, { opacity: 0, offset: 0.7 }, { opacity: 1 }], { duration: 380 });
+    }
+
+    function boxOf(el) {
+      if (!el || el.hidden || !el.isConnected) return null;
+      var b = el.getBoundingClientRect();
+      return b.width ? { x: b.left, y: b.top, w: b.width, h: b.height } : null;
+    }
+
+    // Zamknięte okno wraca do swojego uchwytu: zarys okna kurczy się do uchwytu, który na koniec błyska.
+    // Okno znika od razu, więc fokus i kolejne okna nie czekają na animację.
+    function retract(from, edgeId) {
+      var to = boxOf(Edge.get(edgeId));
+      if (!to) return;
+      if (!_uiFull()) { Edge.ping(edgeId); return; }
+      var g = document.createElement('div');
+      g.className = 'b-ghost';
+      _uiMount(g);
+      g.animate([ghostFrame(from, '14px'), ghostFrame(to, '10px')], { duration: 220, easing: WIN_EASE_OUT })
+        .onfinish = function () { g.remove(); Edge.ping(edgeId); };
     }
 
     function collapse(id, auto) {
@@ -6977,6 +7075,7 @@
     //   narzędzi pod nagłówkiem), body, foot, keys (skróty okna dla ściągawki: [[klawisze, opis], …]),
     //   rail, actions, width (stopień dialogu), size: [w, h], anchor: { a, dx, dy }, min, remember (klucz zapisu
     //   układu), closable, menu (pozycje nad menu położenia), menuLabel, from (element, z którego okno wyrosło),
+    //   edge (id uchwytu krawędziowego okna: okno z niego wyrasta, wraca do niego, a uchwyt pokazuje stan),
     //   onClose, onBeforeClose, onCollapse, label (aria-label bez tytułu), elId, winClass, headClass, mainClass,
     //   adjust (r → r: poprawka położenia okna z wymiarem z treści, np. HUD omija test Google) }
     function open(spec) {
@@ -6991,6 +7090,7 @@
         return ex;
       }
       var kind = spec.kind;
+      if (spec.edge && !spec.from) spec.from = Edge.get(spec.edge);
       var el = document.createElement('section');
       el.className = 'b-ui b-win' + (spec.winClass ? ' ' + spec.winClass : '');
       el.setAttribute('data-kind', kind);
@@ -7144,6 +7244,7 @@
       if (kind === 'work') {
         Object.keys(wins).forEach(function (k) { if (wins[k].kind === 'panel') collapse(k, true); });
       }
+      if (kind !== 'panel') _uiArm(el);
       if (WIN_MODAL[kind] || kind === 'work') {
         enterAnim(w);
         // Pierwszy fokus: ogłoszenie na nagłówku, żeby Enter w biegu nie zamknął go przed przeczytaniem (§1.7).
@@ -7155,8 +7256,10 @@
           (first || el).focus({ preventScroll: true });
         }
       } else if (kind !== 'panel') {
-        el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120 });
+        var src = spec.edge && boxOf(spec.from);
+        if (src) morph(src, rect(w), el); else el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120 });
       }
+      if (spec.edge) Edge.setOpen(spec.edge, true);
       if (saved && saved.collapsed && kind === 'panel') collapse(id);
       return w;
     }
@@ -7182,6 +7285,7 @@
       var w = wins[id];
       if (!w) return;
       if (w.spec.onBeforeClose && w.spec.onBeforeClose() === false) return;
+      var anim = WIN_MODAL[w.kind] || w.kind === 'work', back = w.spec.edge && !anim ? boxOf(w.el) : null;
       delete wins[id];
       order.splice(order.indexOf(id), 1);
       w.open = false;
@@ -7203,7 +7307,11 @@
         if (rf && rf !== document.body && rf.isConnected && rf.getClientRects().length && typeof rf.focus === 'function') rf.focus({ preventScroll: true });
         else focusTop();
       };
-      if (WIN_MODAL[w.kind] || w.kind === 'work') exitAnim(w, finish); else finish();
+      if (anim) exitAnim(w, finish); else finish();
+      if (w.spec.edge) {
+        Edge.setOpen(w.spec.edge, false);
+        if (back) retract(back, w.spec.edge); else Edge.ping(w.spec.edge);
+      }
       if (w.kind === 'work' && !hasWork()) {
         Object.keys(wins).forEach(function (k) { wins[k].raised = false; });
         restack();
@@ -7293,92 +7401,80 @@
   })();
 
   // ───────────────────────────────────────────
-  // UI - UCHWYTY KRAWĘDZIOWE (§1.11)
+  // UI - LISTWA UCHWYTÓW (§1.11)
   // ───────────────────────────────────────────
-  // Uchwyt jednej krawędzi stoi pod poprzednim bez nakładania; kliknięcie otwiera okno, przesunięcie
-  // o ponad 4 px przeciąga wzdłuż krawędzi. Miejsce na krawędzi zapisuje się jak układ okna.
+  // Uchwyty okien (B24 Tagger po schowaniu panelu, Annotators, Wzmianki, Network Monitor, „Dodaj wzmiankę”) stoją
+  // w jednej listwie przy krawędzi: ikona, a nazwa w dymku obok listwy. Kliknięcie otwiera albo chowa okno uchwytu.
+  // Listwa przesuwa się wzdłuż krawędzi. Wyciągnięta dalej niż EDGE_DETACH od krawędzi odrywa się w kroplę, którą
+  // się rzuca: rzut szybszy niż EDGE_FLING przykleja ją do krawędzi w swoim kierunku, wolniejszy oddaje ją krawędzi,
+  // przy której ją puszczono (pas EDGE_SNAP), a dalej od obu krawędzi wraca tam, skąd wyszła. Krawędź i wysokość
+  // zapisują się jak układ okna.
+  var EDGE_ORDER = { panel: 0, annotator: 1, news: 2, nm: 3, mini: 4 };
+  var EDGE_DETACH = 72;   // px od wewnętrznej krawędzi listwy
+  var EDGE_FLING = 0.6;   // px/ms w poziomie, z ostatnich 100 ms ruchu
+  var EDGE_SNAP = 0.18;   // ułamek szerokości okna przy każdej krawędzi
+
   var Edge = (function () {
-    var items = {}, bound = false;
+    var items = {}, bar = null, pos = null, drag = null, suppress = false;
+
+    function order(it) { return it.spec.id in EDGE_ORDER ? EDGE_ORDER[it.spec.id] : 9; }
+    function list() { return Object.keys(items).map(function (k) { return items[k]; }); }
+    function dockW() { return parseFloat(_uiEnsure().app.style.getPropertyValue('--b-dock')) || 0; }
+    function edgeX(side) { return side === 'left' ? 0 : _vw() - dockW(); }
+    function save() { _winSave('edge-bar', { side: pos.side, y: Math.round(pos.y * 1000) / 1000 }); }
+
+    function ensureBar() {
+      if (bar) return;
+      bar = document.createElement('div');
+      bar.className = 'b-ui b-edgebar';
+      bar.setAttribute('role', 'toolbar');
+      bar.setAttribute('aria-label', 'Okna B24 Taggera');
+      bar.setAttribute('aria-orientation', 'vertical');
+      var saved = _winLoad('edge-bar');
+      pos = { side: saved && saved.side === 'left' ? 'left' : 'right', y: saved && saved.y != null ? saved.y : 0.33 };
+      bar.setAttribute('data-side', pos.side);
+      bar.addEventListener('pointerdown', onDown);
+      _uiMount(bar);
+      window.addEventListener('resize', function () { requestAnimationFrame(layout); });
+    }
 
     function add(spec) {
       if (items[spec.id]) return items[spec.id].el;
+      ensureBar();
       var el = document.createElement('button');
       el.type = 'button';
-      el.className = 'b-ui b-edge';
+      el.className = 'b-edge';
       if (spec.elId) el.id = spec.elId;
       el.setAttribute('aria-label', spec.label);
-      el.innerHTML = (spec.icon ? _icon(spec.icon) : '') + '<span class="b-edge__label">' + _escHtml(spec.label) + '</span>';
-      var saved = spec.remember ? _winLoad(spec.remember) : null;
-      var it = { spec: spec, el: el, side: (saved && saved.side) || spec.side || 'right', y: saved && saved.y != null ? saved.y : (spec.y || 0.33) };
-      el.setAttribute('data-side', it.side);
-      var d = null, dragged = false;
-      el.addEventListener('pointerdown', function (e) {
-        if (e.button !== 0) return;
-        dragged = false;
-        d = { sy: e.clientY, sx: e.clientX, y0: el.offsetTop, moved: false };
-        el.setPointerCapture(e.pointerId);
-      });
-      el.addEventListener('pointermove', function (e) {
-        if (!d) return;
-        if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < WIN_DRAG_FROM) return;
-        d.moved = true;
-        el.classList.add('is-dragging');
-        var VH = _vh();
-        var top = _clamp(d.y0 + e.clientY - d.sy, 0, VH - el.offsetHeight);
-        el.style.top = top + 'px';
-        it.y = top / VH;
-        // „✚ B24” przechodzi na drugą krawędź po przeciągnięciu za środek strony.
-        if (spec.switchable) {
-          var side = e.clientX < _vw() / 2 ? 'left' : 'right';
-          if (side !== it.side) { it.side = side; el.setAttribute('data-side', side); }
-        }
-      });
-      var end = function () {
-        if (!d) return;
-        var moved = d.moved;
-        d = null;
-        el.classList.remove('is-dragging');
-        if (!moved) return;
-        dragged = true;
-        if (spec.remember) _winSave(spec.remember, { side: it.side, y: Math.round(it.y * 1000) / 1000 });
-        layout();
-      };
-      el.addEventListener('pointerup', end);
-      el.addEventListener('pointercancel', end);
-      // Puszczenie po przeciągnięciu też daje click (przechwycenie wskaźnika trzyma cel); ten click nie otwiera okna.
-      el.addEventListener('click', function (e) { if (dragged) { dragged = false; return; } spec.onClick(e); });
+      el.setAttribute('aria-expanded', 'false');
+      el.innerHTML = '<span class="b-edge__ico">' + _icon(spec.icon) + '<span class="b-edge__chev">' + _icon('chevRight') + '</span></span>' +
+        '<span class="b-edge__label">' + _escHtml(spec.label) + '</span>';
+      // Puszczenie listwy po przeciągnięciu też daje click; ten click nie otwiera okna.
+      el.addEventListener('click', function (e) { if (!suppress) spec.onClick(e); });
+      var it = { spec: spec, el: el, open: false };
+      var next = list().filter(function (o) { return order(o) > order(it); }).sort(function (a, b) { return order(a) - order(b); })[0];
+      bar.insertBefore(el, next ? next.el : null);
       items[spec.id] = it;
-      _uiMount(el);
-      Tip.init();
-      if (!bound) { bound = true; window.addEventListener('resize', function () { requestAnimationFrame(layout); }); }
       layout();
       return el;
     }
 
-    // Uchwyty jednej krawędzi w kolejności położenia; każdy następny co najmniej 8 px pod poprzednim. Okna
-    // odsuwają się od nowego układu (SURFACES.md §2.3), także gdy uchwyt pojawia się po otwarciu okna.
+    // Listwa w granicach okna przeglądarki; okna odsuwają się od nowego układu (SURFACES.md §2.3).
     function layout() {
-      var VH = _vh();
-      ['left', 'right'].forEach(function (side) {
-        var list = Object.keys(items).map(function (k) { return items[k]; })
-          .filter(function (it) { return it.side === side && !it.el.hidden; })
-          .sort(function (a, b) { return a.y - b.y; });
-        var next = 0;
-        list.forEach(function (it) {
-          var h = it.el.offsetHeight || 0;
-          var top = Math.max(Math.round(it.y * VH), next);
-          top = Math.min(top, Math.max(0, VH - h));
-          it.el.style.top = top + 'px';
-          next = top + h + 8;
-        });
-      });
+      if (!bar) return;
+      var any = list().some(function (it) { return !it.el.hidden; });
+      bar.hidden = !any;
+      if (any && !drag) {
+        var VH = _vh();
+        bar.style.top = _clamp(Math.round(pos.y * VH), 0, Math.max(0, VH - bar.offsetHeight)) + 'px';
+      }
       Win.relayout();
     }
 
     function rects(side) {
-      return Object.keys(items).map(function (k) { return items[k]; })
-        .filter(function (it) { return it.side === side && !it.el.hidden && it.el.isConnected; })
-        .map(function (it) { var r = it.el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
+      if (!bar || bar.hidden || !bar.isConnected || pos.side !== side || bar.classList.contains('is-detached')) return [];
+      var r = bar.getBoundingClientRect();
+      return [{ x: r.left, y: r.top, w: r.width, h: r.height }];
     }
 
     function setVisible(id, on) {
@@ -7386,6 +7482,28 @@
       if (!it) return;
       it.el.hidden = !on;
       layout();
+    }
+
+    // Uchwyt otwartego okna zostaje w listwie jako jego zakładka: kliknięcie chowa okno. Listwa z otwartym oknem
+    // stoi nad tłem okna roboczego (News przygasza stronę razem z uchwytami).
+    function setOpen(id, on) {
+      var it = items[id];
+      if (!it || it.open === !!on) return;
+      it.open = !!on;
+      it.el.classList.toggle('is-open', it.open);
+      it.el.setAttribute('aria-expanded', String(it.open));
+      bar.classList.toggle('is-raised', list().some(function (o) { return o.open; }));
+    }
+
+    // Błysk uchwytu, do którego wróciło okno.
+    function ping(id) {
+      var it = items[id];
+      if (!it || it.el.hidden) return;
+      var el = it.el;
+      el.classList.remove('is-caught');
+      void el.offsetWidth;
+      el.classList.add('is-caught');
+      el.addEventListener('animationend', function () { el.classList.remove('is-caught'); }, { once: true });
     }
 
     function remove(id) {
@@ -7396,7 +7514,238 @@
       layout();
     }
 
-    return { add: add, layout: layout, rects: rects, setVisible: setVisible, remove: remove, get: function (id) { return items[id] ? items[id].el : null; } };
+    // ── Przeciąganie: wait (do progu) → slide (wzdłuż krawędzi) → held (kropla) ──
+    // Wskaźnik przechwycony dopiero po progu: wcześniejsze przechwycenie skierowałoby click na listwę zamiast na uchwyt.
+    function onDown(e) {
+      if (e.button !== 0 || drag) return;
+      var r = bar.getBoundingClientRect();
+      drag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, top0: r.top, h: r.height, w: r.width, phase: 'wait', from: pos.side, pts: [] };
+      window.addEventListener('pointermove', onMove, true);
+      window.addEventListener('pointerup', onUp, true);
+      window.addEventListener('pointercancel', onUp, true);
+    }
+
+    function track(e) {
+      var t = performance.now(), p = drag.pts;
+      p.push({ x: e.clientX, y: e.clientY, t: t });
+      while (p.length > 2 && t - p[0].t > 100) p.shift();
+    }
+
+    // Prędkość z ostatnich 100 ms ruchu; wskaźnik zatrzymany przed puszczeniem nie rzuca.
+    function velocity(p) {
+      var a = p[0], b = p[p.length - 1], dt = b ? b.t - a.t : 0;
+      if (!(dt > 0) || performance.now() - b.t > 100) return { x: 0, y: 0 };
+      return { x: (b.x - a.x) / dt, y: (b.y - a.y) / dt };
+    }
+
+    function onMove(e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      track(e);
+      if (drag.phase === 'wait') {
+        if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < WIN_DRAG_FROM) return;
+        drag.phase = 'slide';
+        try { bar.setPointerCapture(drag.id); } catch (_) {}
+        bar.classList.add('is-dragging');
+        Tip.hide();
+      }
+      if (drag.phase === 'slide') {
+        bar.style.top = _clamp(drag.top0 + e.clientY - drag.sy, 0, Math.max(0, _vh() - drag.h)) + 'px';
+        var away = pos.side === 'left' ? e.clientX - edgeX('left') : edgeX('right') - e.clientX;
+        if (away > drag.w + EDGE_DETACH) {
+          drag.phase = 'held';
+          var r = bar.getBoundingClientRect();
+          bar.classList.add('is-detached');
+          bar.classList.remove('is-dragging');
+          Drop.start(r, pos.side, e.clientX, e.clientY);
+        }
+        return;
+      }
+      Drop.move(e.clientX, e.clientY);
+    }
+
+    function onUp(e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      ['pointermove', 'pointerup', 'pointercancel'].forEach(function (t) { window.removeEventListener(t, t === 'pointermove' ? onMove : onUp, true); });
+      var d = drag;
+      drag = null;
+      bar.classList.remove('is-dragging');
+      if (d.phase === 'wait') return;
+      suppress = true;
+      setTimeout(function () { suppress = false; }, 0);
+      if (d.phase === 'slide') {
+        pos.y = bar.offsetTop / _vh();
+        save();
+        layout();
+        return;
+      }
+      var v = e.type === 'pointercancel' ? { x: 0, y: 0 } : velocity(d.pts);
+      var side = landSide(e.clientX, v.x, d.from);
+      Drop.release(v, side, edgeX(side), attach);
+    }
+
+    function landSide(x, vx, from) {
+      if (Math.abs(vx) >= EDGE_FLING) return vx < 0 ? 'left' : 'right';
+      var VW = _vw();
+      if (x < VW * EDGE_SNAP) return 'left';
+      if (x > VW * (1 - EDGE_SNAP)) return 'right';
+      return from;
+    }
+
+    // Kropla dotarła do krawędzi `side` na wysokości `y`: listwa wyrasta w tym miejscu.
+    function attach(side, y) {
+      pos.side = side;
+      bar.setAttribute('data-side', side);
+      bar.classList.remove('is-detached');
+      var VH = _vh(), h = bar.offsetHeight, top = _clamp(Math.round(y - h / 2), 0, Math.max(0, VH - h));
+      pos.y = top / VH;
+      save();
+      layout();
+      var origin = (side === 'left' ? 'left ' : 'right ') + Math.round(y - top) + 'px';
+      bar.animate(_uiFull()
+        ? [{ opacity: 0, transform: 'scale(0.6, 0.3)', transformOrigin: origin }, { opacity: 1, transform: 'none', transformOrigin: origin }]
+        : [{ opacity: 0 }, { opacity: 1 }], { duration: _uiFull() ? 240 : 160, easing: WIN_EASE_IN });
+    }
+
+    return { add: add, layout: layout, rects: rects, setVisible: setVisible, setOpen: setOpen, ping: ping, remove: remove,
+      get: function (id) { return items[id] ? items[id].el : null; } };
+  })();
+
+  // ── Kropla listwy (Edge) ──
+  // Zestaw pełny: rysunek SVG na całym oknie. Przy oderwaniu kropla wyciąga się z krawędzi na moście metaballi,
+  // trzymana idzie za wskaźnikiem na sprężynie i rozciąga się w kierunku ruchu, po puszczeniu leci z prędkością
+  // rzutu, a stałe przyspieszenie ściąga ją do wybranej krawędzi, gdzie znowu spływa w most i w listwę.
+  // Zestaw ograniczony: kropka idzie dokładnie za wskaźnikiem, a listwa pojawia się od razu przy krawędzi.
+  var Drop = (function () {
+    var NS = 'http://www.w3.org/2000/svg';
+    var R = 20, SPRING = 0.00042, DAMP = 0.0225, PULL = 0.005, FRICTION = 0.0025, MAX_V = 3, OUT_MS = 260, IN_MS = 240;
+    var svg = null, st = null, raf = 0;
+
+    function el(tag, cls) { var n = document.createElementNS(NS, tag); if (cls) n.setAttribute('class', cls); return n; }
+
+    // Most między kołami (metaballe Hiroyukiego Sato, wersja z varun.ca/metaballs); pusty, gdy koła są za daleko.
+    function bridge(c1, r1, c2, r2) {
+      var d = Math.hypot(c2.x - c1.x, c2.y - c1.y), v = 0.5;
+      if (r1 <= 0 || r2 <= 0 || d > r1 + r2 * 2.5 || d <= Math.abs(r1 - r2)) return '';
+      var u1 = 0, u2 = 0;
+      if (d < r1 + r2) {
+        u1 = Math.acos((r1 * r1 + d * d - r2 * r2) / (2 * r1 * d));
+        u2 = Math.acos((r2 * r2 + d * d - r1 * r1) / (2 * r2 * d));
+      }
+      var ac = Math.atan2(c2.y - c1.y, c2.x - c1.x), spread = Math.acos((r1 - r2) / d);
+      var a1 = ac + u1 + (spread - u1) * v, a2 = ac - u1 - (spread - u1) * v;
+      var a3 = ac + Math.PI - u2 - (Math.PI - u2 - spread) * v, a4 = ac - Math.PI + u2 + (Math.PI - u2 - spread) * v;
+      var at = function (c, a, r) { return { x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) }; };
+      var p1 = at(c1, a1, r1), p2 = at(c1, a2, r1), p3 = at(c2, a3, r2), p4 = at(c2, a4, r2);
+      var k = Math.min(v * 2.4, Math.hypot(p1.x - p3.x, p1.y - p3.y) / (r1 + r2)) * Math.min(1, d * 2 / (r1 + r2));
+      var h1 = at(p1, a1 - Math.PI / 2, r1 * k), h2 = at(p2, a2 + Math.PI / 2, r1 * k);
+      var h3 = at(p3, a3 + Math.PI / 2, r2 * k), h4 = at(p4, a4 - Math.PI / 2, r2 * k);
+      var xy = function (p) { return p.x.toFixed(1) + ' ' + p.y.toFixed(1); };
+      return 'M' + xy(p1) + 'C' + xy(h1) + ' ' + xy(h3) + ' ' + xy(p3) + 'A' + r2.toFixed(1) + ' ' + r2.toFixed(1) + ' 0 ' + (d > r1 ? 1 : 0) +
+        ' 0 ' + xy(p4) + 'C' + xy(h4) + ' ' + xy(h2) + ' ' + xy(p2) + 'Z';
+    }
+
+    function ease(t) { return 1 - Math.pow(1 - _clamp(t, 0, 1), 3); }
+
+    function start(rect, side, px, py) {
+      var full = _uiFull(), ex = side === 'left' ? 0 : rect.right;
+      st = { full: full, x: rect.left + rect.width / 2, y: py, vx: 0, vy: 0, tx: px, ty: py, r: R * 0.6, mode: 'held',
+        t0: performance.now(), last: performance.now(), a: { x: ex, y: py, r: rect.width / 2 }, a0: rect.width / 2 };
+      if (!full) {
+        svg = document.createElement('div');
+        svg.className = 'b-ui b-drop-dot';
+        svg.innerHTML = _icon('tag');
+        _uiMount(svg);
+        move(px, py);
+        return;
+      }
+      svg = el('svg', 'b-ui b-drop');
+      svg.setAttribute('aria-hidden', 'true');
+      st.path = svg.appendChild(el('path'));
+      st.anchor = svg.appendChild(el('circle'));
+      st.blob = svg.appendChild(el('ellipse'));
+      st.ico = svg.appendChild(el('path', 'b-drop__ico'));
+      st.ico.setAttribute('d', UI_ICONS.tag);
+      _uiMount(svg);
+      raf = requestAnimationFrame(frame);
+    }
+
+    function move(px, py) {
+      if (!st) return;
+      st.tx = px;
+      st.ty = py;
+      if (!st.full) { svg.style.left = px + 'px'; svg.style.top = py + 'px'; }
+    }
+
+    function release(v, side, edge, done) {
+      if (!st) return;
+      if (!st.full) { var y = st.ty; stop(); done(side, y); return; }
+      st.mode = 'fly';
+      st.side = side;
+      st.edge = edge;
+      st.done = done;
+      st.vx = _clamp(v.x, -MAX_V, MAX_V);
+      st.vy = _clamp(v.y, -MAX_V, MAX_V);
+      st.t0 = performance.now();
+    }
+
+    function stop() {
+      cancelAnimationFrame(raf);
+      if (svg) svg.remove();
+      svg = null;
+      st = null;
+    }
+
+    function frame(now) {
+      var s = st, dt = Math.min(32, now - s.last), VH = _vh();
+      s.last = now;
+      if (s.mode === 'held') {
+        s.vx += (SPRING * (s.tx - s.x) - DAMP * s.vx) * dt;
+        s.vy += (SPRING * (s.ty - s.y) - DAMP * s.vy) * dt;
+        s.r = R * (0.6 + 0.4 * ease((now - s.t0) / OUT_MS));
+        s.a.r = s.a0 * (1 - ease((now - s.t0) / OUT_MS));
+      } else if (s.mode === 'fly') {
+        var dir = s.side === 'left' ? -1 : 1, edge = s.edge;
+        s.vx += PULL * dir * dt;
+        s.vy *= Math.max(0, 1 - FRICTION * dt);
+        s.a.r = 0;
+        if ((dir > 0 && s.x + s.r >= edge) || (dir < 0 && s.x - s.r <= edge) || now - s.t0 > 2000) {
+          s.mode = 'land';
+          s.t0 = now;
+          s.x = dir > 0 ? edge - s.r : edge + s.r;
+          s.lx = s.x;
+          s.a = { x: edge, y: s.y, r: 0 };
+          s.vx = s.vy = 0;
+        }
+      } else {
+        var t = ease((now - s.t0) / IN_MS);
+        s.a.r = s.a0 * t;
+        s.x = s.lx + (s.a.x - s.lx) * t;
+        s.r = R * (1 - 0.5 * t);
+        if (t >= 1) { var land = s.done, side = s.side, y = s.y; stop(); land(side, y); return; }
+      }
+      s.x += s.vx * dt;
+      s.y = _clamp(s.y + s.vy * dt, s.r, VH - s.r);
+      draw(s);
+      raf = requestAnimationFrame(frame);
+    }
+
+    // Kropla rozciąga się wzdłuż prędkości i zwęża w poprzek, z zachowaniem pola.
+    function draw(s) {
+      var sp = Math.hypot(s.vx, s.vy), k = 1 + Math.min(0.45, sp * 0.12), deg = Math.atan2(s.vy, s.vx) * 180 / Math.PI;
+      s.blob.setAttribute('cx', s.x.toFixed(1));
+      s.blob.setAttribute('cy', s.y.toFixed(1));
+      s.blob.setAttribute('rx', (s.r * k).toFixed(1));
+      s.blob.setAttribute('ry', (s.r / k).toFixed(1));
+      s.blob.setAttribute('transform', 'rotate(' + deg.toFixed(1) + ' ' + s.x.toFixed(1) + ' ' + s.y.toFixed(1) + ')');
+      s.anchor.setAttribute('cx', s.a.x.toFixed(1));
+      s.anchor.setAttribute('cy', s.a.y.toFixed(1));
+      s.anchor.setAttribute('r', Math.max(0, s.a.r).toFixed(1));
+      s.path.setAttribute('d', bridge(s.a, s.a.r, { x: s.x, y: s.y }, s.r));
+      var sc = s.r / R;
+      s.ico.setAttribute('transform', 'translate(' + (s.x - 8 * sc).toFixed(1) + ' ' + (s.y - 8 * sc).toFixed(1) + ') scale(' + (sc * 2 / 3).toFixed(3) + ')');
+    }
+
+    return { start: start, move: move, release: release };
   })();
 
   // ───────────────────────────────────────────
@@ -7674,19 +8023,25 @@
       return box;
     }
 
+    // Stos stoi przy panelu albo jego pigułce, tam gdzie patrzy użytkownik: obok, po stronie z miejscem, dolną
+    // krawędzią równo z nimi. Pigułka bez miejsca obok ma stos nad sobą. Bez panelu (schowany do krawędzi, inne
+    // strony) stos stoi w prawym dolnym rogu.
     function place() {
       if (!box) return;
-      var VW = _vw(), VH = _vh(), right = 16, bottom = 16, p = Win.get('panel');
-      if (p && !p.hidden && p.collapsed) {
-        var pill = p.pill && !p.pill.hidden && p.pill.getBoundingClientRect();
-        if (pill && pill.right > VW - box.offsetWidth - 16) bottom = VH - pill.top + 8;
-      } else if (p && !p.hidden) {
-        // Zasięg stosu liczony dla trzech powiadomień, żeby kolejne nie wchodziły na panel.
-        var r = Win.rect('panel'), bw = box.offsetWidth, bh = Math.max(box.offsetHeight, 240);
-        var hit = r.x < VW - 16 && r.x + r.w > VW - 16 - bw && r.y + r.h > VH - 16 - bh;
-        if (hit && r.x - 12 - bw >= 16) right = VW - r.x + 12;
+      var VW = _vw(), VH = _vh(), bw = box.offsetWidth, left = null, right = 16, bottom = 16, p = Win.get('panel'), a = null;
+      if (p && p.open && !p.hidden) {
+        var pr = p.collapsed && p.pill && !p.pill.hidden ? p.pill.getBoundingClientRect() : null;
+        a = p.collapsed ? (pr && { x: pr.left, y: pr.top, w: pr.width, h: pr.height }) : Win.rect('panel');
       }
-      box.style.right = right + 'px';
+      if (a) {
+        bottom = Math.min(Math.max(16, VH - a.y - a.h), Math.max(16, VH - 16 - box.offsetHeight));
+        if (a.x - 12 - bw >= 16) right = VW - a.x + 12;
+        else if (VW - a.x - a.w - 12 - bw >= 16) { left = a.x + a.w + 12; right = null; }
+        else if (p.collapsed) bottom = VH - a.y + 8;
+        else bottom = 16;
+      }
+      box.style.left = left == null ? '' : left + 'px';
+      box.style.right = right == null ? '' : right + 'px';
       box.style.bottom = bottom + 'px';
     }
 
@@ -7724,7 +8079,7 @@
       var o = Object.assign({}, opts, { msg: msg, kind: kind });
       if (kind === 'error' && !('details' in o) && !(o.actions && o.actions.length) && Win.get('panel')) o.details = openLogPanel;
       var t = document.createElement('div');
-      var h = { el: t, close: function () { dismiss(t, 'api'); }, update: function (ch) { Object.assign(o, ch); render(); } };
+      var h = { el: t, close: function () { dismiss(t, 'api'); }, update: function (ch) { Object.assign(o, ch); render(); _uiArm(t); } };
       closers.set(t, function (reason) { if (o.onClose) o.onClose(reason); });
       t.innerHTML = '<span></span><div class="b-toast__msg"></div><div class="b-toast__acts"></div>';
       var msgEl = t.children[1], acts = t.children[2];
@@ -7766,6 +8121,7 @@
         acts.appendChild(x);
       }
       render();
+      _uiArm(t);
       var b = stack();
       var live = Array.prototype.filter.call(b.children, function (n) { return !n.classList.contains('is-out'); });
       if (live.length >= 3) dismiss(live[0], 'evict');
@@ -8379,6 +8735,7 @@
     // ── Samouczek ──
     function render() {
       var st = cur.steps[cur.i], n = cur.steps.length - 2, d = cur.def, body = cur.bubble.querySelector('.b-tour__body');
+      _uiArm(cur.bubble);
       var task = st.task || cur.s.task;
       var head = st.intro ? '<div class="b-tour__count">Samouczek · ' + _escHtml(_tutStepsLabel(d)) + '</div>'
         : st.outro ? ''
@@ -8598,6 +8955,7 @@
     function showOffer(d) {
       offered = true;
       var b = makeBubble('b-tour--offer');
+      _uiArm(b);
       b.setAttribute('role', 'region');
       b.setAttribute('aria-labelledby', 'b24t-tut-offer-title');
       b.setAttribute('aria-live', 'polite');
@@ -8959,6 +9317,7 @@
     var hidden = !!lsGet('b24tagger_panel_hidden');
     if (hidden) Win.hide('panel');
     Edge.setVisible('panel', hidden);
+    updateTokenUI(!!state.tokenSeen);
     return w.el;
   }
 
@@ -11116,17 +11475,18 @@
   // Warianty frazy: skracanie od końca, bo nazwa kampanii po angielsku („…AW26") często nie
   // funkcjonuje na mniejszych rynkach i pełna fraza daje zero wyników. Schodzimy do dwóch
   // słów — samo „H&M" to już nie kampania, tylko cały monitoring marki.
+  // Wynik NIE zawiera samej nazwy: ona idzie do kolejki zawsze (okno kampanii dokłada ją przed
+  // wariantami), a pusta tablica znaczy, że z tej nazwy nie powstaje nic krótszego.
   function _gsVariants(phrase) {
     var words = String(phrase || '').trim().split(/\s+/).filter(Boolean);
-    if (words.length < 2) return words.length ? [words.join(' ')] : [];
     var out = [];
-    for (var n = words.length; n >= 2; n--) {
+    for (var n = words.length - 1; n >= 2; n--) {
       // Wariant kończący się łącznikiem („H&M x" z „H&M x WARDROBE.NYC", „H&M by") jest gorszy
       // niż jego brak: nie zawęża niczego, a dokłada stronę wyników do przejrzenia.
       if (words[n - 1].length < 3) continue;
       out.push(words.slice(0, n).join(' '));
     }
-    return out.length ? out : [words.join(' ')];
+    return out;
   }
 
   // ── Zbieranie z SERP-a ──
@@ -11341,7 +11701,7 @@
     var exhausted = swapped || !_gsHasNext() || found.length === 0 || run.page + 1 >= GS_MAX_PAGES;
 
     var wait = exhausted ? _gsPauseBetweenVariants() : _gsPauseForPage(fresh.length);
-    var ok = await _gsWait(wait, exhausted ? 'następnego wariantu' : 'następnej strony');
+    var ok = await _gsWait(wait, exhausted ? 'następnego zapytania' : 'następnej strony');
     if (!ok) return; // stop wciśnięty albo karta zeszła na dobre
 
     run = _gsRunGet();
@@ -11368,7 +11728,7 @@
       var _czas = run.startedAt ? Date.now() - run.startedAt : 0;
       _ntfySend({
         ev: 'collectDone',
-        title: '✓ Zbieranie zakończone',
+        title: '✓ Wyszukiwanie zakończone',
         message: (run.campaign ? run.campaign + '\n' : '') +
                  (run.cc ? 'rynek ' + String(run.cc).toUpperCase() + '\n' : '') +
                  run.queue.length + ' zadań, w koszyku ' + _ileAdr + ' adresów' +
@@ -11426,8 +11786,8 @@
             powodBefore = powod;
             _gsHud.background = powod === 'tlo';
             _gsHudSay(powod === 'pauza'
-              ? '<div class="b-gs-lead">Pauza</div>Przebieg stoi. „Wznów” rusza od tego samego miejsca.'
-              : '<div class="b-gs-lead">Karta w tle</div>Przebieg czeka. Rusza dalej po powrocie na tę kartę.');
+              ? '<div class="b-gs-lead">Pauza</div>Wyszukiwanie stoi. „Wznów” rusza od tego samego miejsca.'
+              : '<div class="b-gs-lead">Karta w tle</div>Wyszukiwanie czeka. Rusza dalej po powrocie na tę kartę.');
             _gsHudTick('');
             _gsHudSync();
           }
@@ -11626,8 +11986,8 @@
       szcz.push('w koszyku ' + _gsCartGet().items.length + ' adr.');
       _ntfySend({
         ev: 'captcha',
-        title: '⛔ CAPTCHA — zbieranie stoi',
-        message: szcz.join('\n') + '\n\nOdklikaj zagadkę — przebieg ruszy dalej sam, z tego samego miejsca.',
+        title: '⛔ CAPTCHA — wyszukiwanie stoi',
+        message: szcz.join('\n') + '\n\nOdklikaj zagadkę — wyszukiwanie ruszy dalej samo, z tego samego miejsca.',
         tags: ['no_entry'],
         click: location.href,
       });
@@ -11645,7 +12005,7 @@
     var alt = false;
     _gsAlarm.titleIv = setInterval(function() {
       alt = !alt;
-      document.title = alt ? '⛔ CAPTCHA — kliknij tutaj' : '⚠ przebieg wstrzymany';
+      document.title = alt ? '⛔ CAPTCHA — kliknij tutaj' : '⚠ wyszukiwanie wstrzymane';
     }, 900);
 
     _gsAlarmSound();
@@ -11664,7 +12024,7 @@
     _gsAlarmStop();
     var run = _gsRunGet();
     if (!run || !run.active) return;
-    _gsHudSay('<div class="b-gs-lead">Test rozwiązany</div>Zbieranie rusza dalej.');
+    _gsHudSay('<div class="b-gs-lead">Test rozwiązany</div>Wyszukiwanie rusza dalej.');
     _gsRunStep(run).catch(function() {});
   }
 
@@ -11707,6 +12067,8 @@
   // ma zostać w swoim rogu i dać się przeciągać także zwinięty.
 
   var GS_HUD = 'gs-hud';
+  // Krótko: „Wyszukiwanie zaawansowane” nie mieści się obok przycisków nagłówka HUD-a o szerokości 22em i jest ucinane.
+  var GS_HUD_TITLE = 'Wyszukiwanie Google';
   // { min, cart }: zwinięcie i rozwinięta lista koszyka. Przebieg przeładowuje kartę co stronę wyników,
   // więc bez zapisu HUD rozwijałby się przy każdym przejściu dalej.
   var GS_HUD_PREFS = 'b24t_gs_hud';
@@ -11733,7 +12095,7 @@
     var stopIco = _icon('stop', 'b-ico-stop');
     var w = Win.open({
       id: GS_HUD, kind: 'hud', elId: 'b24t-gs-hud', winClass: 'b-gs', mainClass: 'b-win__plain',
-      icon: 'search', title: 'Zbieranie adresów', closable: false, remember: GS_HUD,
+      icon: 'search', title: GS_HUD_TITLE, closable: false, remember: GS_HUD,
       anchor: { a: 'br', dx: WIN_GAP, dy: WIN_GAP }, adjust: function(r) { return _gsAlarm.on ? _gsHudAvoid(r) : r; },
       titleExtra:
         '<span class="b-gs-mini" aria-hidden="true"><span class="b-dot" id="b24t-gs-mini-dot"></span>' +
@@ -11747,13 +12109,13 @@
             '<div class="b-stack b-stack--sm">' +
               '<div class="b-stack b-stack--xs">' +
                 '<span class="b-banner__title">Test Google (CAPTCHA)</span>' +
-                '<span class="b-small">Rozwiąż test na tej stronie. Zbieranie ruszy samo od miejsca, w którym stanęło.</span>' +
+                '<span class="b-small">Test do rozwiązania na tej stronie. Wyszukiwanie ruszy samo od miejsca, w którym stanęło.</span>' +
                 '<span class="b-hint" id="b24t-gs-alarm-why"></span>' +
               '</div>' +
               '<div><button type="button" class="b-btn b-btn--outline b-btn--sm" id="b24t-gs-mute"></button></div>' +
             '</div>' +
           '</div>' +
-          '<section class="b-stack b-stack--sm" id="b24t-gs-prog" aria-label="Postęp przebiegu" hidden>' +
+          '<section class="b-stack b-stack--sm" id="b24t-gs-prog" aria-label="Postęp wyszukiwania" hidden>' +
             '<div class="b-row">' +
               '<span class="b-status" id="b24t-gs-status" role="status"><span class="b-status__label"></span></span>' +
               '<span class="b-small b-text2" id="b24t-gs-prog-label"></span><span class="b-sp"></span>' +
@@ -11792,8 +12154,8 @@
         '<button type="button" class="b-btn b-btn--primary b-btn--block" id="b24t-gs-handoff" hidden>' + _icon('send') + 'Przejdź do skanowania</button>' +
         '<button type="button" class="b-btn b-btn--primary b-btn--block" id="b24t-gs-check" data-tip="Wczytuje ponownie wyniki bieżącego zadania" hidden>' +
           _icon('refresh') + 'Sprawdź teraz</button>' +
-        '<button type="button" class="b-btn b-btn--neutral b-btn--block" id="b24t-gs-abort" data-tip="Zatrzymuje przebieg; koszyk zostaje" hidden>' +
-          stopIco + 'Przerwij zbieranie</button>',
+        '<button type="button" class="b-btn b-btn--neutral b-btn--block" id="b24t-gs-abort" data-tip="Zatrzymuje wyszukiwanie; koszyk zostaje" hidden>' +
+          stopIco + 'Przerwij wyszukiwanie</button>',
     });
 
     // Przycisk zwijania po „⋯”, jak w panelu; ten sam przycisk rozwija pigułkę.
@@ -11810,7 +12172,7 @@
       'b24t-gs-abort': function() {
         _gsAlarmStop();
         _gsRunStop('blocked');
-        _gsHudSay('Zbieranie przerwane przy teście Google. Koszyk zostaje; nowy przebieg startuje z okna Kampanie H&amp;M w Brand24.', true);
+        _gsHudSay('Wyszukiwanie przerwane przy teście Google. Koszyk zostaje; kolejne wyszukiwanie startuje z okna Kampanie H&amp;M w Brand24.', true);
       },
       'b24t-gs-mute': function(b) {
         _gsAlarmSilence();
@@ -11908,7 +12270,7 @@
     var run = _gsRunGet(), active = !!(run && run.active), alarm = _gsAlarm.on;
     var n = _gsCartGet().items.length;
     var st = alarm ? ['error', 'Test Google']
-      : active ? (run.paused ? ['paused', 'Pauza'] : _gsHud.background ? ['paused', 'Karta w tle'] : ['running', 'Zbiera'])
+      : active ? (run.paused ? ['paused', 'Pauza'] : _gsHud.background ? ['paused', 'Karta w tle'] : ['running', 'Szuka'])
       : (run && GS_STOPPED[run.stopped]) || null;
 
     var chip = _$('b24t-gs-status');
@@ -12043,8 +12405,8 @@
   function _gsHudFinish(run) {
     var n = _gsCartGet().items.length;
     _gsHud.handoff = true;
-    _gsHudSay('<div class="b-gs-lead">Przebieg zakończony</div>W koszyku: ' + n + ' ' + _relPl(n, 'adres', 'adresy', 'adresów') +
-      '. „Przejdź do skanowania” uruchamia skan w karcie Brand24, z której wystartowało zbieranie.', true);
+    _gsHudSay('<div class="b-gs-lead">Wyszukiwanie zakończone</div>W koszyku: ' + n + ' ' + _relPl(n, 'adres', 'adresy', 'adresów') +
+      '. „Przejdź do skanowania” uruchamia skan w karcie Brand24, z której wystartowało wyszukiwanie.', true);
     _gsHudProgress(run);
   }
 
@@ -12055,7 +12417,7 @@
     // Gdy `opener` przepadł (panel przeładowany albo zamknięty), sygnał czeka w GM i karta panelu podniesie go
     // po powrocie na nią — trzeba to powiedzieć, bo nic się nie stanie samo i wygląda to jak zawieszenie.
     _gsHudSay(ok ? 'Adresy przekazane do karty panelu Brand24.'
-      : 'Karta panelu nie odpowiedziała. Skan ruszy po powrocie na kartę Brand24, z której wystartowało zbieranie.', true);
+      : 'Karta panelu nie odpowiedziała. Skan ruszy po powrocie na kartę Brand24, z której wystartowało wyszukiwanie.', true);
   }
 
   // Alarm w HUD-zie: rozwija pigułkę, pokazuje opis i przyciski alarmu w tym samym rogu. `why` = null kończy.
@@ -12081,7 +12443,7 @@
   function _gsHudMarket(code, name, on, icon, what) {
     if (!code) return '';
     return '<span class="b-chip b-chip--sm' + (on ? '' : ' b-gs-off') + '" data-tip="Filtr ' + what +
-      (on ? ' w tym przebiegu' : ' nie bierze udziału w tym przebiegu') + '">' + _icon(icon) +
+      (on ? ' w tym wyszukiwaniu' : ' nie bierze udziału w tym wyszukiwaniu') + '">' + _icon(icon) +
       '<b>' + _escHtml(String(code).toUpperCase()) + '</b>' + _escHtml(name || '') + (on ? '' : ' · wył.') + '</span>';
   }
 
@@ -12095,7 +12457,7 @@
   }
 
   function _gsHudQueue(run) {
-    if (run.campaign) Win.setTitle(GS_HUD, 'Zbieranie adresów', run.campaign);
+    if (run.campaign) Win.setTitle(GS_HUD, GS_HUD_TITLE, run.campaign);
     // Które filtry realnie lecą, czytamy z KOLEJKI, a nie z osobnego pola — `run` go nie ma, a kolejka
     // jest źródłem prawdy: to z niej powstają adresy.
     var modes = {};
@@ -12138,19 +12500,19 @@
       // Przebieg należy do karty otwartej z okna kampanii (_gsRunStep); w innej karcie Google HUD tylko
       // pokazuje stan, a Pauza i Stop działają przez wspólny stan w GM.
       var own = run.ownerTab ? run.ownerTab === _gsTabToken() : _gsIsRunTab();
-      if (!own) _gsHudSay('Zbieranie trwa w innej karcie. Pauza i Stop działają także stąd.');
+      if (!own) _gsHudSay('Wyszukiwanie trwa w innej karcie. Pauza i Stop działają także stąd.');
       // Błąd w kroku przebiegu zostawiłby przebieg „aktywny" na zawsze i nikt by się o tym
       // nie dowiedział — karta stoi, a stan w GM mówi, że trwa. Zatrzymujemy jawnie.
       _gsRunStep(run).catch(function(e) {
         var _msg = e && e.message ? e.message : String(e);
         _gsRunStop('error');
-        _gsHudSay('<div class="b-gs-lead">Błąd przebiegu</div>' + _escHtml(_msg) +
-                  '. Koszyk zostaje; nowy przebieg startuje z okna Kampanie H&amp;M w Brand24.', true);
+        _gsHudSay('<div class="b-gs-lead">Błąd wyszukiwania</div>' + _escHtml(_msg) +
+                  '. Koszyk zostaje; kolejne wyszukiwanie startuje z okna Kampanie H&amp;M w Brand24.', true);
         _ntfySend({
           ev: 'collectError',
-          title: '⛔ Zbieranie przerwane błędem',
+          title: '⛔ Wyszukiwanie przerwane błędem',
           message: (run.campaign ? run.campaign + '\n' : '') + _msg +
-                   '\n\nKoszyk zachowany (' + _gsCartGet().items.length + ' adr.) — trzeba uruchomić przebieg ponownie.',
+                   '\n\nKoszyk zachowany (' + _gsCartGet().items.length + ' adr.) — trzeba uruchomić wyszukiwanie ponownie.',
           tags: ['rotating_light'],
           click: location.href,
         });
@@ -12164,7 +12526,7 @@
       var fresh = found.filter(function(e) { return !_gsIsBlacklisted(e.u, run.blacklist); });
       var added = _gsCartAdd(fresh);
       _gsHudCount();
-      _gsHudSay('<div class="b-gs-lead">Tryb ręczny</div>Strony wyników przechodzi się ręcznie; kolektor zbiera adresy z każdej.<br>' +
+      _gsHudSay('<div class="b-gs-lead">Tryb ręczny</div>Strony wyników przechodzi się ręcznie; wtyczka zbiera adresy z każdej.<br>' +
                 'Dodane: ' + added + ' · odsiane: ' + (found.length - fresh.length) + ' z ' + found.length, true);
       return;
     }
@@ -15870,11 +16232,12 @@
     Win.close('news-custom');
   }
 
-  // Uchwyt „Wzmianki” w Brand24 albo „✚ B24” na innej stronie: każdy otwiera i zamyka moduł.
+  // Uchwyt „Wzmianki” w Brand24 albo „Dodaj wzmiankę” na innej stronie: każdy otwiera i zamyka moduł. Moduł ma dwa
+  // okna (News, Niestandardowe) i przełącza się między nimi, więc stan uchwytu ustawia moduł, nie Win (spec.edge).
   function _newsEdgePressed(on) {
     ['news', 'mini'].forEach(function(id) {
-      var e = Edge.get(id);
-      if (e) e.setAttribute('aria-pressed', on ? 'true' : 'false');
+      Edge.setOpen(id, on);
+      if (!on) Edge.ping(id);
     });
   }
 
@@ -15913,7 +16276,7 @@
   var NEWS_LAST_MODE_KEY = 'b24t_mentions_last_mode';
   var NEWS_MODES = [
     { key: 'campaign', icon: 'target', title: 'Kampanie H&M',
-      desc: 'Wtyczka przechodzi wyniki Google dla wariantów frazy kampanii i zbiera adresy do koszyka; z koszyka idą do oceny i dodania.' },
+      desc: 'Wyszukiwanie zaawansowane Google z filtrami kraju, języka i dat; zebrane adresy idą do oceny i dodania.' },
     { key: 'news', icon: 'news', title: 'News',
       desc: 'Lista wklejonych adresów: skan treści, filtr słów kluczowych, kategoria News i tag „dodane”.' },
     { key: 'custom', icon: 'pencil', title: 'Niestandardowe',
@@ -16144,10 +16507,10 @@
   // konfiguracji. Nazwa przy liczniku pokazuje, czyje są te adresy: bez niej koszyk z poprzedniej kampanii
   // wjechałby pod prompt nowej bez śladu.
   var CAMP_RUN_STATE = {
-    active:  { kind: 'info',   label: 'Przebieg w toku' },
-    blocked: { kind: 'danger', label: 'Zatrzymany przez CAPTCHA' },
-    done:    { kind: 'ok',     label: 'Przebieg zakończony' },
-    user:    { kind: '',       label: 'Zatrzymany ręcznie' }
+    active:  { kind: 'info',   label: 'Wyszukiwanie w toku' },
+    blocked: { kind: 'danger', label: 'Zatrzymane przez CAPTCHA' },
+    done:    { kind: 'ok',     label: 'Wyszukiwanie zakończone' },
+    user:    { kind: '',       label: 'Zatrzymane ręcznie' }
   };
 
   // o: { onPaste — przycisk „Wklej do importu”, onChange — po wyczyszczeniu albo przywróceniu koszyka
@@ -16159,7 +16522,7 @@
     var redraw = o.onChange || function() { _campaignCartRender(box, o); };
     box.innerHTML = '<div class="b-ccart">' + _icon('cart') +
         '<div class="b-ccart__text"><div><b class="b-ccart__n">' + n + '</b> ' + _relPl(n, 'adres', 'adresy', 'adresów') + ' w koszyku</div>' +
-          '<div class="b-hint">' + (!n ? 'Adresy trafiają tu z przebiegu zbierania.'
+          '<div class="b-hint">' + (!n ? 'Adresy trafiają tu z wyszukiwania zaawansowanego.'
             : run && run.campaign ? 'Kampania: ' + _escHtml(run.campaign) : 'Kampania bez nazwy') + '</div></div>' +
         (st ? _newsTag(st.kind, _escHtml(st.label)) : '') +
       '</div>' +
@@ -16195,8 +16558,8 @@
   // a dodawanie robi się z gotowego koszyka, często później. Katalog nr 68: przy pustym koszyku „Dodawanie” jest
   // nieaktywne i podpowiada, skąd wziąć adresy; „Wyczyść koszyk” stoi przy liczniku. Klawisze 1 i 2 jak w launcherze.
   var CAMP_STEPS = [
-    { key: 'collect', icon: 'search', title: 'Zbieranie',
-      desc: 'Nazwa kampanii, rynek i zakres dat. Wtyczka przechodzi wyniki Google w osobnej karcie i zbiera adresy do koszyka.' },
+    { key: 'collect', icon: 'search', title: 'Wyszukiwanie zaawansowane',
+      desc: 'Nazwa kampanii z filtrami kraju, języka i dat. Wtyczka przechodzi strony wyników Google w osobnej karcie i zbiera adresy do koszyka.' },
     { key: 'add', icon: 'cart', title: 'Dodawanie',
       desc: 'Adresy z koszyka idą do skanu i oceny AI pod kampanię: osobny prompt i słowa kluczowe z nazwy kampanii.' }
   ];
@@ -16225,7 +16588,7 @@
         addTile.removeAttribute('data-tip');
       } else {
         addTile.setAttribute('aria-disabled', 'true');
-        addTile.setAttribute('data-tip', 'Koszyk jest pusty: adresy zbiera krok Zbieranie');
+        addTile.setAttribute('data-tip', 'Koszyk jest pusty: adresy zbiera wyszukiwanie zaawansowane');
       }
       _campaignCartRender(cartBox, { onChange: render });
     }
@@ -16297,16 +16660,17 @@
     };
     var unwatch = null;
     var w = Win.open({
-      id: 'campaign-search', kind: 'work', elId: 'b24t-campaign-modal', title: 'Wyszukiwanie kampanii', icon: 'search',
+      id: 'campaign-search', kind: 'work', elId: 'b24t-campaign-modal', title: 'Wyszukiwanie zaawansowane Google', icon: 'search',
       remember: 'campaign-search', winClass: 'b-nwin-work', mainClass: 'b-camp',
       body: '<div class="b-camp__grid">' +
         '<section class="b-card" aria-label="Kampania">' +
           fld('b24t-camp-phrase', 'Nazwa kampanii', inp('b24t-camp-phrase', 'text', cfg.phrase, 'placeholder="H&amp;M STUDIO ESSENTIALS AW26" autocomplete="off"'), 'phrase') +
-          '<div class="b-field"><div class="b-row"><label class="b-label" for="b24t-camp-variants">Warianty frazy</label><span class="b-sp"></span>' +
-            '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-camp-regen" data-tip="Warianty od nowa z nazwy kampanii">' + _icon('refresh') + 'Z nazwy</button></div>' +
-            '<textarea class="b-textarea b-mono" id="b24t-camp-variants" rows="3" placeholder="jeden wariant w wierszu" spellcheck="false"></textarea>' +
-            '<span class="b-hint">Pełna nazwa często nie funkcjonuje na mniejszych rynkach: krótsze warianty łapią resztę, a zakres dat trzyma szum w ryzach.</span>' +
-            errSlot('variants') + '</div>' +
+          '<div class="b-field"><div class="b-row b-cvars"><label class="b-label" for="b24t-camp-variants">Warianty frazy</label><span class="b-sp"></span>' +
+            '<span class="b-hint" id="b24t-camp-vars-auto" hidden>Z nazwy kampanii</span>' +
+            '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-camp-vars-act" hidden></button></div>' +
+            '<textarea class="b-textarea b-mono" id="b24t-camp-variants" rows="3" spellcheck="false" aria-describedby="b24t-camp-vars-hint"></textarea>' +
+            '<span class="b-hint" id="b24t-camp-vars-hint">Każdy wariant to osobne zapytanie, tak jak pełna nazwa. Warianty powstają z nazwy skracanej od końca: ' +
+              'pełna nazwa często nie daje wyników na mniejszych rynkach.</span></div>' +
           // Kody są dwuliterowe, daty potrzebują miejsca na `dd.mm.rrrr` plus ikonę kalendarza —
           // równy podział czterech kolumn ściskał pola dat do nieczytelnych.
           '<div class="b-ngrid b-cmarket">' +
@@ -16316,17 +16680,18 @@
             fld('b24t-camp-to', 'Do', inp('b24t-camp-to', 'date', cfg.to), 'to') +
           '</div>' +
           '<p class="b-hint b-nstate" id="b24t-camp-market-hint" aria-live="polite"></p>' +
-          '<div class="b-field" role="group" aria-labelledby="b24t-camp-modes-label"><span class="b-label" id="b24t-camp-modes-label">Filtry wyszukiwania</span>' +
+          '<div class="b-field" role="group" aria-labelledby="b24t-camp-modes-label"><span class="b-label" id="b24t-camp-modes-label">Filtry wyszukiwania zaawansowanego</span>' +
             '<div class="b-row b-row--wrap">' +
               '<label class="b-check"><input type="checkbox" id="b24t-camp-m-country"' + (cfg.modeCountry === false ? '' : ' checked') + '><span>Kraj</span></label>' +
               '<label class="b-check"><input type="checkbox" id="b24t-camp-m-lang"' + (cfg.modeLang === false ? '' : ' checked') + '><span>Język</span></label>' +
-            '</div>' + errSlot('modes') + '</div>' +
+            '</div><span class="b-hint">Każdy filtr to osobna seria zapytań z tym samym zakresem dat.</span>' + errSlot('modes') + '</div>' +
           '<div class="b-nbox">' +
             '<button type="button" class="b-fold" id="b24t-camp-bl-btn" aria-expanded="false" aria-controls="b24t-camp-bl">' + _icon('chevDown') +
               '<span class="b-strong">Czarna lista domen</span><span class="b-sp"></span><span class="b-hint" id="b24t-camp-bl-n"></span></button>' +
             '<div id="b24t-camp-bl" class="b-stack b-stack--sm" hidden>' +
               '<textarea class="b-textarea b-mono" id="b24t-camp-blacklist" rows="5" aria-label="Czarna lista domen" spellcheck="false"></textarea>' +
-              '<span class="b-hint">Jedna domena w wierszu. Jej adresy nie trafiają do koszyka, a strona wyników złożona z samych takich trafień jest przewijana szybciej.</span>' +
+              '<span class="b-hint">Jedna domena w wierszu. Pierwsze ' + GS_MAX_SITE_EXCLUSIONS + ' pełnych domen trafia do zapytania jako operator ' +
+                '<code>-site:</code>, więc Google ich nie pokazuje. Cała lista odsiewa też adresy przed koszykiem.</span>' +
             '</div>' +
           '</div>' +
         '</section>' +
@@ -16336,15 +16701,15 @@
             '<span class="b-hint">Do kampanii służy <code>prompts/news_ai_campaign.txt</code>: zna werdykt „poza kampanią” i podstawia nazwę kampanii pod ' +
               '<code>{CAMPAIGN}</code>. Bez wybranego promptu wtyczka pyta o niego przed skanem.</span></div>' +
           '<p class="b-hint b-nstate" id="b24t-camp-rss-info" aria-live="polite" hidden></p>' +
-          '<div class="b-banner b-banner--info">' + _icon('info') + '<div>Przebieg działa w nowej karcie i potrzebuje jej na wierzchu. ' +
-            'Karta zminimalizowana albo w całości zasłonięta innym oknem jest dla Chrome ukryta i przebieg wtedy czeka. Osobny monitor wystarcza.</div></div>' +
+          '<div class="b-banner b-banner--info">' + _icon('info') + '<div>Wyszukiwanie działa w nowej karcie Google i potrzebuje jej na wierzchu. ' +
+            'Karta zminimalizowana albo w całości zasłonięta innym oknem jest dla Chrome ukryta i wyszukiwanie wtedy czeka. Osobny monitor wystarcza.</div></div>' +
         '</div>' +
       '</div>',
-      foot: '<button type="button" class="b-btn b-btn--quiet" id="b24t-camp-manual" data-tip="Pierwsze wyszukiwanie bez automatu: strony przechodzi się ręcznie, a koszyk zbiera adresy w tle">Otwórz ręcznie</button>' +
-        '<button type="button" class="b-btn b-btn--neutral" id="b24t-camp-rss" data-tip="Jedno zapytanie do Google News zamiast serii do wyszukiwarki, bez ryzyka captchy">' + _icon('news') + 'Dołóż z Google News</button>' +
+      foot: '<button type="button" class="b-btn b-btn--quiet" id="b24t-camp-manual" data-tip="Pierwsze zapytanie w nowej karcie, bez automatu: strony wyników przechodzi się ręcznie, a koszyk zbiera adresy z każdej">Otwórz ręcznie</button>' +
+        '<button type="button" class="b-btn b-btn--neutral" id="b24t-camp-rss" data-tip="Jedno zapytanie do Google News zamiast serii zapytań wyszukiwania zaawansowanego, bez ryzyka CAPTCHA">' + _icon('news') + 'Dołóż z Google News</button>' +
         '<span class="b-sp"></span>' +
-        '<button type="button" class="b-btn b-btn--primary" id="b24t-camp-start">' + _icon('play') + 'Uruchom przebieg</button>',
-      onClose: function() { if (unwatch) unwatch(); }
+        '<button type="button" class="b-btn b-btn--primary" id="b24t-camp-start">' + _icon('play') + 'Uruchom wyszukiwanie</button>',
+      onClose: function() { clearTimeout(vars.timer); if (unwatch) unwatch(); }
     });
     var root = w.el;
     var q = function(id) { return root.querySelector('#' + id); };
@@ -16355,21 +16720,78 @@
     var ccEl     = q('b24t-camp-cc');
     var langEl   = q('b24t-camp-lang');
 
-    varsEl.value = (cfg.variants && cfg.variants.length ? cfg.variants : _gsVariants(cfg.phrase || '')).join('\n');
     blEl.value = (cfg.blacklist && cfg.blacklist.length ? cfg.blacklist : GS_BLACKLIST_DEFAULT).join('\n');
 
-    // Warianty przepisujemy z nazwy tylko dopóki użytkownik ich nie tknął — inaczej ręcznie
-    // dopisany wariant lokalny znikałby przy każdej literze poprawianej w nazwie kampanii.
-    var varsTouched = !!(cfg.variants && cfg.variants.length);
-    varsEl.addEventListener('input', function() { varsTouched = true; });
+    // Warianty frazy (GOOGLE_COLLECTOR.md §3). Pole trzyma tylko skrócenia nazwy: sama nazwa idzie do kolejki zawsze,
+    // więc pole puste znaczy „szukaj samej nazwy”, a nie błąd. Automat przepisuje listę przy każdej zmianie nazwy.
+    // Ręczna zmiana listy wstrzymuje go do następnej zmiany nazwy, a lista zastąpiona przez automat wraca przyciskiem
+    // „Przywróć ręczne”: poprawka literówki w nazwie nie może kasować bez śladu dopisanego wariantu lokalnego.
+    // Zapis nie ma znacznika „ręczne”: lista różna od automatycznej JEST ręczna, także w konfiguracji sprzed tej zmiany,
+    // w której pierwszy wiersz był samą nazwą (stąd odfiltrowanie nazwy przy odczycie).
+    var vKey = function(s) { return String(s || '').trim().replace(/\s+/g, ' ').toLowerCase(); };
+    var vSame = function(a, b) { return a.map(vKey).join('\n') === b.map(vKey).join('\n'); };
+    var savedVars = (cfg.variants || []).filter(function(v) { return vKey(v) && vKey(v) !== vKey(cfg.phrase); });
+    var autoVars = _gsVariants(cfg.phrase);
+    // name: nazwa, dla której powstała bieżąca lista; backup: lista ręczna zastąpiona przez automat.
+    var vars = { name: phraseEl.value, manual: !vSame(savedVars, autoVars), backup: null, timer: 0 };
+    varsEl.value = (vars.manual ? savedVars : autoVars).join('\n');
+    var varsAuto = q('b24t-camp-vars-auto'), varsAct = q('b24t-camp-vars-act');
+
+    function varsUi() {
+      // Komunikat „za krótka” stoi w pustym polu, bo pole zostaje edytowalne: wariant lokalny można dopisać i wtedy.
+      varsEl.placeholder = vars.manual ? 'Jeden wariant w wierszu'
+        : vars.name.trim() ? 'Nazwa za krótka na warianty: wyszukiwana jest sama nazwa' : 'Warianty powstają z nazwy kampanii';
+      varsAuto.hidden = vars.manual || vars.backup !== null || !varsEl.value.trim();
+      varsAct.hidden = !vars.manual && vars.backup === null;
+      if (vars.manual) {
+        varsAct.innerHTML = _icon('refresh') + 'Z nazwy';
+        varsAct.setAttribute('data-tip', 'Tworzy warianty od nowa z nazwy kampanii');
+      } else if (vars.backup !== null) {
+        varsAct.innerHTML = _icon('undo') + 'Przywróć ręczne';
+        varsAct.setAttribute('data-tip', 'Przywraca warianty zmienione ręcznie');
+      }
+    }
+
+    // Automat po zmianie nazwy. Zmiana samej wielkości liter nie zmienia zapytania w Google, więc listy ręcznej nie rusza.
+    function varsSync() {
+      clearTimeout(vars.timer);
+      var name = phraseEl.value;
+      if (name === vars.name) return;
+      var renamed = vKey(name) !== vKey(vars.name);
+      vars.name = name;
+      if (vars.manual && !renamed) return;
+      if (vars.manual) { vars.backup = varsEl.value; vars.manual = false; }
+      varsEl.value = _gsVariants(name).join('\n');
+      varsUi();
+    }
+    // Opóźnienie tylko uspokaja listę w trakcie pisania. Wejście do pola wariantów i zapis (saveAnd) wyrównują listę
+    // od razu: inaczej spóźnione przepisanie nadpisałoby to, co ktoś zaczął w polu wpisywać. Bez wyrównania przy
+    // wyjściu z pola nazwy: wyjście następuje przy naciśnięciu przycisku obok listy i zmieniałoby jego działanie,
+    // zanim kliknięcie się skończy.
     phraseEl.addEventListener('input', function() {
-      if (!varsTouched) varsEl.value = _gsVariants(phraseEl.value).join('\n');
+      clearTimeout(vars.timer);
+      vars.timer = setTimeout(varsSync, 350);
     });
-    q('b24t-camp-regen').addEventListener('click', function() {
-      varsEl.value = _gsVariants(phraseEl.value).join('\n');
-      varsTouched = false;
-      recheck();
+    varsEl.addEventListener('focus', varsSync);
+    varsEl.addEventListener('input', function() {
+      vars.manual = true;
+      vars.backup = null;
+      varsUi();
     });
+    varsAct.addEventListener('click', function() {
+      if (vars.manual) {
+        vars.backup = varsEl.value;
+        vars.manual = false;
+        varsEl.value = _gsVariants(phraseEl.value).join('\n');
+      } else {
+        varsEl.value = vars.backup;
+        vars.backup = null;
+        vars.manual = true;
+      }
+      vars.name = phraseEl.value;
+      varsUi();
+    });
+    varsUi();
 
     // Kraj steruje językiem, dopóki język nie został wpisany ręcznie DLA TEGO PROJEKTU.
     // Ręczna zmiana zapamiętana przy innym projekcie nie ma tu nic do rzeczy — inaczej
@@ -16397,9 +16819,11 @@
     marketHint();
 
     var blBtn = q('b24t-camp-bl-btn'), blBox = q('b24t-camp-bl'), blN = q('b24t-camp-bl-n');
+    // Licznik przy zwiniętej liście mówi też, ile domen wejdzie do zapytania jako operator: reszta tylko filtruje koszyk.
     function blCount() {
-      var n = blEl.value.split('\n').filter(function(s) { return s.trim(); }).length;
-      blN.textContent = n + ' ' + _relPl(n, 'domena', 'domeny', 'domen');
+      var list = blEl.value.split('\n').map(function(s) { return s.trim(); }).filter(Boolean);
+      var site = _gsSiteExclusions(list).length;
+      blN.textContent = list.length + ' ' + _relPl(list.length, 'domena', 'domeny', 'domen') + (site ? ' · ' + site + ' jako -site:' : '');
     }
     blCount();
     blEl.addEventListener('input', blCount);
@@ -16442,7 +16866,16 @@
     unwatch = _campaignWatch(function() { _campaignCartRender(cartBox, cartOpts); });
 
     function readCfg() {
-      var variants = varsEl.value.split('\n').map(function(s) { return s.trim(); }).filter(Boolean);
+      // Bez samej nazwy i bez powtórzeń: kolejka i tak zaczyna się od nazwy, a powtórzony wariant to drugie
+      // zapytanie do Google o to samo.
+      var seen = {};
+      seen[vKey(phraseEl.value)] = true;
+      var variants = varsEl.value.split('\n').map(function(s) { return s.trim(); }).filter(function(s) {
+        var k = vKey(s);
+        if (!k || seen[k]) return false;
+        seen[k] = true;
+        return true;
+      });
       var modes = [];
       if (q('b24t-camp-m-country').checked) modes.push('country');
       if (q('b24t-camp-m-lang').checked) modes.push('lang');
@@ -16465,17 +16898,14 @@
 
     // Wynik: { f: pole, msg } albo null. Komunikat mówi, CO zrobić — brakujące pole samo w sobie nic nie podpowiada.
     function validate(c, kanal) {
-      if (!c.variants.length) {
-        return c.phrase ? { f: 'variants', msg: 'Warianty frazy są puste; przycisk „Z nazwy” tworzy je z nazwy kampanii.' }
-                        : { f: 'phrase', msg: 'Brak nazwy kampanii: z niej powstają warianty frazy.' };
-      }
+      if (!c.phrase) return { f: 'phrase', msg: 'Brak nazwy kampanii: od niej zaczyna się wyszukiwanie i z niej powstają warianty.' };
       // Sprawdzamy ZNACZENIE kodu, nie tylko jego kształt. `[a-z]{2,3}` przepuszcza „gr",
       // które jest poprawnym kodem kraju i błędnym kodem języka — a Google taki filtr
       // po cichu ignoruje, więc przebieg kończy się kompletem adresów z niewłaściwego rynku.
       // Google News nie zna trybów filtra i wymaga za to obu kodów (język idzie w parametrze `hl`).
       var needCc = kanal === 'rss' || c.modes.indexOf('country') !== -1;
       var needLang = kanal === 'rss' || c.modes.indexOf('lang') !== -1;
-      if (kanal !== 'rss' && !c.modes.length) return { f: 'modes', msg: 'Przebieg wymaga co najmniej jednego filtra: kraju albo języka.' };
+      if (kanal !== 'rss' && !c.modes.length) return { f: 'modes', msg: 'Wyszukiwanie wymaga co najmniej jednego filtra: kraju albo języka.' };
       var eCc = needCc && _ccCodeError(c.cc);
       if (eCc) return { f: 'cc', msg: eCc };
       var eLang = needLang && _langCodeError(c.lang, c.cc);
@@ -16486,7 +16916,7 @@
       return null;
     }
 
-    var FIELD_OF = { phrase: 'b24t-camp-phrase', variants: 'b24t-camp-variants', cc: 'b24t-camp-cc', lang: 'b24t-camp-lang',
+    var FIELD_OF = { phrase: 'b24t-camp-phrase', cc: 'b24t-camp-cc', lang: 'b24t-camp-lang',
                      from: 'b24t-camp-from', to: 'b24t-camp-to', modes: 'b24t-camp-m-country' };
     var lastKanal = null, errShown = false;
     function showErr(e) {
@@ -16506,6 +16936,7 @@
     root.addEventListener('change', recheck);
 
     function saveAnd(fn, kanal) {
+      varsSync();
       var c = readCfg();
       lastKanal = kanal || null;
       var e = validate(c, lastKanal);
@@ -16518,7 +16949,7 @@
     q('b24t-camp-start').addEventListener('click', function() {
       saveAnd(function(c) {
         var url = _gsRunStart({
-          campaign: c.phrase, variants: c.variants, modes: c.modes,
+          campaign: c.phrase, variants: [c.phrase].concat(c.variants), modes: c.modes,
           cc: c.cc, lang: c.lang, from: c.from, to: c.to, blacklist: c.blacklist,
           originTab: _b24TabToken(), originProject: state.projectId || null,
         });
@@ -16543,7 +16974,7 @@
           // Google News nie zna wariantów frazy tak jak wyszukiwarka — bierzemy pełną nazwę
           // kampanii, bo tu szum jest i tak mały (same serwisy informacyjne).
           var r = await _gsRssCollect({
-            phrase: c.variants[0], cc: c.cc, lang: c.lang,
+            phrase: c.phrase, cc: c.cc, lang: c.lang,
             from: c.from, to: c.to, blacklist: c.blacklist,
           }, function(txt) { rssMsg('wait', _escHtml(txt)); });
           var szczegoly = [];
@@ -16566,7 +16997,7 @@
         // Tryb awaryjny: bez aktywnego przebiegu kolektor tylko zbiera to, co sam otworzysz.
         _gsRunSet({ active: false, stopped: 'manual', blacklist: c.blacklist });
         var tab = window.open(_gsBuildUrl({
-          phrase: c.variants[0], mode: c.modes[0], cc: c.cc, lang: c.lang, from: c.from, to: c.to,
+          phrase: c.phrase, mode: c.modes[0], cc: c.cc, lang: c.lang, from: c.from, to: c.to,
           blacklist: c.blacklist,
         }), '_blank');
         if (tab) tab.focus();
@@ -19683,6 +20114,86 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.3",
+      "date": "2026-10-03",
+      "label": "new",
+      "changes": [
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Listwa uchwytów przy krawędzi zamiast pionowych zakładek",
+          "items": [
+            "Annotators, Wzmianki, Network Monitor i schowany panel mają ikony w jednej listwie, a nazwa pokazuje się w dymku obok niej.",
+            "Kliknięcie uchwytu otwiera okno, drugie je chowa. Okno wyrasta z uchwytu i do niego wraca, a uchwyt otwartego okna świeci się kolorem akcentu.",
+            "Listwę przesuwa się w górę i w dół. Wyciągnięta od krawędzi zmienia się w kroplę: mocny rzut przykleja ją do krawędzi, w którą poleciała, a słaby oddaje ją z powrotem.",
+            "Wzmianki da się zamknąć uchwytem także przy otwartym oknie News."
+          ],
+          "comment": "Pionowe napisy czytało się z głową przechyloną o 90 stopni. Listwa zajmuje jedno miejsce przy krawędzi i można ją odłożyć tam, gdzie nie przeszkadza w pracy.",
+          "highlight": true,
+          "text": "Listwa uchwytów przy krawędzi zamiast pionowych zakładek. Annotators, Wzmianki, Network Monitor i schowany panel mają ikony w jednej listwie, a nazwa pokazuje się w dymku obok niej. Kliknięcie uchwytu otwiera okno, drugie je chowa. Okno wyrasta z uchwytu i do niego wraca, a uchwyt otwartego okna świeci się kolorem akcentu. Listwę przesuwa się w górę i w dół. Wyciągnięta od krawędzi zmienia się w kroplę: mocny rzut przykleja ją do krawędzi, w którą poleciała, a słaby oddaje ją z powrotem. Wzmianki da się zamknąć uchwytem także przy otwartym oknie News."
+        },
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Szara rama okien w jasnym motywie",
+          "items": [
+            "Nagłówek, pasek funkcji i stopka mają szary odcień, a karty zostają białe, więc panel odcina się od białej strony Brand24."
+          ],
+          "text": "Szara rama okien w jasnym motywie. Nagłówek, pasek funkcji i stopka mają szary odcień, a karty zostają białe, więc panel odcina się od białej strony Brand24."
+        },
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Powiadomienia przy panelu i ochrona przed przypadkowym kliknięciem",
+          "items": [
+            "Powiadomienia pojawiają się obok panelu albo pigułki, a nie zawsze w prawym dolnym rogu.",
+            "Świeże powiadomienie, okno albo dymek samouczka przez pół sekundy nie reagują na kliknięcie, więc klik przeznaczony dla strony nie trafia w ich przycisk."
+          ],
+          "text": "Powiadomienia przy panelu i ochrona przed przypadkowym kliknięciem. Powiadomienia pojawiają się obok panelu albo pigułki, a nie zawsze w prawym dolnym rogu. Świeże powiadomienie, okno albo dymek samouczka przez pół sekundy nie reagują na kliknięcie, więc klik przeznaczony dla strony nie trafia w ich przycisk."
+        },
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Powiadomienie o nowej wersji także przy panelu zwiniętym do pigułki",
+          "items": [
+            "Przycisk instalacji nazywa się „Zainstaluj”, a „Pomiń tę wersję” zniknęło.",
+            "Na kanale Stabilnym z włączoną automatyczną aktualizacją powiadomienie mówi, że Tampermonkey zainstaluje wersję sam, zwykle w ciągu doby."
+          ],
+          "text": "Powiadomienie o nowej wersji także przy panelu zwiniętym do pigułki. Przycisk instalacji nazywa się „Zainstaluj”, a „Pomiń tę wersję” zniknęło. Na kanale Stabilnym z włączoną automatyczną aktualizacją powiadomienie mówi, że Tampermonkey zainstaluje wersję sam, zwykle w ciągu doby."
+        },
+        {
+          "type": "improved",
+          "area": "Kampanie H&M",
+          "title": "Wyszukiwanie zaawansowane Google z wariantami frazy układanymi z nazwy",
+          "items": [
+            "Warianty frazy układają się same przy zmianie nazwy kampanii. Po ręcznej zmianie przycisk „Z nazwy” wraca do automatycznych, a „Przywróć ręczne” do własnej listy.",
+            "Wyszukiwanie zawsze zaczyna od pełnej nazwy, a warianty to jej skrócone wersje.",
+            "Gdy z nazwy nie da się utworzyć wariantów, pole zostaje puste z informacją, że wyszukiwana jest sama nazwa.",
+            "Okno, przyciski i okienko przebiegu mówią o wyszukiwaniu zaawansowanym Google."
+          ],
+          "text": "Wyszukiwanie zaawansowane Google z wariantami frazy układanymi z nazwy. Warianty frazy układają się same przy zmianie nazwy kampanii. Po ręcznej zmianie przycisk „Z nazwy” wraca do automatycznych, a „Przywróć ręczne” do własnej listy. Wyszukiwanie zawsze zaczyna od pełnej nazwy, a warianty to jej skrócone wersje. Gdy z nazwy nie da się utworzyć wariantów, pole zostaje puste z informacją, że wyszukiwana jest sama nazwa. Okno, przyciski i okienko przebiegu mówią o wyszukiwaniu zaawansowanym Google."
+        },
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Ustawienie „Animacje” z opisem każdej opcji",
+          "items": [
+            "Opcje „Jak w systemie”, „Pełne” i „Ograniczone” mają opis tego, co zmieniają na ekranie."
+          ],
+          "text": "Ustawienie „Animacje” z opisem każdej opcji. Opcje „Jak w systemie”, „Pełne” i „Ograniczone” mają opis tego, co zmieniają na ekranie."
+        },
+        {
+          "type": "fix",
+          "area": "Panel",
+          "title": "Naprawiono szarą kropkę tokenu Brand24 po przeładowaniu strony",
+          "items": [
+            "Kropka zielenieje przy pierwszym zapytaniu Brand24 z tokenem, także gdy strona wysłała je przed otwarciem panelu."
+          ],
+          "text": "Naprawiono szarą kropkę tokenu Brand24 po przeładowaniu strony. Kropka zielenieje przy pierwszym zapytaniu Brand24 z tokenem, także gdy strona wysłała je przed otwarciem panelu."
+        }
+      ]
+    },
+    {
       "version": "0.38.2",
       "date": "2026-10-03",
       "label": "new",
@@ -20235,23 +20746,6 @@
           "text": "Ocena dużych projektów w przeglądzie sentymentu trwa o połowę krócej. Mniejsze przeglądy trwają tyle samo. Koszt oceny się nie zmienia."
         }
       ]
-    },
-    {
-      "version": "0.36.6",
-      "date": "2026-10-01",
-      "label": "improved",
-      "changes": [
-        {
-          "type": "improved",
-          "area": "Ustawienia AI",
-          "title": "Ustawienia AI są wspólne dla app.brand24.com i panel.brand24.pl",
-          "items": [
-            "Klucze API, prompty i wybrane modele są zapisane w Tampermonkeyu. Wyczyszczenie danych strony Brand24 ich nie usuwa.",
-            "Dotychczasowe ustawienia z obu paneli przechodzą automatycznie. Prompt o tej samej treści się nie dubluje."
-          ],
-          "text": "Ustawienia AI są wspólne dla app.brand24.com i panel.brand24.pl. Klucze API, prompty i wybrane modele są zapisane w Tampermonkeyu. Wyczyszczenie danych strony Brand24 ich nie usuwa. Dotychczasowe ustawienia z obu paneli przechodzą automatycznie. Prompt o tej samej treści się nie dubluje."
-        }
-      ]
     }
   ];
 
@@ -20259,12 +20753,11 @@
   // mają osobne localStorage, a wynik sprawdzenia i powiadomienia mają obowiązywać w obu.
   const REL_GM = {
     lastRun: 'b24t_last_run_version',  // wersja ostatniego uruchomienia panelu
-    manual:  'b24t_manual_install',    // {version}: kliknięte „Zainstaluj w Tampermonkey”
+    manual:  'b24t_manual_install',    // {version}: kliknięte „Zainstaluj”
     notice:  'b24t_updated_notice',    // {from, to}: powiadomienie „Wtyczka została zaktualizowana” czeka
     clSeen:  'b24t_changelog_seen',    // ostatnio przeczytana wersja dziennika zmian
     check:   'b24t_update_check_',     // + kanał: {t, remote, err}, wynik sprawdzenia wspólny dla kart
     later:   'b24t_update_later',      // {until}: „Później” albo ✕ na powiadomieniu nowej wersji
-    skip:    'b24t_update_skip',       // wersja z „Pomiń tę wersję”: powiadomienie wraca przy nowszej
     opened:  'b24t_update_opened',     // wersja, której powiadomienie już się pokazało; do niej znacznik w nagłówku pulsuje
     running: 'b24t_latest_running',    // najnowsza wersja uruchomiona w którejkolwiek karcie
     pending: 'b24t_update_pending',    // {kind: highlights|changelog, from, to}: okno czeka na pierwsze otwarcie panelu
@@ -20871,13 +21364,18 @@
   function _updSentOpen() {
     return _sentIsOpen();
   }
+  // Panel otwarty albo zwinięty do pigułki; powiadomienie staje przy nim (Toast.place). Panel schowany do krawędzi
+  // pokazuje tylko kropkę nowości na uchwycie.
+  function _updPanelShown() {
+    var w = Win.get('panel');
+    return !!w && w.open && !w.hidden;
+  }
   function _updPanelReady() {
-    var p = _upd.panel;
-    return !!p && !p.hidden && !_updBusy() && !_updSentOpen() && !document.hidden;
+    return !!_upd.panel && _updPanelShown() && !_updBusy() && !_updSentOpen() && !document.hidden;
   }
   // Samo otwiera się: najpierw okno odłożone z _relInit (dziennik po instalacji ręcznej, okno dużej zmiany),
-  // potem powiadomienie po aktualizacji, a bez niego powiadomienie nowej wersji, o ile tej wersji nie pominięto,
-  // od „Później” minęły 24 h i ta karta nie otworzyła już jej instalacji (katalog nr 56).
+  // potem powiadomienie po aktualizacji, a bez niego powiadomienie nowej wersji, o ile od „Później” minęły 24 h
+  // i ta karta nie otworzyła już jej instalacji (katalog nr 56).
   function _updMaybeOpen() {
     if (!_updPanelReady() || _relOpen()) return;
     if (_upd.pending) {
@@ -20889,14 +21387,14 @@
     if (_upd.card) return;
     var notice = _relGm(REL_GM.notice, null);
     if (notice && notice.to === VERSION) { _updOpenCard('updated'); return; }
-    var later = _relGm(REL_GM.later, null), skip = _relGm(REL_GM.skip, null), r = _upd.remote;
-    if (r && !_upd.refresh && r !== _upd.installFor && !(skip && _relCmp(r, skip) <= 0) && !(later && later.until > Date.now())) _updOpenCard('new');
+    var later = _relGm(REL_GM.later, null), r = _upd.remote;
+    if (r && !_upd.refresh && r !== _upd.installFor && !(later && later.until > Date.now())) _updOpenCard('new');
   }
-  // Wywoływane przy każdej zmianie panelu (zwinięcie, schowanie) i stanu przebiegu. Panel schowany albo zwinięty
-  // do pigułki zamyka powiadomienie; po otwarciu panelu _updMaybeOpen pokaże je znowu, jeśli nadal czeka
+  // Wywoływane przy każdej zmianie panelu (zwinięcie, schowanie) i stanu przebiegu. Panel schowany do krawędzi
+  // zamyka powiadomienie; po otwarciu panelu _updMaybeOpen pokaże je znowu, jeśli nadal czeka
   // („zaktualizowano” w GM, nowa wersja bez decyzji).
   function _updOnPanelChange() {
-    if (_upd.card && _upd.panel && _upd.panel.hidden) _updCloseCard();
+    if (_upd.card && !_updPanelShown()) _updCloseCard();
     var ready = _updPanelReady();
     if (ready && !_upd.ready) _updMaybeOpen();
     if (_upd.card === 'installed' && _upd.busy !== _updBusy()) _updRenderCard();
@@ -21066,11 +21564,14 @@
     var o = { kind: 'info', icon: 'upload', title: 'Nowa wersja ' + remote,
       msg: 'Zainstalowana wersja ' + VERSION + (stable ? '' : ' · kanał Experimental'),
       actions: [
-        { label: 'Zainstaluj w Tampermonkey', primary: true, keep: true, onClick: _updInstall },
-        { label: 'Później', onClick: _updLater },
-        { label: 'Pomiń tę wersję', onClick: function() { _relGmSet(REL_GM.skip, remote); } }
+        { label: 'Zainstaluj', primary: true, keep: true, onClick: _updInstall },
+        { label: 'Później', onClick: _updLater }
       ] };
-    var hint = '<p class="b-hint">Instalacja otwiera się w nowej karcie. Nowa wersja działa po odświeżeniu tej strony.</p>';
+    // Tampermonkey sam instaluje tylko z `@updateURL`, czyli z main (TAMPERMONKEY.md §1.3, §1.5). Częstości ani chwili
+    // ostatniego sprawdzenia wtyczka nie widzi, więc termin jest ogólny: domyślna częstość to raz na dobę (§1.1a).
+    var gm = typeof GM_info !== 'undefined' ? GM_info : null, auto = stable && !!(gm && gm.scriptWillUpdate);
+    var hint = '<p class="b-hint">' + (auto ? 'Tampermonkey zainstaluje ją sam, zwykle w ciągu doby; „Zainstaluj” robi to od razu. ' : '') +
+      'Instalacja otwiera się w nowej karcie. Nowa wersja działa po odświeżeniu tej strony.</p>';
     if (stable) {
       _relFor(_relNotes, remote, function(notes) {
         o.body = _updNoteHtml((notes || []).filter(function(x) { return x.version === remote; })[0], true) + hint;
@@ -21095,7 +21596,7 @@
     if (window.top !== window.self) return;
     _upd.panel = panel;
 
-    // Rozpoznanie aktualizacji. Ręczna instalacja (znacznik z „Zainstaluj w Tampermonkey”) otwiera od razu
+    // Rozpoznanie aktualizacji. Ręczna instalacja (znacznik z „Zainstaluj”) otwiera od razu
     // dziennik aktualizacji; automatyczna przez Tampermonkey zostawia powiadomienie „Wtyczka została zaktualizowana”.
     var prev = _relGm(REL_GM.lastRun, null);
     var updated = prev ? _relCmp(VERSION, prev) > 0 : _relHadOldVersion();
@@ -21643,7 +22144,7 @@
     {
       id: 'annotator_tools',
       label: 'Narzędzia annotatora',
-      desc: 'Uchwyty Annotators i Wzmianki przy prawej krawędzi: statystyki projektów i grup, trafność AI, dodawanie wzmianek; w Usuwaniu zakres „Wszystkie projekty”.',
+      desc: 'Annotators i Wzmianki w listwie uchwytów przy krawędzi: statystyki projektów i grup, trafność AI, dodawanie wzmianek; w Usuwaniu zakres „Wszystkie projekty”.',
     },
     {
       id: 'network_monitor',
@@ -21894,8 +22395,9 @@
         _setRow('Motyw', '', _setSeg('b24t-set-theme', 'Motyw', lsGet(LS.THEME, 'light'), [['light', 'Jasny', 'sun'], ['dark', 'Ciemny', 'moon']])) +
         _setRow('Rozmiar tekstu', 'Automatyczny rośnie z szerokością okna przeglądarki.',
           _setSeg('b24t-set-text', 'Rozmiar tekstu', lsGet(LS.UI_TEXT, 'auto'), [['auto', 'Automatyczny'], ['sm', 'Mniejszy'], ['lg', 'Większy']])) +
-        _setRow('Ruch', 'Ograniczony: okna i powiadomienia pojawiają się bez przesuwania i skalowania. System: ruch ' + (reduced ? 'ograniczony' : 'pełny') + '.',
-          _setSeg('b24t-set-motion', 'Ruch', lsGet(LS.UI_MOTION, 'auto'), [['auto', 'Jak w systemie'], ['full', 'Pełny'], ['lite', 'Ograniczony']])) +
+        _setRow('Animacje', 'Pełne: okna wyrastają z przycisku i przesuwają się na miejsce. Ograniczone: okna tylko się ' +
+          'rozjaśniają i gasną. Jak w systemie: według ustawień systemu, teraz ' + (reduced ? 'ograniczone' : 'pełne') + '.',
+          _setSeg('b24t-set-motion', 'Animacje', lsGet(LS.UI_MOTION, 'auto'), [['auto', 'Jak w systemie'], ['full', 'Pełne'], ['lite', 'Ograniczone']])) +
       '</section>' +
       '<section class="b-set-sec"><h3 class="b-set-sec__title">Funkcje</h3>' +
         OPTIONAL_FEATURES.map(function (f) {
@@ -22871,13 +23373,12 @@
   function _annInit() {
     Edge.add({
       id: 'annotator', elId: 'b24t-annotator-tab', side: 'right', label: 'Annotators', icon: 'users', remember: 'edge-annotator',
-      onClick: function() { openAnnotatorPanel(); }
+      onClick: function() { if (Win.get('annotator')) Win.close('annotator'); else openAnnotatorPanel(); }
     });
   }
 
-  // Uchwyt stoi przy krawędzi, dopóki okno jest zamknięte: otwarte okno samo jest wejściem do Dashboardu.
   function _annSyncEdge(features) {
-    Edge.setVisible('annotator', !!(features || loadFeatures()).annotator_tools && !Win.get('annotator'));
+    Edge.setVisible('annotator', !!(features || loadFeatures()).annotator_tools);
   }
 
   function openAnnotatorPanel() {
@@ -22894,10 +23395,9 @@
         '<div id="' + inner + '" class="b-stack"></div></div>';
     }).join('');
     var w = Win.open({
-      id: 'annotator', kind: 'tool', elId: 'b24t-annotator-panel', title: 'Annotators', icon: 'users', bar: bar, body: body,
+      id: 'annotator', kind: 'tool', elId: 'b24t-annotator-panel', title: 'Annotators', icon: 'users', bar: bar, body: body, edge: 'annotator',
       size: [Math.round(32 * u), Math.round(40 * u)], anchor: { a: 'tr', dx: WIN_GAP, dy: WIN_GAP }, remember: 'annotator',
       onClose: function() {
-        _annSyncEdge();
         // Okno zamknięte klawiszem traci fokus; wraca on na uchwyt, z którego okno da się otworzyć ponownie.
         if (_activeEl() === document.body) { var edge = Edge.get('annotator'); if (edge) edge.focus({ preventScroll: true }); }
       }
@@ -22921,7 +23421,6 @@
     });
     // Przewinięcie zapisuje się na bieżąco: po zamknięciu okna jego element jest już odłączony i ma scrollTop 0.
     w.main.addEventListener('scroll', function() { _annScroll[_annTab] = w.main.scrollTop; }, { passive: true });
-    _annSyncEdge();
     _aiAccUpdateTabVisibility();
     _annShowTab(_annTab);
     var cur = tablist.querySelector('[aria-selected="true"]');
@@ -27609,12 +28108,12 @@
   function _nmInit() {
     Edge.add({
       id: 'nm', elId: 'b24t-nm-tab', side: 'right', label: 'Network Monitor', icon: 'activity', remember: 'edge-nm',
-      onClick: function() { openNetworkMonitorPanel(); }
+      onClick: function() { if (Win.get('nm')) Win.close('nm'); else openNetworkMonitorPanel(); }
     });
   }
 
   function _nmSyncEdge(features) {
-    Edge.setVisible('nm', !!(features || loadFeatures()).network_monitor && !Win.get('nm'));
+    Edge.setVisible('nm', !!(features || loadFeatures()).network_monitor);
   }
 
   function _nmSetPaused(on) {
@@ -27671,12 +28170,11 @@
         '<tbody id="b24t-nm-tbody"></tbody>' +
       '</table>';
     var w = Win.open({
-      id: 'nm', kind: 'tool', elId: 'b24t-nm-panel', title: 'Network Monitor', icon: 'activity',
+      id: 'nm', kind: 'tool', elId: 'b24t-nm-panel', title: 'Network Monitor', icon: 'activity', edge: 'nm',
       titleExtra: '<span id="b24t-nm-count" class="b-hint" data-tip="Lista trzyma ' + NM_MAX + ' ostatnich zapytań"></span>',
       bar: bar, body: body, mainClass: 'b-win__plain b-nm-main',
       size: [Math.round(44 * u), Math.round(34 * u)], anchor: { a: 'tr', dx: WIN_GAP, dy: WIN_GAP }, remember: 'nm',
       onClose: function() {
-        _nmSyncEdge();
         if (_activeEl() === document.body) { var edge = Edge.get('nm'); if (edge) edge.focus({ preventScroll: true }); }
       }
     });
@@ -27716,7 +28214,6 @@
       toggle(e.target);
     });
     _nmSetPaused(nmState.paused);
-    _nmSyncEdge();
     _nmRebuildTable();
     el.querySelector('#b24t-nm-search').focus({ preventScroll: true });
   }

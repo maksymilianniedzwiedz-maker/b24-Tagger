@@ -7,20 +7,8 @@
       {
         "type": "fix",
         "area": "Panel",
-        "title": "Naprawiono błąd, przez który strony spoza Brand24 miały dostęp do funkcji wtyczki",
-        "items": [
-          "Skrypt odwiedzanej strony mógł odczytać token Brand24 i wysyłać przez wtyczkę zapytania z danymi logowania użytkownika."
-        ],
-        "text": "Naprawiono błąd, przez który strony spoza Brand24 miały dostęp do funkcji wtyczki. Skrypt odwiedzanej strony mógł odczytać token Brand24 i wysyłać przez wtyczkę zapytania z danymi logowania użytkownika."
-      },
-      {
-        "type": "fix",
-        "area": "Panel",
-        "title": "Naprawiono uruchamianie panelu na stronach spoza Brand24",
-        "items": [
-          "Na stronie z adresem podobnym do strony wyników Brand24 panel wysyłał token Brand24 na serwer tej strony."
-        ],
-        "text": "Naprawiono uruchamianie panelu na stronach spoza Brand24. Na stronie z adresem podobnym do strony wyników Brand24 panel wysyłał token Brand24 na serwer tej strony."
+        "title": "Naprawiono dwa błędy bezpieczeństwa",
+        "text": "Naprawiono dwa błędy bezpieczeństwa."
       }
     ]
   },

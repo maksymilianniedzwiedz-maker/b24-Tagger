@@ -147,8 +147,7 @@
       {
         "area": "Panel",
         "items": [
-          "Naprawiono błąd, przez który strony spoza Brand24 miały dostęp do funkcji wtyczki, w tym do tokenu Brand24.",
-          "Naprawiono błąd, przez który panel wtyczki uruchamiał się na stronach spoza Brand24 z adresem podobnym do strony wyników i wysyłał im token Brand24.",
+          "Naprawiono dwa błędy bezpieczeństwa.",
           "Naprawiono okno nowej wersji, które na stronach spoza Brand24 wyświetlało się bez tła i z nieczytelnym przyciskiem. Okno trzyma się Brand24 i nie zwiedza innych stron."
         ]
       },

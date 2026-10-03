@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.0
+// @version      0.38.1
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -173,7 +173,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.0';
+  const VERSION = '0.38.1';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5198,10 +5198,23 @@
       .b-tour__count { font-size: max(12px, 0.923em); font-weight: 600; color: var(--c-text3); }
       .b-tour__title { margin: 0; font-size: 1.15em; font-weight: 650; color: var(--c-text); }
       .b-tour__text { margin: 0; line-height: 1.45; color: var(--c-text2); }
-      .b-tour__task { display: flex; align-items: center; gap: 0.55em; padding: 0.55em 0.7em; border-radius: 8px; background: var(--c-inset); color: var(--c-text); font-weight: 500; }
-      .b-tour__task[data-done="true"] { background: var(--c-okSoft); }
-      .b-tour__task > svg { color: var(--c-ok); width: 1.1em; height: 1.1em; }
-      .b-tour__mark { flex-shrink: 0; width: 1.1em; height: 1.1em; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--c-borderStrong); }
+      .b-tour__try { display: flex; flex-direction: column; gap: 0.4em; margin-top: 0.25em; }
+      .b-tour__try-label { margin: 0; font-weight: 600; color: var(--c-text); }
+      .b-tour__task {
+        display: flex; align-items: flex-start; gap: 0.6em; padding: 0.65em 0.75em; border-radius: 10px; border: 1px solid var(--c-accent);
+        background: var(--c-accentSoft); color: var(--c-accentInk); font-weight: 600; line-height: 1.4;
+        transition: background-color 300ms var(--ease-in), border-color 300ms var(--ease-in), color 300ms var(--ease-in);
+      }
+      .b-tour__task[data-done="true"] { background: var(--c-okSoft); border-color: var(--c-ok); color: var(--c-text3); }
+      .b-tour__task > svg, .b-tour__mark { flex-shrink: 0; width: 1.15em; height: 1.15em; margin-top: 0.1em; }
+      .b-tour__task > svg { color: var(--c-ok); }
+      .b-tour__mark { box-sizing: border-box; border-radius: 50%; border: 2px solid currentColor; }
+      /* Przekreślenie wykonanego zadania idzie falą przez kolejne wiersze: tło elementu inline (bez box-decoration-break:
+         clone) to jeden pas przez wszystkie wiersze, więc rośnie wiersz po wierszu. Linia się odsłania, a treść stoi,
+         więc przekreślenie działa w obu zestawach ruchu (SURFACES.md §5). Zostaw element inline wewnątrz osobnego
+         elementu flex: element flex jest blokiem i dostałby jedno tło na całą wysokość. */
+      .b-tour__do { background: linear-gradient(currentColor, currentColor) no-repeat 0 58% / 0 2px; transition: background-size 520ms var(--ease-in) 140ms; }
+      .b-tour__task[data-done="true"] .b-tour__do { background-size: 100% 2px; }
       .b-tour__foot { display: flex; align-items: center; gap: 0.375em; margin-top: 0.25em; }
 
       /* ── Pasek funkcji (panel): tryb według szerokości panelu, progi w em rosną z tekstem ── */
@@ -7900,45 +7913,50 @@
   // kroki je otwierają; krok bez celu ustawia dymek w lewym dolnym rogu, z dala od palety i ściągawki.
   var Tour = (function () {
     var cur = null;
+    var TOUR_TRY = 'A teraz wypróbuj, jak to działa:';
+    var TOUR_DONE = 'Zrobione! Za chwilę kolejny krok.';
+    var TOUR_HOLD = 1800;   // od odhaczenia do następnego kroku: ptaszek, przekreślenie (660 ms) i chwila na zobaczenie efektu
+    var TOUR_RESUME = 1200; // od puszczenia przycisku, gdy ktoś chwycił okno w trakcie odliczania
 
     function panelEl() { return _$('b24t-panel'); }
     function expandPanel() { Win.expand('panel'); }
 
     function steps() {
       return [
-        { intro: true, title: 'Nowy wygląd wtyczki',
-          text: 'Sześć krótkich kroków o pasku funkcji, oknach, pigułce i klawiaturze. Każdy krok da się pominąć, a samouczek wraca z palety poleceń i z menu „⋯” panelu.' },
+        { intro: true, title: 'Tagger po remoncie',
+          text: 'Każde okno wtyczki dostało ten sam wygląd, a panel nauczył się kilku nowych sztuczek. Sześć krótkich kroków pokazuje, co gdzie stoi i co działa wygodniej niż do tej pory. Każdy krok da się pominąć, a samouczek czeka potem w menu „⋯” → Pomoc.' },
         { title: 'Pasek funkcji', target: function () { return _q('#b24t-tabs'); }, enter: expandPanel,
-          text: 'Karty wtyczki stoją na pasku po lewej stronie panelu, Historia i Powiadomienia na jego dole. W wąskim panelu pasek pokazuje same ikony, a nazwę karty podpowiada dymek.',
-          start: function (s) { s.tab = _panelTab === 'quicktag' ? 'main' : 'quicktag'; s.task = 'Otwórz kartę ' + (s.tab === 'main' ? 'Plik' : 'Quick Tag'); },
+          text: 'Karty nie tłoczą się już w jednym rzędzie z uciętymi nazwami. Mają własny pasek po lewej stronie panelu, a Historia i Powiadomienia stoją na jego dole. Gdy panel jest wąski, pasek pokazuje same ikony, a nazwę karty podpowiada dymek.',
+          start: function (s) { s.tab = _panelTab === 'quicktag' ? 'main' : 'quicktag'; s.task = 'Kliknij na pasku kartę ' + (s.tab === 'main' ? 'Plik' : 'Quick Tag'); },
           done: function (s) { return _panelTab === s.tab; } },
         { title: 'Przesuwanie i rozmiar', target: function () { return _q('#b24t-panel .b-head'); }, enter: expandPanel,
-          text: 'Panel przesuwa się za nagłówek, a rozmiar zmienia na każdej krawędzi i w rogach. Przy krawędzi ekranu okno się do niej przyciąga; Alt w trakcie przeciągania to wyłącza. Położenie zapamiętuje się osobno dla każdej szerokości ekranu, a menu „⋯” ustawia je bez przeciągania.',
-          task: 'Przeciągnij panel albo zmień jego rozmiar',
+          text: 'Panel przestał stać w jednym miejscu i zasłaniać wyniki. Przesuwa się za nagłówek, rośnie i maleje od każdej krawędzi i rogu, a przy krawędzi ekranu sam się do niej przyciąga (Alt w trakcie przeciągania to wyłącza). Położenie zapamiętuje osobno dla laptopa i dla monitora.',
+          task: 'Złap panel za nagłówek i przesuń go albo pociągnij za krawędź, żeby zmienić rozmiar',
           start: function (s) { s.r = panelEl().getBoundingClientRect(); },
           done: function (s) {
             var r = panelEl().getBoundingClientRect();
             return Math.abs(r.left - s.r.left) + Math.abs(r.top - s.r.top) > 24 || Math.abs(r.width - s.r.width) + Math.abs(r.height - s.r.height) > 24;
           } },
         { title: 'Pigułka', target: function () { return _q('#b24t-panel .b-win__collapse'); }, enter: expandPanel,
-          text: 'Ten przycisk zwija panel do pigułki w rogu ekranu; dwuklik nagłówka robi to samo. Pigułka pokazuje postęp tagowania, na przykład „37 z 108”. Panel zwija się też sam, gdy otwiera się duże okno, jak przegląd sentymentu albo News, i wraca po jego zamknięciu.',
-          task: 'Zwiń panel',
+          text: 'Gdy panel przeszkadza, nie trzeba go zamykać: zwija się do pigułki w rogu ekranu. Pigułka nie próżnuje, bo w trakcie tagowania pokazuje postęp, na przykład „37 z 108”. Przy dużych oknach, jak przegląd sentymentu albo News, panel zwija się sam i wraca po ich zamknięciu.',
+          task: 'Zwiń panel podświetlonym przyciskiem albo dwuklikiem nagłówka',
           done: function () { return Win.get('panel').collapsed; } },
         { title: 'Powrót z pigułki', target: function () { return _q('.b-pill'); },
           when: function () { return Win.get('panel').collapsed; },
-          text: 'Kliknięcie pigułki rozwija panel w tym samym miejscu i na tej samej karcie.',
-          task: 'Rozwiń panel',
+          text: 'Panel wraca w to samo miejsce i na tę samą kartę, na której został.',
+          task: 'Kliknij pigułkę',
           done: function () { return !Win.get('panel').collapsed; } },
-        { title: 'Paleta poleceń', target: function () { var b = _$('b24t-btn-palette'); return b && b.offsetParent ? b : null; },
-          text: 'Ctrl+K otwiera wyszukiwanie po wszystkich oknach i działaniach wtyczki. Wystarczy kilka liter nazwy, na przykład „log” albo „zglos”; Enter wykonuje zaznaczone polecenie, a ostatnio użyte stoją na górze listy.',
-          task: 'Otwórz paletę klawiszami Ctrl+K, potem zamknij ją klawiszem Esc',
+        { title: 'Paleta poleceń',
+          target: function () { var b = _$('b24t-btn-palette'); return b && b.offsetParent ? b : _q('#b24t-panel .b-win__menu'); },
+          text: 'Zamiast szukać przycisku po oknach, można go wpisać. Ctrl+K otwiera paletę ze wszystkimi oknami i działaniami wtyczki: kilka liter, na przykład „log” albo „zglos”, i Enter. Ostatnio używane polecenia czekają na górze listy, a paleta jest też w menu „⋯” → Pomoc.',
+          task: 'Naciśnij Ctrl+K, a potem zamknij paletę klawiszem Esc',
           done: function (s) { if (Palette.isOpen()) s.seen = true; return s.seen && !Palette.isOpen(); } },
-        { title: 'Skróty klawiszowe',
-          text: 'Znak „?” pokazuje skróty okien, które są otwarte. Esc zamyka menu, dymek albo okno z fokusem, a strzałki przechodzą po pasku funkcji. Skróty stoją też w podpowiedziach przycisków.',
-          task: 'Naciśnij „?”, potem Esc',
+        { title: 'Skróty klawiszowe', target: function () { return _q('#b24t-panel .b-win__menu'); },
+          text: 'Skróty przestały być wiedzą tajemną. Klawisz „?” otwiera ściągawkę ze skrótami wszystkich otwartych okien, a ta sama ściągawka jest w podświetlonym menu „⋯” → Pomoc. Esc zamyka menu, dymek albo okno, a strzałki chodzą po pasku funkcji.',
+          task: 'Naciśnij „?” albo wybierz „⋯” → Pomoc → Skróty klawiszowe, a potem zamknij ściągawkę klawiszem Esc',
           done: function (s) { if (Win.get('keys')) s.seen = true; return s.seen && !Win.get('keys'); } },
-        { outro: true, title: 'Gotowe',
-          text: 'Opis każdego elementu panelu daje tryb pomocy: przycisk ze znakiem zapytania w nagłówku. Zmiany w wyglądzie i działaniu okien opisuje dziennik aktualizacji.' }
+        { outro: true, title: 'Gotowe, można tagować',
+          text: 'Resztę podpowie tryb pomocy: przycisk ze znakiem zapytania w nagłówku panelu opisuje każdy jego element. Pełna lista zmian jest w dzienniku w menu „⋯”. Miłego tagowania!' }
       ];
     }
 
@@ -7949,7 +7967,9 @@
         (st.intro || st.outro ? '' : '<div class="b-tour__count">Krok ' + cur.i + ' z ' + n + '</div>') +
         '<h2 class="b-tour__title" id="b24t-tour-title">' + _escHtml(st.title) + '</h2>' +
         '<p class="b-tour__text">' + _escHtml(st.text) + '</p>' +
-        (task ? '<div class="b-tour__task" role="status" data-done="false"><span class="b-tour__mark"></span><span>' + _escHtml(task) + '</span></div>' : '') +
+        (task ? '<div class="b-tour__try"><p class="b-tour__try-label" aria-live="polite">' + TOUR_TRY + '</p>' +
+          '<div class="b-tour__task" data-done="false"><span class="b-tour__mark"></span><span><span class="b-tour__do">' + _escHtml(task) +
+          '</span></span></div></div>' : '') +
         '<div class="b-tour__foot">' +
           (st.intro ? '<button type="button" class="b-btn b-btn--quiet b-btn--sm" data-t="skip">Nie teraz</button><span class="b-sp"></span>' +
                       '<button type="button" class="b-btn b-btn--primary b-btn--sm" data-t="next">Zaczynamy</button>'
@@ -7979,20 +7999,50 @@
       cur.moveTimer = setTimeout(function () { if (cur) cur.spot.classList.remove('is-moving'); }, 260);
     }
 
+    // Odhaczenie: ptaszek, wyszarzenie i przekreślenie zadania (CSS .b-tour__do), potem chwila na zobaczenie efektu
+    // i następny krok.
     function complete() {
       cur.ok = true;
       var t = cur.bubble.querySelector('.b-tour__task');
       if (t) {
         t.dataset.done = 'true';
         t.querySelector('.b-tour__mark').outerHTML = _icon('okCircle');
+        t.firstElementChild.animate(_uiFull() ? [{ transform: 'scale(0.6)' }, { transform: 'scale(1.12)', offset: 0.6 }, { transform: 'none' }]
+          : [{ opacity: 0 }, { opacity: 1 }], { duration: _uiFull() ? 260 : 160, easing: WIN_EASE_IN });
+        cur.bubble.querySelector('.b-tour__try-label').textContent = TOUR_DONE;
       }
-      cur.timer = setTimeout(function () { if (cur) go(cur.i + 1, 1); }, 900);
+      advance(TOUR_HOLD);
+    }
+
+    function advance(ms) {
+      clearTimeout(cur.timer);
+      cur.timer = setTimeout(function () { if (cur) go(cur.i + 1, 1); }, ms);
+    }
+
+    // Wciśnięty przycisk myszy wstrzymuje odhaczenie i przejście dalej: przeciąganie i zmiana rozmiaru spełniają
+    // warunek kroku w trakcie ruchu, a krok nie ma się zmieniać pod trzymanym oknem. Nasłuch w fazie przechwytywania
+    // na window: Win przechwytuje wskaźnik nagłówka, więc pointerup trafia do nagłówka, ale przechodzi przez window.
+    function onDown() {
+      cur.down = true;
+      if (cur.ok) clearTimeout(cur.timer);
+    }
+    function onUp() {
+      if (!cur.down) return;
+      cur.down = false;
+      if (cur.ok) advance(TOUR_RESUME);
+    }
+
+    // Paleta (warstwa 499) i dialog (400) otwarte w kroku leżą nad podświetleniem (480) albo pod nim, a pod dymkiem (510).
+    // Na czas ich otwarcia podświetlenie znika, a dymek schodzi do lewego dolnego rogu, gdzie przy 1366 px nie zasłania
+    // ani palety, ani ściągawki skrótów.
+    function covered() {
+      return Palette.isOpen() || Win.list().some(function (id) { return Win.get(id).kind === 'dialog'; });
     }
 
     // Dymek obok celu: lewo, prawo, pod, nad, w tej kolejności, pierwsze miejsce mieszczące się w oknie.
     // Bez celu: wstęp i koniec na środku, kroki w lewym dolnym rogu. Style zmieniają się tylko przy zmianie układu.
     function place() {
-      var st = cur.steps[cur.i], t = st.target && st.target(), r = t ? t.getBoundingClientRect() : null;
+      var st = cur.steps[cur.i], t = st.target && !covered() && st.target(), r = t ? t.getBoundingClientRect() : null;
       if (r && (!r.width || !r.height)) r = null;
       var VW = _vw(), VH = _vh(), b = cur.bubble, bw = b.offsetWidth, bh = b.offsetHeight, g = 14, m = 8, x, y;
       if (r) {
@@ -8030,7 +8080,7 @@
     function frame() {
       if (!cur) return;
       var st = cur.steps[cur.i];
-      if (st.done && !cur.ok && st.done(cur.s)) complete();
+      if (st.done && !cur.ok && !cur.down && st.done(cur.s)) complete();
       place();
       cur.raf = requestAnimationFrame(frame);
     }
@@ -8066,7 +8116,11 @@
       });
       _uiMount(spot);
       _uiMount(bubble);
-      cur = { steps: steps(), i: 0, s: {}, spot: spot, bubble: bubble, key: '' };
+      cur = { steps: steps(), i: 0, s: {}, spot: spot, bubble: bubble, key: '', down: false };
+      window.addEventListener('pointerdown', onDown, true);
+      window.addEventListener('pointerup', onUp, true);
+      window.addEventListener('pointercancel', onUp, true);
+      window.addEventListener('blur', onUp);
       bubble.animate(_uiFull() ? [{ opacity: 0, transform: 'scale(0.98)' }, { opacity: 1, transform: 'none' }] : [{ opacity: 0 }, { opacity: 1 }],
         { duration: _uiFull() ? 200 : 160, easing: WIN_EASE_IN });
       go(0, 1);
@@ -8082,6 +8136,10 @@
       cancelAnimationFrame(c.raf);
       clearTimeout(c.timer);
       clearTimeout(c.moveTimer);
+      window.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', onUp, true);
+      window.removeEventListener('blur', onUp);
       lsSet(LS.TOUR, how);
       c.spot.remove();
       c.bubble.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, easing: WIN_EASE_OUT, fill: 'forwards' }).onfinish = function () { c.bubble.remove(); };
@@ -19452,6 +19510,33 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.1",
+      "date": "2026-10-03",
+      "label": "improved",
+      "changes": [
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Samouczek nowego wyglądu z wyraźniejszymi zadaniami",
+          "items": [
+            "Każdy krok mówi, co działa inaczej niż w starym wyglądzie, a zadanie do wypróbowania stoi osobno pod tekstem.",
+            "Wykonane zadanie dostaje ptaszka i przekreślenie, a następny krok pojawia się po chwili.",
+            "Krok o skrótach klawiszowych wskazuje menu „⋯”, w którym jest ściągawka."
+          ],
+          "text": "Samouczek nowego wyglądu z wyraźniejszymi zadaniami. Każdy krok mówi, co działa inaczej niż w starym wyglądzie, a zadanie do wypróbowania stoi osobno pod tekstem. Wykonane zadanie dostaje ptaszka i przekreślenie, a następny krok pojawia się po chwili. Krok o skrótach klawiszowych wskazuje menu „⋯”, w którym jest ściągawka."
+        },
+        {
+          "type": "fix",
+          "area": "Panel",
+          "title": "Naprawiono samouczek, który przechodził dalej w trakcie przeciągania panelu",
+          "items": [
+            "Krok czeka, aż przycisk myszy zostanie puszczony."
+          ],
+          "text": "Naprawiono samouczek, który przechodził dalej w trakcie przeciągania panelu. Krok czeka, aż przycisk myszy zostanie puszczony."
+        }
+      ]
+    },
+    {
       "version": "0.38.0",
       "date": "2026-10-03",
       "label": "new",
@@ -19940,22 +20025,6 @@
           ],
           "action": "Jeśli klucz Gemini zniknął z ustawień, wklej go ponownie.",
           "text": "Naprawiono odrzucanie poprawnych kluczy Gemini. Klucz Gemini zaczynający się od „AQ.” był uznawany za niepoprawny. Pole klucza ostrzega, gdy wklejono klucz innego dostawcy, np. klucz Gemini w polu Claude. Jeśli klucz Gemini zniknął z ustawień, wklej go ponownie."
-        }
-      ]
-    },
-    {
-      "version": "0.36.4",
-      "date": "2026-10-01",
-      "label": "fix",
-      "changes": [
-        {
-          "type": "fix",
-          "area": "Przegląd sentymentu",
-          "title": "Naprawiono pobieranie negatywów z zakresu dat w przeglądzie sentymentu",
-          "items": [
-            "Źródło „Negatywy z zakresu dat” kończyło się błędem i ocena nie startowała. Źródło „Aktualny widok Brand24” działało poprawnie."
-          ],
-          "text": "Naprawiono pobieranie negatywów z zakresu dat w przeglądzie sentymentu. Źródło „Negatywy z zakresu dat” kończyło się błędem i ocena nie startowała. Źródło „Aktualny widok Brand24” działało poprawnie."
         }
       ]
     }

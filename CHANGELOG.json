@@ -1,5 +1,32 @@
 [
   {
+    "version": "0.38.1",
+    "date": "2026-10-03",
+    "label": "improved",
+    "changes": [
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Samouczek nowego wyglądu z wyraźniejszymi zadaniami",
+        "items": [
+          "Każdy krok mówi, co działa inaczej niż w starym wyglądzie, a zadanie do wypróbowania stoi osobno pod tekstem.",
+          "Wykonane zadanie dostaje ptaszka i przekreślenie, a następny krok pojawia się po chwili.",
+          "Krok o skrótach klawiszowych wskazuje menu „⋯”, w którym jest ściągawka."
+        ],
+        "text": "Samouczek nowego wyglądu z wyraźniejszymi zadaniami. Każdy krok mówi, co działa inaczej niż w starym wyglądzie, a zadanie do wypróbowania stoi osobno pod tekstem. Wykonane zadanie dostaje ptaszka i przekreślenie, a następny krok pojawia się po chwili. Krok o skrótach klawiszowych wskazuje menu „⋯”, w którym jest ściągawka."
+      },
+      {
+        "type": "fix",
+        "area": "Panel",
+        "title": "Naprawiono samouczek, który przechodził dalej w trakcie przeciągania panelu",
+        "items": [
+          "Krok czeka, aż przycisk myszy zostanie puszczony."
+        ],
+        "text": "Naprawiono samouczek, który przechodził dalej w trakcie przeciągania panelu. Krok czeka, aż przycisk myszy zostanie puszczony."
+      }
+    ]
+  },
+  {
     "version": "0.38.0",
     "date": "2026-10-03",
     "label": "new",

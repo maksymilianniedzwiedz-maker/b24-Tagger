@@ -1,5 +1,58 @@
 [
   {
+    "version": "0.38.4",
+    "date": "2026-10-03",
+    "label": "improved",
+    "changes": [
+      {
+        "type": "improved",
+        "area": "Tagowanie z pliku",
+        "title": "Dopasowanie pliku do Brand24 liczone samo po wgraniu pliku",
+        "items": [
+          "Karta „Dopasowanie do Brand24” pod plikiem pokazuje, ile wierszy z oceną ma wzmiankę w projekcie, ile z nich ma tag z mapowania, a ile inny tag.",
+          "„Pokaż adresy bez wzmianki” rozwija listę adresów, których nie ma wśród wzmianek projektu, a „Przelicz” pobiera wzmianki od nowa.",
+          "Dopasowanie liczy się samo także po zmianie kolumn i po każdym przebiegu, więc po tagowaniu karta pokazuje, ile wzmianek ma już swój tag.",
+          "Stopka karty Plik ma sam „Start” i eksport logu: wyniki „Match” i „Audit” są w karcie dopasowania."
+        ],
+        "comment": "Match liczył dopasowanie z pierwszych ok. 60 wzmianek, więc przy większych plikach wynik wychodził zaniżony, a Audit liczył prawie to samo w osobnym oknie. Jedna karta robi obie rzeczy bez klikania.",
+        "text": "Dopasowanie pliku do Brand24 liczone samo po wgraniu pliku. Karta „Dopasowanie do Brand24” pod plikiem pokazuje, ile wierszy z oceną ma wzmiankę w projekcie, ile z nich ma tag z mapowania, a ile inny tag. „Pokaż adresy bez wzmianki” rozwija listę adresów, których nie ma wśród wzmianek projektu, a „Przelicz” pobiera wzmianki od nowa. Dopasowanie liczy się samo także po zmianie kolumn i po każdym przebiegu, więc po tagowaniu karta pokazuje, ile wzmianek ma już swój tag. Stopka karty Plik ma sam „Start” i eksport logu: wyniki „Match” i „Audit” są w karcie dopasowania."
+      },
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Wspólne ustawienia dla app.brand24.com i panel.brand24.pl",
+        "items": [
+          "Motyw, rozmiar tekstu, animacje, włączone funkcje, kanał aktualizacji i analityka mają jedną wartość dla obu paneli Brand24.",
+          "Po aktualizacji obowiązują ustawienia panelu otwartego jako pierwszy, a z drugiego dochodzą tylko te, których brakowało.",
+          "Zmiana motywu, rozmiaru tekstu, animacji albo funkcji w jednej karcie przeglądarki działa od razu w pozostałych."
+        ],
+        "text": "Wspólne ustawienia dla app.brand24.com i panel.brand24.pl. Motyw, rozmiar tekstu, animacje, włączone funkcje, kanał aktualizacji i analityka mają jedną wartość dla obu paneli Brand24. Po aktualizacji obowiązują ustawienia panelu otwartego jako pierwszy, a z drugiego dochodzą tylko te, których brakowało. Zmiana motywu, rozmiaru tekstu, animacji albo funkcji w jednej karcie przeglądarki działa od razu w pozostałych."
+      },
+      {
+        "type": "improved",
+        "area": "Dodawanie wzmianek",
+        "title": "„Odśwież listę projektów” w Ustawieniach zamiast „Odbuduj listę” i „Sprawdź nazwy”",
+        "items": [
+          "Projekt otwarty w Brand24 trafia na listę formularza „Dodaj wzmiankę” sam, a odświeżenie poprawia w Brand24 nazwy niepotwierdzone i przywraca projekty, które znów są dostępne."
+        ],
+        "text": "„Odśwież listę projektów” w Ustawieniach zamiast „Odbuduj listę” i „Sprawdź nazwy”. Projekt otwarty w Brand24 trafia na listę formularza „Dodaj wzmiankę” sam, a odświeżenie poprawia w Brand24 nazwy niepotwierdzone i przywraca projekty, które znów są dostępne."
+      },
+      {
+        "type": "fix",
+        "area": "Dodawanie wzmianek",
+        "title": "Naprawiono błąd, przez który poprawiona nazwa projektu wracała do starej na drugim panelu Brand24",
+        "text": "Naprawiono błąd, przez który poprawiona nazwa projektu wracała do starej na drugim panelu Brand24."
+      },
+      {
+        "type": "improved",
+        "area": "Dodawanie wzmianek",
+        "title": "Panel Niestandardowe bez okna ustawień z nieużywanymi opcjami",
+        "comment": "Opcje w tym oknie nie zmieniały działania panelu, więc okno zniknęło razem z przyciskiem w nagłówku i znacznikiem „Niestandardowe” w bibliotece promptów.",
+        "text": "Panel Niestandardowe bez okna ustawień z nieużywanymi opcjami."
+      }
+    ]
+  },
+  {
     "version": "0.38.3",
     "date": "2026-10-03",
     "label": "new",

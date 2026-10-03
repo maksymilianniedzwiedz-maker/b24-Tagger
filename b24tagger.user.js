@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.3
+// @version      0.38.4
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -173,18 +173,16 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.3';
+  const VERSION = '0.38.4';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
     SCHEMAS:     'b24tagger_schemas',
     JOBS:        'b24tagger_jobs',
     CRASHLOG:    'b24tagger_crashlog',
-    FEATURES:    'b24tagger_features',
     PANEL_CORNER:     'b24tagger_panel_corner',
     DELETE_AUTO:      'b24tagger_delete_auto',
     HISTORY:          'b24tagger_history',
-    THEME:            'b24tagger_theme',
     GROUPS:           'b24tagger_groups',
     STATS_CFG:        'b24tagger_stats_config',
     PROJECT_NAMES:    'b24tagger_project_names',
@@ -193,8 +191,6 @@
     NEWS_WIN_SIZE:    'b24tagger_news_win_size',
     CAMPAIGN_CFG:     'b24tagger_campaign_cfg',
     CAMPAIGN_CHIPS:   'b24tagger_campaign_chips',
-    UPDATE_CHANNEL:   'b24tagger_update_channel',
-    CHANNEL_MOVED:    'b24tagger_channel_moved_stable', // wersja, która przełączyła kanał na Stabilny (_relMoveToStable)
     MONTH_CLOSE_DONE: 'b24tagger_month_close_done',
     OVERALL_ACTIVE_MONTH: 'b24tagger_overall_active_month',
     DEL_BATCH:        'b24tagger_del_batch',
@@ -203,14 +199,23 @@
     AI_TAG_PROJECT_CFG: 'b24t_ai_tag_project_cfg',
     NA_SESSION_STATS:   'b24t_na_session_stats',
     NA_PENDING:         'b24t_na_pending',
-    NA_CONSENT:         'b24t_na_consent',
-    NA_SETTINGS:        'b24t_na_settings',
-    UI_TEXT:            'b24tagger_ui_text',    // rozmiar tekstu: auto | sm | lg
-    UI_MOTION:          'b24tagger_ui_motion',  // ruch: auto | full | lite
     WIN_LAYOUT:         'b24tagger_win_layout', // układ okien według screen.width (design/SURFACES.md §2.6)
     PALETTE_RECENT:     'b24tagger_palette_recent', // 4 ostatnie polecenia palety (Ctrl+K)
     TOUR:               'b24tagger_tour',       // do 0.38.1 stan samouczka nowego wyglądu (done | skipped); czytany tylko przy przejściu do TUTORIALS
     TUTORIALS:          'b24tagger_tutorials',  // stan samouczków: { id: { st, at } } (design/TUTORIALS.md §6)
+  };
+  // Ustawienia z okna Ustawień i przełączniki funkcji: pamięć Tampermonkeya (gmGet, gmSet), jedna dla app.brand24.com,
+  // panel.brand24.pl i stron spoza Brand24. localStorage należy do domeny, więc każdy panel miał osobny motyw,
+  // przełączniki i kanał aktualizacji. Nazwy kluczy są te same co w localStorage, z którego przechodzą (_prefsMoveFromLs).
+  const PREF = {
+    THEME:          'b24tagger_theme',          // light | dark
+    UI_TEXT:        'b24tagger_ui_text',        // rozmiar tekstu: auto | sm | lg
+    UI_MOTION:      'b24tagger_ui_motion',      // ruch: auto | full | lite
+    FEATURES:       'b24tagger_features',       // { id funkcji z OPTIONAL_FEATURES: true | false }
+    UPDATE_CHANNEL: 'b24tagger_update_channel', // stable | experimental
+    CHANNEL_MOVED:  'b24tagger_channel_moved_stable', // wersja, która przełączyła kanał na Stabilny (_relMoveToStable)
+    NA_SETTINGS:    'b24t_na_settings',         // Analityka: { enabled, pat, repo, lastPush }
+    NA_CONSENT:     'b24t_na_consent',          // zgoda na analitykę News: '1' | '0'
   };
   const MAX_BATCH_SIZE = 50;
   const DEL_BATCH_DEFAULT = 25; // domyślny batch równoległych deletów (edytowalny w UI)
@@ -258,7 +263,6 @@
   const state = {
     status: 'idle',          // idle | running | paused | error | done
     lastMentionsVars: null,  // last organic getMentions variables from Brand24
-    matchPreview: null,      // match preview result
     soundEnabled: false,     // play sound on done
     tokenHeaders: null,
     tokenSeen: false,        // strona wysłała zapytanie z tokenem (kropka tokenu); token z B24Bridge tego nie ustawia
@@ -309,6 +313,73 @@
   const lsSet = (key, val) => {
     try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
   };
+  // Pamięć Tampermonkeya, wspólna dla wszystkich stron; wartość jako JSON, jak w lsGet.
+  const gmGet = (key, fallback = null) => {
+    try { const raw = GM_getValue(key, null); return raw === null ? fallback : (JSON.parse(raw) ?? fallback); }
+    catch { return fallback; }
+  };
+  const gmSet = (key, val) => {
+    try { GM_setValue(key, JSON.stringify(val)); return true; }
+    catch (e) { console.warn('[B24T] zapis ' + key + ' w pamięci Tampermonkeya nieudany', e); return false; }
+  };
+
+  // Przeniesienie ustawień (PREF) z localStorage panelu Brand24 do pamięci Tampermonkeya, raz na panel. Pierwszy
+  // panel przenosi wszystko, co ma. Na drugim wartości już przeniesione zostają, a dochodzą tylko brakujące:
+  // ustawienie, którego w pamięci Tampermonkeya nie ma, i puste pola obiektów (przełączniki funkcji, Analityka).
+  // Kanał aktualizacji przechodzi razem ze znacznikiem przełączenia na Stabilny: znacznik z jednego panelu przy
+  // kanale z drugiego zmieniałby decyzję _relMoveToStable.
+  // Kopia w localStorage zostaje do pierwszego uruchomienia nowszej wersji na tym panelu, bo wersja sprzed
+  // przeniesienia, przywrócona po błędzie, czyta ustawienia tylko z localStorage, w tym kanał aktualizacji.
+  var PREFS_MOVED = 'b24t_prefs_moved'; // { panel: { movedIn: wersja, lsRemovedIn: wersja } }
+  var PREF_UNITS = [[PREF.THEME], [PREF.UI_TEXT], [PREF.UI_MOTION], [PREF.FEATURES],
+    [PREF.UPDATE_CHANNEL, PREF.CHANNEL_MOVED], [PREF.NA_SETTINGS], [PREF.NA_CONSENT]];
+
+  // Wartość zapisana przez wersję sprzed przeniesienia. Przełączniki funkcji były zakodowane podwójnie (JSON
+  // w JSON-ie), a panel bez własnych przełączników używał ich kopii z pamięci Tampermonkeya (b24t_features_mirror).
+  function _prefsLegacy(key) {
+    var v = lsGet(key, null);
+    if (key !== PREF.FEATURES) return v;
+    try {
+      if (v === null) v = GM_getValue('b24t_features_mirror', null);
+      return typeof v === 'string' ? JSON.parse(v) : v;
+    } catch (e) { return null; }
+  }
+
+  function _prefsMoveFromLs() {
+    var panel = _b24HostBase();
+    if (!panel) return;   // localStorage obcej strony może mieć pod tymi nazwami cokolwiek
+    var moved = gmGet(PREFS_MOVED, {});
+    var rec = moved[panel];
+    if (rec) {
+      if (!rec.lsRemovedIn && _relCmp(VERSION, rec.movedIn) > 0) {
+        Object.keys(PREF).forEach(function (k) { try { localStorage.removeItem(PREF[k]); } catch (e) {} });
+        rec.lsRemovedIn = VERSION;
+        gmSet(PREFS_MOVED, moved);
+      }
+      return;
+    }
+    var isObj = function (v) { return !!v && typeof v === 'object' && !Array.isArray(v); };
+    var empty = function (v) { return v === undefined || v === null || v === ''; };
+    var ok = true;
+    PREF_UNITS.forEach(function (unit) {
+      var cur = gmGet(unit[0], null);
+      if (cur === null) {
+        unit.forEach(function (k) { var v = _prefsLegacy(k); if (v !== null) ok = gmSet(k, v) && ok; });
+        return;
+      }
+      var old = _prefsLegacy(unit[0]), added = false;
+      if (!isObj(cur) || !isObj(old)) return;
+      Object.keys(old).forEach(function (f) {
+        if (empty(cur[f]) && !empty(old[f])) { cur[f] = old[f]; added = true; }
+      });
+      if (added) ok = gmSet(unit[0], cur) && ok;
+    });
+    // Bez znacznika przeniesienie powtórzy się przy następnym otwarciu panelu, a localStorage zostaje.
+    if (!ok) return;
+    moved[panel] = { movedIn: VERSION };
+    gmSet(PREFS_MOVED, moved);
+  }
+  _prefsMoveFromLs();
 
   // Escape HTML — używaj zawsze gdy wstawiamy do innerHTML wartość pochodzącą z pliku użytkownika,
   // odpowiedzi API (tag name, project name, URL) lub treści wzmianki. Inaczej ryzyko XSS.
@@ -359,6 +430,11 @@
       if (fromLS) Object.keys(fromLS).forEach(function(pid) {
         if (!_isFallbackProjectName(fromLS[pid])) merged[String(pid)] = fromLS[pid];
       });
+      // Nazwa potwierdzona przez Brand24 wygrywa z nazwą z localStorage panelu. Sprawdzenie nazw zapisuje
+      // localStorage tylko tego panelu, na którym się odbyło, więc drugi panel pokazywał dalej nazwę z tytułu
+      // karty, a jego „Odśwież listę projektów” nie miało czego poprawić: nazwa była już potwierdzona.
+      var bridge = B24Bridge.projects.all();
+      Object.keys(merged).forEach(function(pid) { if (_pnRecVerified(bridge[pid])) merged[pid] = bridge[pid].name; });
       if (!_gmPNSynced && Object.keys(merged).length > 0) {
         var _syncProjs = {};
         Object.keys(merged).forEach(function(pid) { _syncProjs[pid] = { name: merged[pid] }; });
@@ -407,7 +483,6 @@
     tagDone:      { grupa: 'koniec', prio: 3, prog: true,  label: 'Tagowanie z pliku zakończone',      opis: 'Wszystkie partycje przerobione' },
     collectDone:  { grupa: 'koniec', prio: 3, prog: true,  label: 'Wyszukiwanie kampanii zakończone',  opis: 'Wyszukiwanie zaawansowane Google przeszło wszystkie zapytania' },
     scanDone:     { grupa: 'koniec', prio: 3, prog: true,  label: 'Skan newsów zakończony',            opis: 'Strony przeskanowane i ocenione' },
-    auditDone:    { grupa: 'koniec', prio: 3, prog: true,  label: 'Audyt zakończony',                  opis: 'Porównanie pliku z Brand24 gotowe' },
     tagError:     { grupa: 'blad',   prio: 4, prog: false, label: 'Błąd tagowania',                    opis: 'Tagowanie przerwane — z podpowiedzią, co zrobić' },
     collectError: { grupa: 'blad',   prio: 4, prog: false, label: 'Błąd wyszukiwania kampanii',        opis: 'Wyszukiwanie zaawansowane Google przerwane błędem' },
   };
@@ -524,8 +599,7 @@
     return {
       apiKey: '', prompts: [],
       tagging: { model: 'claude-haiku-4-5', activePromptId: null },
-      news: { model: 'claude-haiku-4-5', enabled: false },
-      custom: { model: 'claude-haiku-4-5', enabled: false }
+      news: { model: 'claude-haiku-4-5', enabled: false }
     };
   }
   // Stare ID modeli zapisane w LS — bez przepisania select w ustawieniach nie trafiłby w żadną
@@ -612,15 +686,12 @@
     var s = _aiReadStored() || _aiDefaultSettings();
     if (!s.news) s.news = {};
     if (!s.tagging) s.tagging = {};
-    if (!s.custom) s.custom = {};
     if (!s.campaign) s.campaign = {};
     if (!s.campaign.model) s.campaign.model = s.model || 'claude-haiku-4-5';
     if (!s.news.model) s.news.model = s.model || 'claude-haiku-4-5';
     if (!s.tagging.model) s.tagging.model = s.model || 'claude-haiku-4-5';
-    if (!s.custom.model) s.custom.model = s.model || 'claude-haiku-4-5';
     s.news.model = _aiMigrateModel(s.news.model);
     s.tagging.model = _aiMigrateModel(s.tagging.model);
-    s.custom.model = _aiMigrateModel(s.custom.model);
     if (!s.sentiment) s.sentiment = {};
     if (!s.sentiment.modelA) s.sentiment.modelA = SENT_DEFAULT_MODELS[0];
     if (!s.sentiment.modelB) s.sentiment.modelB = SENT_DEFAULT_MODELS[1];
@@ -1208,16 +1279,13 @@
   // nie mają `nameSrc` i słusznie liczą się jako niepotwierdzone — właśnie między nimi siedzą
   // nazwy złe („Marka24,nl"), których stary test „pusta albo fallbackowa" nie łapał.
   function _pnIsVerified(pid) {
-    try {
-      var rec = B24Bridge.projects.get(pid);
-      if (!rec) return false;
-      var src = rec.nameSrc;
-      if (src !== PN_SRC_GQL && src !== PN_SRC_CMS) return false;
-      // Samonaprawa: nazwa zapisana z encjami pochodzi sprzed poprawki parsera \u2014 niech wr\u00f3ci
-      // do sprawdzenia zamiast zosta\u0107 na li\u015bcie jako \u201eH&amp;M_PL\u201d na zawsze.
-      if (_looksHtmlEscaped(rec.name)) return false;
-      return true;
-    } catch(e) { return false; }
+    try { return _pnRecVerified(B24Bridge.projects.get(pid)); } catch(e) { return false; }
+  }
+  function _pnRecVerified(rec) {
+    if (!rec || (rec.nameSrc !== PN_SRC_GQL && rec.nameSrc !== PN_SRC_CMS)) return false;
+    // Samonaprawa: nazwa zapisana z encjami pochodzi sprzed poprawki parsera \u2014 niech wr\u00f3ci
+    // do sprawdzenia zamiast zosta\u0107 na li\u015bcie jako \u201eH&amp;M_PL\u201d na zawsze.
+    return !_looksHtmlEscaped(rec.name);
   }
 
   // Projekt niedostępny na SWOIM panelu. Nie kasujemy — ukrywamy (decyzja użytkownika
@@ -1458,6 +1526,10 @@
           var rec = Object.assign({}, prev, p, { updatedAt: Date.now() });
           // Nie nadpisuj dobrej nazwy fallbackiem, ale resztę danych (np. tagIds) zapisz zawsze
           if (_isFallbackProjectName(p.name) && !_isFallbackProjectName(prev.name)) rec.name = prev.name;
+          // Nazwy potwierdzonej przez Brand24 nie zastępuje nazwa niepotwierdzona. Rekordy z localStorage panelu
+          // (detectProject i _gmGetProjectNames przy każdym wczytaniu) niosą nazwę z tytułu karty, a podmieniona
+          // nazwa zachowywała `nameSrc`, więc dalej liczyła się jako potwierdzona i nic jej już nie sprawdzało.
+          else if (_pnRecVerified(prev) && !_pnRecVerified(p)) rec.name = prev.name;
           merged[String(pid)] = rec;
         });
         _write({ projects: merged });
@@ -2496,7 +2568,15 @@
   // ───────────────────────────────────────────
 
   // withSentiment: wpisy mapy niosą bieżący sentyment wzmianki (potrzebny akcji „zmień sentyment”).
-  async function buildUrlMap(dateFrom, dateTo, untaggedOnly, withSentiment) {
+  // `opts` służy dopasowaniu liczonemu poza przebiegiem (_matchRun): `alive` zastępuje sprawdzanie statusu
+  // przebiegu, `onPage` zastępuje pasek karty Postęp, a `quiet` przenosi komunikaty o postępie na poziom debug
+  // (ostrzeżenia i błędy zostają). Mapa zwraca się pusta także po błędzie strony 1, więc błąd trafia do
+  // `opts.failed`, a liczba stron z błędem do `opts.pageErrors`.
+  async function buildUrlMap(dateFrom, dateTo, untaggedOnly, withSentiment, opts) {
+    opts = opts || {};
+    const log = opts.quiet ? function (msg, type) { addLog(msg, type === 'warn' || type === 'error' ? type : 'debug'); } : addLog;
+    const alive = opts.alive || function () { return state.status === 'running'; };
+    const progress = opts.onPage || function (n, total) { updateProgress('map', n, total); };
     const gr = (untaggedOnly && state.untaggedId) ? [state.untaggedId] : [];
     const mentionOpts = withSentiment ? { withSentiment: true } : undefined;
     const map = {};
@@ -2517,27 +2597,27 @@
     const isInvalidDate = function(d) { return !d || d === '9999' || d === '0000' || !RX_ISO_DATE.test(d); };
     if (isInvalidDate(dateFrom) || isInvalidDate(dateTo)) {
       const fallback = getAnnotatorDates();
-      addLog(`⚠ [DIAG/DATY] Brak dat w pliku — używam fallback: ${fallback.dateFrom} → ${fallback.dateTo}`, 'warn');
+      log(`⚠ [DIAG/DATY] Brak dat w pliku — używam fallback: ${fallback.dateFrom} → ${fallback.dateTo}`, 'warn');
       dateFrom = fallback.dateFrom;
       dateTo   = fallback.dateTo;
       diag.dateFrom = dateFrom; diag.dateTo = dateTo;
     }
     if (new Date(dateFrom) > new Date(dateTo)) {
-      addLog(`✕ [DIAG/DATY] dateFrom (${dateFrom}) > dateTo (${dateTo}) — zakres odwrócony! Sprawdź plik.`, 'error');
+      log(`✕ [DIAG/DATY] dateFrom (${dateFrom}) > dateTo (${dateTo}) — zakres odwrócony! Sprawdź plik.`, 'error');
     }
 
     // ── KROK 2: walidacja untaggedId ────────────────────────────────────
     diag.step = 'untagged_id';
     if (untaggedOnly) {
       if (!state.untaggedId) {
-        addLog(`⚠ [DIAG/UNTAGGED] untaggedId=${state.untaggedId} — wartość domyślna, możliwe że tag "Untagged" nie został poprawnie wykryty.`, 'warn');
+        log(`⚠ [DIAG/UNTAGGED] untaggedId=${state.untaggedId} — wartość domyślna, możliwe że tag "Untagged" nie został poprawnie wykryty.`, 'warn');
       } else {
-        addLog(`ℹ [DIAG/UNTAGGED] Filtr Untagged aktywny, gr=[${state.untaggedId}]`, 'debug');
+        log(`ℹ [DIAG/UNTAGGED] Filtr Untagged aktywny, gr=[${state.untaggedId}]`, 'debug');
       }
     }
 
-    updateProgress('map', 0, '?');
-    addLog(`→ Budowanie mapy URL (${untaggedOnly ? 'Untagged' : 'pełny zakres'}) | projekt=${state.projectId} | ${dateFrom}→${dateTo}`, 'info');
+    progress(0, '?');
+    log(`→ Budowanie mapy URL (${untaggedOnly ? 'Untagged' : 'pełny zakres'}) | projekt=${state.projectId} | ${dateFrom}→${dateTo}`, 'info');
 
     // ── KROK 3: pierwsza strona — sprawdź count i pageSize ───────────────
     diag.step = 'page1_fetch';
@@ -2545,12 +2625,14 @@
     try {
       first = await getMentions(state.projectId, dateFrom, dateTo, gr, 1, mentionOpts);
     } catch(e) {
-      addLog(`✕ [DIAG/API] getMentions strona 1 FAILED: ${e.message}`, 'error');
+      log(`✕ [DIAG/API] getMentions strona 1 FAILED: ${e.message}`, 'error');
+      opts.failed = e.message;
       return map;
     }
 
     if (!first || !first.results) {
-      addLog(`✕ [DIAG/API] getMentions strona 1 zwróciła null/undefined — problem z API Brand24`, 'error');
+      log(`✕ [DIAG/API] getMentions strona 1 zwróciła null/undefined — problem z API Brand24`, 'error');
+      opts.failed = 'Brand24 nie zwrócił listy wzmianek';
       return map;
     }
 
@@ -2561,10 +2643,10 @@
     const totalPages = Math.ceil(first.count / pageSize);
     diag.totalPages = totalPages;
 
-    addLog(`ℹ [DIAG/API] Strona 1: count=${first.count}, wyniki=${first.results.length}, pageSize=${pageSize}, totalPages=${totalPages}`, 'debug');
+    log(`ℹ [DIAG/API] Strona 1: count=${first.count}, wyniki=${first.results.length}, pageSize=${pageSize}, totalPages=${totalPages}`, 'debug');
 
     if (first.count === 0) {
-      addLog(`⚠ [DIAG/API] count=0 — Brand24 nie zwraca żadnych wzmianek dla tego zakresu/filtrów.
+      log(`⚠ [DIAG/API] count=0 — Brand24 nie zwraca żadnych wzmianek dla tego zakresu/filtrów.
   Możliwe przyczyny: zły zakres dat, nieistniejący projekt, filtr Untagged pusty.`, 'warn');
       return map;
     }
@@ -2578,7 +2660,7 @@
       else { bothEmpty++; }
     });
     if (openUrlOnly > 0 || bothEmpty > 0) {
-      addLog(`⚠ [DIAG/URL_FIELD] Strona 1: url=${urlPresent} present, openUrl-only=${openUrlOnly}, oba puste=${bothEmpty}
+      log(`⚠ [DIAG/URL_FIELD] Strona 1: url=${urlPresent} present, openUrl-only=${openUrlOnly}, oba puste=${bothEmpty}
   Jeśli openUrl-only > 0, Brand24 zmienił format — używamy openUrl jako fallback.`, 'warn');
     }
 
@@ -2596,10 +2678,10 @@
       }
     });
     diag.fetchedPages = 1;
-    updateProgress('map', 1, totalPages);
+    progress(1, totalPages);
 
     if (totalPages <= 1) {
-      addLog(`✓ Mapa zbudowana: ${Object.keys(map).length} wzmianek (1 strona)`, 'success');
+      log(`✓ Mapa zbudowana: ${Object.keys(map).length} wzmianek (1 strona)`, 'success');
       return map;
     }
 
@@ -2618,7 +2700,7 @@
 
     const _mapWorker = async () => {
       while (true) {
-        if (state.status !== 'running') break;
+        if (!alive()) break;
         const p = _poolNextPage;
         if (p > totalPages) break;
         _poolNextPage++;
@@ -2626,12 +2708,12 @@
           .catch(e => ({ _err: e.message, _page: p }));
         if (result && result._err !== undefined) {
           pageErrors++;
-          addLog(`⚠ [DIAG/API] Błąd strony ${p}: ${result._err}`, 'warn');
+          log(`⚠ [DIAG/API] Błąd strony ${p}: ${result._err}`, 'warn');
           continue;
         }
         if (!result || !result.results) {
           pageErrors++;
-          addLog(`⚠ [DIAG/API] Strona ${p}: null response`, 'warn');
+          log(`⚠ [DIAG/API] Strona ${p}: null response`, 'warn');
           continue;
         }
         let pageDupeIds = 0;
@@ -2649,28 +2731,31 @@
           }
         });
         if (pageDupeIds > 0) {
-          addLog(`⚠ [DIAG/PAGINATION] Strona ${p}: ${pageDupeIds} duplikatów ID — Brand24 niestabilna paginacja`, 'warn');
+          log(`⚠ [DIAG/PAGINATION] Strona ${p}: ${pageDupeIds} duplikatów ID — Brand24 niestabilna paginacja`, 'warn');
         }
         fetched++;
         diag.fetchedPages = fetched;
-        updateProgress('map', fetched, totalPages);
+        progress(fetched, totalPages);
         if (fetched % 10 === 0 || fetched >= totalPages) {
-          addLog(`→ Mapa: ${fetched}/${totalPages} stron (${Object.keys(map).length} wzmianek)`, 'info');
+          log(`→ Mapa: ${fetched}/${totalPages} stron (${Object.keys(map).length} wzmianek)`, 'info');
         }
         await sleep(0); // yield do UI między stronami
       }
     };
     await Promise.all(Array.from({ length: MAP_FETCH_CONCURRENCY }, _mapWorker));
+    // Przerwana mapa (pauza, stop, nowe dopasowanie) jest niekompletna z wyboru: bez tego powrotu log dostawał
+    // ostrzeżenie o niekompletnej mapie przy każdej pauzie. Wołający sprawdza status sam.
+    if (!alive()) return map;
 
     const _mapElapsed = Date.now() - _mapTStart;
-    addLog(`ℹ [DIAG/PERF] Mapa ${totalPages} stron: ${_mapElapsed}ms | concurrency=${MAP_FETCH_CONCURRENCY} | dupeId=${allDupeIds} (${first.count > 0 ? (allDupeIds / first.count * 100).toFixed(1) : 0}%)`, 'debug');
+    log(`ℹ [DIAG/PERF] Mapa ${totalPages} stron: ${_mapElapsed}ms | concurrency=${MAP_FETCH_CONCURRENCY} | dupeId=${allDupeIds} (${first.count > 0 ? (allDupeIds / first.count * 100).toFixed(1) : 0}%)`, 'debug');
     diag.mentionsInMap = Object.keys(map).length;
 
     // ── KROK 7: weryfikacja kompletności ─────────────────────────────────
     diag.step = 'completeness_check';
     const expectedMin = Math.floor(first.count * 0.95); // tolerancja 5% na duplikaty/race
     if (diag.mentionsInMap < expectedMin) {
-      addLog(
+      log(
         `⚠ [DIAG/COMPLETENESS] Mapa niekompletna!
 ` +
         `  count z API: ${first.count} | w mapie: ${diag.mentionsInMap} | oczekiwano min: ${expectedMin}
@@ -2680,20 +2765,21 @@
       );
     }
     if (diag.dupeKeys > 0) {
-      addLog(`ℹ [DIAG/DUPES] ${diag.dupeKeys} duplikatów URL w mapie (nadpisane) — Brand24 może zwracać tę samą wzmiankę na wielu stronach`, 'debug');
+      log(`ℹ [DIAG/DUPES] ${diag.dupeKeys} duplikatów URL w mapie (nadpisane) — Brand24 może zwracać tę samą wzmiankę na wielu stronach`, 'debug');
     }
+    opts.pageErrors = pageErrors;
     if (pageErrors > 0) {
-      addLog(`⚠ [DIAG/API] ${pageErrors} stron z błędem — mapa może być niekompletna!`, 'warn');
+      log(`⚠ [DIAG/API] ${pageErrors} stron z błędem — mapa może być niekompletna!`, 'warn');
     }
     if (diag.urlFieldEmpty > 0) {
-      addLog(`⚠ [DIAG/URL_FIELD] ${diag.urlFieldEmpty} wzmianek bez url i openUrl — pominięte w mapie. Brand24 może mieć wzmianki bez URL.`, 'warn');
+      log(`⚠ [DIAG/URL_FIELD] ${diag.urlFieldEmpty} wzmianek bez url i openUrl — pominięte w mapie. Brand24 może mieć wzmianki bez URL.`, 'warn');
     }
 
-    addLog(`✓ Mapa zbudowana: ${diag.mentionsInMap} wzmianek w ${totalPages} stronach`, 'success');
+    log(`✓ Mapa zbudowana: ${diag.mentionsInMap} wzmianek w ${totalPages} stronach`, 'success');
 
     // ── KROK 8: próbkowanie mapy — pokaż sample kluczy ───────────────────
     const mapSample = Object.keys(map).slice(0, 3);
-    addLog(`ℹ [DIAG/MAP_SAMPLE] Przykłady kluczy w mapie: ${mapSample.map(k => '"'+k+'"').join(' | ')}`, 'debug');
+    log(`ℹ [DIAG/MAP_SAMPLE] Przykłady kluczy w mapie: ${mapSample.map(k => '"'+k+'"').join(' | ')}`, 'debug');
 
     return map;
   }
@@ -3414,13 +3500,15 @@
   async function startRun() {
     if (_runActive) return;
     _runActive = true;
-    try { await _runPartitions(); } finally { _runActive = false; }
+    try { await _runPartitions(); } finally { _runActive = false; _matchSchedule(true); }
   }
 
+  // Stop w pauzie kończy przebieg bez pętli, więc dopasowanie zleca się tutaj, a nie w startRun.
   function _runInterrupt(status) {
     state.status = status;
     _runCuts++;
     updateStatusUI();
+    if (status === 'idle') _matchSchedule(true);
   }
 
   // Wznowienie: partycja zakończona przed pauzą przechodzi na następną, przerwana rusza od nowa. Gdy pętla jeszcze
@@ -3917,7 +4005,7 @@
   function _diagSecrets() {
     var out = [];
     try { var s = _aiGetSettings(); Object.keys(AI_KEY_FIELD).forEach(function(p) { out.push(s[AI_KEY_FIELD[p]]); }); } catch (err) {}
-    try { out.push((lsGet(LS.NA_SETTINGS, {}) || {}).pat); } catch (err) {}
+    try { out.push((gmGet(PREF.NA_SETTINGS, {}) || {}).pat); } catch (err) {}
     try { out.push(_ntfyGetCfg().topic); } catch (err) {}
     // Tylko nagłówki autoryzacji: wśród nich jest też `Content-Type: application/json`, którego maskowanie
     // wycięłoby ten napis z całego zgłoszenia.
@@ -4073,6 +4161,7 @@
     if (!el || el.dataset.state === st) return;
     el.dataset.state = st;
     el.textContent = found ? 'Token Brand24 aktywny' : 'Czekam na token Brand24';
+    if (found) _matchSchedule();
   }
 
   const STATUS_UI = {
@@ -4706,20 +4795,6 @@
     },
     exportReport,
     exportPartitions,
-    exportAuditReport: () => {
-      const r = window.B24Tagger._lastAuditResult;
-      if (!r) { addLog('Brak wyników Audit Mode.', 'warn'); return; }
-      const rows = [['status','url','expected','actual']];
-      r.alreadyTagged.forEach(u => rows.push(['OK', u, '', '']));
-      r.untagged.forEach(e => rows.push(['UNTAGGED', e.url || e, e.expected || '', '']));
-      r.taggedWrong.forEach(e => rows.push(['WRONG_TAG', e.url, e.expected, e.actual]));
-      r.notFound.forEach(u => rows.push(['NOT_FOUND', u, '', '']));
-      const csv = rows.map(r => r.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(',')).join('\n');
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = 'b24tagger_audit_' + Date.now() + '.csv';
-      a.click(); URL.revokeObjectURL(url);
-    },
   };
   try {
     if (_isBrand24Host && localStorage.getItem('b24tagger_debug') === '1') _win.B24Tagger = _win.b24tagger = window.B24Tagger;
@@ -4748,7 +4823,7 @@
       var root = host.attachShadow({ mode: 'open' });
       var app = document.createElement('div');
       app.className = 'b24t-app';
-      app.setAttribute('data-b24t-theme', document.documentElement.getAttribute('data-b24t-theme') || 'light');
+      app.setAttribute('data-b24t-theme', _themeGet());
       var sys = document.createElement('style');
       sys.id = 'b24t-ui-system';
       sys.textContent = UI_CSS;
@@ -4759,6 +4834,7 @@
       // Fonts z każdej odwiedzanej strony.
       if (_isBrand24Host) _uiFonts();
       _uiApplyPrefs();
+      _uiWatchPrefs();
       _uiWatchHost(host);
     }
     // Host odłączony przez skrypt strony wraca razem z całą zawartością korzenia.
@@ -4801,11 +4877,25 @@
   var _UI_TEXT_SCALE = { auto: 1, sm: 0.92, lg: 1.08 };
   function _uiApplyPrefs() {
     var app = _uiEnsure().app;
-    var t = lsGet(LS.UI_TEXT, 'auto');
+    var t = gmGet(PREF.UI_TEXT, 'auto');
     app.style.setProperty('--b24t-text-scale', String(_UI_TEXT_SCALE[t] || 1));
-    var m = lsGet(LS.UI_MOTION, 'auto');
+    var m = gmGet(PREF.UI_MOTION, 'auto');
     if (m !== 'full' && m !== 'lite') m = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'lite' : 'full';
     app.setAttribute('data-b24t-motion', m);
+  }
+
+  // Motyw wtyczki: light | dark, domyślnie jasny na każdej stronie.
+  function _themeGet() { return gmGet(PREF.THEME, 'light') === 'dark' ? 'dark' : 'light'; }
+
+  // Motyw, rozmiar tekstu i ruch zmienione w innej karcie, także na drugim panelu Brand24 albo na stronie spoza
+  // Brand24, zmieniają tę kartę od razu, bez przeładowania. Przełączniki funkcji nasłuchuje init().
+  function _uiWatchPrefs() {
+    var watch = function (key, fn) {
+      try { GM_addValueChangeListener(key, function (name, oldV, newV, remote) { if (remote) fn(); }); } catch (e) {}
+    };
+    watch(PREF.THEME, function () { _ui.app.setAttribute('data-b24t-theme', _themeGet()); });
+    watch(PREF.UI_TEXT, _uiApplyPrefs);
+    watch(PREF.UI_MOTION, _uiApplyPrefs);
   }
 
   function _uiMount(el) {
@@ -5398,8 +5488,6 @@
         .b-rail__label, .b-rail__item--util .b-rail__label { display: block; font-size: 1em; }
         .b-rail__item .b-rail__dot { position: static; margin-left: auto; box-shadow: none; }
       }
-      @container b-panel (width < 26em) { .b-hide-below-26 { display: none !important; } }
-      @container b-panel (width >= 26em) { .b-show-below-26 { display: none !important; } }
       @container b-panel (width < 28em) { .b-hide-below-28 { display: none !important; } }
       @container b-panel (width < 34em) { .b-hide-below-34 { display: none !important; } }
 
@@ -6414,7 +6502,6 @@
     globe: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zM3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18',
     lock: 'M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3',
     target: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zM12 8a4 4 0 1 0 0 8a4 4 0 1 0 0-8zM12 12h.01',
-    audit: 'M9 3.5h6v3H9zM7.5 5H5v16h14V5h-2.5M9 13.5l2 2 4-4',
     folder: 'M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z',
     grid: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
     send: 'M4 12 20 4l-6 16-3-7z',
@@ -8364,8 +8451,6 @@
     btn('b24t-btn-start', 'main', 'Uruchom tagowanie z pliku', 'play');
     btn('b24t-btn-pause', 'main', 'Wstrzymaj tagowanie', 'pause');
     btn('b24t-btn-stop', 'main', 'Zatrzymaj tagowanie', 'stop');
-    btn('b24t-btn-preview', 'main', 'Sprawdź dopasowanie adresów (Match)', 'search');
-    btn('b24t-btn-audit', 'main', 'Porównaj plik z tagami w Brand24 (Audit)', 'audit');
     btn('b24t-qt-run', 'quicktag', 'Taguj widoczne wzmianki (Quick Tag)', 'quick');
     btn('b24t-qt-untag', 'quicktag', 'Usuń tag z widocznych wzmianek', 'quick');
     btn('b24t-ait-run', 'aitag', 'Taguj przez AI', 'ai');
@@ -8401,7 +8486,7 @@
     } else if (pw) {
       add('show', 'Pokaż panel', 'Układ', 'chevLeft', function () { _panelHide(false); });
     }
-    var dark = lsGet(LS.THEME, 'light') === 'dark';
+    var dark = _themeGet() === 'dark';
     add('theme', dark ? 'Motyw jasny' : 'Motyw ciemny', 'Wygląd', dark ? 'sun' : 'moon', function () { applyTheme(dark ? 'light' : 'dark'); });
     add('help', 'Pomoc i samouczki', 'Pomoc', 'help', _tutCatalog);
     add('keys', 'Skróty klawiszowe', 'Pomoc', 'keyboard', _keysOpen, '?');
@@ -8607,10 +8692,11 @@
             text: 'Test Run przechodzi cały przebieg, ale niczego nie zapisuje w Brand24; log pokazuje, co by się stało. Po przeładowaniu strony tryb wraca na Właściwy.',
             task: 'Przełącz tryb na Test Run',
             done: function () { return state.testRunMode; } },
-          { title: 'Najpierw dopasowanie', target: function () { return _$('b24t-btn-preview'); }, enter: function () { _tutShowPanel('main'); },
-            text: 'Match sprawdza, ile adresów z pliku wtyczka znajduje w Brand24, zanim cokolwiek otaguje. Niedopasowane adresy da się podejrzeć.',
-            task: 'Kliknij Match i poczekaj na wynik',
-            done: function () { var p = _$('b24t-match-preview'); return !!p && !p.hidden; } }
+          { title: 'Dopasowanie bez klikania', target: function () { var c = _$('b24t-match-preview'); return c && !c.hidden ? c : _$('b24t-file-zone'); },
+            enter: function () { _tutShowPanel('main'); },
+            text: 'Po wgraniu pliku wtyczka sama sprawdza, ile wierszy ma wzmiankę w projekcie i ile z nich ma już tag. Adresy bez wzmianki da się podejrzeć pod wynikiem.',
+            task: 'Sprawdź wynik dopasowania pod plikiem',
+            done: function () { return _match.view === 'done'; } }
         ]
       },
       {
@@ -9257,8 +9343,7 @@
       <div id="b24t-notify-tab-placeholder"></div>
       </div>`;
 
-    // Stopka: grupa przycisków dla każdej karty z jednym głównym działaniem (data-for). Karta Plik: poniżej 26em
-    // szerokości panelu Match, Audit i eksport przechodzą do menu „Więcej działań”. Usuwanie ma dwie niezależne
+    // Stopka: grupa przycisków dla każdej karty z jednym głównym działaniem (data-for). Usuwanie ma dwie niezależne
     // operacje z przyciskami w kartach, Historia i Powiadomienia nie mają działań, więc stopka znika.
     const foot = `
       <div id="b24t-actions" class="b-foot__group" data-for="main">
@@ -9268,12 +9353,7 @@
           <button type="button" class="b-btn b-btn--neutral" id="b24t-btn-stop" hidden>${_icon('stop', 'b-ico-stop')}Stop</button>
         </span>
         <span class="b-sp"></span>
-        <span id="b24t-diag-controls" class="b-row b-hide-below-26">
-          <button type="button" class="b-btn b-btn--quiet" id="b24t-btn-preview" data-tip="Sprawdź dopasowanie adresów bez tagowania">Match</button>
-          <button type="button" class="b-btn b-btn--quiet" id="b24t-btn-audit" data-tip="Porównaj plik z tagami w Brand24 bez tagowania">Audit</button>
-          <button type="button" class="b-ibtn" id="b24t-btn-export" aria-label="Eksport logu (CSV)" data-tip="Eksport logu (CSV)">${_icon('download')}</button>
-        </span>
-        <button type="button" class="b-ibtn b-show-below-26" id="b24t-btn-more-actions" aria-haspopup="menu" aria-label="Więcej działań: Match, Audit, eksport" data-tip="Match, Audit, eksport">${_icon('more')}</button>
+        <button type="button" class="b-ibtn" id="b24t-btn-export" aria-label="Eksport logu (CSV)" data-tip="Eksport logu (CSV)">${_icon('download')}</button>
       </div>
       <div class="b-foot__group" data-for="quicktag" hidden>
         <button type="button" class="b-btn b-btn--primary" id="b24t-qt-run">${_icon('tag')}Taguj teraz</button>
@@ -9294,7 +9374,7 @@
   // Bazowy rozmiar tekstu w px: ten sam wzór co --u w UI_CSS (13 px przy 1366, 15 px od 2560 px szerokości).
   // Potrzebny tam, gdzie wymiar w em trzeba podać w px przed zbudowaniem okna.
   function _uiBasePx() {
-    var scale = { sm: 0.92, lg: 1.08 }[lsGet(LS.UI_TEXT, 'auto')] || 1;
+    var scale = { sm: 0.92, lg: 1.08 }[gmGet(PREF.UI_TEXT, 'auto')] || 1;
     return _clamp(10.4 + 0.0019 * window.innerWidth, 13, 15) * scale;
   }
 
@@ -9390,19 +9470,6 @@
     });
   }
 
-  // Menu „Więcej działań” w wąskim panelu: te same przyciski co w stopce, z ich stanem.
-  function _panelMoreActions(btn) {
-    var item = function (id, label, icon) {
-      var src = _$(id);
-      return { label: label, icon: icon, disabled: !src || src.disabled, onSelect: function () { src.click(); } };
-    };
-    Menu.open(btn, [
-      item('b24t-btn-preview', 'Match: sprawdź dopasowanie', 'link'),
-      item('b24t-btn-audit', 'Audit: porównaj z Brand24', 'audit'),
-      item('b24t-btn-export', 'Eksport logu (CSV)', 'download')
-    ], { align: 'end' });
-  }
-
   // ───────────────────────────────────────────
   // UI - DRAGGING & COLLAPSING
   // ───────────────────────────────────────────
@@ -9413,10 +9480,8 @@
   // ───────────────────────────────────────────
 
   function applyTheme(theme) {
-    document.documentElement.setAttribute('data-b24t-theme', theme);
+    gmSet(PREF.THEME, theme);
     _uiEnsure().app.setAttribute('data-b24t-theme', theme);
-    lsSet(LS.THEME, theme);
-    try { GM_setValue('b24t_theme_mirror', theme); } catch(e) {}
   }
 
   function wireEvents(panel) {
@@ -9499,20 +9564,13 @@
     // Export
     panel.querySelector('#b24t-btn-export').addEventListener('click', exportReport);
 
-    // Match Preview
-    panel.querySelector('#b24t-btn-preview')?.addEventListener('click', async () => {
-      if (!state.file) { addLog('Wgraj plik przed Match Preview.', 'warn'); return; }
-      if (!state.tokenHeaders) { addLog('Token nie gotowy — poczekaj chwile.', 'warn'); return; }
-      const preview = await runMatchPreview();
-      if (preview) renderMatchPreview(preview);
-    });
-
-    // Audit Mode
-    panel.querySelector('#b24t-btn-audit')?.addEventListener('click', async () => {
-      if (!state.file) { addLog('Wgraj plik przed Audit Mode.', 'warn'); return; }
-      if (!Object.keys(state.mapping).length) { addLog('Skonfiguruj mapowanie przed Audit Mode.', 'warn'); return; }
-      if (state.status === 'running') { addLog('Sesja jest juz uruchomiona.', 'warn'); return; }
-      await runAuditMode();
+    // Karta dopasowania: przeliczenie i lista adresów bez wzmianki
+    panel.querySelector('#b24t-match-preview').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-match]');
+      if (!b) return;
+      if (b.dataset.match === 'again') { _matchSchedule(true); return; }
+      _match.open = !_match.open;
+      _matchRender();
     });
 
     // Column override toggle
@@ -9562,9 +9620,6 @@
     panel.querySelector('#b24t-btn-help').addEventListener('click', _tutCatalog);
     panel.querySelector('#b24t-btn-palette').addEventListener('click', () => Palette.open());
 
-    // Wąski panel: Match, Audit i eksport w menu „Więcej działań”
-    panel.querySelector('#b24t-btn-more-actions').addEventListener('click', (e) => _panelMoreActions(e.currentTarget));
-
     // Latency badge → otwiera Network Monitor
     panel.querySelector('#b24t-latency-badge')?.addEventListener('click', function() {
       if (nmState.enabled) openNetworkMonitorPanel();
@@ -9573,9 +9628,6 @@
 
     // Dodatkowe funkcje
     panel.querySelector('#b24t-btn-features')?.addEventListener('click', () => showFeaturesModal());
-
-    // ── APPLY SAVED THEME ON INIT ──
-    applyTheme(lsGet(LS.THEME, 'light'));
 
     // Crash banner
     // Po przeładowaniu strony pliku nie ma w pamięci, a pętla bez niego kończy pracę od razu: panel zostawał
@@ -9811,6 +9863,7 @@
       if (fileWarnings.some(w => w.type === 'error')) {
         addLog('⛔ Plik ma błędy krytyczne — Start zablokowany. Sprawdź ostrzeżenia nad mapowaniem.', 'error');
       }
+      _matchSchedule(true);
 
     } catch (e) {
       addLog(`✕ Błąd pliku: ${e.message}`, 'error');
@@ -9829,7 +9882,7 @@
     state.partitions = [];
     state.currentPartitionIdx = 0;
     state.urlMap = {};
-    state.matchPreview = null;
+    _matchReset();
     state.stats = { tagged: 0, skipped: 0, noMatch: 0, conflicts: 0 };
 
     // Reset file UI
@@ -10267,6 +10320,7 @@
     }
     // F11: tag counts
     updateTagCountsInMapping();
+    if (_match.view === 'done') _matchRender();
     updateAutoDeleteSection();
     if (state.file && state.file.colMap && state.file.colMap.projectId) _updateTagCoverage();
   }
@@ -10665,36 +10719,146 @@
   }
 
   // ───────────────────────────────────────────
-  // F1 - MATCH PREVIEW
+  // DOPASOWANIE PLIKU DO BRAND24 (karta pod plikiem)
 
-  function renderMatchPreview(preview) {
-    const el = _$('b24t-match-preview');
-    if (!el) return;
-    const tone = preview.pct >= 80 ? 'b-ok' : preview.pct >= 50 ? 'b-warn' : 'b-danger';
-    const shown = Math.min(preview.unmatched, 50);
-    el.hidden = false;
-    el.innerHTML =
-      '<div class="b-card__head"><span class="b-card__title">Dopasowanie adresów</span><span class="b-kpi__val ' + tone + '">' + preview.pct + '%</span></div>' +
-      '<div class="b-progress"><i style="width:' + preview.pct + '%"></i></div>' +
-      '<div class="b-row b-row--wrap">' +
-        '<span class="b-chip b-chip--sm b-chip--ok">dopasowane <b>' + preview.matched + '</b></span>' +
-        '<span class="b-chip b-chip--sm' + (preview.unmatched ? ' b-chip--danger' : '') + '">brak <b>' + preview.unmatched + '</b></span>' +
-        (preview.noAssessment ? '<span class="b-chip b-chip--sm">bez oceny <b>' + preview.noAssessment + '</b></span>' : '') +
-      '</div>' +
-      (preview.unmatched > 0
-        ? '<div><button type="button" class="b-btn b-btn--link b-small" id="b24t-preview-btn" aria-expanded="false">Pokaż niedopasowane (' + shown + ')</button></div>' +
-          '<div id="b24t-preview-list" class="b-pre" style="max-height:8em" hidden>' +
-          preview.unmatchedList.map(function(u) { return _escHtml(u); }).join('\n') +
-          (preview.unmatched > 50 ? '\n… i ' + (preview.unmatched - 50) + ' więcej' : '') +
-          '</div>'
-        : '');
-    var btn = _$('b24t-preview-btn');
-    if (btn) btn.addEventListener('click', function() {
-      var list = _$('b24t-preview-list');
-      list.hidden = !list.hidden;
-      btn.setAttribute('aria-expanded', String(!list.hidden));
-      btn.textContent = (list.hidden ? 'Pokaż' : 'Ukryj') + ' niedopasowane (' + shown + ')';
+  // Dopasowanie liczy się samo: po wgraniu pliku, po zmianie kolumn, po pojawieniu się tokenu i po przebiegu.
+  // Mapa obejmuje wszystkie wzmianki z zakresu pliku, nie same nieotagowane, bo karta liczy też wzmianki, które
+  // mają już tag. Start buduje mapę od nowa: mapa sprzed kilku minut nie zna tagów dodanych w międzyczasie,
+  // a przy mapie „Nieotagowane” wzmianka otagowana przez kogoś innego dostałaby drugi tag.
+  var _match = { gen: 0, timer: 0, key: '', map: null, keys: null, hits: null, view: 'none', why: '', page: 0, pages: 0, err: '', gaps: 0, open: false };
+
+  function _matchSchedule(refetch) {
+    if (refetch) _match.key = '';
+    clearTimeout(_match.timer);
+    _match.timer = setTimeout(_matchRun, 300);
+  }
+
+  function _matchReset() {
+    clearTimeout(_match.timer);
+    _match.gen++;
+    _match.key = '';
+    _match.map = _match.keys = _match.hits = null;
+    _match.open = false;
+    _matchRender('none');
+  }
+
+  async function _matchRun() {
+    var f = state.file;
+    // Plik wielu projektów, bez kolumny adresu, oceny albo dat: dopasowania nie ma czego liczyć, a braki pokazuje
+    // walidacja pliku.
+    if (!f || f.colMap.projectId || !f.colMap.url || !f.colMap.assessment) return _matchReset();
+    var from = f.meta.minDate, to = f.meta.maxDate;
+    if (!RX_ISO_DATE.test(from || '') || !RX_ISO_DATE.test(to || '')) return _matchReset();
+    // W trakcie przebiegu tagi się zmieniają; po nim startRun albo Stop zlecają liczenie od nowa.
+    if (_runActive || state.status === 'running' || state.status === 'paused') return;
+    if (!state.projectId) return _matchRender('wait', 'Dopasowanie policzy się po otwarciu projektu w Brand24.');
+    if (!state.tokenHeaders) return _matchRender('wait', 'Dopasowanie policzy się po pierwszym zapytaniu strony Brand24 z tokenem.');
+    var key = state.projectId + '|' + from + '|' + to;
+    if (key === _match.key && _match.map) { _matchIndex(); return _matchRender('done'); }
+    var gen = ++_match.gen, opts = {
+      quiet: true,
+      alive: function () { return gen === _match.gen && !_runActive && state.status !== 'running'; },
+      onPage: function (n, total) { if (gen === _match.gen) { _match.page = n; _match.pages = total; _matchRender('busy'); } }
+    };
+    _match.key = key;
+    _match.map = _match.keys = _match.hits = null;
+    _match.page = _match.pages = 0;
+    _matchRender('busy');
+    var map = await buildUrlMap(from, to, false, false, opts);
+    if (gen !== _match.gen) return;
+    if (_runActive || state.status === 'running') { _match.key = ''; return _matchRender('wait', 'Dopasowanie policzy się od nowa po przebiegu.'); }
+    if (opts.failed) { _match.key = ''; _match.err = opts.failed; return _matchRender('error'); }
+    _match.map = map;
+    _match.keys = Object.keys(map);
+    _match.gaps = opts.pageErrors || 0;
+    _matchIndex();
+    _matchRender('done');
+    var c = _matchCount();
+    addLog('Dopasowanie pliku: ' + c.matched + ' z ' + c.rows + ' ' + _relPl(c.rows, 'wiersza', 'wierszy', 'wierszy') + ' z oceną ma wzmiankę w projekcie' +
+      (c.missed.length ? ', ' + c.missed.length + ' bez wzmianki' : '') + '.', 'info');
+  }
+
+  // Wzmianka każdego wiersza, liczona raz na mapę i kolumny; liczniki tagów zależą od mapowania, więc liczy je
+  // _matchCount przy każdym rysowaniu. Ta sama reguła co w runTagging: dokładny adres, potem adres, który
+  // urlsMatch uznaje za ten sam i który różni się najwyżej 5 znakami.
+  function _matchIndex() {
+    var cm = state.file.colMap, map = _match.map, keys = _match.keys;
+    _match.hits = state.file.rows.map(function (row) {
+      var raw = String(row[cm.assessment] || '').trim().toUpperCase();
+      var url = String(row[cm.url] || '').trim(), norm = url && normalizeUrl(url), e = norm ? map[norm] || null : null;
+      for (var i = 0; norm && !e && i < keys.length; i++) {
+        if (urlsMatch(norm, keys[i]) && Math.abs(norm.length - keys[i].length) <= 5) e = map[keys[i]];
+      }
+      return { a: raw ? raw.split('|').map(function (x) { return x.trim(); }).filter(Boolean) : [], url: url, e: e };
     });
+  }
+
+  function _matchCount() {
+    var c = { rows: 0, matched: 0, done: 0, other: 0, noAssessment: 0, missed: [] };
+    _match.hits.forEach(function (h) {
+      if (!h.a.length) { c.noAssessment++; return; }
+      c.rows++;
+      if (!h.e) { c.missed.push(h.url); return; }
+      c.matched++;
+      var ids = (h.e.existingTags || []).map(function (t) { return t.id; });
+      var targets = h.a.map(function (a) { return state.mapping[a]; })
+        .filter(function (m) { return m && m.type !== 'delete' && m.type !== 'sentiment'; });
+      if (!targets.length) return;
+      if (targets.every(function (m) { return ids.indexOf(m.tagId) !== -1; })) c.done++;
+      else if (ids.length) c.other++;
+    });
+    return c;
+  }
+
+  // Bez argumentu rysuje bieżący stan od nowa, na przykład po zmianie mapowania.
+  function _matchRender(view, why) {
+    if (view) _match.view = view;
+    if (why) _match.why = why;
+    var el = _$('b24t-match-preview');
+    if (!el) return;
+    var v = _match.view;
+    el.hidden = v === 'none';
+    if (v === 'none') { el.innerHTML = ''; return; }
+    var head = function (extra) {
+      return '<div class="b-card__head"><span class="b-card__title">Dopasowanie do Brand24</span>' + (extra || '') + '</div>';
+    };
+    var again = function (label) { return '<button type="button" class="b-btn b-btn--link b-small" data-match="again">' + label + '</button>'; };
+    if (v === 'wait') { el.innerHTML = head() + '<div class="b-hint">' + _escHtml(_match.why) + '</div>'; return; }
+    if (v === 'busy') {
+      var done = _match.pages ? Math.round(_match.page / _match.pages * 100) : 0;
+      el.innerHTML = head(_match.pages ? '<span class="b-hint b-mono">strona ' + _match.page + ' z ' + _match.pages + '</span>' : '') +
+        '<div class="b-progress"><i style="width:' + done + '%"></i></div>' +
+        '<div class="b-hint">Pobieranie wzmianek z dni ' + _escHtml(state.file.meta.minDate) + ' – ' + _escHtml(state.file.meta.maxDate) + '.</div>';
+      return;
+    }
+    if (v === 'error') {
+      el.innerHTML = head() + '<div class="b-small b-danger">Brand24 nie zwrócił wzmianek: ' + _escHtml(_match.err) + '</div><div>' + again('Spróbuj ponownie') + '</div>';
+      return;
+    }
+    var c = _matchCount(), miss = c.missed.length, pct = Math.round(c.matched / Math.max(1, c.rows) * 100);
+    var tone = pct < 50 ? ' b-danger' : pct < 80 ? ' b-warn' : '';
+    var chip = function (cls, label, n, tip) {
+      return n ? '<span class="b-chip b-chip--sm' + cls + '" data-tip="' + tip + '">' + label + ' <b>' + n + '</b></span>' : '';
+    };
+    el.innerHTML = head('<span class="b-kpi__val' + tone + '">' + pct + '%</span>') +
+      '<div class="b-progress"><i style="width:' + pct + '%"></i></div>' +
+      '<div class="b-small b-text2">' + c.matched + ' z ' + c.rows + ' ' + _relPl(c.rows, 'wiersza', 'wierszy', 'wierszy') + ' z oceną ma wzmiankę w projekcie</div>' +
+      '<div class="b-row b-row--wrap">' +
+        chip(' b-chip--danger', 'bez wzmianki', miss, 'Adresu nie ma wśród wzmianek projektu z dni pliku. Start pominie te wiersze.') +
+        chip('', 'z tagiem z mapowania', c.done, 'Wzmianka ma już tag przypisany ocenie. Start ją pominie.') +
+        chip(' b-chip--warn', 'z innym tagiem', c.other, 'Wzmianka ma w Brand24 inny tag. Mapa „Nieotagowane” jej nie znajdzie; przy mapie „Wszystkie” decyduje ustawienie konfliktów.') +
+        chip('', 'bez oceny', c.noAssessment, 'Wiersz nie ma oceny, więc Start go pominie.') +
+      '</div>' +
+      (_match.gaps ? '<div class="b-hint b-warn">Brand24 nie zwrócił ' + _match.gaps + ' ' + _relPl(_match.gaps, 'strony', 'stron', 'stron') +
+        ' wzmianek, więc część wierszy bez wzmianki może ją mieć.</div>' : '') +
+      '<div class="b-row b-row--wrap">' +
+        (miss ? '<button type="button" class="b-btn b-btn--link b-small" data-match="list" aria-expanded="' + _match.open + '">' +
+          (_match.open ? 'Ukryj' : 'Pokaż') + ' adresy bez wzmianki (' + miss + ')</button>' : '') +
+        '<span class="b-sp"></span>' + again('Przelicz') +
+      '</div>' +
+      (miss ? '<div class="b-pre" style="max-height:8em"' + (_match.open ? '' : ' hidden') + '>' +
+        c.missed.slice(0, 50).map(function (u) { return _escHtml(u || '(pusty adres)'); }).join('\n') +
+        (miss > 50 ? '\n… i ' + (miss - 50) + ' więcej' : '') + '</div>' : '');
   }
 
   // ───────────────────────────────────────────
@@ -10749,9 +10913,7 @@
       if (newMap.date)       parts.push('Data: "' + (sample[newMap.date] || '') + '"');
       preview.textContent = parts.join(' | ');
     }
-    state.matchPreview = null;
-    const prevEl = _$('b24t-match-preview');
-    if (prevEl) prevEl.style.display = 'none';
+    _matchSchedule();
   }
 
   // ───────────────────────────────────────────
@@ -11076,115 +11238,12 @@
     var el = _$('b24t-file-validation');
     var mpEl = _$('b24t-multiproject-section');
     var blocked = !!(el && el.dataset.hasErrors === '1') || !!(mpEl && mpEl.dataset.blocked === '1');
-    ['b24t-btn-start', 'b24t-btn-preview', 'b24t-btn-audit'].forEach(function(id) {
-      var b = _$(id);
-      if (b) b.disabled = blocked;
-    });
     var startBtn = _$('b24t-btn-start');
+    if (startBtn) startBtn.disabled = blocked;
     if (startBtn) {
       if (blocked) startBtn.setAttribute('data-tip', 'Start zablokowany: plik ma błędy krytyczne albo nieznane projekty');
       else startBtn.removeAttribute('data-tip');
     }
-  }
-
-  // ───────────────────────────────────────────
-  // F6 - AUDIT MODE
-  // ───────────────────────────────────────────
-
-  async function runAuditMode() {
-    if (!state.file || !state.projectId) return;
-    state.status = 'running';
-    state.sessionStart = Date.now();
-    updateStatusUI();
-    startSessionTimer();
-    addLog('🔍 Audit Mode — porównuję plik z Brand24 (bez tagowania)...', 'info');
-
-    const dateFrom = state.file.meta.minDate;
-    const dateTo   = state.file.meta.maxDate;
-    const colMap   = state.file.colMap;
-
-    const map = await buildUrlMap(dateFrom, dateTo, false);
-
-    const result = { alreadyTagged: [], untagged: [], taggedWrong: [], notFound: [], notInFile: 0 };
-    const fileUrls = new Set(state.file.rows.map(function(r){
-      return normalizeUrl(colMap.url ? (r[colMap.url] || '') : '');
-    }).filter(Boolean));
-    result.notInFile = Object.keys(map).filter(function(k){ return !fileUrls.has(k); }).length;
-
-    state.file.rows.forEach(function(row) {
-      const assessment = (colMap.assessment ? (row[colMap.assessment] || '') : '').trim().toUpperCase();
-      if (!assessment) return;
-      const urlRaw = colMap.url ? (row[colMap.url] || '') : '';
-      if (!urlRaw) return;
-      const entry = map[normalizeUrl(urlRaw)];
-      const expectedMapping = state.mapping[assessment];
-      if (!entry) { result.notFound.push(urlRaw); return; }
-      const tags = (entry.existingTags || []).map(function(t){ return t.id; });
-      if (tags.length === 0) {
-        result.untagged.push({ url: urlRaw, expected: expectedMapping ? expectedMapping.tagName : assessment });
-      } else if (expectedMapping && tags.includes(expectedMapping.tagId)) {
-        result.alreadyTagged.push(urlRaw);
-      } else {
-        result.taggedWrong.push({ url: urlRaw, expected: expectedMapping ? expectedMapping.tagName : assessment, actual: (entry.existingTags || []).map(function(t){ return t.title; }).join(', ') });
-      }
-    });
-
-    state.status = 'done';
-    updateStatusUI();
-    window.B24Tagger._lastAuditResult = result;
-    showAuditReport(result);
-    addLog('✓ Audit: ' + result.alreadyTagged.length + ' OK, ' + result.untagged.length + ' nieztagowane, ' + result.taggedWrong.length + ' złe tagi, ' + result.notFound.length + ' nie znaleziono', 'success');
-    // Audyt ciągnie wszystkie wzmianki z zakresu dat stronami, więc przy szerokim oknie
-    // schodzi mu kilka minut. Do powiadomienia idą liczby wymagające reakcji, nie samo „gotowe”:
-    // zgodne rekordy są bez znaczenia, rozjazdy trzeba obejrzeć.
-    var _aCzas = state.sessionStart ? Date.now() - state.sessionStart : 0;
-    var _aDoPoprawki = result.untagged.length + result.taggedWrong.length;
-    _ntfySend({
-      ev: 'auditDone',
-      title: _aDoPoprawki ? '🔍 Audyt gotowy — ' + _aDoPoprawki + ' do poprawki' : '🔍 Audyt gotowy — bez rozjazdów',
-      message: (_ntfyProjekt() ? _ntfyProjekt() + '\n' : '') +
-               'zgodne: ' + result.alreadyTagged.length + '\n' +
-               'nieotagowane: ' + result.untagged.length + '\n' +
-               'zły tag: ' + result.taggedWrong.length + '\n' +
-               'nie znaleziono w Brand24: ' + result.notFound.length +
-               (_aCzas ? '\nczas: ' + _ntfyCzas(_aCzas) : ''),
-      tags: [_aDoPoprawki ? 'mag' : 'white_check_mark'],
-      minutes: _aCzas / 60000,
-    });
-    saveSessionToHistory();
-  }
-
-  // Raport audytu (powierzchnia nr 5, okno dialogowe §1.6).
-  function showAuditReport(result) {
-    const row = (label, val, cls) => '<div class="b-list__row"><span class="b-text2">' + label + '</span><span class="b-sp"></span>' +
-      '<span class="b-strong' + (cls ? ' ' + cls : '') + '">' + val + '</span></div>';
-    let wrongHtml = '';
-    if (result.taggedWrong.length > 0) {
-      wrongHtml = '<div class="b-stack b-stack--sm"><div class="b-label">Błędne tagi, pierwsze ' + Math.min(5, result.taggedWrong.length) + '</div>' +
-        result.taggedWrong.slice(0, 5).map(function(e) {
-          return '<div class="b-inset b-small b-stack b-stack--xs"><span class="b-ell b-muted">' + _escHtml(e.url || '') + '</span>' +
-            '<span><span class="b-danger">ma: ' + _escHtml(e.actual) + '</span> · <span class="b-ok">powinien: ' + _escHtml(e.expected) + '</span></span></div>';
-        }).join('') + '</div>';
-    }
-    Win.close('report');
-    const w = Win.open({
-      id: 'report', kind: 'dialog', width: 36, title: 'Raport audytu', from: _$('b24t-btn-audit'),
-      body: '<div class="b-stack"><div class="b-list" style="gap:0.5em">' +
-        row('Prawidłowo otagowane', result.alreadyTagged.length, 'b-ok') +
-        row('Nieotagowane', result.untagged.length, result.untagged.length ? 'b-warn' : '') +
-        row('Błędny tag', result.taggedWrong.length, result.taggedWrong.length ? 'b-danger' : '') +
-        row('Nie ma w Brand24', result.notFound.length, '') +
-        row('W Brand24, brak w pliku', result.notInFile, '') +
-        '</div>' + wrongHtml + '</div>',
-      foot: '<span class="b-sp"></span><button type="button" class="b-btn b-btn--quiet" data-rep="close">Zamknij</button>' +
-        '<button type="button" class="b-btn b-btn--primary" data-rep="export" autofocus>' + _icon('download') + 'Eksport CSV</button>'
-    });
-    w.el.addEventListener('click', function(e) {
-      const b = e.target.closest('[data-rep]');
-      if (!b) return;
-      if (b.dataset.rep === 'export') window.B24Tagger.exportAuditReport();
-      else Win.close('report');
-    });
   }
 
   // ───────────────────────────────────────────
@@ -11240,37 +11299,6 @@
 
 
   // ───────────────────────────────────────────
-  // FEATURE: MATCH PREVIEW
-  // ───────────────────────────────────────────
-
-  async function runMatchPreview() {
-    if (!state.file || !state.projectId || !state.tokenHeaders) return null;
-    const dateFrom = state.file.meta.minDate;
-    const dateTo   = state.file.meta.maxDate;
-    if (!dateFrom || !dateTo) return null;
-    addLog('→ Match Preview: buduję mapę...', 'info');
-    const map = await buildUrlMap(dateFrom, dateTo, state.mapMode === 'untagged');
-    const colMap = state.file.colMap;
-    let matched = 0, unmatched = 0, noAssessment = 0;
-    const unmatchedList = [];
-    state.file.rows.forEach(row => {
-      const assessment = colMap.assessment ? (row[colMap.assessment] || '').trim() : '';
-      if (!assessment) { noAssessment++; return; }
-      const urlRaw = colMap.url ? (row[colMap.url] || '') : '';
-      if (!urlRaw) { unmatched++; return; }
-      if (map[normalizeUrl(urlRaw)]) { matched++; }
-      else { unmatched++; if (unmatchedList.length < 50) unmatchedList.push(urlRaw); }
-    });
-    state.matchPreview = {
-      matched, unmatched, noAssessment,
-      total: state.file.rows.length,
-      pct: Math.round(matched / Math.max(1, matched + unmatched) * 100),
-      unmatchedList, dateFrom, dateTo,
-    };
-    return state.matchPreview;
-  }
-
-  // ───────────────────────────────────────────
   // FEATURE: MANUAL COLUMN MAPPING
 
   // ───────────────────────────────────────────
@@ -11278,9 +11306,6 @@
 
   // ───────────────────────────────────────────
   // FEATURE: FILE VALIDATION
-
-  // ───────────────────────────────────────────
-  // FEATURE: AUDIT MODE
 
   // ───────────────────────────────────────────
   // FEATURE: SOUND NOTIFICATION
@@ -12087,10 +12112,6 @@
 
   function _gsBuildHud() {
     if (Win.get(GS_HUD)) return;
-    // Motyw z panelu Brand24: strona wyników nie ma własnego ustawienia, a localStorage Google jest osobny.
-    var theme = 'dark';
-    try { theme = GM_getValue('b24t_theme_mirror', 'dark') === 'light' ? 'light' : 'dark'; } catch(e) {}
-    _uiEnsure().app.setAttribute('data-b24t-theme', theme);
 
     var stopIco = _icon('stop', 'b-ico-stop');
     var w = Win.open({
@@ -14471,7 +14492,7 @@
   }
 
   function _naNewSession(country) {
-    if (lsGet(LS.NA_CONSENT) !== '1') return;
+    if (gmGet(PREF.NA_CONSENT) !== '1') return;
     if (newsState.sessionId) {
       var prevAgg = _naAggSession();
       var stats = lsGet(LS.NA_SESSION_STATS, []);
@@ -14522,7 +14543,7 @@
   // Zgoda na analitykę News (powierzchnia nr 72, okno dialogowe §1.6). Esc i ✕ odkładają decyzję: okno wraca
   // przy kolejnym otwarciu News.
   function _naShowConsentIfNeeded() {
-    var consent = lsGet(LS.NA_CONSENT);
+    var consent = gmGet(PREF.NA_CONSENT);
     if (consent === '1' || consent === '0') return;
     var w = Win.open({
       id: 'news-consent', kind: 'dialog', width: 36, elId: 'b24t-na-consent', title: 'Analityka skanowania News',
@@ -14537,16 +14558,16 @@
         '<button type="button" class="b-btn b-btn--quiet" id="b24t-na-consent-no">Wyłącz analitykę</button>' +
         '<button type="button" class="b-btn b-btn--primary" id="b24t-na-consent-yes" autofocus>Włącz analitykę</button>'
     });
-    w.el.querySelector('#b24t-na-consent-yes').addEventListener('click', function() { lsSet(LS.NA_CONSENT, '1'); Win.close('news-consent'); });
-    w.el.querySelector('#b24t-na-consent-no').addEventListener('click', function() { lsSet(LS.NA_CONSENT, '0'); Win.close('news-consent'); });
+    w.el.querySelector('#b24t-na-consent-yes').addEventListener('click', function() { gmSet(PREF.NA_CONSENT, '1'); Win.close('news-consent'); });
+    w.el.querySelector('#b24t-na-consent-no').addEventListener('click', function() { gmSet(PREF.NA_CONSENT, '0'); Win.close('news-consent'); });
   }
 
   function _naGetSettings() {
-    return lsGet(LS.NA_SETTINGS, { enabled: false, pat: '', repo: 'i24dev/i24_analytics', lastPush: null });
+    return gmGet(PREF.NA_SETTINGS, { enabled: false, pat: '', repo: 'i24dev/i24_analytics', lastPush: null });
   }
 
   function _naSaveSettings(s) {
-    lsSet(LS.NA_SETTINGS, s);
+    gmSet(PREF.NA_SETTINGS, s);
   }
 
   function _naAggSession() {
@@ -14618,7 +14639,7 @@
 
   function _naPushSession(sessionData, onDone) {
     var ns = _naGetSettings();
-    if (!ns.enabled || !ns.pat || lsGet(LS.NA_CONSENT) !== '1') {
+    if (!ns.enabled || !ns.pat || gmGet(PREF.NA_CONSENT) !== '1') {
       if (onDone) onDone('skip');
       return;
     }
@@ -14672,7 +14693,7 @@
   }
 
   function _naRetryPending() {
-    if (lsGet(LS.NA_CONSENT) !== '1') return;
+    if (gmGet(PREF.NA_CONSENT) !== '1') return;
     var pending = lsGet(LS.NA_PENDING, []);
     if (!pending.length) return;
     lsSet(LS.NA_PENDING, []);
@@ -16192,8 +16213,6 @@
       id: 'news-custom', kind: 'float', elId: 'b24t-news-custom', title: 'Niestandardowe', icon: 'pencil',
       winClass: 'b-nwin-custom', mainClass: 'b-nfloat', body: _newsUi.form,
       anchor: { a: 'tr', dx: 56, dy: 20 }, remember: 'news-custom', menuLabel: 'Więcej',
-      actions: [{ id: 'b24t-news-custom-settings-btn', icon: 'settings', label: 'Ustawienia trybu Niestandardowe',
-        onClick: function() { _openCustomPanelSettings(); } }],
       menu: function() {
         return [{ label: 'Zgłoś błąd albo pomysł', icon: 'chat', onSelect: function() { showReportModal({ kind: 'bug', area: 'Dodawanie wzmianek' }); } }];
       },
@@ -16212,7 +16231,7 @@
     _newsPark(_newsUi.form, _newsUi.cols);
     // Zmiana trybu: drugie okno modułu już stoi, więc sesja trwa dalej.
     if (Win.get('news') || Win.get('news-custom')) return;
-    if (newsState.sessionId && lsGet(LS.NA_CONSENT) === '1') {
+    if (newsState.sessionId && gmGet(PREF.NA_CONSENT) === '1') {
       var _naClose = _naAggSession();
       var _naStats = lsGet(LS.NA_SESSION_STATS, []);
       if (!_naStats.some(function(s) { return s.sessionId === _naClose.sessionId; })) {
@@ -17002,83 +17021,6 @@
         }), '_blank');
         if (tab) tab.focus();
       });
-    });
-  }
-
-  // ── USTAWIENIA TRYBU NIESTANDARDOWE (powierzchnia nr 81, okno dialogowe 36em) ──
-  function _openCustomPanelSettings() {
-    if (Win.get('news-custom-settings')) { Win.close('news-custom-settings'); return; }
-    var s = _aiGetSettings();
-    var c = s.custom || {};
-    var prompts = (s.prompts || []).filter(function(p) { return p.mode === 'custom' || p.mode === 'all' || !p.mode; });
-    var w = Win.open({
-      id: 'news-custom-settings', kind: 'dialog', width: 36, elId: 'b24t-custom-settings', title: 'Ustawienia trybu Niestandardowe',
-      from: _$('b24t-news-custom-settings-btn'),
-      body: '<div class="b-stack">' +
-        '<label class="b-switch"><input type="checkbox" id="b24t-cps-ai"' + (c.enabled ? ' checked' : '') + '><span>Ocena AI wzmianki</span></label>' +
-        '<label class="b-field"><span class="b-label">Prompt AI</span><select class="b-select" id="b24t-cps-prompt-sel">' +
-          '<option value="">Bez promptu</option>' +
-          prompts.map(function(p) {
-            return '<option value="' + _escHtml(p.id) + '"' + (p.id === c.activePromptId ? ' selected' : '') + '>' + _escHtml(p.name || p.id) + '</option>';
-          }).join('') +
-        '</select></label>' +
-        '<hr class="b-sep">' +
-        '<div class="b-stack b-stack--sm">' +
-          '<div class="b-row b-row--wrap"><span class="b-strong">Lista projektów</span><span class="b-sp"></span>' +
-            '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-cps-sync">' + _icon('refresh') + 'Odbuduj listę</button></div>' +
-          '<p class="b-hint">Czyści listę projektów w pamięci wtyczki i odbudowuje ją z danych zapisanych na stronie Brand24. ' +
-            'Pomaga, gdy na liście stoją projekty bez nazw albo nieaktualne; działa tylko na stronie Brand24.</p>' +
-          '<p class="b-hint b-nstate" id="b24t-cps-sync-msg" aria-live="polite"></p>' +
-        '</div>' +
-      '</div>',
-      foot: '<span class="b-sp"></span><button type="button" class="b-btn b-btn--quiet" data-cps="cancel">Anuluj</button>' +
-        '<button type="button" class="b-btn b-btn--primary" id="b24t-cps-save">Zapisz</button>'
-    });
-
-    w.el.querySelector('[data-cps="cancel"]').addEventListener('click', function() { Win.close('news-custom-settings'); });
-    w.el.querySelector('#b24t-cps-save').addEventListener('click', function() {
-      var cfg = _aiGetSettings();
-      if (!cfg.custom) cfg.custom = {};
-      cfg.custom.enabled = w.el.querySelector('#b24t-cps-ai').checked;
-      cfg.custom.activePromptId = w.el.querySelector('#b24t-cps-prompt-sel').value || null;
-      _aiSaveSettings(cfg);
-      Win.close('news-custom-settings');
-      Toast.show('Zapisano ustawienia trybu Niestandardowe', 'ok');
-    });
-
-    // Reset + przebuduj listę projektów
-    var syncMsg = w.el.querySelector('#b24t-cps-sync-msg');
-    w.el.querySelector('#b24t-cps-sync').addEventListener('click', function() {
-      // Dane do odbudowy są tylko w localStorage Brand24 — na innej stronie nie ma z czego budować.
-      var lsProj  = lsGet(LS.PROJECTS, {});
-      var lsNames = lsGet(LS.PROJECT_NAMES, {});
-      if (Object.keys(lsProj).length === 0 && Object.keys(lsNames).length === 0) {
-        syncMsg.dataset.state = 'warn';
-        syncMsg.textContent = 'Ta strona nie ma danych projektów. Ten sam przycisk na stronie Brand24 odbuduje listę.';
-        return;
-      }
-      // Wyczyść bridge i odbuduj wyłącznie z LS
-      _gmPNSynced = false;
-      var newProj = {}, newNames = {};
-      Object.keys(lsProj).forEach(function(pid) {
-        var p = lsProj[pid] || {};
-        if (!_isFallbackProjectName(p.name)) {
-          newProj[String(pid)] = p;
-          newNames[String(pid)] = p.name;
-        }
-      });
-      Object.keys(lsNames).forEach(function(pid) {
-        if (!_isFallbackProjectName(lsNames[pid])) newNames[String(pid)] = lsNames[pid];
-      });
-      // Zapisz do B24Bridge (czyści stare, wpisuje tylko dobre)
-      var _cleanProj = {};
-      Object.keys(newProj).forEach(function(pid) { _cleanProj[pid] = newProj[pid]; });
-      Object.keys(newNames).forEach(function(pid) { if (!_cleanProj[pid]) _cleanProj[pid] = {}; _cleanProj[pid].name = newNames[pid]; });
-      B24Bridge.projects.setAll(_cleanProj);
-      _newsRefillProjectSelect();
-      var n = Object.keys(newProj).length;
-      syncMsg.dataset.state = 'ok';
-      syncMsg.textContent = 'Odbudowano listę: ' + n + ' ' + _relPl(n, 'projekt', 'projekty', 'projektów') + '.';
     });
   }
 
@@ -20114,6 +20056,59 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.4",
+      "date": "2026-10-03",
+      "label": "improved",
+      "changes": [
+        {
+          "type": "improved",
+          "area": "Tagowanie z pliku",
+          "title": "Dopasowanie pliku do Brand24 liczone samo po wgraniu pliku",
+          "items": [
+            "Karta „Dopasowanie do Brand24” pod plikiem pokazuje, ile wierszy z oceną ma wzmiankę w projekcie, ile z nich ma tag z mapowania, a ile inny tag.",
+            "„Pokaż adresy bez wzmianki” rozwija listę adresów, których nie ma wśród wzmianek projektu, a „Przelicz” pobiera wzmianki od nowa.",
+            "Dopasowanie liczy się samo także po zmianie kolumn i po każdym przebiegu, więc po tagowaniu karta pokazuje, ile wzmianek ma już swój tag.",
+            "Stopka karty Plik ma sam „Start” i eksport logu: wyniki „Match” i „Audit” są w karcie dopasowania."
+          ],
+          "comment": "Match liczył dopasowanie z pierwszych ok. 60 wzmianek, więc przy większych plikach wynik wychodził zaniżony, a Audit liczył prawie to samo w osobnym oknie. Jedna karta robi obie rzeczy bez klikania.",
+          "text": "Dopasowanie pliku do Brand24 liczone samo po wgraniu pliku. Karta „Dopasowanie do Brand24” pod plikiem pokazuje, ile wierszy z oceną ma wzmiankę w projekcie, ile z nich ma tag z mapowania, a ile inny tag. „Pokaż adresy bez wzmianki” rozwija listę adresów, których nie ma wśród wzmianek projektu, a „Przelicz” pobiera wzmianki od nowa. Dopasowanie liczy się samo także po zmianie kolumn i po każdym przebiegu, więc po tagowaniu karta pokazuje, ile wzmianek ma już swój tag. Stopka karty Plik ma sam „Start” i eksport logu: wyniki „Match” i „Audit” są w karcie dopasowania."
+        },
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Wspólne ustawienia dla app.brand24.com i panel.brand24.pl",
+          "items": [
+            "Motyw, rozmiar tekstu, animacje, włączone funkcje, kanał aktualizacji i analityka mają jedną wartość dla obu paneli Brand24.",
+            "Po aktualizacji obowiązują ustawienia panelu otwartego jako pierwszy, a z drugiego dochodzą tylko te, których brakowało.",
+            "Zmiana motywu, rozmiaru tekstu, animacji albo funkcji w jednej karcie przeglądarki działa od razu w pozostałych."
+          ],
+          "text": "Wspólne ustawienia dla app.brand24.com i panel.brand24.pl. Motyw, rozmiar tekstu, animacje, włączone funkcje, kanał aktualizacji i analityka mają jedną wartość dla obu paneli Brand24. Po aktualizacji obowiązują ustawienia panelu otwartego jako pierwszy, a z drugiego dochodzą tylko te, których brakowało. Zmiana motywu, rozmiaru tekstu, animacji albo funkcji w jednej karcie przeglądarki działa od razu w pozostałych."
+        },
+        {
+          "type": "improved",
+          "area": "Dodawanie wzmianek",
+          "title": "„Odśwież listę projektów” w Ustawieniach zamiast „Odbuduj listę” i „Sprawdź nazwy”",
+          "items": [
+            "Projekt otwarty w Brand24 trafia na listę formularza „Dodaj wzmiankę” sam, a odświeżenie poprawia w Brand24 nazwy niepotwierdzone i przywraca projekty, które znów są dostępne."
+          ],
+          "text": "„Odśwież listę projektów” w Ustawieniach zamiast „Odbuduj listę” i „Sprawdź nazwy”. Projekt otwarty w Brand24 trafia na listę formularza „Dodaj wzmiankę” sam, a odświeżenie poprawia w Brand24 nazwy niepotwierdzone i przywraca projekty, które znów są dostępne."
+        },
+        {
+          "type": "fix",
+          "area": "Dodawanie wzmianek",
+          "title": "Naprawiono błąd, przez który poprawiona nazwa projektu wracała do starej na drugim panelu Brand24",
+          "text": "Naprawiono błąd, przez który poprawiona nazwa projektu wracała do starej na drugim panelu Brand24."
+        },
+        {
+          "type": "improved",
+          "area": "Dodawanie wzmianek",
+          "title": "Panel Niestandardowe bez okna ustawień z nieużywanymi opcjami",
+          "comment": "Opcje w tym oknie nie zmieniały działania panelu, więc okno zniknęło razem z przyciskiem w nagłówku i znacznikiem „Niestandardowe” w bibliotece promptów.",
+          "text": "Panel Niestandardowe bez okna ustawień z nieużywanymi opcjami."
+        }
+      ]
+    },
+    {
       "version": "0.38.3",
       "date": "2026-10-03",
       "label": "new",
@@ -20730,22 +20725,6 @@
           "text": "Przełącznik „Ukryj załatwione” w oknie przeglądu sentymentu. Ukrywa kafelki, przy których zapadła już decyzja. Ostatnio zdecydowany kafelek zostaje widoczny do następnej decyzji, z możliwością cofnięcia. Kafelek, którego nie udało się zapisać, wraca na widok. Ustawienie przełącznika jest zapamiętywane."
         }
       ]
-    },
-    {
-      "version": "0.36.7",
-      "date": "2026-10-01",
-      "label": "improved",
-      "changes": [
-        {
-          "type": "improved",
-          "area": "Przegląd sentymentu",
-          "title": "Ocena dużych projektów w przeglądzie sentymentu trwa o połowę krócej",
-          "items": [
-            "Mniejsze przeglądy trwają tyle samo. Koszt oceny się nie zmienia."
-          ],
-          "text": "Ocena dużych projektów w przeglądzie sentymentu trwa o połowę krócej. Mniejsze przeglądy trwają tyle samo. Koszt oceny się nie zmienia."
-        }
-      ]
     }
   ];
 
@@ -20793,7 +20772,7 @@
     for (var i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0);
     return 0;
   }
-  function _relChannel() { return lsGet(LS.UPDATE_CHANNEL, 'stable') === 'experimental' ? 'experimental' : 'stable'; }
+  function _relChannel() { return gmGet(PREF.UPDATE_CHANNEL, 'stable') === 'experimental' ? 'experimental' : 'stable'; }
   // Twarda spacja w grupach cyfr („1 000”), żeby liczba nie łamała się na końcu wiersza (CHANGELOG_STYLE.md §5).
   function _relNb(s) { return String(s).replace(/(\d) (?=\d{3}(?!\d))/g, '$1 '); }
   // Nazwy z ekranu w „…” pogrubione. Działa na tekście już escapowanym, więc nie wpuszcza HTML-a z pliku.
@@ -21682,16 +21661,16 @@
   // funkcje, ustawienia i dane nie zależą od kanału.
   // Rusza dopiero, gdy na main jest już ta wersja albo nowsza. Wcześniej Stabilny nie ma opisu tej wersji
   // (RELEASE_NOTES.json leży na main), a użytkownik, który wziął wersję z Experimental przed wydaniem,
-  // straciłby dziennik. Kanał i znacznik leżą w localStorage, czyli osobno dla app.brand24.com
-  // i panel.brand24.pl: każdy panel przełącza się raz, a ręczny powrót na Experimental jest ostateczny.
+  // straciłby dziennik. Kanał i znacznik leżą w pamięci Tampermonkeya, wspólnej dla app.brand24.com
+  // i panel.brand24.pl: przełączenie następuje raz, a ręczny powrót na Experimental jest ostateczny.
   function _relMoveToStable(onMoved) {
-    if (_relChannel() !== 'experimental' || lsGet(LS.CHANNEL_MOVED, null)) return;
+    if (_relChannel() !== 'experimental' || gmGet(PREF.CHANNEL_MOVED, null)) return;
     _relRemoteVersion(RAW_URL_STABLE, function(stable) {
       if (!stable || _relCmp(stable, VERSION) < 0) return;
       // Ustawienia mogły zmienić kanał w trakcie zapytania.
-      if (_relChannel() !== 'experimental' || lsGet(LS.CHANNEL_MOVED, null)) return;
-      lsSet(LS.CHANNEL_MOVED, VERSION);
-      lsSet(LS.UPDATE_CHANNEL, 'stable');
+      if (_relChannel() !== 'experimental' || gmGet(PREF.CHANNEL_MOVED, null)) return;
+      gmSet(PREF.CHANNEL_MOVED, VERSION);
+      gmSet(PREF.UPDATE_CHANNEL, 'stable');
       addLog('ℹ Kanał aktualizacji przełączony na Stabilny. Powrót: Ustawienia → Kanał aktualizacji → Eksperymentalny.', 'info');
       onMoved();
     });
@@ -21713,7 +21692,7 @@
   // Dziennik zmian zawsze z experimental, opisy wersji stabilnych z main (CHANGELOG_STYLE.md §1).
   const CHANGELOG_URL     = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/experimental/CHANGELOG.json';
   const RELEASE_NOTES_URL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/RELEASE_NOTES.json';
-  function getRawUrl() { return lsGet(LS.UPDATE_CHANNEL, 'stable') === 'experimental' ? RAW_URL_EXPERIMENTAL : RAW_URL_STABLE; }
+  function getRawUrl() { return gmGet(PREF.UPDATE_CHANNEL, 'stable') === 'experimental' ? RAW_URL_EXPERIMENTAL : RAW_URL_STABLE; }
 
   // ───────────────────────────────────────────
   // ZGŁOSZENIA BŁĘDÓW I POMYSŁÓW
@@ -22164,21 +22143,13 @@
     },
   ];
 
-  // Flagi funkcji czytamy też POZA Brand24. `localStorage` jest per origin, więc na Instagramie
-  // czy TikToku jest pusty — a to właśnie tam używa się formularza wzmianki. Stąd kopia w pamięci
-  // Tampermonkeya, dokładnie tak jak wtyczka robi to z motywem (`b24t_theme_mirror`).
   function loadFeatures() {
-    try {
-      var raw = lsGet(LS.FEATURES, null);
-      if (raw) return JSON.parse(raw);
-    } catch(e) {}
-    try { return JSON.parse(GM_getValue('b24t_features_mirror', '{}')); } catch(e) { return {}; }
+    var f = gmGet(PREF.FEATURES, null);
+    return f && typeof f === 'object' ? f : {};
   }
 
   function saveFeatures(features) {
-    var json = JSON.stringify(features);
-    lsSet(LS.FEATURES, json);
-    try { GM_setValue('b24t_features_mirror', json); } catch(e) {}
+    gmSet(PREF.FEATURES, features);
   }
 
   function applyFeatures() {
@@ -22381,7 +22352,7 @@
     show(first, true);
   }
 
-  // Zakładka Ogólne: wygląd, funkcje opcjonalne, kanał aktualizacji, nazwy projektów.
+  // Zakładka Ogólne: wygląd, funkcje opcjonalne, kanał aktualizacji, lista projektów.
   function _setPaneGeneral(pane, ctx) {
     var features = loadFeatures();
     var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -22392,12 +22363,12 @@
     ];
     pane.innerHTML =
       '<section class="b-set-sec"><h3 class="b-set-sec__title">Wygląd</h3>' +
-        _setRow('Motyw', '', _setSeg('b24t-set-theme', 'Motyw', lsGet(LS.THEME, 'light'), [['light', 'Jasny', 'sun'], ['dark', 'Ciemny', 'moon']])) +
+        _setRow('Motyw', '', _setSeg('b24t-set-theme', 'Motyw', _themeGet(), [['light', 'Jasny', 'sun'], ['dark', 'Ciemny', 'moon']])) +
         _setRow('Rozmiar tekstu', 'Automatyczny rośnie z szerokością okna przeglądarki.',
-          _setSeg('b24t-set-text', 'Rozmiar tekstu', lsGet(LS.UI_TEXT, 'auto'), [['auto', 'Automatyczny'], ['sm', 'Mniejszy'], ['lg', 'Większy']])) +
+          _setSeg('b24t-set-text', 'Rozmiar tekstu', gmGet(PREF.UI_TEXT, 'auto'), [['auto', 'Automatyczny'], ['sm', 'Mniejszy'], ['lg', 'Większy']])) +
         _setRow('Animacje', 'Pełne: okna wyrastają z przycisku i przesuwają się na miejsce. Ograniczone: okna tylko się ' +
           'rozjaśniają i gasną. Jak w systemie: według ustawień systemu, teraz ' + (reduced ? 'ograniczone' : 'pełne') + '.',
-          _setSeg('b24t-set-motion', 'Animacje', lsGet(LS.UI_MOTION, 'auto'), [['auto', 'Jak w systemie'], ['full', 'Pełne'], ['lite', 'Ograniczone']])) +
+          _setSeg('b24t-set-motion', 'Animacje', gmGet(PREF.UI_MOTION, 'auto'), [['auto', 'Jak w systemie'], ['full', 'Pełne'], ['lite', 'Ograniczone']])) +
       '</section>' +
       '<section class="b-set-sec"><h3 class="b-set-sec__title">Funkcje</h3>' +
         OPTIONAL_FEATURES.map(function (f) {
@@ -22414,18 +22385,19 @@
             '<span class="b-hint">' + c[2] + '</span></span></label>';
         }).join('') + '</div>' +
       '</section>' +
-      '<section class="b-set-sec"><h3 class="b-set-sec__title">Nazwy projektów</h3>' +
+      '<section class="b-set-sec"><h3 class="b-set-sec__title">Lista projektów</h3>' +
         _setRow('Niepotwierdzone przez Brand24: <b id="b24t-pn-missing-count">…</b>',
-          'Nazwa projektu zapisuje się z tytułu karty przeglądarki i bywa błędna; sprawdzenie pobiera nazwy z Brand24.',
-          '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-pn-fill">' + _icon('refresh') + 'Sprawdź nazwy</button>') +
+          'Projekt otwarty w Brand24 trafia na listę formularza „Dodaj wzmiankę” sam. Odświeżenie sprawdza w Brand24 ' +
+          'nazwy niepotwierdzone i projekty ukryte: poprawia nazwy, ukrywa projekty niedostępne i przywraca dostępne.',
+          '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-pn-refresh">' + _icon('refresh') + 'Odśwież listę projektów</button>') +
         '<div id="b24t-pn-status" class="b-set-msg b-small b-muted" role="status" hidden></div>' +
       '</section>';
 
     pane.addEventListener('change', function (e) {
       var t = e.target;
       if (t.name === 'b24t-set-theme') applyTheme(t.value);
-      else if (t.name === 'b24t-set-text') { lsSet(LS.UI_TEXT, t.value); _uiApplyPrefs(); }
-      else if (t.name === 'b24t-set-motion') { lsSet(LS.UI_MOTION, t.value); _uiApplyPrefs(); }
+      else if (t.name === 'b24t-set-text') { gmSet(PREF.UI_TEXT, t.value); _uiApplyPrefs(); }
+      else if (t.name === 'b24t-set-motion') { gmSet(PREF.UI_MOTION, t.value); _uiApplyPrefs(); }
       else if (t.dataset.feature) {
         var f = loadFeatures();
         f[t.dataset.feature] = t.checked;
@@ -22434,8 +22406,8 @@
       } else if (t.name === 'b24t-channel') {
         // Wybór kanału jest ostateczny: bez znacznika jednorazowe przełączenie (_relMoveToStable) cofało
         // „Eksperymentalny” przy następnym otwarciu panelu, gdy na main była ta sama wersja.
-        if (!lsGet(LS.CHANNEL_MOVED, null)) lsSet(LS.CHANNEL_MOVED, VERSION);
-        lsSet(LS.UPDATE_CHANNEL, t.value);
+        if (!gmGet(PREF.CHANNEL_MOVED, null)) gmSet(PREF.CHANNEL_MOVED, VERSION);
+        gmSet(PREF.UPDATE_CHANNEL, t.value);
         _relOnChannel();
         addLog('ℹ Kanał aktualizacji: ' + (t.value === 'experimental' ? 'Eksperymentalny' : 'Stabilny') + '.', 'info');
       } else return;
@@ -22443,7 +22415,7 @@
     });
 
     var pnCountEl = pane.querySelector('#b24t-pn-missing-count');
-    var pnFillBtn = pane.querySelector('#b24t-pn-fill');
+    var pnRefreshBtn = pane.querySelector('#b24t-pn-refresh');
     var pnStatusEl = pane.querySelector('#b24t-pn-status');
 
     // Do sprawdzenia kwalifikuje się projekt, którego nazwa nie została POTWIERDZONA przez API
@@ -22476,12 +22448,12 @@
       var miss = _getMissingIds().length, hid = _getHiddenIds().length;
       pnCountEl.textContent = hid ? (miss + ' (+' + hid + ' ukrytych)') : String(miss);
       // Przycisk zostaje aktywny także wtedy, gdy są same ukryte — to jedyna droga do ich odzyskania.
-      pnFillBtn.disabled = (miss + hid) === 0;
+      pnRefreshBtn.disabled = (miss + hid) === 0;
     }
     _refreshPnCount();
 
-    pnFillBtn.addEventListener('click', function() {
-      if (_setIsBusy(pnFillBtn)) return;
+    pnRefreshBtn.addEventListener('click', function() {
+      if (_setIsBusy(pnRefreshBtn)) return;
       if (!state.tokenHeaders) {
         _setSay(pnStatusEl, 'Brak tokenu Brand24: otwórz wyniki projektu w Brand24 i sprawdź ponownie.', 'danger');
         return;
@@ -22498,12 +22470,12 @@
         _setSay(pnStatusEl, 'Wszystkie nazwy są potwierdzone.', 'ok');
         return;
       }
-      _setBusy(pnFillBtn, 'Sprawdzam…');
+      _setBusy(pnRefreshBtn, 'Sprawdzam…');
 
       var found = 0, renamed = 0, dead = 0, unknown = 0;
 
       function _finish() {
-        _setBusy(pnFillBtn, null);
+        _setBusy(pnRefreshBtn, null);
         _refreshPnCount();
         _newsRefillProjectSelect();   // dropdown modalu może być otwarty — pokaż nowe nazwy
         var parts = [];
@@ -22709,7 +22681,7 @@
 
     function uses(s, id) {
       return [['AI Tag', s.tagging.activePromptId], ['News', s.news.activePromptId], ['Sentyment', s.sentiment.promptId],
-        ['Kampanie', s.campaign.activePromptId], ['Niestandardowe', s.custom.activePromptId]]
+        ['Kampanie', s.campaign.activePromptId]]
         .filter(function (x) { return x[1] === id; }).map(function (x) { return x[0]; });
     }
 
@@ -30663,16 +30635,12 @@
 
   // „✚ B24” na stronach spoza Brand24 (powierzchnia nr 90, uchwyt krawędziowy §1.11; katalog nr 9). Uchwyt
   // przesuwa się wzdłuż krawędzi i przechodzi na drugą po przeciągnięciu za środek strony; miejsce zapisuje się
-  // w localStorage odwiedzanej strony, czyli osobno dla każdej domeny. Motyw idzie z kopii w GM, bo localStorage
-  // Brand24 jest tu niedostępny; ustawiony tylko w korzeniu wtyczki, żeby nie znaczyć cudzej strony.
+  // w localStorage odwiedzanej strony, czyli osobno dla każdej domeny.
   function _initMiniMentionButton() {
     // Nie w ramce i nie u kogoś, kto nigdy nie używał wtyczki (brak zapisanych projektów).
     try { if (window.top !== window.self) return; } catch(e) { return; }
     var projects = _gmGetProjects();
     if (!projects || Object.keys(projects).length === 0) return;
-    var theme = 'dark';
-    try { theme = GM_getValue('b24t_theme_mirror', 'dark'); } catch(e) {}
-    _uiEnsure().app.setAttribute('data-b24t-theme', theme);
     Edge.add({
       id: 'mini', elId: 'b24t-mini-mention-btn', side: 'right', label: 'Dodaj wzmiankę', icon: 'plus',
       remember: 'edge-mini', y: 0.33, switchable: true,
@@ -30808,6 +30776,8 @@
 
     // Zastosuj opcjonalne funkcje
     applyFeatures();
+    // Przełączniki zmienione w innej karcie, także na drugim panelu Brand24.
+    try { GM_addValueChangeListener(PREF.FEATURES, function(name, oldV, newV, remote) { if (remote) applyFeatures(); }); } catch(e) {}
 
   }
 

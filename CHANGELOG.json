@@ -1,5 +1,255 @@
 [
   {
+    "version": "0.38.0",
+    "date": "2026-10-03",
+    "label": "new",
+    "changes": [
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "Nowy wygląd całej wtyczki",
+        "items": [
+          "Panel, przegląd sentymentu, News, Dashboard Annotatora, ustawienia i dzienniki mają jeden wygląd w jasnym i ciemnym motywie.",
+          "Okna przeciąga się, zmienia im rozmiar i przyciąga do krawędzi przeglądarki. Położenie jest zapamiętane osobno dla każdej szerokości ekranu.",
+          "Panel zwija się do pigułki, która w trakcie przebiegu pokazuje postęp.",
+          "Samouczek nowego wyglądu w kilku krokach pokazuje najważniejsze zmiany. Uruchamia się go z tego okna albo z menu „⋯” → Pomoc."
+        ],
+        "comment": "Wtyczka rosła przez kilkadziesiąt wersji i każde okno dostawało własny wygląd. Przebudowaliśmy wszystkie od zera w jednym systemie, żeby cały dzień pracy z nią mniej męczył oczy i ręce.",
+        "highlight": true,
+        "text": "Nowy wygląd całej wtyczki. Panel, przegląd sentymentu, News, Dashboard Annotatora, ustawienia i dzienniki mają jeden wygląd w jasnym i ciemnym motywie. Okna przeciąga się, zmienia im rozmiar i przyciąga do krawędzi przeglądarki. Położenie jest zapamiętane osobno dla każdej szerokości ekranu. Panel zwija się do pigułki, która w trakcie przebiegu pokazuje postęp. Samouczek nowego wyglądu w kilku krokach pokazuje najważniejsze zmiany. Uruchamia się go z tego okna albo z menu „⋯” → Pomoc."
+      },
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "Paleta poleceń pod Ctrl+K i ściągawka skrótów pod „?”",
+        "items": [
+          "Paleta wyszukuje akcje i okna wtyczki po nazwie, także bez polskich znaków. Przycisk palety jest w menu „⋯”, a przy szerszym panelu także w nagłówku.",
+          "Klawisz „?” pokazuje skróty wszystkich otwartych okien."
+        ],
+        "text": "Paleta poleceń pod Ctrl+K i ściągawka skrótów pod „?”. Paleta wyszukuje akcje i okna wtyczki po nazwie, także bez polskich znaków. Przycisk palety jest w menu „⋯”, a przy szerszym panelu także w nagłówku. Klawisz „?” pokazuje skróty wszystkich otwartych okien."
+      },
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "„Cofnij” w powiadomieniu zamiast pytania przy akcjach odwracalnych",
+        "items": [
+          "Usunięcie grupy albo promptu i wyczyszczenie historii albo logu działają od razu, a powiadomienie przez 8 s pozwala je cofnąć.",
+          "Pytanie zostaje przy operacjach nieodwracalnych, np. usunięciu wzmianek w Brand24.",
+          "Powiadomienie o błędzie zostaje na ekranie do zamknięcia, a „Szczegóły” otwierają log."
+        ],
+        "text": "„Cofnij” w powiadomieniu zamiast pytania przy akcjach odwracalnych. Usunięcie grupy albo promptu i wyczyszczenie historii albo logu działają od razu, a powiadomienie przez 8 s pozwala je cofnąć. Pytanie zostaje przy operacjach nieodwracalnych, np. usunięciu wzmianek w Brand24. Powiadomienie o błędzie zostaje na ekranie do zamknięcia, a „Szczegóły” otwierają log."
+      },
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "Okno logu z wyszukiwaniem i filtrem problemów",
+        "items": [
+          "Log otwiera się w osobnym oknie obok panelu. Przełącznik „Tylko problemy” zostawia ostrzeżenia i błędy.",
+          "„Kopiuj” i eksport CSV biorą wpisy widoczne po filtrze."
+        ],
+        "text": "Okno logu z wyszukiwaniem i filtrem problemów. Log otwiera się w osobnym oknie obok panelu. Przełącznik „Tylko problemy” zostawia ostrzeżenia i błędy. „Kopiuj” i eksport CSV biorą wpisy widoczne po filtrze."
+      },
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Ustawienia w jednym oknie, zapisywane od razu",
+        "items": [
+          "Zakładki Ogólne, AI, Prompty i Analityka. Zmiana zapisuje się od razu ze znacznikiem „Zapisano”.",
+          "Biblioteka promptów jest zakładką ustawień, a edytor promptu rozwija się do pełnego okna."
+        ],
+        "text": "Ustawienia w jednym oknie, zapisywane od razu. Zakładki Ogólne, AI, Prompty i Analityka. Zmiana zapisuje się od razu ze znacznikiem „Zapisano”. Biblioteka promptów jest zakładką ustawień, a edytor promptu rozwija się do pełnego okna."
+      },
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Dziennik zmian: „Co nowego” na żądanie i pomijanie wersji",
+        "items": [
+          "Przycisk w dzienniku zmian otwiera okno dużej zmiany w każdej chwili.",
+          "Powiadomienie o nowej wersji ma przycisk „Pomiń tę wersję” i wraca dopiero przy następnej wersji.",
+          "Znane problemy są widoczne przy każdym filtrze obszaru."
+        ],
+        "text": "Dziennik zmian: „Co nowego” na żądanie i pomijanie wersji. Przycisk w dzienniku zmian otwiera okno dużej zmiany w każdej chwili. Powiadomienie o nowej wersji ma przycisk „Pomiń tę wersję” i wraca dopiero przy następnej wersji. Znane problemy są widoczne przy każdym filtrze obszaru."
+      },
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Zgłoszenie błędu zachowuje szkic i wysyła się skrótem Ctrl+Enter",
+        "items": [
+          "Szkic zgłoszenia zostaje po zamknięciu okna i po przeładowaniu strony, a znika po wysłaniu.",
+          "Pasek błędu pokazuje pełną treść w dymku, a kliknięcie kopiuje ją do schowka."
+        ],
+        "text": "Zgłoszenie błędu zachowuje szkic i wysyła się skrótem Ctrl+Enter. Szkic zgłoszenia zostaje po zamknięciu okna i po przeładowaniu strony, a znika po wysłaniu. Pasek błędu pokazuje pełną treść w dymku, a kliknięcie kopiuje ją do schowka."
+      },
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Log nie spowalnia strony przy długich przebiegach",
+        "items": [
+          "Wpisy trafiają do logu raz na klatkę obrazu, więc seria setek wpisów nie blokuje strony."
+        ],
+        "text": "Log nie spowalnia strony przy długich przebiegach. Wpisy trafiają do logu raz na klatkę obrazu, więc seria setek wpisów nie blokuje strony."
+      },
+      {
+        "type": "improved",
+        "area": "Tagowanie z pliku",
+        "title": "Konflikt tagu rozstrzygany klawiszami 1–3, także dla całej sesji",
+        "items": [
+          "Okno konfliktu pokazuje do 160 znaków treści wzmianki.",
+          "„Zastosuj do kolejnych konfliktów w tej sesji” zapamiętuje decyzję do końca przebiegu."
+        ],
+        "text": "Konflikt tagu rozstrzygany klawiszami 1–3, także dla całej sesji. Okno konfliktu pokazuje do 160 znaków treści wzmianki. „Zastosuj do kolejnych konfliktów w tej sesji” zapamiętuje decyzję do końca przebiegu."
+      },
+      {
+        "type": "improved",
+        "area": "Tagowanie z pliku",
+        "title": "Komunikaty i lista wzmianek bez dopasowania w oknach wtyczki",
+        "items": [
+          "Błędy pokazują się w powiadomieniu wtyczki, a lista wzmianek bez dopasowania w jej oknie, zamiast okienek przeglądarki, które blokowały stronę."
+        ],
+        "text": "Komunikaty i lista wzmianek bez dopasowania w oknach wtyczki. Błędy pokazują się w powiadomieniu wtyczki, a lista wzmianek bez dopasowania w jej oknie, zamiast okienek przeglądarki, które blokowały stronę."
+      },
+      {
+        "type": "improved",
+        "area": "Quick Delete",
+        "title": "Usuwanie: jedno potwierdzenie z kompletem danych i przycisk „Zatrzymaj”",
+        "items": [
+          "Okno potwierdzenia podaje liczbę wzmianek, tag, zakres dat i projekt.",
+          "„Zatrzymaj” przerywa usuwanie po bieżącej partii, także przy usuwaniu ze wszystkich projektów."
+        ],
+        "text": "Usuwanie: jedno potwierdzenie z kompletem danych i przycisk „Zatrzymaj”. Okno potwierdzenia podaje liczbę wzmianek, tag, zakres dat i projekt. „Zatrzymaj” przerywa usuwanie po bieżącej partii, także przy usuwaniu ze wszystkich projektów."
+      },
+      {
+        "type": "improved",
+        "area": "Przegląd sentymentu",
+        "title": "Przegląd sentymentu: filtr, nowe skróty i zapis widocznych z „Cofnij”",
+        "items": [
+          "Nad kafelkami jest wyszukiwanie po treści i autorze oraz wybór źródła.",
+          "Spacja rozwija treść, O otwiera źródło wzmianki, a Z cofa ostatnią decyzję.",
+          "„Zapisz widoczne” zapisuje grupę „Zgodna zmiana” bez pytania, a powiadomienie pozwala cofnąć całą grupę.",
+          "Po ostatnim kafelku pojawia się „Wszystkie załatwione” z pobraniem dziennika decyzji."
+        ],
+        "text": "Przegląd sentymentu: filtr, nowe skróty i zapis widocznych z „Cofnij”. Nad kafelkami jest wyszukiwanie po treści i autorze oraz wybór źródła. Spacja rozwija treść, O otwiera źródło wzmianki, a Z cofa ostatnią decyzję. „Zapisz widoczne” zapisuje grupę „Zgodna zmiana” bez pytania, a powiadomienie pozwala cofnąć całą grupę. Po ostatnim kafelku pojawia się „Wszystkie załatwione” z pobraniem dziennika decyzji."
+      },
+      {
+        "type": "improved",
+        "area": "Narzędzia annotatora",
+        "title": "Dashboard Annotatora: wyszukiwanie projektów i Overall bez ponownego liczenia",
+        "items": [
+          "Zakładka Tagi i edytor grupy mają wyszukiwanie projektów. W edytorze Enter zapisuje grupę, a Esc zamyka okno.",
+          "Overall pamięta policzone miesiące: wynik sprzed 5 minut pokazuje się bez liczenia, starszy od razu i liczy się w tle.",
+          "Network Monitor ma pole wyszukiwania obok wyboru typu zapytań."
+        ],
+        "text": "Dashboard Annotatora: wyszukiwanie projektów i Overall bez ponownego liczenia. Zakładka Tagi i edytor grupy mają wyszukiwanie projektów. W edytorze Enter zapisuje grupę, a Esc zamyka okno. Overall pamięta policzone miesiące: wynik sprzed 5 minut pokazuje się bez liczenia, starszy od razu i liczy się w tle. Network Monitor ma pole wyszukiwania obok wyboru typu zapytań."
+      },
+      {
+        "type": "improved",
+        "area": "Dodawanie wzmianek",
+        "title": "News w nowym oknie z wyszukiwaniem po domenie i tytule",
+        "items": [
+          "Lista adresów ma pole wyszukiwania po domenie i tytule.",
+          "Lista tagów ma filtr po nazwie."
+        ],
+        "text": "News w nowym oknie z wyszukiwaniem po domenie i tytule. Lista adresów ma pole wyszukiwania po domenie i tytule. Lista tagów ma filtr po nazwie."
+      },
+      {
+        "type": "improved",
+        "area": "Kampanie H&M",
+        "title": "Zbieranie adresów w pływającym oknie z podglądem koszyka",
+        "items": [
+          "Okno zwija się do pigułki z liczbą adresów w koszyku i stanem przebiegu.",
+          "Przy captchy okno rozwija się w alarm w rogu, który nie zasłania testu.",
+          "Podgląd koszyka pozwala usunąć adres, a „Cofnij” przywraca go przez 8 s."
+        ],
+        "text": "Zbieranie adresów w pływającym oknie z podglądem koszyka. Okno zwija się do pigułki z liczbą adresów w koszyku i stanem przebiegu. Przy captchy okno rozwija się w alarm w rogu, który nie zasłania testu. Podgląd koszyka pozwala usunąć adres, a „Cofnij” przywraca go przez 8 s."
+      },
+      {
+        "type": "fix",
+        "area": "Tagowanie z pliku",
+        "title": "Naprawiono wznowienie po pauzie, które pomijało resztę przerwanej partycji",
+        "items": [
+          "Start po pauzie powtarza przerwaną partycję od początku, a otagowane wzmianki są pomijane."
+        ],
+        "text": "Naprawiono wznowienie po pauzie, które pomijało resztę przerwanej partycji. Start po pauzie powtarza przerwaną partycję od początku, a otagowane wzmianki są pomijane."
+      },
+      {
+        "type": "fix",
+        "area": "Tagowanie z pliku",
+        "title": "Naprawiono tryb nadpisywania, w którym Stop zostawiał wzmianki bez tagu",
+        "items": [
+          "Po Stop wzmianki, z których zdjęto stary tag, dostają nowy, a pozostałe zostają nietknięte."
+        ],
+        "text": "Naprawiono tryb nadpisywania, w którym Stop zostawiał wzmianki bez tagu. Po Stop wzmianki, z których zdjęto stary tag, dostają nowy, a pozostałe zostają nietknięte."
+      },
+      {
+        "type": "fix",
+        "area": "Tagowanie z pliku",
+        "title": "Naprawiono wznowienie bez potwierdzeń po zmianie mapowania w pauzie",
+        "items": [
+          "Zmiana mapowania albo trybu w pauzie wymaga przy wznowieniu tych samych potwierdzeń co przy starcie.",
+          "Wgranie innego pliku w trakcie przebiegu wymaga jego zatrzymania przyciskiem Stop."
+        ],
+        "text": "Naprawiono wznowienie bez potwierdzeń po zmianie mapowania w pauzie. Zmiana mapowania albo trybu w pauzie wymaga przy wznowieniu tych samych potwierdzeń co przy starcie. Wgranie innego pliku w trakcie przebiegu wymaga jego zatrzymania przyciskiem Stop."
+      },
+      {
+        "type": "fix",
+        "area": "Tagowanie z pliku",
+        "title": "Naprawiono usuwanie po tagowaniu poza zakresem dat pliku",
+        "items": [
+          "Gdy w zakresie pliku nie było wzmianek z wybranym tagiem, druga próba obejmowała okres od początku poprzedniego miesiąca. Druga próba obejmuje ten sam zakres co plik."
+        ],
+        "text": "Naprawiono usuwanie po tagowaniu poza zakresem dat pliku. Gdy w zakresie pliku nie było wzmianek z wybranym tagiem, druga próba obejmowała okres od początku poprzedniego miesiąca. Druga próba obejmuje ten sam zakres co plik."
+      },
+      {
+        "type": "fix",
+        "area": "AI Tag",
+        "title": "Naprawiono „Zatrzymaj”, po którym AI Tag nadal nakładał tagi i usuwał wzmianki",
+        "text": "Naprawiono „Zatrzymaj”, po którym AI Tag nadal nakładał tagi i usuwał wzmianki."
+      },
+      {
+        "type": "fix",
+        "area": "Przegląd sentymentu",
+        "title": "Naprawiono przytrzymany klawisz decyzji, który zapisywał sentyment kolejnym kafelkom",
+        "text": "Naprawiono przytrzymany klawisz decyzji, który zapisywał sentyment kolejnym kafelkom."
+      },
+      {
+        "type": "fix",
+        "area": "Panel",
+        "title": "Naprawiono zapis do poprzedniego projektu po przejściu na inny bez przeładowania",
+        "items": [
+          "Start, wznowienie, Usuwanie i AI Tag proszą wtedy o odświeżenie strony."
+        ],
+        "text": "Naprawiono zapis do poprzedniego projektu po przejściu na inny bez przeładowania. Start, wznowienie, Usuwanie i AI Tag proszą wtedy o odświeżenie strony."
+      },
+      {
+        "type": "fix",
+        "area": "Panel",
+        "title": "Naprawiono powrót na kanał Stabilny po ręcznym wyborze Eksperymentalnego",
+        "text": "Naprawiono powrót na kanał Stabilny po ręcznym wyborze Eksperymentalnego."
+      },
+      {
+        "type": "fix",
+        "area": "Panel",
+        "title": "Naprawiono znikanie okna dużej zmiany po przeładowaniu strony przed otwarciem panelu",
+        "text": "Naprawiono znikanie okna dużej zmiany po przeładowaniu strony przed otwarciem panelu."
+      },
+      {
+        "type": "fix",
+        "area": "Panel",
+        "title": "Naprawiono pasek błędu po nieudanych zapytaniach samego Brand24",
+        "items": [
+          "Pasek błędu i przycisk „Zgłoś” pokazują się tylko przy błędach wtyczki."
+        ],
+        "text": "Naprawiono pasek błędu po nieudanych zapytaniach samego Brand24. Pasek błędu i przycisk „Zgłoś” pokazują się tylko przy błędach wtyczki."
+      },
+      {
+        "type": "fix",
+        "area": "Panel",
+        "title": "Naprawiono błędy bezpieczeństwa",
+        "text": "Naprawiono błędy bezpieczeństwa."
+      }
+    ]
+  },
+  {
     "version": "0.37.2",
     "date": "2026-10-03",
     "label": "fix",
@@ -50,12 +300,12 @@
       {
         "type": "new",
         "area": "Panel",
-        "title": "Kropka i połysk na przycisku 📋 przy nieprzeczytanej wersji",
+        "title": "Kropka i połysk na przycisku dziennika przy nieprzeczytanej wersji",
         "items": [
           "Znikają po otwarciu dziennika."
         ],
         "comment": "Subtelna presja, żeby jednak zajrzeć.",
-        "text": "Kropka i połysk na przycisku 📋 przy nieprzeczytanej wersji. Znikają po otwarciu dziennika."
+        "text": "Kropka i połysk na przycisku dziennika przy nieprzeczytanej wersji. Znikają po otwarciu dziennika."
       },
       {
         "type": "new",
@@ -72,11 +322,11 @@
         "area": "Przegląd sentymentu",
         "title": "Przegląd sentymentu obejmuje wzmianki z każdym sentymentem",
         "items": [
-          "Źródło „Wzmianki z zakresu dat” pobiera wzmianki z sentymentami zaznaczonymi na karcie ◐ Sentyment: negatywnymi, neutralnymi i pozytywnymi. Domyślnie zaznaczone są wszystkie, a wybór jest zapamiętywany dla projektu.",
+          "Źródło „Wzmianki z zakresu dat” pobiera wzmianki z sentymentami zaznaczonymi na karcie Sentyment: negatywnymi, neutralnymi i pozytywnymi. Domyślnie zaznaczone są wszystkie, a wybór jest zapamiętywany dla projektu.",
           "Jeden przegląd obejmuje do 5 000 wzmianek."
         ],
         "comment": "Przegląd zaczął się od negatywów, ale raport potrzebuje poprawnego sentymentu w każdą stronę.",
-        "text": "Przegląd sentymentu obejmuje wzmianki z każdym sentymentem. Źródło „Wzmianki z zakresu dat” pobiera wzmianki z sentymentami zaznaczonymi na karcie ◐ Sentyment: negatywnymi, neutralnymi i pozytywnymi. Domyślnie zaznaczone są wszystkie, a wybór jest zapamiętywany dla projektu. Jeden przegląd obejmuje do 5 000 wzmianek."
+        "text": "Przegląd sentymentu obejmuje wzmianki z każdym sentymentem. Źródło „Wzmianki z zakresu dat” pobiera wzmianki z sentymentami zaznaczonymi na karcie Sentyment: negatywnymi, neutralnymi i pozytywnymi. Domyślnie zaznaczone są wszystkie, a wybór jest zapamiętywany dla projektu. Jeden przegląd obejmuje do 5 000 wzmianek."
       },
       {
         "type": "improved",
@@ -97,9 +347,9 @@
         "items": [
           "Po instalacji przyciskiem „Zainstaluj w Tampermonkey” opis nowej wersji otwiera się sam.",
           "Po automatycznej aktualizacji przez Tampermonkey pod nagłówkiem panelu pojawia się okno „Wtyczka została zaktualizowana” z przyciskiem „Zobacz zmiany”.",
-          "Na kanale Experimental przycisk 📋 otwiera dziennik zmian."
+          "Na kanale Experimental przycisk dziennika otwiera dziennik zmian."
         ],
-        "text": "Kanał Stabilny ma dziennik aktualizacji z pełnym opisem wersji. Po instalacji przyciskiem „Zainstaluj w Tampermonkey” opis nowej wersji otwiera się sam. Po automatycznej aktualizacji przez Tampermonkey pod nagłówkiem panelu pojawia się okno „Wtyczka została zaktualizowana” z przyciskiem „Zobacz zmiany”. Na kanale Experimental przycisk 📋 otwiera dziennik zmian."
+        "text": "Kanał Stabilny ma dziennik aktualizacji z pełnym opisem wersji. Po instalacji przyciskiem „Zainstaluj w Tampermonkey” opis nowej wersji otwiera się sam. Po automatycznej aktualizacji przez Tampermonkey pod nagłówkiem panelu pojawia się okno „Wtyczka została zaktualizowana” z przyciskiem „Zobacz zmiany”. Na kanale Experimental przycisk dziennika otwiera dziennik zmian."
       },
       {
         "type": "improved",
@@ -109,30 +359,30 @@
           "Przełączenie odbywa się raz, gdy ta wersja jest dostępna na kanale Stabilnym, osobno w app.brand24.com i panel.brand24.pl.",
           "Zmienia się tylko kanał aktualizacji. Ustawienia, klucze API i funkcje zostają bez zmian."
         ],
-        "action": "Jeśli wtyczka ma dalej dostawać wersje testowe, trzeba wybrać w ⚙ w sekcji „Kanał aktualizacji” opcję „🔬 Eksperymentalny”.",
-        "text": "Instalacje na kanale Experimental przechodzą na kanał Stabilny. Przełączenie odbywa się raz, gdy ta wersja jest dostępna na kanale Stabilnym, osobno w app.brand24.com i panel.brand24.pl. Zmienia się tylko kanał aktualizacji. Ustawienia, klucze API i funkcje zostają bez zmian. Jeśli wtyczka ma dalej dostawać wersje testowe, trzeba wybrać w ⚙ w sekcji „Kanał aktualizacji” opcję „🔬 Eksperymentalny”."
+        "action": "Jeśli wtyczka ma dalej dostawać wersje testowe, trzeba wybrać w ustawieniach w sekcji „Kanał aktualizacji” opcję „Eksperymentalny”.",
+        "text": "Instalacje na kanale Experimental przechodzą na kanał Stabilny. Przełączenie odbywa się raz, gdy ta wersja jest dostępna na kanale Stabilnym, osobno w app.brand24.com i panel.brand24.pl. Zmienia się tylko kanał aktualizacji. Ustawienia, klucze API i funkcje zostają bez zmian. Jeśli wtyczka ma dalej dostawać wersje testowe, trzeba wybrać w ustawieniach w sekcji „Kanał aktualizacji” opcję „Eksperymentalny”."
       },
       {
         "type": "new",
         "area": "Panel",
         "title": "Zgłaszanie błędów i pomysłów z wtyczki",
         "items": [
-          "Przycisk 💬 w panelu, przycisk 🐞 w oknach przeglądu sentymentu i News oraz „Zgłoś” na pasku błędu otwierają okienko zgłoszenia.",
+          "Przycisk zgłoszenia w panelu i w oknach przeglądu sentymentu i News oraz „Zgłoś” na pasku błędu otwierają okienko zgłoszenia.",
           "Do zgłoszenia błędu wtyczka dołącza ostatnie zdarzenia, wersję i stan funkcji. Klucze API, tokeny i treści wzmianek zostają w przeglądarce.",
           "Gdy wysyłka się nie uda, „Kopiuj zgłoszenie” kopiuje treść do schowka."
         ],
         "comment": "Najtrudniej naprawić błąd, którego nikt nie umie opisać. Teraz wtyczka opisuje go sama.",
-        "text": "Zgłaszanie błędów i pomysłów z wtyczki. Przycisk 💬 w panelu, przycisk 🐞 w oknach przeglądu sentymentu i News oraz „Zgłoś” na pasku błędu otwierają okienko zgłoszenia. Do zgłoszenia błędu wtyczka dołącza ostatnie zdarzenia, wersję i stan funkcji. Klucze API, tokeny i treści wzmianek zostają w przeglądarce. Gdy wysyłka się nie uda, „Kopiuj zgłoszenie” kopiuje treść do schowka."
+        "text": "Zgłaszanie błędów i pomysłów z wtyczki. Przycisk zgłoszenia w panelu i w oknach przeglądu sentymentu i News oraz „Zgłoś” na pasku błędu otwierają okienko zgłoszenia. Do zgłoszenia błędu wtyczka dołącza ostatnie zdarzenia, wersję i stan funkcji. Klucze API, tokeny i treści wzmianek zostają w przeglądarce. Gdy wysyłka się nie uda, „Kopiuj zgłoszenie” kopiuje treść do schowka."
       },
       {
         "type": "improved",
         "area": "Panel",
         "title": "Log w panelu domyślnie ukryty",
         "items": [
-          "Log włącza się w ⚙ opcją „📜 Log w panelu”.",
+          "Log włącza się w ustawieniach opcją „Log w panelu”.",
           "Bez logu błędy pokazuje pasek nad przyciskiem Start."
         ],
-        "text": "Log w panelu domyślnie ukryty. Log włącza się w ⚙ opcją „📜 Log w panelu”. Bez logu błędy pokazuje pasek nad przyciskiem Start."
+        "text": "Log w panelu domyślnie ukryty. Log włącza się w ustawieniach opcją „Log w panelu”. Bez logu błędy pokazuje pasek nad przyciskiem Start."
       },
       {
         "type": "improved",
@@ -162,12 +412,12 @@
         "area": "Przegląd sentymentu",
         "title": "Do przeglądu sentymentu można wrócić po zamknięciu okna",
         "items": [
-          "Karta ◐ Sentyment pokazuje projekt, zakres dat i postęp przeglądu.",
-          "„↩ Wróć do przeglądu” otwiera okno w miejscu, w którym je zamknięto. Ocena i zapisywanie decyzji trwają przy zamkniętym oknie.",
+          "Karta Sentyment pokazuje projekt, zakres dat i postęp przeglądu.",
+          "„Wróć do przeglądu” otwiera okno w miejscu, w którym je zamknięto. Ocena i zapisywanie decyzji trwają przy zamkniętym oknie.",
           "Nowa ocena przy niezałatwionych kafelkach wymaga potwierdzenia. Ponowna ocena tego samego zakresu jest bezpłatna.",
           "Przeładowanie strony kończy przegląd."
         ],
-        "text": "Do przeglądu sentymentu można wrócić po zamknięciu okna. Karta ◐ Sentyment pokazuje projekt, zakres dat i postęp przeglądu. „↩ Wróć do przeglądu” otwiera okno w miejscu, w którym je zamknięto. Ocena i zapisywanie decyzji trwają przy zamkniętym oknie. Nowa ocena przy niezałatwionych kafelkach wymaga potwierdzenia. Ponowna ocena tego samego zakresu jest bezpłatna. Przeładowanie strony kończy przegląd."
+        "text": "Do przeglądu sentymentu można wrócić po zamknięciu okna. Karta Sentyment pokazuje projekt, zakres dat i postęp przeglądu. „Wróć do przeglądu” otwiera okno w miejscu, w którym je zamknięto. Ocena i zapisywanie decyzji trwają przy zamkniętym oknie. Nowa ocena przy niezałatwionych kafelkach wymaga potwierdzenia. Ponowna ocena tego samego zakresu jest bezpłatna. Przeładowanie strony kończy przegląd."
       }
     ]
   },
@@ -319,7 +569,7 @@
       {
         "type": "new",
         "area": "Przegląd sentymentu",
-        "title": "Nowa karta ◐ Sentyment: przegląd negatywnych wzmianek z pomocą AI",
+        "title": "Nowa karta Sentyment: przegląd negatywnych wzmianek z pomocą AI",
         "items": [
           "Włącza się w Ustawienia → AI → Przegląd sentymentu.",
           "Dwa modele AI oceniają negatywne wzmianki z wybranego zakresu dat albo z aktualnego widoku Brand24.",
@@ -327,7 +577,7 @@
           "Każdy wybór zapisuje się od razu w Brand24 i można go cofnąć. Okno pokazuje koszt oceny."
         ],
         "highlight": true,
-        "text": "Nowa karta ◐ Sentyment: przegląd negatywnych wzmianek z pomocą AI. Włącza się w Ustawienia → AI → Przegląd sentymentu. Dwa modele AI oceniają negatywne wzmianki z wybranego zakresu dat albo z aktualnego widoku Brand24. Do decyzji trafiają wzmianki, przy których modele się różnią albo mają wątpliwości. Zmiany, co do których są zgodne, zatwierdza się jednym przyciskiem. Każdy wybór zapisuje się od razu w Brand24 i można go cofnąć. Okno pokazuje koszt oceny."
+        "text": "Nowa karta Sentyment: przegląd negatywnych wzmianek z pomocą AI. Włącza się w Ustawienia → AI → Przegląd sentymentu. Dwa modele AI oceniają negatywne wzmianki z wybranego zakresu dat albo z aktualnego widoku Brand24. Do decyzji trafiają wzmianki, przy których modele się różnią albo mają wątpliwości. Zmiany, co do których są zgodne, zatwierdza się jednym przyciskiem. Każdy wybór zapisuje się od razu w Brand24 i można go cofnąć. Okno pokazuje koszt oceny."
       }
     ]
   },
@@ -341,12 +591,12 @@
         "area": "Tagowanie z pliku",
         "title": "Zmiana sentymentu wzmianek na podstawie pliku z ocenami",
         "items": [
-          "Po włączeniu „◐ Zmiana sentymentu po assessmencie” w Dodatkowych funkcjach (⚙) mapowanie ocen ma akcje „Sentyment → negatywny”, „→ neutralny” i „→ pozytywny”.",
+          "Po włączeniu zmiany sentymentu po ocenie w ustawieniach mapowanie ocen ma akcje „Sentyment → negatywny”, „→ neutralny” i „→ pozytywny”.",
           "Sentyment zmienia się w zwykłym przebiegu Start, razem z tagowaniem i usuwaniem. Jedna ocena może łączyć tag i sentyment, np. „RELEVANT|NEUTRALNY”.",
           "Wzmianki, które mają już docelowy sentyment, są pomijane. Wzmianka ze sprzecznymi ocenami jest pomijana i zgłaszana w logu.",
           "Brand24 przyjmuje zmiany sentymentu pojedynczo, więc trwają dłużej niż tagowanie."
         ],
-        "text": "Zmiana sentymentu wzmianek na podstawie pliku z ocenami. Po włączeniu „◐ Zmiana sentymentu po assessmencie” w Dodatkowych funkcjach (⚙) mapowanie ocen ma akcje „Sentyment → negatywny”, „→ neutralny” i „→ pozytywny”. Sentyment zmienia się w zwykłym przebiegu Start, razem z tagowaniem i usuwaniem. Jedna ocena może łączyć tag i sentyment, np. „RELEVANT|NEUTRALNY”. Wzmianki, które mają już docelowy sentyment, są pomijane. Wzmianka ze sprzecznymi ocenami jest pomijana i zgłaszana w logu. Brand24 przyjmuje zmiany sentymentu pojedynczo, więc trwają dłużej niż tagowanie."
+        "text": "Zmiana sentymentu wzmianek na podstawie pliku z ocenami. Po włączeniu zmiany sentymentu po ocenie w ustawieniach mapowanie ocen ma akcje „Sentyment → negatywny”, „→ neutralny” i „→ pozytywny”. Sentyment zmienia się w zwykłym przebiegu Start, razem z tagowaniem i usuwaniem. Jedna ocena może łączyć tag i sentyment, np. „RELEVANT|NEUTRALNY”. Wzmianki, które mają już docelowy sentyment, są pomijane. Wzmianka ze sprzecznymi ocenami jest pomijana i zgłaszana w logu. Brand24 przyjmuje zmiany sentymentu pojedynczo, więc trwają dłużej niż tagowanie."
       }
     ]
   },
@@ -439,14 +689,14 @@
       {
         "type": "new",
         "area": "Powiadomienia",
-        "title": "Powiadomienia na telefon w nowej karcie 🔔 Powiadomienia",
+        "title": "Powiadomienia na telefon w nowej karcie Powiadomienia",
         "items": [
           "Wtyczka wysyła powiadomienie przez aplikację ntfy, gdy czeka na człowieka (captcha Google, pauza po partycji), po zakończeniu długiej operacji i przy błędzie.",
           "Każde z ośmiu zdarzeń włącza się osobno. Powiadomienie o zakończeniu przychodzi tylko po operacji dłuższej niż ustawiony próg.",
           "Nazwę kanału wpisuje się w karcie, tak jak klucz API. „Wyślij testowe” sprawdza konfigurację."
         ],
         "action": "Wybierz długą, trudną do zgadnięcia nazwę kanału: kto ją zna, może czytać powiadomienia.",
-        "text": "Powiadomienia na telefon w nowej karcie 🔔 Powiadomienia. Wtyczka wysyła powiadomienie przez aplikację ntfy, gdy czeka na człowieka (captcha Google, pauza po partycji), po zakończeniu długiej operacji i przy błędzie. Każde z ośmiu zdarzeń włącza się osobno. Powiadomienie o zakończeniu przychodzi tylko po operacji dłuższej niż ustawiony próg. Nazwę kanału wpisuje się w karcie, tak jak klucz API. „Wyślij testowe” sprawdza konfigurację. Wybierz długą, trudną do zgadnięcia nazwę kanału: kto ją zna, może czytać powiadomienia."
+        "text": "Powiadomienia na telefon w nowej karcie Powiadomienia. Wtyczka wysyła powiadomienie przez aplikację ntfy, gdy czeka na człowieka (captcha Google, pauza po partycji), po zakończeniu długiej operacji i przy błędzie. Każde z ośmiu zdarzeń włącza się osobno. Powiadomienie o zakończeniu przychodzi tylko po operacji dłuższej niż ustawiony próg. Nazwę kanału wpisuje się w karcie, tak jak klucz API. „Wyślij testowe” sprawdza konfigurację. Wybierz długą, trudną do zgadnięcia nazwę kanału: kto ją zna, może czytać powiadomienia."
       }
     ]
   },

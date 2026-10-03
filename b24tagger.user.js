@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.12
+// @version      0.38.13
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -174,7 +174,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.12';
+  const VERSION = '0.38.13';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5735,7 +5735,7 @@
 
       /* ── Pasek funkcji (panel): tryb według szerokości panelu, progi w em rosną z tekstem ── */
       .b-rail {
-        flex-shrink: 0; display: flex; flex-direction: column; gap: 0.25em; width: 5.75em; padding: 0.5em 0.375em;
+        position: relative; flex-shrink: 0; display: flex; flex-direction: column; gap: 0.25em; width: 5.75em; padding: 0.5em 0.375em;
         background: var(--c-frame); border-right: 1px solid var(--c-border); overflow-x: hidden; --b-fade: var(--c-frame);
       }
       .b-rail__item {
@@ -5813,6 +5813,17 @@
       .b-file.is-over { border-color: var(--c-focus); background-color: var(--c-accentSoft); }
       .b-file__text { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
       .b-file__name { font-weight: 500; }
+      /* Karta pliku obok karty Postęp (dwie kolumny siatki od 2 × 17em + odstęp): siatka wyrównuje wysokość kart, więc
+         pole pliku wypełnia kartę. Bez pliku to duży cel upuszczania z ikoną nad tekstem; z plikiem opis zawija się
+         zamiast kończyć wielokropkiem. */
+      .b-filegrid { container: b-filegrid / inline-size; }
+      @container b-filegrid (width >= 34.75em) {
+        .b-file { flex: 1 1 auto; }
+        .b-file.is-empty { flex-direction: column; justify-content: center; gap: 0.5em; padding: 1em; text-align: center; }
+        .b-file.is-empty > svg { width: 2em; height: 2em; }
+        .b-file.is-empty > .b-file__text { flex: 0 0 auto; align-items: center; }
+        .b-file:not(.is-empty) > .b-file__text > .b-ell { white-space: normal; }
+      }
 
       /* Mapowanie ocen: ocena z liczbą nad polami tagu i rodzaju; od 30em szerokości listy w jednym wierszu. */
       .b-maps { container: b-maps / inline-size; }
@@ -6073,7 +6084,10 @@
       .b-set-tool > svg { width: 1.15em; height: 1.15em; color: var(--c-text2); flex-shrink: 0; }
       .b-set-row.b-set-row--sub { padding-left: 2em; }
       .b-set-tool__ctl { gap: 0.25em; }
-      .b-rail__item.is-dragging { opacity: 0.6; cursor: grabbing; }
+      /* Przeciągana pozycja paska: uniesiona nad sąsiadami, w zestawie pełnym lekko powiększona (_railWireDrag). */
+      .b-rail.is-sorting, .b-rail.is-sorting .b-rail__item { cursor: grabbing; }
+      .b-rail__item.is-dragging { z-index: 2; background-color: var(--c-card); box-shadow: var(--sh-pop); }
+      [data-b24t-motion="full"] .b-rail__item.is-dragging { scale: 1.06; transition: scale 120ms var(--ease-in), box-shadow 120ms var(--ease-in); }
       .b-set-row--sub:has(input:disabled) .b-set-row__label { color: var(--c-textDisabled); }
       label.b-set-row:has(input:disabled) { cursor: default; }
       .b-set-warn { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25em 0.4em; margin-top: 0.25em; color: var(--c-warn); }
@@ -9614,7 +9628,7 @@
           </div>
         </div>
 
-        <div class="b-grid">
+        <div class="b-grid b-filegrid">
           <section class="b-card" aria-label="Plik z ocenami">
             <div id="b24t-file-zone" class="b-file is-empty" role="button" tabindex="0" aria-label="Wybierz plik z ocenami" data-tip="Najpewniejszy jest JSON: XLSX potrafi obciąć 19-cyfrowe ID z TikToka i X">
               ${_icon('file')}
@@ -10026,14 +10040,39 @@
     return items;
   }
 
-  // Przeciąganie pozycji górnej grupy paska: po 6 px ruchu pozycja jedzie za kursorem, a pozycja pod kursorem zamienia
-  // się z nią miejscem; kolejność zapisuje się po puszczeniu. Kliknięcie bez ruchu przełącza kartę jak dotąd.
+  // Przeciąganie pozycji górnej grupy paska. Po 6 px ruchu pozycja unosi się (is-dragging) i jedzie za kursorem
+  // (`translate`), a kolejność w DOM zmienia się, gdy kursor minie połowę sąsiada; sąsiedzi jadą wtedy ze starego
+  // miejsca na nowe (FLIP). Po puszczeniu pozycja osiada na swoim miejscu, a kolejność się zapisuje. Ruch sąsiadów
+  // i osiadanie tylko w zestawie pełnym; jazda za kursorem także w ograniczonym, bo prowadzi ją ręka użytkownika.
+  // Kliknięcie bez ruchu przełącza kartę jak dotąd.
   function _railWireDrag(nav) {
     var d = null;
+    // Górna krawędź pozycji w układzie, bez `translate` i animacji (pasek jest offsetParent pozycji, .b-rail).
+    var top = function (x) { return nav.getBoundingClientRect().top + nav.clientTop + x.offsetTop - nav.scrollTop; };
+    var group = function () {
+      return Array.prototype.filter.call(nav.querySelectorAll('.b-rail__item:not(.b-rail__item--util)'), function (x) { return !x.hidden; });
+    };
+    // Pozycja zostaje pod kursorem w miejscu chwytu, w granicach grupy.
+    var follow = function (y) {
+      var g = group(), at = top(d.b), last = g[g.length - 1];
+      var off = Math.min(top(last) + last.offsetHeight - d.b.offsetHeight - at, Math.max(top(g[0]) - at, y - d.grab - at));
+      d.b.style.translate = '0 ' + Math.round(off) + 'px';
+    };
+    var move = function (ref) {
+      var was = new Map();
+      if (_uiFull()) group().forEach(function (x) { if (x !== d.b) was.set(x, x.getBoundingClientRect().top); });
+      nav.insertBefore(d.b, ref);
+      was.forEach(function (t, x) {
+        // Przerwana jazda zaczyna się od miejsca, w którym sąsiad jest teraz, a nie od starego miejsca w układzie.
+        x.getAnimations().forEach(function (a) { a.cancel(); });
+        var dy = t - x.getBoundingClientRect().top;
+        if (dy) x.animate([{ transform: 'translateY(' + dy + 'px)' }, { transform: 'none' }], { duration: 160, easing: WIN_EASE_IN });
+      });
+    };
     nav.addEventListener('pointerdown', function (e) {
       var b = e.target.closest('.b-rail__item');
       if (e.button !== 0 || !b || b.classList.contains('b-rail__item--util')) return;
-      d = { b: b, y: e.clientY, on: false, id: e.pointerId };
+      d = { b: b, y: e.clientY, grab: e.clientY - top(b), on: false, id: e.pointerId };
     });
     nav.addEventListener('pointermove', function (e) {
       if (!d || e.pointerId !== d.id) return;
@@ -10041,26 +10080,31 @@
         if (Math.abs(e.clientY - d.y) < 6) return;
         d.on = true;
         nav.setPointerCapture(d.id);
+        nav.classList.add('is-sorting');
         d.b.classList.add('is-dragging');
         Tip.hide();
       }
-      // Kursor nad pierwszą albo pod ostatnią widoczną kartą grupy stawia przeciąganą na początku albo na końcu.
-      var vis = Array.prototype.filter.call(nav.querySelectorAll('.b-rail__item:not(.b-rail__item--util)'), function (x) { return x !== d.b && !x.hidden; });
-      if (!vis.length) return;
-      var first = vis[0].getBoundingClientRect(), last = vis[vis.length - 1].getBoundingClientRect();
-      if (e.clientY < first.top) { nav.insertBefore(d.b, vis[0]); return; }
-      if (e.clientY > last.bottom) { nav.insertBefore(d.b, vis[vis.length - 1].nextSibling); return; }
-      var over = vis.filter(function (x) { var r = x.getBoundingClientRect(); return e.clientY >= r.top && e.clientY <= r.bottom; })[0];
-      if (!over) return;
-      var r = over.getBoundingClientRect();
-      nav.insertBefore(d.b, e.clientY < r.top + r.height / 2 ? over : over.nextSibling);
+      // Miejsce przed pierwszym sąsiadem, którego połowę kursor jeszcze nie minął; za ostatnim, gdy minął wszystkich.
+      var others = group().filter(function (x) { return x !== d.b; }), i = 0;
+      while (i < others.length && e.clientY > top(others[i]) + others[i].offsetHeight / 2) i++;
+      if (others.length) {
+        var ref = i < others.length ? others[i] : others[others.length - 1].nextSibling;
+        if (ref !== d.b && ref !== d.b.nextSibling) move(ref);
+      }
+      follow(e.clientY);
     });
     var end = function (e) {
       if (!d || e.pointerId !== d.id) return;
       var was = d;
       d = null;
       if (!was.on) return;
+      var off = was.b.style.translate;
+      was.b.style.translate = '';
       was.b.classList.remove('is-dragging');
+      nav.classList.remove('is-sorting');
+      if (_uiFull() && off) {
+        was.b.animate([{ translate: off, scale: '1.06' }, { translate: '0 0', scale: '1' }], { duration: 180, easing: WIN_EASE_IN });
+      }
       // Puszczenie po przeciągnięciu daje click na pozycji; click w ciągu 400 ms nie przełącza karty (_panelWireRail).
       nav.dataset.dropAt = String(Date.now());
       var dom = Array.prototype.map.call(nav.querySelectorAll('.b-rail__item:not(.b-rail__item--util)'), function (x) { return x.dataset.tab; });
@@ -20667,6 +20711,33 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.13",
+      "date": "2026-10-03",
+      "label": "improved",
+      "changes": [
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Przeciąganie kart na pasku funkcji z animacją",
+          "items": [
+            "Chwycona karta unosi się i jedzie za kursorem, a pozostałe rozsuwają się płynnie na nowe miejsca.",
+            "Po puszczeniu karta osiada na swoim miejscu. Rozsuwanie i osiadanie działają przy „Animacje: Pełne” albo przy „Jak w systemie” bez ograniczenia ruchu w systemie."
+          ],
+          "text": "Przeciąganie kart na pasku funkcji z animacją. Chwycona karta unosi się i jedzie za kursorem, a pozostałe rozsuwają się płynnie na nowe miejsca. Po puszczeniu karta osiada na swoim miejscu. Rozsuwanie i osiadanie działają przy „Animacje: Pełne” albo przy „Jak w systemie” bez ograniczenia ruchu w systemie."
+        },
+        {
+          "type": "improved",
+          "area": "Tagowanie z pliku",
+          "title": "Karta pliku bez pustego miejsca w szerokim panelu",
+          "items": [
+            "Gdy karta pliku stoi obok karty Postęp, pole pliku wypełnia całą kartę jako duże miejsce do upuszczenia pliku.",
+            "Opis wczytanego pliku mieści się w całości zamiast kończyć się wielokropkiem."
+          ],
+          "text": "Karta pliku bez pustego miejsca w szerokim panelu. Gdy karta pliku stoi obok karty Postęp, pole pliku wypełnia całą kartę jako duże miejsce do upuszczenia pliku. Opis wczytanego pliku mieści się w całości zamiast kończyć się wielokropkiem."
+        }
+      ]
+    },
+    {
       "version": "0.38.12",
       "date": "2026-10-03",
       "label": "new",
@@ -21002,86 +21073,6 @@
           "title": "Panel Niestandardowe bez okna ustawień z nieużywanymi opcjami",
           "comment": "Opcje w tym oknie nie zmieniały działania panelu, więc okno zniknęło razem z przyciskiem w nagłówku i znacznikiem „Niestandardowe” w bibliotece promptów.",
           "text": "Panel Niestandardowe bez okna ustawień z nieużywanymi opcjami."
-        }
-      ]
-    },
-    {
-      "version": "0.38.3",
-      "date": "2026-10-03",
-      "label": "new",
-      "changes": [
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Listwa uchwytów przy krawędzi zamiast pionowych zakładek",
-          "items": [
-            "Annotators, Wzmianki, Network Monitor i schowany panel mają ikony w jednej listwie, a nazwa pokazuje się w dymku obok niej.",
-            "Kliknięcie uchwytu otwiera okno, drugie je chowa. Okno wyrasta z uchwytu i do niego wraca, a uchwyt otwartego okna świeci się kolorem akcentu.",
-            "Listwę przesuwa się w górę i w dół. Wyciągnięta od krawędzi zmienia się w kroplę: mocny rzut przykleja ją do krawędzi, w którą poleciała, a słaby oddaje ją z powrotem.",
-            "Wzmianki da się zamknąć uchwytem także przy otwartym oknie News."
-          ],
-          "comment": "Pionowe napisy czytało się z głową przechyloną o 90 stopni. Listwa zajmuje jedno miejsce przy krawędzi i można ją odłożyć tam, gdzie nie przeszkadza w pracy.",
-          "highlight": true,
-          "text": "Listwa uchwytów przy krawędzi zamiast pionowych zakładek. Annotators, Wzmianki, Network Monitor i schowany panel mają ikony w jednej listwie, a nazwa pokazuje się w dymku obok niej. Kliknięcie uchwytu otwiera okno, drugie je chowa. Okno wyrasta z uchwytu i do niego wraca, a uchwyt otwartego okna świeci się kolorem akcentu. Listwę przesuwa się w górę i w dół. Wyciągnięta od krawędzi zmienia się w kroplę: mocny rzut przykleja ją do krawędzi, w którą poleciała, a słaby oddaje ją z powrotem. Wzmianki da się zamknąć uchwytem także przy otwartym oknie News."
-        },
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Szara rama okien w jasnym motywie",
-          "items": [
-            "Nagłówek, pasek funkcji i stopka mają szary odcień, a karty zostają białe, więc panel odcina się od białej strony Brand24."
-          ],
-          "text": "Szara rama okien w jasnym motywie. Nagłówek, pasek funkcji i stopka mają szary odcień, a karty zostają białe, więc panel odcina się od białej strony Brand24."
-        },
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Powiadomienia przy panelu i ochrona przed przypadkowym kliknięciem",
-          "items": [
-            "Powiadomienia pojawiają się obok panelu albo pigułki, a nie zawsze w prawym dolnym rogu.",
-            "Świeże powiadomienie, okno albo dymek samouczka przez pół sekundy nie reagują na kliknięcie, więc klik przeznaczony dla strony nie trafia w ich przycisk."
-          ],
-          "text": "Powiadomienia przy panelu i ochrona przed przypadkowym kliknięciem. Powiadomienia pojawiają się obok panelu albo pigułki, a nie zawsze w prawym dolnym rogu. Świeże powiadomienie, okno albo dymek samouczka przez pół sekundy nie reagują na kliknięcie, więc klik przeznaczony dla strony nie trafia w ich przycisk."
-        },
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Powiadomienie o nowej wersji także przy panelu zwiniętym do pigułki",
-          "items": [
-            "Przycisk instalacji nazywa się „Zainstaluj”, a „Pomiń tę wersję” zniknęło.",
-            "Na kanale Stabilnym z włączoną automatyczną aktualizacją powiadomienie mówi, że Tampermonkey zainstaluje wersję sam, zwykle w ciągu doby."
-          ],
-          "text": "Powiadomienie o nowej wersji także przy panelu zwiniętym do pigułki. Przycisk instalacji nazywa się „Zainstaluj”, a „Pomiń tę wersję” zniknęło. Na kanale Stabilnym z włączoną automatyczną aktualizacją powiadomienie mówi, że Tampermonkey zainstaluje wersję sam, zwykle w ciągu doby."
-        },
-        {
-          "type": "improved",
-          "area": "Kampanie H&M",
-          "title": "Wyszukiwanie zaawansowane Google z wariantami frazy układanymi z nazwy",
-          "items": [
-            "Warianty frazy układają się same przy zmianie nazwy kampanii. Po ręcznej zmianie przycisk „Z nazwy” wraca do automatycznych, a „Przywróć ręczne” do własnej listy.",
-            "Wyszukiwanie zawsze zaczyna od pełnej nazwy, a warianty to jej skrócone wersje.",
-            "Gdy z nazwy nie da się utworzyć wariantów, pole zostaje puste z informacją, że wyszukiwana jest sama nazwa.",
-            "Okno, przyciski i okienko przebiegu mówią o wyszukiwaniu zaawansowanym Google."
-          ],
-          "text": "Wyszukiwanie zaawansowane Google z wariantami frazy układanymi z nazwy. Warianty frazy układają się same przy zmianie nazwy kampanii. Po ręcznej zmianie przycisk „Z nazwy” wraca do automatycznych, a „Przywróć ręczne” do własnej listy. Wyszukiwanie zawsze zaczyna od pełnej nazwy, a warianty to jej skrócone wersje. Gdy z nazwy nie da się utworzyć wariantów, pole zostaje puste z informacją, że wyszukiwana jest sama nazwa. Okno, przyciski i okienko przebiegu mówią o wyszukiwaniu zaawansowanym Google."
-        },
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Ustawienie „Animacje” z opisem każdej opcji",
-          "items": [
-            "Opcje „Jak w systemie”, „Pełne” i „Ograniczone” mają opis tego, co zmieniają na ekranie."
-          ],
-          "text": "Ustawienie „Animacje” z opisem każdej opcji. Opcje „Jak w systemie”, „Pełne” i „Ograniczone” mają opis tego, co zmieniają na ekranie."
-        },
-        {
-          "type": "fix",
-          "area": "Panel",
-          "title": "Naprawiono szarą kropkę tokenu Brand24 po przeładowaniu strony",
-          "items": [
-            "Kropka zielenieje przy pierwszym zapytaniu Brand24 z tokenem, także gdy strona wysłała je przed otwarciem panelu."
-          ],
-          "text": "Naprawiono szarą kropkę tokenu Brand24 po przeładowaniu strony. Kropka zielenieje przy pierwszym zapytaniu Brand24 z tokenem, także gdy strona wysłała je przed otwarciem panelu."
         }
       ]
     }

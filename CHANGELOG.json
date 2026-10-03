@@ -1,5 +1,32 @@
 [
   {
+    "version": "0.38.13",
+    "date": "2026-10-03",
+    "label": "improved",
+    "changes": [
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Przeciąganie kart na pasku funkcji z animacją",
+        "items": [
+          "Chwycona karta unosi się i jedzie za kursorem, a pozostałe rozsuwają się płynnie na nowe miejsca.",
+          "Po puszczeniu karta osiada na swoim miejscu. Rozsuwanie i osiadanie działają przy „Animacje: Pełne” albo przy „Jak w systemie” bez ograniczenia ruchu w systemie."
+        ],
+        "text": "Przeciąganie kart na pasku funkcji z animacją. Chwycona karta unosi się i jedzie za kursorem, a pozostałe rozsuwają się płynnie na nowe miejsca. Po puszczeniu karta osiada na swoim miejscu. Rozsuwanie i osiadanie działają przy „Animacje: Pełne” albo przy „Jak w systemie” bez ograniczenia ruchu w systemie."
+      },
+      {
+        "type": "improved",
+        "area": "Tagowanie z pliku",
+        "title": "Karta pliku bez pustego miejsca w szerokim panelu",
+        "items": [
+          "Gdy karta pliku stoi obok karty Postęp, pole pliku wypełnia całą kartę jako duże miejsce do upuszczenia pliku.",
+          "Opis wczytanego pliku mieści się w całości zamiast kończyć się wielokropkiem."
+        ],
+        "text": "Karta pliku bez pustego miejsca w szerokim panelu. Gdy karta pliku stoi obok karty Postęp, pole pliku wypełnia całą kartę jako duże miejsce do upuszczenia pliku. Opis wczytanego pliku mieści się w całości zamiast kończyć się wielokropkiem."
+      }
+    ]
+  },
+  {
     "version": "0.38.12",
     "date": "2026-10-03",
     "label": "new",

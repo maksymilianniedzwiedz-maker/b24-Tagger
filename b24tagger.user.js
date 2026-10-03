@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.7
+// @version      0.38.8
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -173,7 +173,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.7';
+  const VERSION = '0.38.8';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -208,14 +208,15 @@
   // panel.brand24.pl i stron spoza Brand24. localStorage należy do domeny, więc każdy panel miał osobny motyw,
   // przełączniki i kanał aktualizacji. Nazwy kluczy są te same co w localStorage, z którego przechodzą (_prefsMoveFromLs).
   const PREF = {
-    THEME:          'b24tagger_theme',          // light | dark
+    THEME:          'b24tagger_theme',          // auto | light | dark (brak zapisu = auto)
     UI_TEXT:        'b24tagger_ui_text',        // rozmiar tekstu: auto | sm | lg
     UI_MOTION:      'b24tagger_ui_motion',      // ruch: auto | full | lite
-    FEATURES:       'b24tagger_features',       // { id funkcji z OPTIONAL_FEATURES: true | false }
+    FEATURES:       'b24tagger_features',       // { id narzędzia albo opcji z SET_TOOLS i SET_SUBS: true | false }
     UPDATE_CHANNEL: 'b24tagger_update_channel', // stable | experimental
     CHANNEL_MOVED:  'b24tagger_channel_moved_stable', // wersja, która przełączyła kanał na Stabilny (_relMoveToStable)
     NA_SETTINGS:    'b24t_na_settings',         // Analityka: { enabled, pat, repo, lastPush }
     NA_CONSENT:     'b24t_na_consent',          // zgoda na analitykę News: '1' | '0'
+    SOUNDS:         'b24t_sounds',              // Powiadomienia → Dźwięki: { done, error, captcha: true | false }
   };
   const MAX_BATCH_SIZE = 50;
   const DEL_BATCH_DEFAULT = 25; // domyślny batch równoległych deletów (edytowalny w UI)
@@ -263,7 +264,6 @@
   const state = {
     status: 'idle',          // idle | running | paused | error | done
     lastMentionsVars: null,  // last organic getMentions variables from Brand24
-    soundEnabled: false,     // play sound on done
     tokenHeaders: null,
     tokenSeen: false,        // strona wysłała zapytanie z tokenem (kropka tokenu); token z B24Bridge tego nie ustawia
     tknB24: null,             // CSRF token for legacy Django endpoints
@@ -494,7 +494,7 @@
   }
 
   function _ntfyGetCfg() {
-    var d = { topic: '', server: NTFY_DEFAULT_SERVER, events: _ntfyDefaultEvents(), minMin: 3 };
+    var d = { enabled: false, topic: '', server: NTFY_DEFAULT_SERVER, events: _ntfyDefaultEvents(), minMin: 3 };
     try {
       var raw = GM_getValue(NTFY_CFG_KEY, null);
       if (!raw) return d;
@@ -505,8 +505,11 @@
       var ev = {};
       var zap = (c && typeof c.events === 'object' && c.events) ? c.events : {};
       Object.keys(NTFY_EVENTS).forEach(function(k) { ev[k] = zap[k] !== false; });
+      var topic = typeof c.topic === 'string' ? c.topic.trim() : '';
       return {
-        topic:  typeof c.topic === 'string' ? c.topic.trim() : '',
+        // Zapis sprzed przełącznika (do 0.38.7) nie ma `enabled`: kanał wpisany = powiadomienia włączone.
+        enabled: typeof c.enabled === 'boolean' ? c.enabled : !!topic,
+        topic:  topic,
         server: (typeof c.server === 'string' && c.server.trim()) ? c.server.trim().replace(/\/+$/, '') : NTFY_DEFAULT_SERVER,
         events: ev,
         minMin: (typeof c.minMin === 'number' && c.minMin >= 0) ? c.minMin : 3,
@@ -525,7 +528,7 @@
   // drukarskim (§2). Przez nagłówki rozsypałoby się to na pierwszym „ę".
   function _ntfySend(o) {
     var cfg = _ntfyGetCfg();
-    if (!cfg.topic) return;                        // brak kanału = funkcja wyłączona
+    if (!cfg.enabled || !cfg.topic) return;        // wyłączone w Ustawieniach albo bez kanału
     var def = NTFY_EVENTS[o.ev];
     if (!def) return;                              // nieznane zdarzenie — cisza zamiast zgadywania
     if (cfg.events[o.ev] === false) return;        // wyłączone przez użytkownika
@@ -3793,7 +3796,7 @@
       stopHealthCheck();
       stopSessionTimer();
       saveSessionToHistory();
-      if (state.soundEnabled) playDoneSound();
+      if (_sndOn('done')) _sndPlay('done');
       showFinalReport();
       clearCheckpoint();
     }
@@ -3959,6 +3962,7 @@
     stopSessionTimer();
     state.status = 'error';
     updateStatusUI();
+    if (_sndOn('error')) _sndPlay('error');
     addLog(`✕ [${ctx.src}] Błąd w: ${context} — ${error.message}\n  → ${ctx.hint}`, 'error');
     showCrashBanner(crash);
     // Centralny handler błędów tagowania — jedno podpięcie zamiast osobnego przy każdej
@@ -5021,8 +5025,13 @@
     app.setAttribute('data-b24t-motion', m);
   }
 
-  // Motyw wtyczki: light | dark, domyślnie jasny na każdej stronie.
-  function _themeGet() { return gmGet(PREF.THEME, 'light') === 'dark' ? 'dark' : 'light'; }
+  // Motyw z Ustawień: auto (jak w systemie) | light | dark; brak zapisu to auto (SETTINGS.md §1 nr 10).
+  function _themePref() { var t = gmGet(PREF.THEME, 'auto'); return t === 'light' || t === 'dark' ? t : 'auto'; }
+  // Motyw do narysowania: light | dark.
+  function _themeGet() {
+    var t = _themePref();
+    return t !== 'auto' ? t : window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
 
   // Motyw, rozmiar tekstu i ruch zmienione w innej karcie, także na drugim panelu Brand24 albo na stronie spoza
   // Brand24, zmieniają tę kartę od razu, bez przeładowania. Przełączniki funkcji nasłuchuje init().
@@ -5031,6 +5040,9 @@
       try { GM_addValueChangeListener(key, function (name, oldV, newV, remote) { if (remote) fn(); }); } catch (e) {}
     };
     watch(PREF.THEME, function () { _ui.app.setAttribute('data-b24t-theme', _themeGet()); });
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+      if (_themePref() === 'auto') _ui.app.setAttribute('data-b24t-theme', _themeGet());
+    });
     watch(PREF.UI_TEXT, _uiApplyPrefs);
     watch(PREF.UI_MOTION, _uiApplyPrefs);
   }
@@ -5240,7 +5252,7 @@
       @keyframes b-edge-out { from { opacity: 1; } to { opacity: 0; } }
 
       /* ── Przyciski (stany: plansza StatesH) ── */
-      .b-btn, .b-ibtn, .b-chip, .b-rail__item, .b-menu__item, .b-seg > * {
+      .b-btn, .b-ibtn, .b-chip, .b-rail__item, .b-menu__item, .b-set-nav__item, .b-seg > * {
         font: inherit; margin: 0; outline: none; user-select: none; -webkit-tap-highlight-color: transparent;
         background-image: none; text-decoration: none;
         transition: background-color 120ms var(--ease-in), color 120ms var(--ease-in), border-color 120ms var(--ease-in),
@@ -5279,10 +5291,10 @@
       :is(.b-btn--primary):not([aria-disabled="true"]):not([aria-busy="true"]):not(:disabled):active { background-color: var(--c-accentPress); }
       :is(.b-btn--danger):not([aria-disabled="true"]):not([aria-busy="true"]):not(:disabled):hover { background-color: var(--c-dangerHover); }
       :is(.b-btn--danger):not([aria-disabled="true"]):not([aria-busy="true"]):not(:disabled):active { background-color: var(--c-dangerPress); }
-      :is(.b-btn--neutral, .b-btn--quiet, .b-btn--outline, .b-btn:not([class*="b-btn--"]), .b-ibtn, button.b-chip, .b-rail__item, .b-menu__item):not([aria-disabled="true"]):not([aria-busy="true"]):not(:disabled):hover {
+      :is(.b-btn--neutral, .b-btn--quiet, .b-btn--outline, .b-btn:not([class*="b-btn--"]), .b-ibtn, button.b-chip, .b-rail__item, .b-menu__item, .b-set-nav__item):not([aria-disabled="true"]):not([aria-busy="true"]):not(:disabled):hover {
         background-image: linear-gradient(var(--c-hover), var(--c-hover));
       }
-      :is(.b-btn--neutral, .b-btn--quiet, .b-btn--outline, .b-btn:not([class*="b-btn--"]), .b-ibtn, button.b-chip, .b-rail__item, .b-menu__item):not([aria-disabled="true"]):not([aria-busy="true"]):not(:disabled):active {
+      :is(.b-btn--neutral, .b-btn--quiet, .b-btn--outline, .b-btn:not([class*="b-btn--"]), .b-ibtn, button.b-chip, .b-rail__item, .b-menu__item, .b-set-nav__item):not([aria-disabled="true"]):not([aria-busy="true"]):not(:disabled):active {
         background-image: linear-gradient(var(--c-press), var(--c-press));
       }
       .b-btn--link:not([aria-disabled="true"]):hover { text-decoration: underline; background-image: none; }
@@ -5906,6 +5918,35 @@
         opacity: 0; transition: opacity 160ms var(--ease-in);
       }
       .b-set-saved.is-on { opacity: 1; }
+      /* Kategorie w pionowej liście po lewej (SETTINGS.md §2.1): lista stoi, przewija się treść. Poniżej 40em szerokości
+         okna lista przechodzi w same ikony z dymkiem. */
+      .b-set .b-main { container: b-setwin / inline-size; }
+      .b-set-layout { display: grid; grid-template-columns: 11em minmax(0, 1fr); gap: 0 1.5em; min-width: 0; }
+      .b-set-nav { position: sticky; top: 0; align-self: start; display: flex; flex-direction: column; gap: 2px; padding-top: 0.75em; }
+      .b-set-nav__item {
+        display: flex; align-items: center; gap: 0.6em; min-height: 2.25em; padding: 0 0.75em; border: 0; border-radius: 8px;
+        background-color: transparent; color: var(--c-text2); font: inherit; text-align: left; cursor: pointer;
+      }
+      .b-set-nav__item > svg { width: 1.15em; height: 1.15em; flex-shrink: 0; }
+      .b-set-nav__item[aria-selected="true"] { background-color: var(--c-accentSoft); color: var(--c-accentInk); font-weight: 600; }
+      .b-set-nav__item:focus-visible { outline: 2px solid var(--c-focus); outline-offset: -2px; }
+      @container b-setwin (width < 40em) {
+        .b-set-layout { grid-template-columns: 2.5em minmax(0, 1fr); gap: 0 0.75em; }
+        .b-set-nav__item { justify-content: center; padding: 0; }
+        .b-set-nav__label { display: none; }
+      }
+      .b-set-pane__title { font-size: 1.23em; font-weight: 600; }
+      .b-set-foot { padding-bottom: 0.75em; }
+      /* Narzędzia: ikona jak w pasku albo na uchwycie; opcja zależna z wcięciem, wyszarzona przy wyłączonym narzędziu. */
+      .b-set-tool { display: inline-flex; align-items: center; gap: 0.5em; }
+      .b-set-tool > svg { width: 1.15em; height: 1.15em; color: var(--c-text2); flex-shrink: 0; }
+      .b-set-row.b-set-row--sub { padding-left: 2em; }
+      .b-set-row--sub:has(input:disabled) .b-set-row__label { color: var(--c-textDisabled); }
+      label.b-set-row:has(input:disabled) { cursor: default; }
+      .b-set-warn { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25em 0.4em; margin-top: 0.25em; color: var(--c-warn); }
+      .b-set-warn > svg { width: 1.1em; height: 1.1em; }
+      .b-set-ntfy { gap: 0.75em; padding-bottom: 0.75em; }
+      .b-set-sub__title { font-weight: 600; padding-top: 0.5em; }
       .b-set-pane { display: flex; flex-direction: column; gap: 1.5em; min-width: 0; padding-top: 0.75em; container: b-set / inline-size; }
       .b-set-sec { display: flex; flex-direction: column; min-width: 0; }
       .b-set-sec__title { font-size: 1.077em; font-weight: 600; }
@@ -8033,7 +8074,7 @@
       var text = target.getAttribute('data-tip');
       if (!text) return;
       // Pozycja paska funkcji z widocznym podpisem nie potrzebuje dymku; dymek ma tylko w trybie samych ikon.
-      var lab = target.querySelector('.b-rail__label');
+      var lab = target.querySelector('.b-rail__label, .b-set-nav__label');
       if (lab && lab.offsetWidth) return;
       if (!el) {
         el = document.createElement('div');
@@ -8666,12 +8707,12 @@
     add('changelog', exp ? 'Dziennik zmian' : 'Dziennik aktualizacji', 'Okno', 'notes', function () { showChangelog(); });
     add('whatsnew', 'Co nowego: największe zmiany ostatnich wersji', 'Okno', 'sparkle', showWhatsNew);
     add('report', 'Zgłoś błąd albo pomysł', 'Okno', 'chat', function () { showReportModal(); });
-    if (f.annotator_tools) {
+    if (_featOn('annotator_mentions', f)) {
       add('news', 'News: dodawanie wzmianek z artykułów', 'Okno', 'news', function () { openNewsPanels('news'); });
       add('custom', 'Niestandardowe: dodawanie wzmianki z dowolnej strony', 'Okno', 'plus', function () { openNewsPanels('custom'); });
       add('campaigns', 'Kampanie Google', 'Okno', 'target', _openCampaignHub);
-      add('annotator', 'Dashboard Annotatora', 'Okno', 'users', openAnnotatorPanel);
     }
+    if (_featOn('annotator_dashboard', f)) add('annotator', 'Dashboard Annotatora', 'Okno', 'users', openAnnotatorPanel);
     if (f.network_monitor) add('nm', 'Network Monitor', 'Okno', 'activity', openNetworkMonitorPanel);
 
     var pw = Win.get('panel');
@@ -8902,7 +8943,7 @@
         intro: { title: 'Przegląd sentymentu', text: 'Modele już oceniły wzmianki, zostały decyzje. Cztery kroki pokazują, jak przejść przegląd samą klawiaturą i jak cofnąć pomyłkę.' },
         outro: { title: 'Do dzieła', text: 'Grupa „Zgodna zmiana” zapisuje się jednym przyciskiem, a „Dziennik decyzji” w nagłówku pokazuje decyzje z ostatnich 12 miesięcy.' },
         ready: function () {
-          if (!_tutVisible(_$('b24t-sent-tab-btn'))) return 'Włącz przegląd sentymentu w Ustawieniach → AI.';
+          if (!_tutVisible(_$('b24t-sent-tab-btn'))) return 'Włącz Sentyment w Ustawieniach → Narzędzia.';
           var run = sentState.run;
           if (!run || (run.phase !== 'done' && run.phase !== 'stopped') || !run.items.length) return 'Samouczek prowadzi przez gotowy przegląd: najpierw oceń wzmianki na karcie Sentyment.';
           return '';
@@ -8944,7 +8985,7 @@
         ready: function () {
           var r = _tutPanelReady();
           if (r) return r;
-          return _tutVisible(_$('b24t-aitag-tab-btn')) ? '' : 'Włącz tagowanie AI w Ustawieniach → AI.';
+          return _tutVisible(_$('b24t-aitag-tab-btn')) ? '' : 'Włącz AI Tag w Ustawieniach → Narzędzia.';
         },
         prepare: function () { _tutShowPanel('aitag'); },
         offer: {
@@ -9351,17 +9392,16 @@
   const PANEL_TABS = [
     { tab: 'main', label: 'Plik', icon: 'file' },
     { tab: 'quicktag', label: 'Quick Tag', icon: 'quick' },
-    { tab: 'aitag', label: 'AI Tag', icon: 'ai', id: 'b24t-aitag-tab-btn', hidden: true },
-    { tab: 'sentiment', label: 'Sentyment', icon: 'sent', id: 'b24t-sent-tab-btn', hidden: true },
+    { tab: 'aitag', label: 'AI Tag', icon: 'ai', id: 'b24t-aitag-tab-btn' },
+    { tab: 'sentiment', label: 'Sentyment', icon: 'sent', id: 'b24t-sent-tab-btn' },
     { tab: 'delete', label: 'Usuwanie', icon: 'del' },
-    { tab: 'history', label: 'Historia', icon: 'hist', util: true },
-    { tab: 'notify', label: 'Powiadomienia', icon: 'bell', util: true }
+    { tab: 'history', label: 'Historia', icon: 'hist', util: true }
   ];
 
   function buildPanel() {
     const railItem = (t) =>
       `<button type="button" class="b-rail__item${t.util ? ' b-rail__item--util' : ''}" data-tab="${t.tab}"` +
-      (t.id ? ` id="${t.id}"` : '') + (t.hidden ? ' style="display:none"' : '') +
+      (t.id ? ` id="${t.id}"` : '') + ' hidden' +
       ` aria-label="${t.label}" data-tip="${t.label}"${t.tab === 'main' ? ' aria-current="page"' : ''}>` +
       `${_icon(t.icon)}<span class="b-rail__label" aria-hidden="true">${t.label}</span></button>`;
 
@@ -9374,7 +9414,7 @@
       `<span id="b24t-status-badge" class="b-status" data-state="idle" role="status" hidden><span class="b-status__label">Gotowy</span></span>` +
       `<button type="button" class="b-ibtn b-hide-below-34" id="b24t-btn-palette" aria-label="Paleta poleceń" data-tip="Paleta poleceń" data-tip-kbd="Ctrl K">${_icon('search')}</button>` +
       `<button type="button" class="b-ibtn b-hide-below-25" id="b24t-btn-help" aria-label="Pomoc i samouczki" data-tip="Pomoc i samouczki">${_icon('help')}</button>` +
-      `<button type="button" class="b-ibtn" id="b24t-btn-features" aria-label="Ustawienia" data-tip="Ustawienia: funkcje, modele AI, aktualizacje">${_icon('settings')}</button>`;
+      `<button type="button" class="b-ibtn" id="b24t-btn-features" aria-label="Ustawienia" data-tip="Ustawienia: narzędzia, wygląd, AI, powiadomienia">${_icon('settings')}</button>`;
 
     const rail =
       `<nav id="b24t-tabs" class="b-rail b-scroll b-scroll--bare" aria-label="Funkcje">` +
@@ -9507,8 +9547,6 @@
               <select class="b-select b-select--sm" id="b24t-switch-view-tag"></select>
             </div>
             <div id="b24t-auto-delete-placeholder"></div>
-            <hr class="b-sep">
-            <label class="b-check"><input type="checkbox" id="b24t-sound-cb"><span>Dźwięk po zakończeniu sesji</span></label>
           </div>
         </section>
 
@@ -9529,7 +9567,11 @@
       <div id="b24t-aitag-tab-placeholder"></div>
       <div id="b24t-sent-tab-placeholder"></div>
       <div id="b24t-history-tab-placeholder"></div>
-      <div id="b24t-notify-tab-placeholder"></div>
+      <div class="b-tabpanel" data-tab-panel="none" hidden>
+        <div class="b-empty">${_icon('grid')}<div class="b-empty__title">Pasek bez kart</div>
+          <div>Karty paska włącza się w Ustawieniach → Narzędzia.</div>
+          <button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-tabs-empty-open">${_icon('settings')}Otwórz Narzędzia</button></div>
+      </div>
       </div>`;
 
     // Stopka: grupa przycisków dla każdej karty z jednym głównym działaniem (data-for). Usuwanie ma dwie niezależne
@@ -9725,6 +9767,22 @@
     Tutor.poke();
   }
 
+  // Widoczność pozycji paska z Ustawień → Narzędzia. Pokazana karta, która znika, ustępuje pierwszej widocznej;
+  // bez żadnej widocznej panel pokazuje pusty stan z drogą do Ustawień (SETTINGS.md §1 nr 4).
+  function _panelSyncRail() {
+    var panel = _$('b24t-panel');
+    if (!panel) return;
+    var f = loadFeatures(), ai = _aiGetSettings(), first = null, on = {};
+    PANEL_TABS.forEach(function (t) {
+      on[t.tab] = _toolOn(PANEL_TAB_TOOL[t.tab], f, ai);
+      var b = panel.querySelector('.b-rail__item[data-tab="' + t.tab + '"]');
+      if (b) b.hidden = !on[t.tab];
+      if (on[t.tab] && !first) first = t.tab;
+    });
+    if (_panelTab && on[_panelTab]) return;
+    _panelShowTab(first || 'none');
+  }
+
   // Pasek funkcji: kliknięcie przełącza kartę; strzałki w górę i w dół przechodzą między widocznymi pozycjami.
   function _panelWireRail(panel) {
     var nav = panel.querySelector('#b24t-tabs');
@@ -9753,7 +9811,7 @@
 
   function applyTheme(theme) {
     gmSet(PREF.THEME, theme);
-    _uiEnsure().app.setAttribute('data-b24t-theme', theme);
+    _uiEnsure().app.setAttribute('data-b24t-theme', _themeGet());
   }
 
   function wireEvents(panel) {
@@ -9857,10 +9915,7 @@
       if (show && state.file && state.file.rows) buildColumnOverrideUI(state.file.rows);
     });
 
-    // Sound checkbox
-    panel.querySelector('#b24t-sound-cb')?.addEventListener('change', (e) => {
-      state.soundEnabled = e.target.checked;
-    });
+    panel.querySelector('#b24t-tabs-empty-open').addEventListener('click', function() { showFeaturesModal('tools'); });
 
     // Settings collapse toggle
     (function() {
@@ -11205,69 +11260,10 @@
     lsSet(LS.HISTORY, history.slice(0, 20));
   }
 
-  // Zakładka „Powiadomienia". Lista przełączników powstaje z rejestru `NTFY_EVENTS`, a nie
-  // z ręcznie wypisanego HTML-a — dzięki temu dołożenie powiadomienia to jeden wiersz
-  // w rejestrze, bez dotykania tego widoku. Grupy i ich opisy idą z `NTFY_GRUPY`.
-  function buildNotifyTab() {
-    const div = document.createElement('div');
-    div.id = 'b24t-notify-tab';
-    div.className = 'b-tabpanel';
-    div.hidden = true;
-
-    let grupyHtml = '';
-    NTFY_GRUPY.forEach(function(g) {
-      const wiersze = Object.keys(NTFY_EVENTS).filter(function(k) { return NTFY_EVENTS[k].grupa === g.id; });
-      if (!wiersze.length) return;
-      grupyHtml +=
-        '<div class="b-stack b-stack--sm">' +
-          '<div><div class="b-label">' + _escHtml(g.label) + (g.id === 'czeka' ? ' <span class="b-muted">· pilne</span>' : '') + '</div>' +
-          '<div class="b-hint">' + _escHtml(g.opis) + '</div></div>' +
-          wiersze.map(function(k) {
-            const e = NTFY_EVENTS[k];
-            return '<label class="b-check"><input type="checkbox" id="b24t-ntfy-ev-' + k + '" data-ntfy-ev="' + k + '">' +
-              '<span>' + _escHtml(e.label) + '<span class="b-hint" style="display:block">' + _escHtml(e.opis) + '</span></span></label>';
-          }).join('') +
-        '</div>';
-    });
-
-    div.innerHTML =
-      '<section class="b-card">' +
-        '<div class="b-card__head"><span class="b-card__title">Kanał ntfy</span></div>' +
-        '<p class="b-small b-text2">Powiadomienia przychodzą przez aplikację <b>ntfy</b> na telefonie: zasubskrybuj w niej własny kanał ' +
-          'i wpisz jego nazwę niżej. Nazwa kanału jest jedynym zabezpieczeniem, bo kto ją zna, ten czyta powiadomienia; ' +
-          'dlatego powinna być długa i nieoczywista.</p>' +
-        '<input type="text" id="b24t-ntfy-topic" class="b-input b-mono" placeholder="np. b24t-2f9a4c7e1b6d" autocomplete="off" spellcheck="false" aria-label="Nazwa kanału ntfy">' +
-        '<div id="b24t-ntfy-hint" class="b-hint"></div>' +
-        '<div class="b-row b-row--wrap">' +
-          '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-ntfy-test">' + _icon('send') + 'Wyślij testowe</button>' +
-          '<span class="b-sp"></span>' +
-          '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-ntfy-server-toggle" aria-expanded="false" aria-controls="b24t-ntfy-server-row">Własny serwer</button>' +
-        '</div>' +
-        '<label class="b-field" id="b24t-ntfy-server-row" hidden>' +
-          '<span class="b-label">Serwer (domyślny wystarcza bez własnego)</span>' +
-          '<input type="text" id="b24t-ntfy-server" class="b-input b-input--sm b-mono" placeholder="https://ntfy.sh" autocomplete="off" spellcheck="false">' +
-        '</label>' +
-        '<div id="b24t-ntfy-status" class="b-small" role="status"></div>' +
-      '</section>' +
-      '<section class="b-card" id="b24t-ntfy-events">' +
-        '<div class="b-card__head"><span class="b-card__title">Co ma przychodzić</span></div>' +
-        grupyHtml +
-        '<hr class="b-sep">' +
-        '<div class="b-opt">' +
-          '<span class="b-label">Grupa „Skończone” tylko powyżej</span>' +
-          '<select id="b24t-ntfy-minmin" class="b-select b-select--sm" style="width:auto">' +
-            '<option value="0">zawsze</option><option value="1">1 min</option><option value="3">3 min</option>' +
-            '<option value="5">5 min</option><option value="10">10 min</option>' +
-          '</select>' +
-        '</div>' +
-        '<div class="b-hint">Krótka praca nie wysyła powiadomienia. To, co czeka na decyzję, i błędy przychodzą zawsze, niezależnie od progu.</div>' +
-      '</section>';
-    return div;
-  }
-
-  // Wiązanie zakładki „Powiadomienia". Osobno od budowy, bo zakładka wstrzykiwana jest raz,
-  // a stan czytany z GM przy każdym wejściu do panelu.
-  function wireNotifyTab(root) {
+  // ntfy w Ustawieniach → Powiadomienia: przełącznik rozwija ustawienia kanału; każda zmiana zapisuje się od razu.
+  function _ntfyWire(root, ctx) {
+    const onEl     = root.querySelector('#b24t-ntfy-on');
+    const bodyEl   = root.querySelector('#b24t-ntfy-body');
     const topicEl  = root.querySelector('#b24t-ntfy-topic');
     const serverEl = root.querySelector('#b24t-ntfy-server');
     const hintEl   = root.querySelector('#b24t-ntfy-hint');
@@ -11292,8 +11288,8 @@
       evEls.concat([minEl, testEl]).forEach(function(el) { if (el) el.disabled = !ma; });
       if (!hintEl) return;
       if (!ma) {
-        hintEl.textContent = 'Puste pole wyłącza powiadomienia.';
-        hintEl.className = 'b-hint';
+        hintEl.textContent = 'Bez nazwy kanału nic nie przyjdzie.';
+        hintEl.className = 'b-small b-warn';
       } else {
         const ile = evEls.filter(function(el) { return el.checked; }).length;
         hintEl.textContent = ile
@@ -11306,13 +11302,20 @@
       const events = {};
       evEls.forEach(function(el) { events[el.dataset.ntfyEv] = el.checked; });
       _ntfySaveCfg({
+        enabled: onEl.checked,
         topic: topicEl.value.trim(),
         server: serverEl.value.trim() || NTFY_DEFAULT_SERVER,
         events: events,
         minMin: parseInt(minEl.value, 10) || 0,
       });
       sync();
+      ctx.saved();
     }
+    onEl.addEventListener('change', function() {
+      bodyEl.hidden = !onEl.checked;
+      zapisz();
+      if (onEl.checked && !topicEl.value.trim()) topicEl.focus();
+    });
     topicEl.addEventListener('input', zapisz);
     serverEl.addEventListener('input', zapisz);
     minEl.addEventListener('change', zapisz);
@@ -11340,7 +11343,7 @@
         data: JSON.stringify({
           topic: t,
           title: '📲 B24 Tagger — kanał działa',
-          message: 'Jeśli to widzisz na telefonie, powiadomienia są skonfigurowane poprawnie.\n\nWtyczka odezwie się przy zdarzeniach zaznaczonych w zakładce „Powiadomienia".',
+          message: 'Jeśli to widzisz na telefonie, powiadomienia są skonfigurowane poprawnie.\n\nWtyczka odezwie się przy zdarzeniach zaznaczonych w Ustawieniach → Powiadomienia.',
           priority: 3,
           tags: ['white_check_mark'],
         }),
@@ -11517,21 +11520,36 @@
   // F9 - SOUND NOTIFICATION
   // ───────────────────────────────────────────
 
-  function playDoneSound() {
+  // Powiadomienia → Dźwięki: koniec i błąd tagowania z pliku, alarm captchy w wyszukiwaniu kampanii (FOCUS.md §3).
+  var SND_DEFAULT = { done: false, error: false, captcha: true };
+  function _sndOn(kind) {
+    var s = gmGet(PREF.SOUNDS, null) || {};
+    return typeof s[kind] === 'boolean' ? s[kind] : SND_DEFAULT[kind];
+  }
+
+  // Tony kolejno co `step` s, każdy `len` s. Kontekst powstaje przy każdym sygnale i zamyka się po nim.
+  function _sndTones(freqs, type, step, len) {
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      [523.25, 659.25, 783.99].forEach(function(freq, i) {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      freqs.forEach(function(freq, i) {
+        var osc = ctx.createOscillator(), gain = ctx.createGain();
         osc.connect(gain); gain.connect(ctx.destination);
-        osc.frequency.value = freq; osc.type = 'sine';
-        const t = ctx.currentTime + i * 0.13;
+        osc.frequency.value = freq; osc.type = type;
+        var t = ctx.currentTime + i * step;
         gain.gain.setValueAtTime(0, t);
         gain.gain.linearRampToValueAtTime(0.15, t + 0.03);
-        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
-        osc.start(t); osc.stop(t + 0.45);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + len);
+        osc.start(t); osc.stop(t + len);
       });
+      setTimeout(function() { ctx.close(); }, (freqs.length * step + len) * 1000 + 200);
     } catch(e) {}
+  }
+
+  // Koniec: trzy rosnące tony; błąd: dwa opadające; captcha: 1,5 s alarmu z wyszukiwania kampanii (podgląd).
+  function _sndPlay(kind) {
+    if (kind === 'done') _sndTones([523.25, 659.25, 783.99], 'sine', 0.13, 0.45);
+    else if (kind === 'error') _sndTones([493.88, 349.23], 'triangle', 0.22, 0.5);
+    else if (kind === 'captcha' && !_gsAlarm.on) { _gsAlarmSound(); setTimeout(_gsAlarmSilence, 1500); }
   }
 
   // ───────────────────────────────────────────
@@ -12300,7 +12318,7 @@
       document.title = alt ? '⛔ CAPTCHA — kliknij tutaj' : '⚠ wyszukiwanie wstrzymane';
     }, 900);
 
-    _gsAlarmSound();
+    if (_sndOn('captcha')) _gsAlarmSound();
     _gsHudAlarm(powod || '?');
 
     // Captcha rozwiązana bez przeładowania strony — wtedy nic nas nie obudzi poza sprawdzaniem.
@@ -20344,6 +20362,48 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.8",
+      "date": "2026-10-03",
+      "label": "new",
+      "changes": [
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Ustawienia z listą kategorii po lewej",
+          "items": [
+            "Kategorie: Narzędzia, Wygląd, AI, Prompty, Powiadomienia, Projekty, Aktualizacje i Analityka; strzałki w górę i w dół przechodzą między nimi.",
+            "W wąskim oknie lista pokazuje same ikony, a nazwa kategorii jest w dymku.",
+            "Motyw ma trzy stany: „Jak w systemie”, „Jasny” i „Ciemny”."
+          ],
+          "text": "Ustawienia z listą kategorii po lewej. Kategorie: Narzędzia, Wygląd, AI, Prompty, Powiadomienia, Projekty, Aktualizacje i Analityka; strzałki w górę i w dół przechodzą między nimi. W wąskim oknie lista pokazuje same ikony, a nazwa kategorii jest w dymku. Motyw ma trzy stany: „Jak w systemie”, „Jasny” i „Ciemny”."
+        },
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Narzędzia: każda karta paska i każdy uchwyt włączany osobno",
+          "items": [
+            "Da się ukryć każdą kartę paska, także Plik; bez żadnej karty panel prowadzi do Ustawień → Narzędzia.",
+            "Dashboard Annotatora, Wzmianki i zakres „Wszystkie projekty” w Usuwaniu mają osobne przełączniki zamiast jednego wspólnego.",
+            "Opcje zależne, np. „Usuwanie po ocenie” pod Plikiem, stoją pod swoim narzędziem i gasną razem z nim.",
+            "Przy AI Tag i Sentymencie bez klucza dostawcy stoi ostrzeżenie z przyciskiem „Dodaj klucz”."
+          ],
+          "text": "Narzędzia: każda karta paska i każdy uchwyt włączany osobno. Da się ukryć każdą kartę paska, także Plik; bez żadnej karty panel prowadzi do Ustawień → Narzędzia. Dashboard Annotatora, Wzmianki i zakres „Wszystkie projekty” w Usuwaniu mają osobne przełączniki zamiast jednego wspólnego. Opcje zależne, np. „Usuwanie po ocenie” pod Plikiem, stoją pod swoim narzędziem i gasną razem z nim. Przy AI Tag i Sentymencie bez klucza dostawcy stoi ostrzeżenie z przyciskiem „Dodaj klucz”."
+        },
+        {
+          "type": "improved",
+          "area": "Powiadomienia",
+          "title": "Powiadomienia w Ustawieniach: dźwięki i ntfy w jednym miejscu",
+          "items": [
+            "Dźwięki końca i błędu tagowania z pliku oraz alarm captchy włącza się osobno, a przycisk obok odtwarza każdy z nich.",
+            "Wybór dźwięków zostaje po przeładowaniu strony.",
+            "Powiadomienia na telefon (ntfy) mają własny przełącznik, a ustawienia kanału pokazują się dopiero po jego włączeniu.",
+            "Pasek funkcji nie ma karty Powiadomienia."
+          ],
+          "text": "Powiadomienia w Ustawieniach: dźwięki i ntfy w jednym miejscu. Dźwięki końca i błędu tagowania z pliku oraz alarm captchy włącza się osobno, a przycisk obok odtwarza każdy z nich. Wybór dźwięków zostaje po przeładowaniu strony. Powiadomienia na telefon (ntfy) mają własny przełącznik, a ustawienia kanału pokazują się dopiero po jego włączeniu. Pasek funkcji nie ma karty Powiadomienia."
+        }
+      ]
+    },
+    {
       "version": "0.38.7",
       "date": "2026-10-03",
       "label": "new",
@@ -20956,23 +21016,6 @@
           "area": "Panel",
           "title": "Naprawiono dwa błędy bezpieczeństwa",
           "text": "Naprawiono dwa błędy bezpieczeństwa."
-        }
-      ]
-    },
-    {
-      "version": "0.37.1",
-      "date": "2026-10-02",
-      "label": "fix",
-      "changes": [
-        {
-          "type": "fix",
-          "area": "Panel",
-          "title": "Naprawiono błąd, przez który włączony Network Monitor wywoływał pasek błędu w panelu",
-          "items": [
-            "Zapytania Brand24 z odpowiedzią w formacie JSON nie trafiały do monitora, a nad przyciskiem Start pojawiał się czerwony pasek błędu.",
-            "Monitor pokazuje także zapytania z odpowiedzią JSON."
-          ],
-          "text": "Naprawiono błąd, przez który włączony Network Monitor wywoływał pasek błędu w panelu. Zapytania Brand24 z odpowiedzią w formacie JSON nie trafiały do monitora, a nad przyciskiem Start pojawiał się czerwony pasek błędu. Monitor pokazuje także zapytania z odpowiedzią JSON."
         }
       ]
     }
@@ -21922,7 +21965,7 @@
       if (_relChannel() !== 'experimental' || gmGet(PREF.CHANNEL_MOVED, null)) return;
       gmSet(PREF.CHANNEL_MOVED, VERSION);
       gmSet(PREF.UPDATE_CHANNEL, 'stable');
-      addLog('ℹ Kanał aktualizacji przełączony na Stabilny. Powrót: Ustawienia → Kanał aktualizacji → Eksperymentalny.', 'info');
+      addLog('ℹ Kanał aktualizacji przełączony na Stabilny. Powrót: Ustawienia → Aktualizacje → Eksperymentalny.', 'info');
       onMoved();
     });
   }
@@ -22366,35 +22409,45 @@
     clip.insertBefore(bar, clip.querySelector('.b-foot'));
   }
 
-  // Funkcje opcjonalne w Ustawieniach → Ogólne. `tag`: znacznik przy nazwie [tekst, rodzaj chipu].
-  const OPTIONAL_FEATURES = [
-    {
-      id: 'show_log',
-      label: 'Log w panelu',
-      desc: 'Log zdarzeń w kartach Plik i AI Tag. Bez logu błędy pokazuje pasek nad przyciskami panelu, a do zgłoszeń wtyczka i tak zapisuje ostatnie zdarzenia.',
-    },
-    {
-      id: 'annotator_tools',
-      label: 'Narzędzia annotatora',
-      desc: 'Annotators i Wzmianki w listwie uchwytów przy krawędzi: statystyki projektów i grup, trafność AI, dodawanie wzmianek; w Usuwaniu zakres „Wszystkie projekty”.',
-    },
-    {
-      id: 'network_monitor',
-      label: 'Network Monitor',
-      desc: 'Okno z ruchem sieciowym strony Brand24; pokazuje przyczynę błędów tagowania i usuwania wzmianek.',
-    },
-    {
-      id: 'delete_by_assessment',
-      label: 'Usuwanie po ocenie',
-      tag: ['Nieodwracalne', 'danger'],
-      desc: 'W mapowaniu ocen pojawia się opcja „Usuń”. Wzmianki z tą oceną są trwale usuwane z Brand24 w trakcie przebiegu Start, razem z tagowaniem.',
-    },
-    {
-      id: 'sentiment_by_assessment',
-      label: 'Zmiana sentymentu po ocenie',
-      desc: 'W mapowaniu ocen pojawiają się opcje sentymentu: negatywny, neutralny, pozytywny. Wzmianki z taką oceną dostają ten sentyment w Brand24 w trakcie przebiegu Start; wzmianki, które już go mają, są pomijane.',
-    },
+  // Narzędzia i ich opcje w Ustawieniach → Narzędzia (SETTINGS.md §3, teksty §4.2). `loc`: nazwa w miejscowniku
+  // do opisu opcji zależnej („Działa przy włączonym Usuwaniu”); `run`: przełącznik nieaktywny w trakcie przebiegu.
+  // AI Tag i Sentyment zapisują się w ustawieniach AI (`tagging.enabled`, `sentiment.enabled`), reszta w PREF.FEATURES.
+  var SET_TOOLS = [
+    ['W pasku panelu', [
+      { id: 'tab_main', icon: 'file', name: 'Plik', loc: 'Pliku', run: true, subs: ['show_log', 'delete_by_assessment', 'sentiment_by_assessment'],
+        desc: 'Tagowanie wzmianek według pliku z ocenami: CSV, JSON albo XLSX.' },
+      { id: 'tab_quicktag', icon: 'quick', name: 'Quick Tag', desc: 'Tagowanie wzmianek z bieżącego widoku Brand24 jednym tagiem.' },
+      { id: 'ai_tagging', icon: 'ai', name: 'AI Tag', run: true, desc: 'Tagowanie wzmianek promptem przez model AI, bez pliku.' },
+      { id: 'ai_sentiment', icon: 'sent', name: 'Sentyment', run: true, desc: 'Ocena sentymentu dwoma modelami; decyzje z przeglądu trafiają do Brand24.' },
+      { id: 'tab_delete', icon: 'del', name: 'Usuwanie', loc: 'Usuwaniu', subs: ['delete_all_projects'],
+        desc: 'Usuwanie wzmianek z wybranym tagiem albo z bieżącego widoku Brand24.' },
+      { id: 'tab_history', icon: 'hist', name: 'Historia', desc: 'Zakończone przebiegi zapisane w tej przeglądarce, z eksportem do CSV.' }
+    ]],
+    ['Przy krawędzi ekranu', [
+      { id: 'annotator_dashboard', icon: 'users', name: 'Dashboard Annotatora', desc: 'Uchwyt „Annotators”: statystyki projektów i grup, Overall, trafność AI.',
+        info: 'Statystyki pobierają się w tle, gdy narzędzie jest włączone.' },
+      { id: 'annotator_mentions', icon: 'news', name: 'Wzmianki', desc: 'Uchwyt „Wzmianki”: dodawanie wzmianek z News, z dowolnej strony i z kampanii.' },
+      { id: 'network_monitor', icon: 'activity', name: 'Network Monitor', desc: 'Uchwyt okna z ruchem sieciowym Brand24, w tym przyczynami błędów zapisu.' }
+    ]],
+    ['Na innych stronach', [
+      { id: 'mini_mention', icon: 'plus', name: 'Dodaj wzmiankę', desc: 'Uchwyt formularza wzmianki na stronach spoza Brand24, np. na Instagramie.' }
+    ]]
   ];
+  var SET_SUBS = {
+    show_log: { name: 'Log w karcie', desc: 'Zdarzenia przebiegu w kartach Plik i AI Tag; błąd pokazuje też pasek błędu.' },
+    delete_by_assessment: { name: 'Usuwanie po ocenie', tag: ['Nieodwracalne', 'danger'],
+      desc: 'Opcja „Usuń wzmiankę” w mapowaniu ocen; wzmianka znika z Brand24 w przebiegu.',
+      info: 'Usuwanie następuje tylko w trybie Właściwy, po potwierdzeniu przebiegu; Brand24 nie ma kosza.' },
+    sentiment_by_assessment: { name: 'Sentyment po ocenie', desc: 'Opcje sentymentu w mapowaniu ocen; Brand24 dostaje sentyment w przebiegu.',
+      info: 'Wzmianki, które mają już ten sentyment, są pomijane.' },
+    delete_all_projects: { name: 'Wszystkie projekty', desc: 'Zakres „Wszystkie projekty”: wzmianki z tagiem w wielu projektach naraz.',
+      info: 'Lista projektów i liczba wzmianek pokazują się przed usunięciem, w osobnym oknie.' }
+  };
+  // Brak zapisu: karty paska i „Dodaj wzmiankę” włączone, jak przed wprowadzeniem przełączników. Dashboard, Wzmianki
+  // i „Wszystkie projekty” biorą wartość dawnego wspólnego przełącznika „Narzędzia annotatora” (SETTINGS.md §1 nr 5).
+  var FEATURE_ON_DEFAULT = { tab_main: true, tab_quicktag: true, tab_delete: true, tab_history: true, mini_mention: true };
+  var FEATURE_FROM = { annotator_dashboard: 'annotator_tools', annotator_mentions: 'annotator_tools', delete_all_projects: 'annotator_tools' };
+  var PANEL_TAB_TOOL = { main: 'tab_main', quicktag: 'tab_quicktag', aitag: 'ai_tagging', sentiment: 'ai_sentiment', delete: 'tab_delete', history: 'tab_history' };
 
   function loadFeatures() {
     var f = gmGet(PREF.FEATURES, null);
@@ -22403,6 +22456,44 @@
 
   function saveFeatures(features) {
     gmSet(PREF.FEATURES, features);
+  }
+
+  function _featOn(id, f) {
+    f = f || loadFeatures();
+    if (typeof f[id] === 'boolean') return f[id];
+    if (FEATURE_FROM[id]) return !!f[FEATURE_FROM[id]];
+    return !!FEATURE_ON_DEFAULT[id];
+  }
+  function _toolOn(id, f, ai) {
+    if (id === 'ai_tagging') return !!(ai || _aiGetSettings()).tagging.enabled;
+    if (id === 'ai_sentiment') return !!(ai || _aiGetSettings()).sentiment.enabled;
+    return _featOn(id, f);
+  }
+  function _toolSet(id, on) {
+    if (id === 'ai_tagging' || id === 'ai_sentiment') {
+      var cfg = _aiGetSettings();
+      cfg[id === 'ai_tagging' ? 'tagging' : 'sentiment'].enabled = on;
+      _aiSaveSettings(cfg);
+    } else {
+      var f = loadFeatures();
+      f[id] = on;
+      saveFeatures(f);
+    }
+    applyFeatures();
+  }
+  // Przebieg narzędzia w toku: wyłączenie zabrałoby kartę z pracą w trakcie. Quick Tag i Usuwanie nie mają stanu
+  // przebiegu poza samą funkcją, więc ich przełączniki zostają aktywne.
+  function _toolRunning(id) {
+    if (id === 'tab_main') return state.status === 'running' || state.status === 'paused';
+    if (id === 'ai_tagging') return !!state._aitRunning;
+    if (id === 'ai_sentiment') return !!(sentState.running || sentState.inFlight > 0);
+    return false;
+  }
+  // Dostawca pierwszego brakującego klucza do modeli narzędzia albo ''.
+  function _toolMissingKey(id, ai) {
+    var models = id === 'ai_tagging' ? [ai.tagging.model] : id === 'ai_sentiment' ? [ai.sentiment.modelA, ai.sentiment.modelB] : [];
+    var m = models.filter(function (x) { return !_aiKeyFor(x, ai); })[0];
+    return m ? _aiProvider(m) : '';
   }
 
   function applyFeatures() {
@@ -22414,27 +22505,30 @@
       var el = _$(id);
       if (el) el.hidden = !features.show_log;
     });
-    // Pokaż opcję "Wszystkie projekty" w Quick Delete tylko gdy Annotators włączone
     const apLabel = _$('b24t-del-allprojects-label');
-    if (apLabel) apLabel.hidden = !features.annotator_tools;
+    if (apLabel) apLabel.hidden = !_featOn('delete_all_projects', features);
 
     // Każdy obszar przełącza swoje uchwyty i okna we własnej funkcji (Annotator, Wzmianki, Network Monitor).
     _annApplyFeatures(features);
     _newsApplyFeatures(features);
     _nmApplyFeatures(features);
+    if (Edge.get('mini')) Edge.setVisible('mini', _featOn('mini_mention', features));
+    _panelSyncRail();
     // Prefetch danych w tle — startBgPrefetch sam zarządza tokenem i cyklem
-    if (features.annotator_tools) startBgPrefetch();
+    if (_featOn('annotator_dashboard', features)) startBgPrefetch();
   }
 
   // Funkcja opcjonalna „Annotators”: uchwyt krawędziowy i okno Dashboardu Annotatora.
   function _annApplyFeatures(features) {
-    if (!features.annotator_tools) Win.close('annotator');
+    if (!_featOn('annotator_dashboard', features)) Win.close('annotator');
     _annSyncEdge(features);
   }
 
-  // Zakładka boczna „Wzmianki” stoi razem z funkcją „Annotators”.
+  // Uchwyt „Wzmianki” w Brand24; wyłączenie zamyka okna News i Niestandardowe (szkic formularza zostaje).
   function _newsApplyFeatures(features) {
-    Edge.setVisible('news', !!features.annotator_tools);
+    var on = _featOn('annotator_mentions', features);
+    if (!on && _isB24 && newsState.panelsOpen) closeNewsPanels();
+    Edge.setVisible('news', on);
   }
 
   function _nmApplyFeatures(features) {
@@ -22446,13 +22540,16 @@
   // ───────────────────────────────────────────
   // UI - USTAWIENIA (OBSZAR ustawienia)
   // ───────────────────────────────────────────
-  // Okno dialogowe 52em z zakładkami Ogólne, AI, Prompty i Analityka (design/IMPLEMENTATION.md §6, SURFACES.md
-  // §1.6). Każda zmiana zapisuje się od razu i zapala znacznik „Zapisano” w pasku zakładek (katalog nr 51).
+  // Okno dialogowe 52em z pionową listą kategorii (design/SETTINGS.md §2, SURFACES.md §1.6). Każda zmiana zapisuje się
+  // od razu i zapala znacznik „Zapisano” w nagłówku okna (katalog nr 51).
   // Biblioteka promptów jest zakładką tego okna, nie drugim dialogiem nad pierwszym; edytor promptu otwiera się
   // w miejscu karty (nr 53) i jako jedyny dialog powiększa okno do pełnego ekranu.
 
   var SET_TAB_LS = 'b24tagger_settings_tab';
-  var SET_TABS = [['general', 'Ogólne', 'settings'], ['ai', 'AI', 'ai'], ['prompts', 'Prompty', 'notes'], ['analytics', 'Analityka', 'activity']];
+  // Kategorie w kolejności z SETTINGS.md §2.2: najpierw zmieniane przy zmianie sposobu pracy, potem ustawiane raz, na końcu
+  // naprawcze i rzadkie.
+  var SET_TABS = [['tools', 'Narzędzia', 'grid'], ['look', 'Wygląd', 'sun'], ['ai', 'AI', 'ai'], ['prompts', 'Prompty', 'notes'],
+    ['notify', 'Powiadomienia', 'bell'], ['projects', 'Projekty', 'folder'], ['updates', 'Aktualizacje', 'refresh'], ['analytics', 'Analityka', 'activity']];
   var _set = null; // otwarte Ustawienia: { show(zakładka), prompts }
 
   // Pola na klucze API i token GitHuba to `type="text"` maskowany przez `-webkit-text-security`
@@ -22480,11 +22577,12 @@
   }
 
   // Wiersz ustawienia: nazwa i opis po lewej, kontrolka po prawej. `label` i `hint` to stałe HTML wtyczki.
-  // opts.label: cały wiersz jest etykietą kontrolki (przełącznik); opts.top: kontrolka przy pierwszej linii opisu.
+  // opts.label: cały wiersz jest etykietą kontrolki (przełącznik); opts.top: kontrolka przy pierwszej linii opisu;
+  // opts.cls: dodatkowa klasa wiersza; opts.for: id kontrolki etykiety, gdy w wierszu stoją też inne przyciski.
   function _setRow(label, hint, control, opts) {
     opts = opts || {};
     var tag = opts.label ? 'label' : 'div';
-    return '<' + tag + ' class="b-set-row' + (opts.top ? ' b-set-row--top' : '') + '">' +
+    return '<' + tag + (opts.for ? ' for="' + opts.for + '"' : '') + ' class="b-set-row' + (opts.top ? ' b-set-row--top' : '') + (opts.cls ? ' ' + opts.cls : '') + '">' +
       '<span class="b-set-row__text"><span class="b-set-row__label">' + label + '</span>' + (hint ? '<span class="b-hint">' + hint + '</span>' : '') + '</span>' +
       control + '</' + tag + '>';
   }
@@ -22521,31 +22619,36 @@
   }
   function _setIsBusy(btn) { return btn.getAttribute('aria-busy') === 'true'; }
 
-  // Ustawienia (powierzchnie nr 30–34). `tab`: general | ai | prompts | analytics otwiera wskazaną zakładkę
-  // (np. okno bez promptu odsyła do zakładki Prompty); bez niego wraca ostatnio otwarta (SURFACES.md §1.6).
-  function showFeaturesModal(tab) {
+  // Ustawienia (powierzchnie nr 30–34). `tab` otwiera wskazaną kategorię, `focus` (selektor) przewija do pola i stawia
+  // na nim fokus, np. „Dodaj klucz” w Narzędziach; bez `tab` wraca ostatnio otwarta (SURFACES.md §1.6, SETTINGS.md §2.1).
+  function showFeaturesModal(tab, focus) {
     var known = function (t) { return SET_TABS.some(function (x) { return x[0] === t; }); };
     if (_set) {
-      if (known(tab)) _set.show(tab, true);
+      if (known(tab)) _set.show(tab, !focus, focus);
       Win.front('settings');
       return;
     }
-    var first = known(tab) ? tab : lsGet(SET_TAB_LS, 'general');
-    if (!known(first)) first = 'general';
+    // „Ogólne” zapisane do 0.38.7 dzieli się na Narzędzia, Wygląd, Projekty i Aktualizacje.
+    var last = lsGet(SET_TAB_LS, 'tools');
+    var first = known(tab) ? tab : last === 'general' ? 'tools' : last;
+    if (!known(first)) first = 'tools';
     var savedTimer = 0, scroll = {}, cur = null;
     var w = Win.open({
       id: 'settings', kind: 'dialog', width: 52, elId: 'b24t-features-modal', winClass: 'b-set', title: 'Ustawienia', from: _activeEl(),
-      bar: '<div class="b-seg b-set-tabs" role="tablist" aria-label="Sekcje ustawień">' + SET_TABS.map(function (t) {
-          return '<button type="button" role="tab" id="b24t-set-tab-' + t[0] + '" data-pane="' + t[0] + '" aria-controls="b24t-set-pane-' + t[0] + '"' +
-            ' aria-selected="false" tabindex="-1">' + _icon(t[2]) + t[1] + '</button>';
-        }).join('') + '</div><span class="b-sp"></span><span class="b-set-saved" role="status" aria-live="polite"></span>',
-      body: SET_TABS.map(function (t) {
-        return '<div class="b-set-pane" role="tabpanel" id="b24t-set-pane-' + t[0] + '" data-pane="' + t[0] + '" aria-labelledby="b24t-set-tab-' + t[0] + '" hidden></div>';
-      }).join(''),
+      headExtra: '<span class="b-set-saved" role="status" aria-live="polite"></span>',
+      body: '<div class="b-set-layout"><nav class="b-set-nav" role="tablist" aria-orientation="vertical" aria-label="Kategorie ustawień">' +
+        SET_TABS.map(function (t) {
+          return '<button type="button" role="tab" class="b-set-nav__item" id="b24t-set-tab-' + t[0] + '" data-pane="' + t[0] + '"' +
+            ' aria-controls="b24t-set-pane-' + t[0] + '" aria-selected="false" tabindex="-1" data-tip="' + t[1] + '">' +
+            _icon(t[2]) + '<span class="b-set-nav__label">' + t[1] + '</span></button>';
+        }).join('') + '</nav><div class="b-set-panes">' +
+        SET_TABS.map(function (t) {
+          return '<div class="b-set-pane" role="tabpanel" id="b24t-set-pane-' + t[0] + '" data-pane="' + t[0] + '" aria-labelledby="b24t-set-tab-' + t[0] + '" hidden></div>';
+        }).join('') + '</div></div>',
       onBeforeClose: function () { return _set.prompts.beforeClose(); },
       onClose: function () { clearTimeout(savedTimer); _set = null; }
     });
-    var root = w.el, tabs = root.querySelectorAll('.b-set-tabs [role="tab"]'), savedEl = root.querySelector('.b-set-saved');
+    var root = w.el, tabs = root.querySelectorAll('.b-set-nav [role="tab"]'), savedEl = root.querySelector('.b-set-saved');
     var pane = function (name) { return root.querySelector('.b-set-pane[data-pane="' + name + '"]'); };
 
     function saved() {
@@ -22555,9 +22658,9 @@
       savedTimer = setTimeout(function () { savedEl.classList.remove('is-on'); }, 2000);
     }
 
-    // Obszar treści jest wspólny dla zakładek, więc przewinięcie zapamiętuje się osobno dla każdej (katalog nr 14).
-    // focusTab: fokus na zakładce, gdy przełącza ją klawiatura albo przycisk, który po przełączeniu znika z widoku.
-    function show(name, focusTab) {
+    // Obszar treści jest wspólny dla kategorii, więc przewinięcie zapamiętuje się osobno dla każdej (katalog nr 14).
+    // focusTab: fokus na pozycji listy, gdy kategorię przełącza klawiatura; focusSel: fokus na wskazanym polu.
+    function show(name, focusTab, focusSel) {
       if (name !== cur) {
         if (cur) scroll[cur] = w.main.scrollTop;
         if (name !== 'prompts') prompts.unzoom();
@@ -22574,23 +22677,33 @@
         cur = name;
         lsSet(SET_TAB_LS, name);
       }
-      if (focusTab) root.querySelector('#b24t-set-tab-' + name).focus({ preventScroll: true });
+      var target = focusSel && root.querySelector(focusSel);
+      if (target) { target.scrollIntoView({ block: 'center' }); target.focus({ preventScroll: true }); }
+      else if (focusTab) root.querySelector('#b24t-set-tab-' + name).focus({ preventScroll: true });
     }
 
     var ctx = { w: w, saved: saved, show: show };
-    _setPaneGeneral(pane('general'), ctx);
+    _setPaneTools(pane('tools'), ctx);
+    _setPaneLook(pane('look'), ctx);
     _setPaneAi(pane('ai'), ctx);
     var prompts = _setPanePrompts(pane('prompts'), ctx);
+    _setPaneNotify(pane('notify'), ctx);
+    _setPaneProjects(pane('projects'));
+    _setPaneUpdates(pane('updates'), ctx);
     _setPaneAnalytics(pane('analytics'), ctx);
+    // Nagłówek kategorii równy nazwie z listy; Prompty mają własny wiersz z nazwą, licznikiem i „Nowy prompt”.
+    SET_TABS.forEach(function (t) {
+      if (t[0] !== 'prompts') pane(t[0]).insertAdjacentHTML('afterbegin', '<h2 class="b-set-pane__title">' + t[1] + '</h2>');
+    });
 
-    var tablist = root.querySelector('.b-set-tabs');
+    var tablist = root.querySelector('.b-set-nav');
     tablist.addEventListener('click', function (e) {
       var b = e.target.closest('[role="tab"]');
       if (b) show(b.dataset.pane);
     });
     tablist.addEventListener('keydown', function (e) {
       var n = SET_TABS.length, i = SET_TABS.findIndex(function (t) { return t[0] === cur; });
-      var k = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: n - 1 }[e.key];
+      var k = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: n - 1 }[e.key];
       if (k === undefined) return;
       e.preventDefault();
       show(SET_TABS[(k + n) % n][0], true);
@@ -22602,35 +22715,96 @@
     });
 
     _set = { show: show, prompts: prompts };
-    show(first, true);
+    show(first, !focus, focus);
   }
 
-  // Zakładka Ogólne: wygląd, funkcje opcjonalne, kanał aktualizacji, lista projektów.
-  function _setPaneGeneral(pane, ctx) {
-    var features = loadFeatures();
+  // Narzędzia (SETTINGS.md §3): karty paska, uchwyty przy krawędzi i uchwyt na innych stronach. Opcja zależna stoi
+  // z wcięciem pod narzędziem i jest nieaktywna, gdy narzędzie jest wyłączone. Lista rysuje się od nowa po każdej
+  // zmianie, bo przełącznik narzędzia zmienia stan jego opcji.
+  function _setPaneTools(pane, ctx) {
+    pane.innerHTML = '<div class="b-set-tools"></div><p class="b-hint b-set-foot">Zmiany działają od razu w każdej karcie tej przeglądarki.</p>';
+    var box = pane.firstChild;
+    // Etykieta wiersza wskazuje przełącznik przez `for`: bez tego etykietą przycisku (i) albo „Dodaj klucz”, które stoją
+    // przed przełącznikiem, kliknięcie w tekst wiersza trafiało w nie.
+    var sw = function (id, on, off, name) {
+      return '<span class="b-switch"><input type="checkbox" role="switch" id="b24t-tool-' + id + '" data-tool="' + id + '" aria-label="' + name + '"' +
+        (on ? ' checked' : '') + (off ? ' disabled' : '') + '></span>';
+    };
+    function row(t, f, ai) {
+      var on = _toolOn(t.id, f, ai), busy = t.run && _toolRunning(t.id), miss = _toolMissingKey(t.id, ai);
+      var hint = busy ? 'Trwa przebieg: przełącznik zadziała po jego zakończeniu.' : t.desc;
+      if (miss) {
+        hint += '<span class="b-set-warn">' + _icon('alert') + 'Brak klucza ' + AI_PROVIDER_LABEL[miss] +
+          '<button type="button" class="b-btn b-btn--quiet b-btn--sm" data-addkey="' + miss + '">Dodaj klucz</button></span>';
+      }
+      var html = _setRow('<span class="b-set-tool">' + _icon(t.icon) + t.name + '</span>' + (t.info ? _info(t.info, t.name) : ''), hint,
+        sw(t.id, on, busy, t.name), { label: true, for: 'b24t-tool-' + t.id });
+      (t.subs || []).forEach(function (id) {
+        var o = SET_SUBS[id], tag = o.tag ? '<span class="b-chip b-chip--sm b-chip--' + o.tag[1] + '">' + o.tag[0] + '</span>' : '';
+        html += _setRow(o.name + tag + (o.info ? _info(o.info, o.name) : ''), on ? o.desc : 'Działa przy włączonym ' + t.loc + '.',
+          sw(id, _featOn(id, f), !on, o.name), { label: true, for: 'b24t-tool-' + id, cls: 'b-set-row--sub' });
+      });
+      return html;
+    }
+    function render(focusId) {
+      var f = loadFeatures(), ai = _aiGetSettings();
+      box.innerHTML = SET_TOOLS.map(function (sec) {
+        return '<section class="b-set-sec"><h3 class="b-set-sec__title">' + sec[0] + '</h3>' +
+          sec[1].map(function (t) { return row(t, f, ai); }).join('') + '</section>';
+      }).join('');
+      var el = focusId && box.querySelector('[data-tool="' + focusId + '"]');
+      if (el) el.focus({ preventScroll: true });
+    }
+    render();
+    box.addEventListener('change', function (e) {
+      var id = e.target.dataset.tool;
+      if (!id) return;
+      _toolSet(id, e.target.checked);
+      render(id);
+      ctx.saved();
+    });
+    box.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-addkey]');
+      if (!b) return;
+      e.preventDefault();   // przycisk stoi w etykiecie wiersza
+      ctx.show('ai', false, '#b24t-ai-key-' + b.dataset.addkey);
+    });
+    // Klucze, modele i przebiegi zmieniają się poza tą kategorią.
+    pane.addEventListener('b24t-tab-show', function () { render(); });
+  }
+
+  // Wygląd: motyw, rozmiar tekstu, animacje.
+  function _setPaneLook(pane, ctx) {
     var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    pane.innerHTML =
+      '<section class="b-set-sec">' +
+        _setRow('Motyw', 'Jak w systemie: według motywu systemu, teraz ' + (dark ? 'ciemny' : 'jasny') + '.',
+          _setSeg('b24t-set-theme', 'Motyw', _themePref(), [['auto', 'Jak w systemie'], ['light', 'Jasny', 'sun'], ['dark', 'Ciemny', 'moon']])) +
+        _setRow('Rozmiar tekstu', 'Automatyczny rośnie z szerokością okna przeglądarki.',
+          _setSeg('b24t-set-text', 'Rozmiar tekstu', gmGet(PREF.UI_TEXT, 'auto'), [['auto', 'Automatyczny'], ['sm', 'Mniejszy'], ['lg', 'Większy']])) +
+        _setRow('Animacje', 'Pełne: okna wyrastają z przycisku i przesuwają się na miejsce. Ograniczone: okna tylko się ' +
+          'rozjaśniają i gasną. Jak w systemie: według ustawień systemu, teraz ' + (reduced ? 'ograniczone' : 'pełne') + '.',
+          _setSeg('b24t-set-motion', 'Animacje', gmGet(PREF.UI_MOTION, 'auto'), [['auto', 'Jak w systemie'], ['full', 'Pełne'], ['lite', 'Ograniczone']])) +
+      '</section>';
+    pane.addEventListener('change', function (e) {
+      var t = e.target;
+      if (t.name === 'b24t-set-theme') applyTheme(t.value);
+      else if (t.name === 'b24t-set-text') { gmSet(PREF.UI_TEXT, t.value); _uiApplyPrefs(); }
+      else if (t.name === 'b24t-set-motion') { gmSet(PREF.UI_MOTION, t.value); _uiApplyPrefs(); }
+      else return;
+      ctx.saved();
+    });
+  }
+
+  // Aktualizacje: kanał, zainstalowana wersja, sprawdzenie i dziennik.
+  function _setPaneUpdates(pane, ctx) {
     var channel = _relChannel();
     var channels = [
       ['stable', 'Stabilny', 'Sprawdzone wersje; zalecany do codziennej pracy.'],
       ['experimental', 'Eksperymentalny', 'Najnowsze zmiany przed wydaniem stabilnym; mogą zawierać błędy.']
     ];
     pane.innerHTML =
-      '<section class="b-set-sec"><h3 class="b-set-sec__title">Wygląd</h3>' +
-        _setRow('Motyw', '', _setSeg('b24t-set-theme', 'Motyw', _themeGet(), [['light', 'Jasny', 'sun'], ['dark', 'Ciemny', 'moon']])) +
-        _setRow('Rozmiar tekstu', 'Automatyczny rośnie z szerokością okna przeglądarki.',
-          _setSeg('b24t-set-text', 'Rozmiar tekstu', gmGet(PREF.UI_TEXT, 'auto'), [['auto', 'Automatyczny'], ['sm', 'Mniejszy'], ['lg', 'Większy']])) +
-        _setRow('Animacje', 'Pełne: okna wyrastają z przycisku i przesuwają się na miejsce. Ograniczone: okna tylko się ' +
-          'rozjaśniają i gasną. Jak w systemie: według ustawień systemu, teraz ' + (reduced ? 'ograniczone' : 'pełne') + '.',
-          _setSeg('b24t-set-motion', 'Animacje', gmGet(PREF.UI_MOTION, 'auto'), [['auto', 'Jak w systemie'], ['full', 'Pełne'], ['lite', 'Ograniczone']])) +
-      '</section>' +
-      '<section class="b-set-sec"><h3 class="b-set-sec__title">Funkcje</h3>' +
-        OPTIONAL_FEATURES.map(function (f) {
-          var tag = f.tag ? '<span class="b-chip b-chip--sm b-chip--' + f.tag[1] + '">' + f.tag[0] + '</span>' : '';
-          return _setRow(f.label + tag, f.desc,
-            '<span class="b-switch"><input type="checkbox" role="switch" data-feature="' + f.id + '"' + (features[f.id] ? ' checked' : '') + '></span>',
-            { label: true, top: true });
-        }).join('') +
-      '</section>' +
       '<section class="b-set-sec"><h3 class="b-set-sec__title">Kanał aktualizacji</h3>' +
         '<div class="b-set-choices" role="radiogroup" aria-label="Kanał aktualizacji">' + channels.map(function (c) {
           return '<label class="b-radio b-set-choice" data-channel="' + c[0] + '"><input type="radio" name="b24t-channel" value="' + c[0] + '"' +
@@ -22638,6 +22812,46 @@
             '<span class="b-hint">' + c[2] + '</span></span></label>';
         }).join('') + '</div>' +
       '</section>' +
+      '<section class="b-set-sec"><h3 class="b-set-sec__title">Wersja</h3>' +
+        _setRow('Zainstalowana wersja ' + VERSION, '<span id="b24t-set-upd-state"></span>',
+          '<div class="b-row b-row--wrap"><button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-set-upd-check">' + _icon('refresh') + 'Sprawdź aktualizacje</button>' +
+          '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-set-upd-log">' + _icon('notes') + 'Dziennik</button></div>') +
+      '</section>';
+    var stEl = pane.querySelector('#b24t-set-upd-state'), checkBtn = pane.querySelector('#b24t-set-upd-check');
+    function say() {
+      var r = _updRow();
+      stEl.textContent = r.state === 'info' ? r.label + '.' : r.hint.charAt(0).toUpperCase() + r.hint.slice(1) + '.';
+    }
+    say();
+    checkBtn.addEventListener('click', function () {
+      if (_upd.checking) return;
+      _updCheck(true);
+      _setBusy(checkBtn, 'Sprawdzam…');
+      var iv = setInterval(function () {
+        if (_upd.checking) return;
+        clearInterval(iv);
+        _setBusy(checkBtn, null);
+        say();
+      }, 300);
+    });
+    pane.querySelector('#b24t-set-upd-log').addEventListener('click', function () { showChangelog(); });
+    pane.addEventListener('change', function (e) {
+      if (e.target.name !== 'b24t-channel') return;
+      // Wybór kanału jest ostateczny: bez znacznika jednorazowe przełączenie (_relMoveToStable) cofało
+      // „Eksperymentalny” przy następnym otwarciu panelu, gdy na main była ta sama wersja.
+      if (!gmGet(PREF.CHANNEL_MOVED, null)) gmSet(PREF.CHANNEL_MOVED, VERSION);
+      gmSet(PREF.UPDATE_CHANNEL, e.target.value);
+      _relOnChannel();
+      addLog('ℹ Kanał aktualizacji: ' + (e.target.value === 'experimental' ? 'Eksperymentalny' : 'Stabilny') + '.', 'info');
+      say();
+      ctx.saved();
+    });
+    pane.addEventListener('b24t-tab-show', say);
+  }
+
+  // Projekty: lista projektów formularza „Dodaj wzmiankę” i jej odświeżenie (SETTINGS.md §5).
+  function _setPaneProjects(pane) {
+    pane.innerHTML =
       '<section class="b-set-sec"><h3 class="b-set-sec__title">Lista projektów</h3>' +
         _setRow('Niepotwierdzone przez Brand24: <b id="b24t-pn-missing-count">…</b>',
           'Projekt otwarty w Brand24 trafia na listę formularza „Dodaj wzmiankę” sam. Odświeżenie sprawdza w Brand24 ' +
@@ -22645,27 +22859,6 @@
           '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-pn-refresh">' + _icon('refresh') + 'Odśwież listę projektów</button>') +
         '<div id="b24t-pn-status" class="b-set-msg b-small b-muted" role="status" hidden></div>' +
       '</section>';
-
-    pane.addEventListener('change', function (e) {
-      var t = e.target;
-      if (t.name === 'b24t-set-theme') applyTheme(t.value);
-      else if (t.name === 'b24t-set-text') { gmSet(PREF.UI_TEXT, t.value); _uiApplyPrefs(); }
-      else if (t.name === 'b24t-set-motion') { gmSet(PREF.UI_MOTION, t.value); _uiApplyPrefs(); }
-      else if (t.dataset.feature) {
-        var f = loadFeatures();
-        f[t.dataset.feature] = t.checked;
-        saveFeatures(f);
-        applyFeatures();
-      } else if (t.name === 'b24t-channel') {
-        // Wybór kanału jest ostateczny: bez znacznika jednorazowe przełączenie (_relMoveToStable) cofało
-        // „Eksperymentalny” przy następnym otwarciu panelu, gdy na main była ta sama wersja.
-        if (!gmGet(PREF.CHANNEL_MOVED, null)) gmSet(PREF.CHANNEL_MOVED, VERSION);
-        gmSet(PREF.UPDATE_CHANNEL, t.value);
-        _relOnChannel();
-        addLog('ℹ Kanał aktualizacji: ' + (t.value === 'experimental' ? 'Eksperymentalny' : 'Stabilny') + '.', 'info');
-      } else return;
-      ctx.saved();
-    });
 
     var pnCountEl = pane.querySelector('#b24t-pn-missing-count');
     var pnRefreshBtn = pane.querySelector('#b24t-pn-refresh');
@@ -22770,7 +22963,81 @@
     });
   }
 
-  // Zakładka AI: klucze dostawców, modele i przełączniki News, AI Tag, przeglądu sentymentu, skrót do promptów.
+  // Powiadomienia (SETTINGS.md §1 nr 7): dźwięki na tym komputerze i ntfy jako opcja, której ustawienia rozwijają się
+  // po włączeniu. Lista zdarzeń ntfy powstaje z rejestru NTFY_EVENTS, więc nowe zdarzenie to jeden wiersz w rejestrze.
+  var SND_ROWS = [
+    ['done', 'Koniec tagowania z pliku', 'Trzy rosnące tony po zakończeniu przebiegu Start.'],
+    ['error', 'Błąd przerywający tagowanie', 'Dwa opadające tony, gdy przebieg Start staje z błędem.'],
+    ['captcha', 'Captcha w wyszukiwaniu kampanii', 'Pulsujący alarm w karcie Google, dopóki Google czeka na weryfikację. Obrys strony i tytuł karty działają także bez dźwięku.']
+  ];
+  function _setPaneNotify(pane, ctx) {
+    var grupy = NTFY_GRUPY.map(function (g) {
+      var wiersze = Object.keys(NTFY_EVENTS).filter(function (k) { return NTFY_EVENTS[k].grupa === g.id; });
+      if (!wiersze.length) return '';
+      return '<div class="b-stack b-stack--sm">' +
+          '<div><div class="b-label">' + _escHtml(g.label) + (g.id === 'czeka' ? ' <span class="b-muted">· pilne</span>' : '') + '</div>' +
+          '<div class="b-hint">' + _escHtml(g.opis) + '</div></div>' +
+          wiersze.map(function (k) {
+            var e = NTFY_EVENTS[k];
+            return '<label class="b-check"><input type="checkbox" id="b24t-ntfy-ev-' + k + '" data-ntfy-ev="' + k + '">' +
+              '<span>' + _escHtml(e.label) + '<span class="b-hint" style="display:block">' + _escHtml(e.opis) + '</span></span></label>';
+          }).join('') +
+        '</div>';
+    }).join('');
+    var ntfyOn = _ntfyGetCfg().enabled;
+    pane.innerHTML =
+      '<section class="b-set-sec"><h3 class="b-set-sec__title">Dźwięki</h3>' +
+        SND_ROWS.map(function (r) {
+          return _setRow(r[1], r[2], '<div class="b-row">' +
+            '<button type="button" class="b-ibtn b-ibtn--sm" data-snd-play="' + r[0] + '" aria-label="Posłuchaj: ' + r[1] + '" data-tip="Posłuchaj">' + _icon('play') + '</button>' +
+            '<span class="b-switch"><input type="checkbox" role="switch" data-snd="' + r[0] + '" aria-label="' + r[1] + '"' + (_sndOn(r[0]) ? ' checked' : '') + '></span></div>');
+        }).join('') +
+      '</section>' +
+      '<section class="b-set-sec"><h3 class="b-set-sec__title">Na telefonie (ntfy)</h3>' +
+        _setRow('Powiadomienia na telefon', 'Aplikacja ntfy na telefonie dostaje powiadomienia o captchy, końcu długich operacji i błędach, ' +
+          'także z karty wyszukiwania Google.', _setSwitch('b24t-ntfy-on', ntfyOn), { label: true }) +
+        '<div id="b24t-ntfy-body" class="b-set-ntfy b-stack"' + (ntfyOn ? '' : ' hidden') + '>' +
+          '<p class="b-small b-text2">Zasubskrybuj w aplikacji ntfy własny kanał i wpisz jego nazwę niżej. Nazwa kanału jest jedynym ' +
+            'zabezpieczeniem, bo kto ją zna, ten czyta powiadomienia; dlatego powinna być długa i nieoczywista.</p>' +
+          '<input type="text" id="b24t-ntfy-topic" class="b-input b-mono" placeholder="np. b24t-2f9a4c7e1b6d" autocomplete="off" spellcheck="false" aria-label="Nazwa kanału ntfy">' +
+          '<div id="b24t-ntfy-hint" class="b-hint"></div>' +
+          '<div class="b-row b-row--wrap">' +
+            '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-ntfy-test">' + _icon('send') + 'Wyślij testowe</button>' +
+            '<span class="b-sp"></span>' +
+            '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-ntfy-server-toggle" aria-expanded="false" aria-controls="b24t-ntfy-server-row">Własny serwer</button>' +
+          '</div>' +
+          '<label class="b-field" id="b24t-ntfy-server-row" hidden>' +
+            '<span class="b-label">Serwer (domyślny wystarcza bez własnego)</span>' +
+            '<input type="text" id="b24t-ntfy-server" class="b-input b-input--sm b-mono" placeholder="https://ntfy.sh" autocomplete="off" spellcheck="false">' +
+          '</label>' +
+          '<div id="b24t-ntfy-status" class="b-small" role="status"></div>' +
+          '<h4 class="b-set-sub__title">Co ma przychodzić</h4>' + grupy +
+          '<div class="b-opt">' +
+            '<span class="b-label">Grupa „Skończone” tylko powyżej</span>' +
+            '<select id="b24t-ntfy-minmin" class="b-select b-select--sm" style="width:auto">' +
+              '<option value="0">zawsze</option><option value="1">1 min</option><option value="3">3 min</option>' +
+              '<option value="5">5 min</option><option value="10">10 min</option>' +
+            '</select>' +
+          '</div>' +
+          '<div class="b-hint">Krótka praca nie wysyła powiadomienia. To, co czeka na decyzję, i błędy przychodzą zawsze, niezależnie od progu.</div>' +
+        '</div>' +
+      '</section>';
+    pane.addEventListener('change', function (e) {
+      var k = e.target.dataset.snd;
+      if (!k) return;
+      var cur = gmGet(PREF.SOUNDS, null) || {};
+      cur[k] = e.target.checked;
+      gmSet(PREF.SOUNDS, cur);
+      ctx.saved();
+    });
+    pane.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-snd-play]');
+      if (b) _sndPlay(b.dataset.sndPlay);
+    });
+    _ntfyWire(pane, ctx);
+  }
+
+  // AI: klucze dostawców, koszt, modele i ocena AI w News.
   function _setPaneAi(pane, ctx) {
     var s = _aiGetSettings();
     var ph = { anthropic: 'sk-ant-api03-…', openai: 'sk-proj-…', google: 'AIza… albo AQ.…' };
@@ -22799,19 +23066,12 @@
         _setRow('Ocena AI w module News', 'Model AI ocenia artykuły na liście News.', _setSwitch('b24t-ai-news-enabled', s.news.enabled), { label: true }) +
       '</section>' +
       '<section class="b-set-sec"><h3 class="b-set-sec__title">AI Tag</h3>' +
+        '<p class="b-hint b-set-sec__hint">Prompt wybiera się w kategorii Prompty, a kartę włącza w Narzędziach.</p>' +
         '<div class="b-set-kv">' + model('tagging', 'Model') + '</div>' +
-        _setRow('Karta AI Tag w panelu', 'Ocena i tagowanie wzmianek przez model AI według promptu wybranego w zakładce Prompty.',
-          _setSwitch('b24t-ai-tagging-enabled', s.tagging.enabled), { label: true }) +
       '</section>' +
       '<section class="b-set-sec"><h3 class="b-set-sec__title">Przegląd sentymentu</h3>' +
         '<p class="b-hint b-set-sec__hint">Dwa modele różnych dostawców (OpenAI i Gemini); wzmianka, co do której się różnią, trafia do decyzji. Modele oceniają z włączonym myśleniem.</p>' +
         '<div class="b-set-kv">' + model('sentA', 'Model 1') + model('sentB', 'Model 2') + '</div>' +
-        _setRow('Karta Sentyment w panelu', 'Zmiany zatwierdzone w oknie przeglądu zapisują się od razu w Brand24.',
-          _setSwitch('b24t-ai-sent-enabled', s.sentiment.enabled), { label: true }) +
-      '</section>' +
-      '<section class="b-set-sec"><h3 class="b-set-sec__title">Prompty</h3>' +
-        _setRow('<span id="b24t-set-ai-prompts"></span>', '<span id="b24t-set-ai-prompts-hint"></span>',
-          '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-ai-open-prompts">Otwórz prompty' + _icon('chevRight') + '</button>') +
       '</section>';
 
     var MODELS = {
@@ -22887,16 +23147,12 @@
       });
     });
 
-    [['b24t-ai-news-enabled', 'news', null], ['b24t-ai-tagging-enabled', 'tagging', _aitSyncTabVisibility],
-      ['b24t-ai-sent-enabled', 'sentiment', _sentSyncTabVisibility]].forEach(function (x) {
-      var cb = pane.querySelector('#' + x[0]);
-      cb.addEventListener('change', function () {
-        var cfg = _aiGetSettings();
-        cfg[x[1]].enabled = cb.checked;
-        _aiSaveSettings(cfg);
-        if (x[2]) x[2]();
-        ctx.saved();
-      });
+    var newsCb = pane.querySelector('#b24t-ai-news-enabled');
+    newsCb.addEventListener('change', function () {
+      var cfg = _aiGetSettings();
+      cfg.news.enabled = newsCb.checked;
+      _aiSaveSettings(cfg);
+      ctx.saved();
     });
 
     // Dopisek do błędu klucza: co zrobić przy kodach, które zależą od klucza, a nie od dostawcy.
@@ -22955,15 +23211,10 @@
     pane.addEventListener('click', function (e) {
       var b = e.target.closest('[data-secret]');
       if (b) _secretToggle(pane.querySelector('#' + b.dataset.secret), b);
-      else if (e.target.closest('#b24t-ai-open-prompts')) ctx.show('prompts', true);
     });
 
     pane.addEventListener('b24t-tab-show', function () {
       if (!spendBox.contains(_activeEl())) renderSpend();
-      var cfg = _aiGetSettings(), n = cfg.prompts.length;
-      var active = cfg.prompts.find(function (x) { return x.id === cfg.tagging.activePromptId; });
-      pane.querySelector('#b24t-set-ai-prompts').textContent = n ? n + ' ' + _relPl(n, 'prompt systemowy', 'prompty systemowe', 'promptów systemowych') : 'Brak promptów systemowych';
-      pane.querySelector('#b24t-set-ai-prompts-hint').textContent = active ? 'AI Tag używa promptu „' + active.name + '”.' : 'AI Tag nie ma wybranego promptu.';
     });
   }
 
@@ -23592,7 +23843,7 @@
     try { return await _fetchProjectStats(); } catch(e) { addLog('[BG] project prefetch error: ' + e.message, 'warn'); }
   }
 
-  // Master scheduler — odpala się raz gdy annotator_tools włączony i token gotowy
+  // Master scheduler — odpala się raz, gdy Dashboard Annotatora jest włączony i token gotowy
   async function startBgPrefetch() {
     if (bgPrefetchStarted) return;
     bgPrefetchStarted = true;
@@ -23652,7 +23903,7 @@
   }
 
   function _annSyncEdge(features) {
-    Edge.setVisible('annotator', !!(features || loadFeatures()).annotator_tools);
+    Edge.setVisible('annotator', _featOn('annotator_dashboard', features));
   }
 
   function openAnnotatorPanel() {
@@ -26305,15 +26556,6 @@
 
   function _aitEsc(x) { return String(x == null ? '' : x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-  // Pokazuje/ukrywa pozycję AI Tag w pasku funkcji zależnie od ustawienia tagging.enabled
-  function _aitSyncTabVisibility() {
-    var btn = _$('b24t-aitag-tab-btn');
-    if (!btn) return;
-    var s = _aiGetSettings();
-    var on = !!(s.tagging && s.tagging.enabled);
-    btn.style.display = on ? '' : 'none';
-    if (!on && btn.getAttribute('aria-current') === 'page') _panelShowTab('main');
-  }
 
   function buildAiTagTab() {
     const div = document.createElement('div');
@@ -26402,7 +26644,7 @@
     const cats = Array.isArray(prompt.knownAssessments) ? prompt.knownAssessments : [];
     if (!cats.length) {
       container.innerHTML = '<div class="b-banner b-banner--warn b-small">' + _icon('alert') +
-        '<div>Ten prompt nie ma kategorii oceny. Kategorie dodaje się w Ustawieniach, na karcie Prompty.</div></div>';
+        '<div>Ten prompt nie ma kategorii oceny. Kategorie dodaje się w Ustawieniach → Prompty.</div></div>';
       return;
     }
     const cfg = state.projectId ? _aiTagGetProjectCfg(state.projectId) : { tagMap: {}, deleteMap: {} };
@@ -28021,13 +28263,6 @@
 
   // ── Karta w panelu ──────────────────────────────────────────────────────
 
-  function _sentSyncTabVisibility() {
-    var btn = _$('b24t-sent-tab-btn');
-    if (!btn) return;
-    var on = !!_aiGetSettings().sentiment.enabled;
-    btn.style.display = on ? '' : 'none';
-    if (!on && btn.getAttribute('aria-current') === 'page') _panelShowTab('main');
-  }
 
   function buildSentimentTab() {
     var div = document.createElement('div');
@@ -31008,6 +31243,7 @@
         openNewsPanels('custom');
       }
     });
+    Edge.setVisible('mini', _featOn('mini_mention'));
   }
 
   // ───────────────────────────────────────────
@@ -31065,7 +31301,6 @@
     [
       ['delete', buildDeleteTab, '#b24t-delete-tab-placeholder'],
       ['history', buildHistoryTab, '#b24t-history-tab-placeholder'],
-      ['notify', buildNotifyTab, '#b24t-notify-tab-placeholder'],
       ['quicktag', buildQuickTagTab, '#b24t-quicktag-tab-placeholder'],
       ['aitag', buildAiTagTab, '#b24t-aitag-tab-placeholder'],
       ['sentiment', buildSentimentTab, '#b24t-sent-tab-placeholder']
@@ -31078,12 +31313,10 @@
         addLog('✕ Karta „' + t[0] + '” nie zbudowała się: ' + (e && e.message || e), 'error');
       }
     });
-    wireNotifyTab(_$('b24t-notify-tab'));
     const autoDelPlaceholder = panel.querySelector('#b24t-auto-delete-placeholder');
     if (autoDelPlaceholder) autoDelPlaceholder.replaceWith(buildAutoDeleteSection());
     window.addEventListener('keydown', _keysGlobal);
     _panelWireRail(panel);
-    _panelShowTab('main');
 
     // ── MENTIONS SIDE TAB (dawniej News) ──
     // Uchwyt krawędziowy (powierzchnia nr 70, §1.11); widoczność ustawia _newsApplyFeatures.
@@ -31102,10 +31335,9 @@
     wireDeleteEvents(panel);
     wireQuickTagEvents(panel);
     wireAiTagEvents(panel);
-    _aitSyncTabVisibility();
     wireSentimentTab(panel);
-    _sentSyncTabVisibility();
     wireHistoryTab();
+    _panelSyncRail();
 
     // Projekt z adresu — raz przy starcie, a potem na bieżąco, bo panel jest SPA
     // i przełączenie projektu nie przeładowuje strony.

@@ -1,5 +1,47 @@
 [
   {
+    "version": "0.38.8",
+    "date": "2026-10-03",
+    "label": "new",
+    "changes": [
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Ustawienia z listą kategorii po lewej",
+        "items": [
+          "Kategorie: Narzędzia, Wygląd, AI, Prompty, Powiadomienia, Projekty, Aktualizacje i Analityka; strzałki w górę i w dół przechodzą między nimi.",
+          "W wąskim oknie lista pokazuje same ikony, a nazwa kategorii jest w dymku.",
+          "Motyw ma trzy stany: „Jak w systemie”, „Jasny” i „Ciemny”."
+        ],
+        "text": "Ustawienia z listą kategorii po lewej. Kategorie: Narzędzia, Wygląd, AI, Prompty, Powiadomienia, Projekty, Aktualizacje i Analityka; strzałki w górę i w dół przechodzą między nimi. W wąskim oknie lista pokazuje same ikony, a nazwa kategorii jest w dymku. Motyw ma trzy stany: „Jak w systemie”, „Jasny” i „Ciemny”."
+      },
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "Narzędzia: każda karta paska i każdy uchwyt włączany osobno",
+        "items": [
+          "Da się ukryć każdą kartę paska, także Plik; bez żadnej karty panel prowadzi do Ustawień → Narzędzia.",
+          "Dashboard Annotatora, Wzmianki i zakres „Wszystkie projekty” w Usuwaniu mają osobne przełączniki zamiast jednego wspólnego.",
+          "Opcje zależne, np. „Usuwanie po ocenie” pod Plikiem, stoją pod swoim narzędziem i gasną razem z nim.",
+          "Przy AI Tag i Sentymencie bez klucza dostawcy stoi ostrzeżenie z przyciskiem „Dodaj klucz”."
+        ],
+        "text": "Narzędzia: każda karta paska i każdy uchwyt włączany osobno. Da się ukryć każdą kartę paska, także Plik; bez żadnej karty panel prowadzi do Ustawień → Narzędzia. Dashboard Annotatora, Wzmianki i zakres „Wszystkie projekty” w Usuwaniu mają osobne przełączniki zamiast jednego wspólnego. Opcje zależne, np. „Usuwanie po ocenie” pod Plikiem, stoją pod swoim narzędziem i gasną razem z nim. Przy AI Tag i Sentymencie bez klucza dostawcy stoi ostrzeżenie z przyciskiem „Dodaj klucz”."
+      },
+      {
+        "type": "improved",
+        "area": "Powiadomienia",
+        "title": "Powiadomienia w Ustawieniach: dźwięki i ntfy w jednym miejscu",
+        "items": [
+          "Dźwięki końca i błędu tagowania z pliku oraz alarm captchy włącza się osobno, a przycisk obok odtwarza każdy z nich.",
+          "Wybór dźwięków zostaje po przeładowaniu strony.",
+          "Powiadomienia na telefon (ntfy) mają własny przełącznik, a ustawienia kanału pokazują się dopiero po jego włączeniu.",
+          "Pasek funkcji nie ma karty Powiadomienia."
+        ],
+        "text": "Powiadomienia w Ustawieniach: dźwięki i ntfy w jednym miejscu. Dźwięki końca i błędu tagowania z pliku oraz alarm captchy włącza się osobno, a przycisk obok odtwarza każdy z nich. Wybór dźwięków zostaje po przeładowaniu strony. Powiadomienia na telefon (ntfy) mają własny przełącznik, a ustawienia kanału pokazują się dopiero po jego włączeniu. Pasek funkcji nie ma karty Powiadomienia."
+      }
+    ]
+  },
+  {
     "version": "0.38.7",
     "date": "2026-10-03",
     "label": "new",

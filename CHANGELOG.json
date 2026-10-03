@@ -1,5 +1,50 @@
 [
   {
+    "version": "0.38.5",
+    "date": "2026-10-03",
+    "label": "new",
+    "changes": [
+      {
+        "type": "fix",
+        "area": "Przegląd sentymentu",
+        "title": "Naprawiono „Zatrzymaj”, po którym modele jeszcze przez kilka minut oceniały wysłane partie wzmianek",
+        "items": [
+          "„Zatrzymaj” przerywa zapytania do modeli w toku, a wzmianki bez werdyktu trafiają do grupy „Do decyzji”."
+        ],
+        "text": "Naprawiono „Zatrzymaj”, po którym modele jeszcze przez kilka minut oceniały wysłane partie wzmianek. „Zatrzymaj” przerywa zapytania do modeli w toku, a wzmianki bez werdyktu trafiają do grupy „Do decyzji”."
+      },
+      {
+        "type": "improved",
+        "area": "Przegląd sentymentu",
+        "title": "Ocena od 1 000 wzmianek czeka na potwierdzenie z szacunkiem kosztu",
+        "items": [
+          "Okno potwierdzenia podaje projekt, zakres dat, liczbę wzmianek do oceny i szacunkowy koszt każdego z dwóch modeli.",
+          "Wzmianki z werdyktem zapamiętanym z wcześniejszej oceny nie liczą się do progu, bo nie trafiają do modeli."
+        ],
+        "text": "Ocena od 1 000 wzmianek czeka na potwierdzenie z szacunkiem kosztu. Okno potwierdzenia podaje projekt, zakres dat, liczbę wzmianek do oceny i szacunkowy koszt każdego z dwóch modeli. Wzmianki z werdyktem zapamiętanym z wcześniejszej oceny nie liczą się do progu, bo nie trafiają do modeli."
+      },
+      {
+        "type": "improved",
+        "area": "Przegląd sentymentu",
+        "title": "Karta Sentyment bez domyślnie zaznaczonych sentymentów",
+        "items": [
+          "Przy pierwszej ocenie projektu sentymenty do oceny trzeba wybrać, a wybór zapamiętuje się dla projektu."
+        ],
+        "text": "Karta Sentyment bez domyślnie zaznaczonych sentymentów. Przy pierwszej ocenie projektu sentymenty do oceny trzeba wybrać, a wybór zapamiętuje się dla projektu."
+      },
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "Podgląd dziennika aktualizacji przed wydaniem wersji na kanale Stabilnym",
+        "items": [
+          "Gdy opis najbliższej wersji stabilnej jest gotowy, dziennik zmian ma przycisk „Podgląd dziennika aktualizacji”.",
+          "Podgląd pokazuje opis w oknie, które po wydaniu zobaczą użytkownicy kanału Stabilnego."
+        ],
+        "text": "Podgląd dziennika aktualizacji przed wydaniem wersji na kanale Stabilnym. Gdy opis najbliższej wersji stabilnej jest gotowy, dziennik zmian ma przycisk „Podgląd dziennika aktualizacji”. Podgląd pokazuje opis w oknie, które po wydaniu zobaczą użytkownicy kanału Stabilnego."
+      }
+    ]
+  },
+  {
     "version": "0.38.4",
     "date": "2026-10-03",
     "label": "improved",

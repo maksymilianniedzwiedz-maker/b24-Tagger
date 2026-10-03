@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.4
+// @version      0.38.5
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -173,7 +173,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.4';
+  const VERSION = '0.38.5';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1013,6 +1013,8 @@
   // `reasoning: 'default'` zostawia modelowi jego domyślne myślenie: bez wariantów z _aiWarianty
   // i bez zapamiętywania wariantu, który obowiązuje pozostałe funkcje. Potrzebuje tego ocena
   // sentymentu — ograniczone myślenie zmienia tam 11–15% werdyktów (SENTIMENT.md §4.2).
+  // `signal` (AbortSignal) przerywa zapytanie w locie: Reject z `.aborted`. Bez tego „Zatrzymaj” w ocenie
+  // sentymentu czekał na wszystkie wysłane partie, do 2 min płatnej pracy modeli.
   function _aiCall(opts) {
     var provider = _aiProvider(opts.model);
     var key = _aiKeyFor(opts.model);
@@ -1020,7 +1022,14 @@
     var domyslne = opts.reasoning === 'default';
     var warianty = domyslne ? [{}] : _aiWarianty(provider, opts.model);
     var start = domyslne ? 0 : (_aiWariantModelu[opts.model] || 0);
-    return new Promise(function(resolve, reject) {
+    var sig = opts.signal, cur = null, onAbort = null;
+    var p = new Promise(function(resolve, reject) {
+      if (sig) {
+        if (sig.aborted) { reject(_aiAborted()); return; }
+        // Najpierw reject, potem abort(): onabort Tampermonkeya odrzuciłby obietnicę zwykłym błędem sieci.
+        onAbort = function() { reject(_aiAborted()); if (cur && cur.abort) cur.abort(); };
+        sig.addEventListener('abort', onAbort);
+      }
       function proba(i) {
         var req = _aiBuildRequest(Object.assign({}, opts, { wariant: warianty[i] }), key);
         var t0 = Date.now();
@@ -1029,7 +1038,7 @@
             err: err ? String(err).slice(0, 400) : undefined,
             tok: usage ? [usage.input_tokens || 0, usage.output_tokens || 0] : undefined });
         };
-        GM_xmlhttpRequest({
+        cur = GM_xmlhttpRequest({
           method: 'POST', url: req.url, headers: req.headers, data: JSON.stringify(req.body),
           timeout: opts.timeout || 60000,
           onload: function(resp) {
@@ -1063,6 +1072,17 @@
       }
       proba(start);
     });
+    if (onAbort) {
+      var off = function() { sig.removeEventListener('abort', onAbort); };
+      p.then(off, off);
+    }
+    return p;
+  }
+
+  function _aiAborted() {
+    var e = new Error('Zapytanie do API zatrzymane');
+    e.aborted = true;
+    return e;
   }
 
   // Lista modeli dostępnych dla klucza — prosto od dostawcy, żeby wtyczka nie starzała się
@@ -20056,6 +20076,51 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.5",
+      "date": "2026-10-03",
+      "label": "new",
+      "changes": [
+        {
+          "type": "fix",
+          "area": "Przegląd sentymentu",
+          "title": "Naprawiono „Zatrzymaj”, po którym modele jeszcze przez kilka minut oceniały wysłane partie wzmianek",
+          "items": [
+            "„Zatrzymaj” przerywa zapytania do modeli w toku, a wzmianki bez werdyktu trafiają do grupy „Do decyzji”."
+          ],
+          "text": "Naprawiono „Zatrzymaj”, po którym modele jeszcze przez kilka minut oceniały wysłane partie wzmianek. „Zatrzymaj” przerywa zapytania do modeli w toku, a wzmianki bez werdyktu trafiają do grupy „Do decyzji”."
+        },
+        {
+          "type": "improved",
+          "area": "Przegląd sentymentu",
+          "title": "Ocena od 1 000 wzmianek czeka na potwierdzenie z szacunkiem kosztu",
+          "items": [
+            "Okno potwierdzenia podaje projekt, zakres dat, liczbę wzmianek do oceny i szacunkowy koszt każdego z dwóch modeli.",
+            "Wzmianki z werdyktem zapamiętanym z wcześniejszej oceny nie liczą się do progu, bo nie trafiają do modeli."
+          ],
+          "text": "Ocena od 1 000 wzmianek czeka na potwierdzenie z szacunkiem kosztu. Okno potwierdzenia podaje projekt, zakres dat, liczbę wzmianek do oceny i szacunkowy koszt każdego z dwóch modeli. Wzmianki z werdyktem zapamiętanym z wcześniejszej oceny nie liczą się do progu, bo nie trafiają do modeli."
+        },
+        {
+          "type": "improved",
+          "area": "Przegląd sentymentu",
+          "title": "Karta Sentyment bez domyślnie zaznaczonych sentymentów",
+          "items": [
+            "Przy pierwszej ocenie projektu sentymenty do oceny trzeba wybrać, a wybór zapamiętuje się dla projektu."
+          ],
+          "text": "Karta Sentyment bez domyślnie zaznaczonych sentymentów. Przy pierwszej ocenie projektu sentymenty do oceny trzeba wybrać, a wybór zapamiętuje się dla projektu."
+        },
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Podgląd dziennika aktualizacji przed wydaniem wersji na kanale Stabilnym",
+          "items": [
+            "Gdy opis najbliższej wersji stabilnej jest gotowy, dziennik zmian ma przycisk „Podgląd dziennika aktualizacji”.",
+            "Podgląd pokazuje opis w oknie, które po wydaniu zobaczą użytkownicy kanału Stabilnego."
+          ],
+          "text": "Podgląd dziennika aktualizacji przed wydaniem wersji na kanale Stabilnym. Gdy opis najbliższej wersji stabilnej jest gotowy, dziennik zmian ma przycisk „Podgląd dziennika aktualizacji”. Podgląd pokazuje opis w oknie, które po wydaniu zobaczą użytkownicy kanału Stabilnego."
+        }
+      ]
+    },
+    {
       "version": "0.38.4",
       "date": "2026-10-03",
       "label": "improved",
@@ -20706,25 +20771,6 @@
           "text": "Do przeglądu sentymentu można wrócić po zamknięciu okna. Karta Sentyment pokazuje projekt, zakres dat i postęp przeglądu. „Wróć do przeglądu” otwiera okno w miejscu, w którym je zamknięto. Ocena i zapisywanie decyzji trwają przy zamkniętym oknie. Nowa ocena przy niezałatwionych kafelkach wymaga potwierdzenia. Ponowna ocena tego samego zakresu jest bezpłatna. Przeładowanie strony kończy przegląd."
         }
       ]
-    },
-    {
-      "version": "0.36.8",
-      "date": "2026-10-01",
-      "label": "new",
-      "changes": [
-        {
-          "type": "new",
-          "area": "Przegląd sentymentu",
-          "title": "Przełącznik „Ukryj załatwione” w oknie przeglądu sentymentu",
-          "items": [
-            "Ukrywa kafelki, przy których zapadła już decyzja.",
-            "Ostatnio zdecydowany kafelek zostaje widoczny do następnej decyzji, z możliwością cofnięcia.",
-            "Kafelek, którego nie udało się zapisać, wraca na widok.",
-            "Ustawienie przełącznika jest zapamiętywane."
-          ],
-          "text": "Przełącznik „Ukryj załatwione” w oknie przeglądu sentymentu. Ukrywa kafelki, przy których zapadła już decyzja. Ostatnio zdecydowany kafelek zostaje widoczny do następnej decyzji, z możliwością cofnięcia. Kafelek, którego nie udało się zapisać, wraca na widok. Ustawienie przełącznika jest zapamiętywane."
-        }
-      ]
     }
   ];
 
@@ -20835,6 +20881,17 @@
       onDone(data ? data.filter(function(n) { return n && REL_VER.test(n.version) && /^\d{4}-\d{2}$/.test(n.date) && n.name; }) : null);
     });
   }
+  // Szkic opisu najbliższego wydania stabilnego albo null. Po wydaniu plik znika z experimental, ale kopia w GM
+  // zostaje (pobranie 404 oddaje kopię), więc szkic wersji, która ma już opis na main, się nie liczy.
+  function _relPreview(onDone) {
+    _relFetch('preview', RELEASE_PREVIEW_URL, 10 * 60 * 1000, function(data) {
+      var n = (data || []).filter(function(x) { return x && REL_VER.test(x.version) && /^\d{4}-\d{2}$/.test(x.date) && x.name; })[0];
+      if (!n) { onDone(null); return; }
+      _relNotes(10 * 60 * 1000, function(notes) {
+        onDone((notes || []).some(function(x) { return _relCmp(x.version, n.version) >= 0; }) ? null : n);
+      });
+    });
+  }
   // Dane, które mają zawierać wersję `version`. Kopia z GM bywa sprzed jej wydania, np. gdy Tampermonkey
   // zaktualizował wtyczkę kilka minut po otwarciu dziennika; wtedy jedno pobranie z pominięciem kopii.
   function _relFor(load, version, onDone) {
@@ -20932,6 +20989,8 @@
           'placeholder="Szukaj w zmianach, np. „klucz” albo „duplikat”" aria-label="Szukaj w zmianach"></label>' +
         '<div class="b-cl-chips" role="group" aria-label="Obszar" data-cl-for></div>',
       foot: '<button type="button" class="b-btn b-btn--quiet" data-cl="whatsnew" hidden>' + _icon('sparkle') + 'Co nowego</button>' +
+        '<button type="button" class="b-btn b-btn--quiet" data-cl="preview" hidden data-tip="Szkic opisu najbliższej wersji ' +
+          'na kanale Stabilnym, w oknie, które zobaczą jego użytkownicy">' + _icon('notes') + 'Podgląd dziennika aktualizacji</button>' +
         '<span class="b-sp"></span><button type="button" class="b-btn b-btn--primary" data-cl="close">Zamknij</button>'
     });
     var listEl = w.el.querySelector('[data-cl-body="news"]'), chipsEl = w.el.querySelector('.b-cl-chips');
@@ -21006,9 +21065,10 @@
     });
     qEl.addEventListener('input', function() { st.q = qEl.value.trim(); renderList(); });
     w.el.addEventListener('click', function(e) {
-      var b = e.target.closest('[data-cl="reset"], [data-cl="whatsnew"]');
+      var b = e.target.closest('[data-cl="reset"], [data-cl="whatsnew"], [data-cl="preview"]');
       if (!b) return;
       if (b.dataset.cl === 'whatsnew') { Win.close('changelog'); showWhatsNew(); return; }
+      if (b.dataset.cl === 'preview') { Win.close('changelog'); _relShowNotes(st.preview); return; }
       st.area = ''; st.q = ''; qEl.value = '';
       renderChips(); renderList();
       qEl.focus();
@@ -21023,6 +21083,11 @@
       st.olderOpen = true; renderList();
       var el = _$('b24t-cl-c-' + at.version.replace(/\./g, '-') + '-' + at.index);
       if (el) { el.scrollIntoView({ block: 'start' }); _relFlash(el); }
+    });
+    _relPreview(function(n) {
+      if (Win.get('changelog') !== w || !n) return;
+      st.preview = n;
+      w.el.querySelector('[data-cl="preview"]').hidden = false;
     });
   }
 
@@ -21098,26 +21163,37 @@
       '<p class="b-rn-outro">' + _relUi(n.outro || REL_OUTRO) + '</p>' +
     '</article>';
   }
-  function _relShowNotes() {
+  // `preview`: szkic opisu najbliższego wydania stabilnego (_relPreview) na początku listy, nad wydanymi opisami.
+  // Okno poza banerem szkicu i powrotem do dziennika zmian jest takie, jakie zobaczą użytkownicy kanału Stabilnego.
+  function _relShowNotes(preview) {
     if (_relOpen()) return;
     var w = _relWin({
-      width: 72, title: 'Dziennik aktualizacji', sub: 'Wersja ' + VERSION, tab: 'Aktualizacje',
-      foot: '<span class="b-sp"></span><button type="button" class="b-btn b-btn--primary" data-cl="close">Zamknij</button>'
+      width: 72, title: 'Dziennik aktualizacji', sub: preview ? 'Podgląd wersji ' + preview.version : 'Wersja ' + VERSION, tab: 'Aktualizacje',
+      foot: (preview ? '<button type="button" class="b-btn b-btn--quiet" data-cl="back">' + _icon('chevLeft') + 'Dziennik zmian</button>' : '') +
+        '<span class="b-sp"></span><button type="button" class="b-btn b-btn--primary" data-cl="close">Zamknij</button>'
     });
     var body = w.el.querySelector('[data-cl-body="news"]');
+    if (preview) w.el.addEventListener('click', function(e) {
+      if (e.target.closest('[data-cl="back"]')) { Win.close('changelog'); _relShowChangelogWin(); }
+    });
     // Fokus na treści: strzałki i PageDown przewijają opis od razu po otwarciu.
     w.main.tabIndex = -1;
     w.main.focus({ preventScroll: true });
-    _relFor(_relNotes, VERSION, function(notes) {
+    // Szkic nie jest jeszcze na main, więc _relFor pobierałby opisy drugi raz w poszukiwaniu jego wersji.
+    var load = preview ? function(cb) { _relNotes(10 * 60 * 1000, cb); } : function(cb) { _relFor(_relNotes, VERSION, cb); };
+    load(function(notes) {
       if (Win.get('changelog') !== w) return;
-      var list = (notes || []).filter(function(n) { return _relCmp(n.version, VERSION) <= 0; });
+      var list = (notes || []).filter(function(n) { return _relCmp(n.version, VERSION) <= 0 && !(preview && n.version === preview.version); });
+      if (preview) list.unshift(preview);
       if (!list.length) {
         body.innerHTML = '<div class="b-empty">' + _icon(notes ? 'notes' : 'alertCircle') + '<div class="b-empty__title">' + (notes
           ? 'Dziennik aktualizacji obejmuje aktualizacje od wersji 0.37.0.'
           : 'Nie udało się pobrać dziennika aktualizacji. Sprawdź połączenie i otwórz dziennik ponownie.') + '</div></div>';
         return;
       }
-      body.innerHTML = list.map(_relNoteHtml).join('<hr class="b-rn-sep">') +
+      body.innerHTML = (preview ? '<div class="b-banner b-banner--info">' + _icon('info') + '<div><div class="b-banner__title">Szkic opisu wersji ' +
+          _escHtml(preview.version) + '</div>Użytkownicy kanału Stabilnego zobaczą go w tym oknie po wydaniu tej wersji.</div></div>' : '') +
+        list.map(_relNoteHtml).join('<hr class="b-rn-sep">') +
         '<p class="b-rn-end">Dziennik zawiera opisy aktualizacji od wersji 0.37.0.</p>';
       _figSetup(body);
     });
@@ -21692,6 +21768,8 @@
   // Dziennik zmian zawsze z experimental, opisy wersji stabilnych z main (CHANGELOG_STYLE.md §1).
   const CHANGELOG_URL     = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/experimental/CHANGELOG.json';
   const RELEASE_NOTES_URL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/RELEASE_NOTES.json';
+  // Szkic opisu najbliższego wydania stabilnego; leży tylko na experimental do chwili wydania (CHANGELOG_STYLE.md §6.7).
+  const RELEASE_PREVIEW_URL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/experimental/RELEASE_NOTES_PREVIEW.json';
   function getRawUrl() { return gmGet(PREF.UPDATE_CHANNEL, 'stable') === 'experimental' ? RAW_URL_EXPERIMENTAL : RAW_URL_STABLE; }
 
   // ───────────────────────────────────────────
@@ -26463,6 +26541,11 @@
   var SENT_LS_HIDE_DONE = 'b24t_sent_hide_done';  // przełącznik „Ukryj załatwione” w oknie
   // $ za mln tokenów wejścia i wyjścia, cennik z 2026-09-30. Model spoza listy — bez kwoty.
   var SENT_PRICE = { 'gemini-3.8-flash': [0.75, 3.75], 'gpt-6-luna': [0.10, 0.50] };
+  // Ocena od tylu wzmianek bez werdyktu w pamięci czeka na potwierdzenie z szacunkiem kosztu.
+  var SENT_CONFIRM_FROM = 1000;
+  // Koszt 1 000 wzmianek z przebiegu promptu v4 (SENTIMENT.md §7.4). Partie Gemini kosztowały od 0,36 do 3,37 $
+  // na 1 000 wzmianek zależnie od liczby tokenów myślenia, więc szacunek podaje rząd wielkości.
+  var SENT_USD_PER_1000 = { 'gemini-3.8-flash': 1.38, 'gpt-6-luna': 0.10 };
 
   // Kontrakt z sekcją OUTPUT promptu `prompts/sentiment_review.txt`. `id` to klucz w partii
   // („1”…„20”), nie ID Brand24 — modele przekręcają długie ID (SENTIMENT.md §5.1).
@@ -26502,7 +26585,7 @@
   ];
 
   var sentState = {
-    run: null, running: false, stop: false,
+    run: null, running: false, stop: false, abort: null,   // abort: AbortController bieżącej oceny („Zatrzymaj”)
     focusId: null, openText: {}, win: null, anchor: null,
     groups: { decide: true, change: true, keep: false }, query: '', q: '', source: '', searchKeys: {},
     queue: [], inFlight: 0, undoAfterSave: {},
@@ -26606,15 +26689,17 @@
       try {
         return await _aiCall({
           model: model, system: system, user: _sentPayload(brand, items),
-          maxTokens: SENT_MAX_TOKENS[_aiProvider(model)], reasoning: 'default', timeout: SENT_TIMEOUT,
+          maxTokens: SENT_MAX_TOKENS[_aiProvider(model)], reasoning: 'default', timeout: SENT_TIMEOUT, signal: sentState.abort.signal,
           schema: { name: 'submit_sentiment', description: 'Sentiment verdict for every mention key.', schema: SENT_SCHEMA },
         });
       } catch(e) {
+        // „Zatrzymaj” w trakcie ponowień zostawia partię bez werdyktu, tak jak przerwane zapytanie, a nie z błędem.
+        if (e.aborted || sentState.stop) throw e.aborted ? e : _aiAborted();
         var przejsciowy = e.status === 429 || e.status >= 500 || e.message === 'Brak połączenia z API';
-        if (!przejsciowy || attempt >= delays.length || sentState.stop) throw e;
+        if (!przejsciowy || attempt >= delays.length) throw e;
         // Przerwa w krokach po 1 s, żeby „Zatrzymaj” nie czekał do jej końca.
         for (var t = 0; t < delays[attempt] && !sentState.stop; t += 1000) await sleep(1000);
-        if (sentState.stop) throw e;
+        if (sentState.stop) throw _aiAborted();
       }
     }
   }
@@ -26628,9 +26713,11 @@
   //   rozbijania — 20 pojedynczych zapytań do dostawcy, który właśnie dławi ruch, tylko by to pogłębiło.
   // - 401/403/404 i SENT_MAX_REJECTED odrzuceń 400 bez żadnej udanej odpowiedzi lecą wyżej i kończą
   //   ocenę tym modelem: kolejne partie skończyłyby się tak samo.
+  // - Zapytanie przerwane przez „Zatrzymaj”: null, partia zostaje bez werdyktu i poza licznikiem postępu.
   async function _sentRunBatch(model, system, brand, items, st) {
     var res = null, err = null;
     try { res = await _sentAsk(model, system, brand, items); } catch(e) { err = e; }
+    if (err && err.aborted) return null;
     if (err && (err.status === 401 || err.status === 403 || err.status === 404)) throw err;
     if (err && err.status === 400 && ++st.rejected >= SENT_MAX_REJECTED && !st.answered) throw err;
     if (res) {
@@ -26644,7 +26731,10 @@
     var why = err ? err.message : (res.reason || (res.json ? 'brak werdyktu w odpowiedzi' : 'odpowiedź bez poprawnego JSON'));
     if (items.length > 1 && (res || err.status === 400)) {
       for (var i = 0; i < items.length && !sentState.stop; i++) {
-        if (!out[i]) out[i] = (await _sentRunBatch(model, system, brand, [items[i]], st))[0];
+        if (out[i]) continue;
+        var one = await _sentRunBatch(model, system, brand, [items[i]], st);
+        if (!one) break;
+        out[i] = one[0];
       }
       why = 'ocena przerwana';
     }
@@ -26673,6 +26763,7 @@
         var batch = batches[next++];
         try {
           var out = await _sentRunBatch(st.model, system, run.brand, batch, st);
+          if (!out) break;
           batch.forEach(function(it, k) {
             it.v[slot] = out[k];
             if (out[k].s) cache[it.id + '|' + st.model + '|' + ctx] = { s: out[k].s, b: out[k].b, d: out[k].d, r: out[k].r, at: Date.now() };
@@ -26769,7 +26860,7 @@
       models: { a: _sentModelState(s.sentiment.modelA), b: _sentModelState(s.sentiment.modelB) },
       params: p,      // „Spróbuj ponownie” po błędzie ponawia ocenę z tymi samymi ustawieniami
     };
-    sentState.run = run; sentState.running = true; sentState.stop = false;
+    sentState.run = run; sentState.running = true; sentState.stop = false; sentState.abort = new AbortController();
     sentState.focusId = null; sentState.openText = {}; sentState.lastDoneId = null; sentState.anchor = null;
     sentState.groups = { decide: true, change: true, keep: false }; sentState.query = ''; sentState.q = ''; sentState.source = '';
     sentState.searchKeys = {};
@@ -26794,6 +26885,11 @@
         var d = dec[it.id];
         if (d && d.to === it.orig) it.dec = { to: d.to, status: 'earlier', at: d.at };
       });
+      if (!(await _sentConfirmSize(run, p.system))) {
+        run.phase = 'cancelled';
+        addLog('◐ Przegląd sentymentu — anulowany przed oceną: ' + run.projectName + ', ' + run.items.length + ' wzmianek', 'info');
+        return;
+      }
       run.phase = 'eval';
       _sentRenderAll();
       await _sentEvaluate(run, p.system);
@@ -26805,10 +26901,48 @@
       addLog('✕ Przegląd sentymentu: ' + run.error, 'error');
     } finally {
       sentState.running = false;
-      _sentRenderAll();
-      _sentFocusFirstOpen();
-      _sentTabStatus();
+      if (run.phase === 'cancelled') {
+        sentState.run = null;
+        Win.close('sent');
+        _sentTabStatus('Ocena anulowana. Węższy zakres dat albo mniej sentymentów zmniejsza liczbę wzmianek.', 'warn');
+      } else {
+        _sentRenderAll();
+        _sentFocusFirstOpen();
+        _sentTabStatus();
+      }
     }
+  }
+
+  // Duża ocena czeka na potwierdzenie z liczbą wzmianek i szacunkiem kosztu: przypadkowy start na pełnym zakresie
+  // to tysiące płatnych zapytań. Liczą się wzmianki bez werdyktu w pamięci, bo tylko one idą do modeli.
+  async function _sentConfirmSize(run, system) {
+    var cache = _sentGmRead(SENT_GM_VERDICTS), ctx = _sentHash(system + '\n' + run.brand);
+    var todo = ['a', 'b'].map(function(slot) {
+      var m = run.models[slot].model;
+      return { model: m, n: run.items.filter(function(it) { return it.text && !cache[it.id + '|' + m + '|' + ctx]; }).length };
+    });
+    var n = Math.max(todo[0].n, todo[1].n);
+    if (n < SENT_CONFIRM_FROM) return true;
+    run.phase = 'confirm';
+    _sentRenderAll();
+    var fmt = function(x) { return 'ok. ' + x.toFixed(x < 1 ? 2 : 1).replace('.', ',') + ' $'; };
+    var parts = todo.map(function(t) {
+      var usd = SENT_USD_PER_1000[t.model];
+      return usd == null ? null : { model: t.model, usd: t.n / 1000 * usd };
+    });
+    var cost = parts.every(Boolean)
+      ? '<p>Szacunkowy koszt: <b>' + fmt(parts[0].usd + parts[1].usd) + '</b> (' +
+          parts.map(function(x) { return _escHtml(x.model) + ' ' + fmt(x.usd); }).join(', ') + '). ' +
+          'Szacunek z pomiaru na próbce; koszt Gemini zależy od długości myślenia modelu i bywa kilka razy niższy albo wyższy.</p>'
+      : '<p>Brak szacunku kosztu dla tych modeli; koszt pokaże się w trakcie oceny.</p>';
+    var rest = run.items.length - n;
+    return _dlgConfirm({
+      title: 'Ocenić ' + n.toLocaleString('pl-PL') + ' ' + _relPl(n, 'wzmiankę', 'wzmianki', 'wzmianek') + '?',
+      confirm: 'Oceń', cancel: 'Anuluj',
+      body: '<p><b>' + _escHtml(run.projectName) + '</b>, ' + _escHtml(run.dateFrom + ' – ' + run.dateTo) + ', ' + _escHtml(_sentScopeLabel(run)) + '.</p>' +
+        '<p>Do oceny dwoma modelami: <b>' + n.toLocaleString('pl-PL') + '</b>' +
+          (rest > 0 ? ' z ' + run.items.length.toLocaleString('pl-PL') + ' (reszta ma werdykt w pamięci albo nie ma treści)' : '') + '.</p>' + cost,
+    });
   }
 
   function _sentCost(st) {
@@ -27148,7 +27282,7 @@
   function _sentOnListClick(e) {
     var t = e.target;
     if (t.closest('[data-sent-bulk]')) { _sentBulk(); return; }
-    if (t.closest('[data-sent-stop]')) { sentState.stop = true; _sentRenderSummary(); return; }
+    if (t.closest('[data-sent-stop]')) { sentState.stop = true; if (sentState.abort) sentState.abort.abort(); _sentRenderSummary(); return; }
     if (t.closest('[data-sent-again]')) { _sentAgain(); return; }
     if (t.closest('[data-sent-reset]')) { _sentResetFilter(); return; }
     if (t.closest('[data-sent-export]')) { _sentExportCsv(); return; }
@@ -27326,6 +27460,11 @@
         run.params ? '<button type="button" class="b-btn b-btn--primary" data-sent-again>' + _icon('refresh') + 'Spróbuj ponownie</button>' : '');
       return;
     }
+    if (run.phase === 'confirm') {
+      list.innerHTML = _sentStateHtml(_icon('sent'), 'Czeka na potwierdzenie', _escHtml(run.projectName + ': ' +
+        run.items.length.toLocaleString('pl-PL') + ' ' + _relPl(run.items.length, 'wzmianka', 'wzmianki', 'wzmianek') + ' z Brand24'));
+      return;
+    }
     if (run.phase === 'eval') {
       list.innerHTML = '<section class="b-card b-sent-run" id="b24t-sent-run-card" aria-live="polite"></section>';
       _sentRenderSummary();
@@ -27415,7 +27554,7 @@
     stop.disabled = sentState.stop;
     stop.innerHTML = sentState.stop ? '<span class="b-spin" aria-hidden="true"></span>Zatrzymuję' : _icon('stop', 'b-ico-stop') + 'Zatrzymaj';
     card.querySelector('[data-sent-note]').textContent = sentState.stop
-      ? 'Modele kończą bieżące partie. Wzmianki bez werdyktu trafią do grupy „Do decyzji”.'
+      ? 'Przerywam zapytania w toku. Wzmianki bez werdyktu trafią do grupy „Do decyzji”.'
       : n.toLocaleString('pl-PL') + ' ' + _relPl(n, 'wzmianka', 'wzmianki', 'wzmianek') + ', dwa modele. Kafelki pojawią się po ocenie; zamknięcie okna jej nie przerywa.';
     card.querySelector('[data-sent-rows]').innerHTML = ['a', 'b'].map(function(slot) {
       var st = run.models[slot], pct = st.total ? Math.round(st.done / st.total * 100) : 100, cost = _sentCost(st);
@@ -27687,9 +27826,9 @@
           '</div>' +
           '<div class="b-field"><span class="b-label">Sentyment w Brand24</span>' +
             '<div id="b24t-sent-se" class="b-row b-row--wrap" style="gap:0.375em 1em">' + SENT_ORDER.map(function(s) {
-              return '<label class="b-check"><input type="checkbox" value="' + s + '" checked><span>' + SENT_PLURAL[s] + '</span></label>';
+              return '<label class="b-check"><input type="checkbox" value="' + s + '"><span>' + SENT_PLURAL[s] + '</span></label>';
             }).join('') +
-          '</div></div>' +
+          '</div><span class="b-hint">Wybór zapamiętywany dla projektu.</span></div>' +
         '</div>' +
         '<label class="b-field"><span class="b-label">Marka w prompcie</span>' +
           '<input type="text" id="b24t-sent-brand" class="b-input" placeholder="np. Cupra">' +
@@ -27751,7 +27890,7 @@
       q('#b24t-sent-brand').value = cfg.brand || _pnResolve(state.projectId);
       var r = q('input[name="b24t-sent-source"][value="' + (cfg.source === 'view' ? 'view' : 'range') + '"]');
       if (r) r.checked = true;
-      var se = Array.isArray(cfg.sentiments) ? cfg.sentiments : SENT_ORDER;
+      var se = Array.isArray(cfg.sentiments) ? cfg.sentiments : [];
       tab.querySelectorAll('#b24t-sent-se input').forEach(function(cb) { cb.checked = se.indexOf(cb.value) !== -1; });
       syncRange();
     }

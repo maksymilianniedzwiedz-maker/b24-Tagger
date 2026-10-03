@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.6
+// @version      0.38.7
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -173,7 +173,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.6';
+  const VERSION = '0.38.7';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -933,6 +933,109 @@
              cache_read_input_tokens: gc };
   }
 
+  // ── Licznik kosztu kluczy AI ──
+  // Zwykły klucz API nie daje odczytu wydatków konta (Anthropic i OpenAI wymagają klucza administracyjnego, Gemini
+  // nie ma takiego API), więc wtyczka liczy sama: tokeny z odpowiedzi razy cennik, suma na klucz i miesiąc
+  // kalendarzowy w pamięci Tampermonkeya, wspólnej dla kart i obu paneli Brand24. Liczą się tylko wywołania
+  // z tej przeglądarki; ten sam klucz używany gdzie indziej kosztuje więcej, niż pokazuje licznik.
+  // $ za mln tokenów: [wejście, odczyt cache, zapis cache, wyjście]. Cenniki dostawców z 2026-09-28 i 2026-09-30;
+  // OpenAI i Gemini nie liczą zapisu cache osobno. Model spoza listy liczy wywołania bez kwoty.
+  var AI_PRICE = {
+    'claude-haiku-4-5': [1, 0.10, 1.25, 5],
+    'claude-sonnet-5': [2, 0.20, 2.5, 10],
+    'claude-sonnet-5-5': [2, 0.20, 2.5, 10],
+    'claude-opus-5-5': [4, 0.20, 5, 20],
+    'claude-fable-5-1': [10, 0.25, 12.5, 50],
+    'gpt-6-astra': [10, 1.0, 10, 50],
+    'gpt-6-sol': [2, 0.20, 2, 10],
+    'gpt-6-luna': [0.10, 0.01, 0.10, 0.50],
+    // Do 2026-12-31; od 2027-01-01 Google podwaja wszystkie stawki.
+    'gemini-3.8-flash': [0.75, 0.075, 0.75, 3.75],
+    'gemini-3.5-flash-lite': [0.30, 0.03, 0.30, 2.50]
+  };
+  var AI_SPEND_GM = 'b24t_ai_spend';   // { odcisk klucza: { p: dostawca, m: { 'RRRR-MM': { usd, n, nf, tok } } } }
+  var AI_SPEND_WARN = 0.8;             // od tej części limitu kropka stanu w nagłówku panelu zmienia kolor
+
+  // ID z datą (`claude-haiku-4-5-20251001`) albo z `-latest` ma cenę modelu bazowego.
+  function _aiPrice(model) {
+    var m = String(model || '').toLowerCase();
+    return AI_PRICE[m] || AI_PRICE[m.replace(/-(\d{8}|latest)$/, '')] || null;
+  }
+  function _aiCostUsd(model, u) {
+    var p = _aiPrice(model);
+    if (!p || !u) return null;
+    return ((u.input_tokens || 0) * p[0] + (u.cache_read_input_tokens || 0) * p[1] +
+      (u.cache_creation_input_tokens || 0) * p[2] + (u.output_tokens || 0) * p[3]) / 1e6;
+  }
+  // Odcisk klucza (FNV-1a), żeby suma trzymała się klucza bez zapisywania go drugi raz.
+  function _aiKeyId(key) {
+    var h = 0x811c9dc5;
+    for (var i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return h.toString(36);
+  }
+  function _aiMonth(d) {
+    d = d || new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  }
+
+  // Wywołania zbierane w pamięci karty i dopisywane raz na sekundę. → koszt wywołania w $ albo null bez cennika.
+  var _aiSpendQ = {}, _aiSpendT = 0;
+  function _aiSpendAdd(model, key, usage) {
+    if (!usage || !key) return null;
+    var usd = _aiCostUsd(model, usage), id = _aiKeyId(key), mon = _aiMonth();
+    var q = _aiSpendQ[id] || (_aiSpendQ[id] = { p: _aiProvider(model), m: {} });
+    var e = q.m[mon] || (q.m[mon] = { usd: 0, n: 0, nf: 0, tok: 0 });
+    e.n++;
+    e.tok += (usage.input_tokens || 0) + (usage.output_tokens || 0) + (usage.cache_read_input_tokens || 0) + (usage.cache_creation_input_tokens || 0);
+    if (usd == null) e.nf++; else e.usd += usd;
+    if (!_aiSpendT) _aiSpendT = setTimeout(_aiSpendFlush, 1000);
+    return usd;
+  }
+  // Zostaw odczyt przed zapisem: druga karta (panel .com i .pl, News) dopisuje do tych samych sum, a zapis
+  // obiektu trzymanego w pamięci tej karty skasowałby jej wywołania.
+  function _aiSpendFlush() {
+    _aiSpendT = 0;
+    var all = gmGet(AI_SPEND_GM, {}) || {};
+    Object.keys(_aiSpendQ).forEach(function(id) {
+      var q = _aiSpendQ[id], rec = all[id] || (all[id] = { p: q.p, m: {} });
+      Object.keys(q.m).forEach(function(mon) {
+        var a = q.m[mon], b = rec.m[mon] || (rec.m[mon] = { usd: 0, n: 0, nf: 0, tok: 0 });
+        b.usd += a.usd; b.n += a.n; b.nf += a.nf; b.tok += a.tok;
+      });
+    });
+    _aiSpendQ = {};
+    gmSet(AI_SPEND_GM, all);
+    _conn.ai = null;
+    _connRender();
+  }
+  // Wydatek bieżącego klucza dostawcy w miesiącu `mon` (domyślnie bieżącym), z wywołaniami czekającymi na zapis.
+  function _aiSpendOf(provider, mon, s) {
+    var key = String((s || _aiGetSettings())[AI_KEY_FIELD[provider]] || '').trim();
+    if (!key) return null;
+    var id = _aiKeyId(key), out = { usd: 0, n: 0, nf: 0, tok: 0 };
+    mon = mon || _aiMonth();
+    [((gmGet(AI_SPEND_GM, {}) || {})[id] || { m: {} }).m[mon], (_aiSpendQ[id] || { m: {} }).m[mon]].forEach(function(e) {
+      if (e) { out.usd += e.usd; out.n += e.n; out.nf += e.nf; out.tok += e.tok; }
+    });
+    return out;
+  }
+  function _aiFmtUsd(x) {
+    return x.toFixed(x > 0 && x < 0.1 ? 3 : 2).replace('.', ',') + ' $';
+  }
+  // Najgorszy stan limitów: { state: 'ok' | 'warn' | 'danger' | 'none', usd (suma kluczy), rows: [{ p, usd, limit, ratio }] }.
+  function _aiSpendState() {
+    var s = _aiGetSettings(), lim = s.spendLimit || {}, rows = [], usd = 0, rank = 0;
+    ['anthropic', 'openai', 'google'].forEach(function(p) {
+      var sp = _aiSpendOf(p, null, s);
+      if (!sp) return;
+      var limit = +lim[p] > 0 ? +lim[p] : 0, ratio = limit ? sp.usd / limit : 0;
+      usd += sp.usd;
+      rank = Math.max(rank, !limit ? 0 : ratio >= 1 ? 3 : ratio >= AI_SPEND_WARN ? 2 : 1);
+      rows.push({ p: p, usd: sp.usd, n: sp.n, nf: sp.nf, limit: limit, ratio: ratio });
+    });
+    return { state: ['none', 'ok', 'warn', 'danger'][rank], usd: usd, rows: rows };
+  }
+
   // Dlaczego odpowiedź jest niepełna — ucięta limitem, odmowa, blokada filtra. Bez tego
   // pusty albo ucięty tekst kończy się komunikatem „błąd parsowania", który nic nie mówi.
   function _aiResponseReason(provider, data) {
@@ -982,20 +1085,25 @@
     catch(e) { return { json: null, text: text }; }
   }
 
-  // Jedno zdarzenie strumienia SSE (już sparsowany JSON z linii `data:`) → { text } albo { error }.
+  // Jedno zdarzenie strumienia SSE (już sparsowany JSON z linii `data:`) → { text } albo { error }, do tego
+  // `usage` w kształcie _aiUsage. Zużycie przychodzi w częściach (Claude: wejście na starcie, wyjście narastająco
+  // na końcu; Gemini narastająco w każdej porcji), więc wołający składa je Object.assign w jeden obiekt.
   function _aiStreamEvent(provider, ev) {
     if (!ev) return {};
     if (provider === 'anthropic') {
       if (ev.type === 'content_block_delta' && ev.delta && typeof ev.delta.text === 'string') return { text: ev.delta.text };
+      if (ev.type === 'message_start' && ev.message && ev.message.usage) return { usage: ev.message.usage };
+      if (ev.type === 'message_delta' && ev.usage) return { usage: ev.usage };
       if (ev.type === 'error' && ev.error) return { error: ev.error.message || ev.error.type || 'błąd strumienia' };
       return {};
     }
     if (provider === 'openai') {
+      var ou = ev.response && ev.response.usage ? { usage: _aiUsage('openai', ev.response) } : {};
       if (ev.type === 'response.output_text.delta' && typeof ev.delta === 'string') return { text: ev.delta };
       if (ev.type === 'error') return { error: ev.message || (ev.error && ev.error.message) || 'błąd strumienia' };
-      if (ev.type === 'response.failed') return { error: (ev.response && ev.response.error && ev.response.error.message) || 'odpowiedź przerwana' };
-      if (ev.type === 'response.incomplete') return { error: _aiResponseReason('openai', ev.response || {}) || 'odpowiedź niepełna' };
-      return {};
+      if (ev.type === 'response.failed') return Object.assign(ou, { error: (ev.response && ev.response.error && ev.response.error.message) || 'odpowiedź przerwana' });
+      if (ev.type === 'response.incomplete') return Object.assign(ou, { error: _aiResponseReason('openai', ev.response || {}) || 'odpowiedź niepełna' });
+      return ou;
     }
     // Gemini: każda porcja to pełny obiekt odpowiedzi z przyrostem tekstu w `parts`.
     if (ev.error) return { error: ev.error.message || 'błąd strumienia' };
@@ -1003,6 +1111,7 @@
     var t = '';
     ((c && c.content && c.content.parts) || []).forEach(function(p) { if (p.text && !p.thought) t += p.text; });
     var out = t ? { text: t } : {};
+    if (ev.usageMetadata) out.usage = _aiUsage('google', ev);
     var reason = _aiResponseReason('google', ev);
     if (reason) out.error = reason;
     return out;
@@ -1056,6 +1165,7 @@
               var data = JSON.parse(resp.responseText);
               var out = _aiReadResponse(provider, data, opts.schema && opts.schema.name);
               out.usage = _aiUsage(provider, data);
+              out.usd = _aiSpendAdd(opts.model, key, out.usage);
               diag(status, null, out.usage);
               // Ucięta odpowiedź nie jest błędem sama w sobie — parser News wyciąga werdykt
               // z uciętego JSON-a. Przyczyna idzie obok, wołający decyduje.
@@ -2037,9 +2147,11 @@
       // Treść strony CMS nie jest potrzebna: wystarcza adres po przekierowaniach.
       if (res.body) res.body.cancel().catch(function () {});
       _cmsDeny.session = res.ok && !/\/cms33\/login/.test(res.url);
+      _connRender();
       return _cmsDeny.session;
     }, function () {
       _cmsDeny.session = null;
+      _connRender();
       return null;
     });
     return _cmsDeny.probing;
@@ -2372,6 +2484,7 @@
       return {
         assessments: res.json.mentions.map(function(x) { return x && x.assessment; }),
         usage: res.usage || null,
+        usd: res.usd,
       };
     });
   }
@@ -4175,12 +4288,14 @@
 
 
 
-  // Wołane przy każdym zapytaniu GraphQL strony, więc DOM zmienia się tylko przy zmianie stanu.
+  // Wołane przy każdym zapytaniu GraphQL strony, więc DOM zmienia się tylko przy zmianie stanu. Pierwsze zapytania
+  // idą przed zbudowaniem panelu, a wtedy moduły niżej (sieć, aktualizacje) nie mają jeszcze stanu: bez przycisku
+  // stanu nic się nie dzieje, a _panelOpen woła tę funkcję ponownie.
   function updateTokenUI(found) {
-    const el = _$('b24t-token-status'), st = found ? 'ok' : 'pending';
-    if (!el || el.dataset.state === st) return;
-    el.dataset.state = st;
-    el.textContent = found ? 'Token Brand24 aktywny' : 'Czekam na token Brand24';
+    const el = _$('b24t-conn'), st = found ? 'ok' : 'wait';
+    if (!el || el.dataset.token === st) return;
+    el.dataset.token = st;
+    _connRender();
     if (found) _matchSchedule();
   }
 
@@ -4196,8 +4311,10 @@
     if (!el) return;
     const [text, st] = STATUS_UI[state.status] || STATUS_UI.idle;
     el.dataset.state = st;
+    // Spoczynek nie wymaga uwagi; pojawienie się chipu samo sygnalizuje przebieg (FOCUS.md §4).
+    el.hidden = st === 'idle';
     el.querySelector('.b-status__label').textContent = text;
-    el.setAttribute('aria-label', 'Stan: ' + text.toLowerCase());
+    el.setAttribute('aria-label', 'Przebieg: ' + text.toLowerCase());
 
     const lbl = _$('b24t-progress-label');
     if (lbl) {
@@ -5370,6 +5487,15 @@
       .b-menu__sep { height: 1px; margin: 0.25em 0.375em; background: var(--c-border); }
       .b-menu__head { padding: 0.4em 0.75em 0.2em; font-size: max(12px, 0.923em); color: var(--c-text3); font-weight: 600; }
       .b-menu__hint { margin-left: auto; padding-left: 1em; font-size: max(12px, 0.923em); color: var(--c-text3); font-weight: 400; }
+      /* Wiersz stanu: kropka w kolumnie ikon pozycji menu, wyjaśnienie pod nazwą. */
+      .b-menu__state { display: grid; grid-template-columns: 1.15em minmax(0, 1fr); column-gap: 0.6em; padding: 0.3em 0.75em; --st: var(--c-text3); }
+      .b-menu__state::before { content: ""; grid-row: 1; justify-self: center; align-self: center; width: 0.5em; height: 0.5em; border-radius: 50%; background: var(--st); }
+      .b-menu__state[data-state="ok"] { --st: var(--c-ok); }
+      .b-menu__state[data-state="info"] { --st: var(--c-accent); }
+      .b-menu__state[data-state="warn"] { --st: var(--c-warn); }
+      .b-menu__state[data-state="danger"] { --st: var(--c-dangerIcon); }
+      .b-menu__state-label { grid-column: 2; }
+      .b-menu__state-hint { grid-column: 2; font-size: max(12px, 0.923em); color: var(--c-text3); }
       /* Pozycja, której dotyczy kropka na „⋯”: ta sama kropka w rogu ikony, mignięcie przy otwarciu menu. */
       .b-menu__item.has-dot { position: relative; }
       .b-menu__item.has-dot::before {
@@ -5508,26 +5634,24 @@
         .b-rail__label, .b-rail__item--util .b-rail__label { display: block; font-size: 1em; }
         .b-rail__item .b-rail__dot { position: static; margin-left: auto; box-shadow: none; }
       }
+      @container b-panel (width < 25em) { .b-hide-below-25 { display: none !important; } }
       @container b-panel (width < 28em) { .b-hide-below-28 { display: none !important; } }
       @container b-panel (width < 34em) { .b-hide-below-34 { display: none !important; } }
 
       /* ── Panel: nagłówek, karty, stopka ── */
-      .b-ver {
-        border: 0; background-color: transparent; height: 1.85em; padding: 0 0.35em; border-radius: 6px; cursor: pointer;
-        color: var(--c-text3); font-size: max(12px, 0.923em); white-space: nowrap; flex-shrink: 0;
+      /* Tytuł bez projektu: nazwa wtyczki w kolorze pomocniczym (FOCUS.md §4). */
+      .b-head__title.is-muted { color: var(--c-text3); }
+      /* Wskaźnik połączenia: ikona z kropką w kolorze najgorszego stanu (_connRender). */
+      .b-conn { position: relative; flex-shrink: 0; --conn: var(--c-text3); }
+      .b-conn[data-state="ok"] { --conn: var(--c-ok); }
+      .b-conn[data-state="info"] { --conn: var(--c-accent); }
+      .b-conn[data-state="warn"] { --conn: var(--c-warn); }
+      .b-conn[data-state="danger"] { --conn: var(--c-dangerIcon); }
+      .b-conn__dot {
+        position: absolute; right: 0.3em; bottom: 0.3em; width: 0.5em; height: 0.5em; border-radius: 50%;
+        background: var(--conn); box-shadow: 0 0 0 2px var(--c-frame); transition: background-color 160ms var(--ease-in);
       }
-      .b-ver:hover { background-image: linear-gradient(var(--c-hover), var(--c-hover)); color: var(--c-text2); }
-      .b-ver:focus-visible { outline: 2px solid var(--c-focus); outline-offset: 1px; }
-      .b-ver.is-busy { opacity: 0.5; cursor: progress; }
       .b-chip--sm { height: 1.7em; padding: 0 0.55em; }
-      .b-upd-chip { position: relative; }
-      .b-upd-chip.is-on { box-shadow: inset 0 0 0 1.5px currentColor; }
-      .b-upd-chip.is-ok { cursor: default; }
-      [data-b24t-motion="full"] .b-upd-chip.is-ping::after {
-        content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
-        animation: b-ping 5s var(--ease-in) 1s infinite;
-      }
-      @keyframes b-ping { 0% { box-shadow: 0 0 0 0 var(--c-outline); } 12% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 6px transparent; } }
       .b-status__label { min-width: 0; }
       @container b-panel (width < 25em) {
         .b-status:has(> .b-status__label) { padding: 0; width: 1.85em; justify-content: center; }
@@ -5539,11 +5663,6 @@
       .b-foot__group { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; gap: 0.5em; min-width: 0; }
       .b-btn > .b-ico-stop { width: 0.85em; height: 0.85em; color: var(--c-dangerIcon); }
       .b-btn:disabled > .b-ico-stop { color: inherit; }
-      .b-token { display: inline-flex; align-items: center; gap: 0.4em; white-space: nowrap; }
-      .b-token::before { content: ""; width: 0.45em; height: 0.45em; border-radius: 50%; background: var(--c-text3); flex-shrink: 0; }
-      .b-token[data-state="ok"]::before { background: var(--c-ok); }
-      .b-token[data-state="error"]::before { background: var(--c-dangerIcon); }
-      .b-net[data-state="ok"] > svg { color: var(--c-ok); }
 
       /* Plik: wiersz z nazwą i stanem; bez pliku przerywana ramka zaprasza do upuszczenia. */
       .b-file {
@@ -5801,6 +5920,7 @@
       @container b-set (width < 32em) { .b-set-row:has(> .b-seg) { grid-template-columns: minmax(0, 1fr); } }
       .b-set-kv { display: grid; grid-template-columns: 6.5em minmax(0, 1fr); align-items: center; gap: 0.5em 0.75em; padding: 0.75em 0; min-width: 0; }
       .b-set-kv__full { grid-column: 2; }
+      .b-row > .b-input.b-set-limit { width: 5.5em; flex: 0 0 auto; }
       .b-set-msg { display: flex; align-items: flex-start; gap: 0.4em; min-width: 0; overflow-wrap: anywhere; }
       .b-set-msg > svg { width: 1.1em; height: 1.1em; margin-top: 0.1em; }
       .b-set-secret { -webkit-text-security: disc; }
@@ -8089,6 +8209,17 @@
       items.forEach(function (it) {
         if (it === 'sep') { el.insertAdjacentHTML('beforeend', '<div class="b-menu__sep" role="separator"></div>'); return; }
         if (it.head) { var h = document.createElement('div'); h.className = 'b-menu__head'; h.textContent = it.head; el.appendChild(h); return; }
+        // Wiersz stanu (okienko „Stan” w nagłówku panelu): kropka w kolorze stanu, nazwa i wyjaśnienie, bez działania.
+        if (it.state) {
+          var sr = document.createElement('div');
+          sr.className = 'b-menu__state';
+          sr.dataset.state = it.state;
+          sr.innerHTML = '<span class="b-menu__state-label"></span>' + (it.hint ? '<span class="b-menu__state-hint"></span>' : '');
+          sr.firstChild.textContent = it.label;
+          if (it.hint) sr.lastChild.textContent = it.hint;
+          el.appendChild(sr);
+          return;
+        }
         var b = document.createElement('button');
         b.type = 'button';
         b.className = 'b-menu__item' + (it.dot ? ' has-dot' : '');
@@ -8717,7 +8848,8 @@
             text: 'Ctrl+K otwiera paletę ze wszystkimi oknami i działaniami wtyczki. Kilka liter, na przykład „log”, i Enter; ostatnio używane polecenia czekają na górze.',
             task: 'Naciśnij Ctrl+K, a potem zamknij paletę klawiszem Esc',
             done: function (s) { if (Palette.isOpen()) s.seen = true; return s.seen && !Palette.isOpen(); } },
-          { title: 'Pomoc pod znakiem zapytania', target: function () { return _$('b24t-btn-help'); },
+          { title: 'Pomoc pod znakiem zapytania',
+            target: [function () { return _$('b24t-btn-help'); }, function () { return _q('#b24t-panel .b-win__menu'); }],
             text: 'Klawisz „?” otwiera ściągawkę skrótów wszystkich otwartych okien. Przycisk ze znakiem zapytania w nagłówku prowadzi do samouczków poszczególnych funkcji.',
             task: 'Naciśnij „?”, a potem zamknij ściągawkę klawiszem Esc',
             done: function (s) { if (Win.get('keys')) s.seen = true; return s.seen && !Win.get('keys'); } }
@@ -9233,14 +9365,15 @@
       ` aria-label="${t.label}" data-tip="${t.label}"${t.tab === 'main' ? ' aria-current="page"' : ''}>` +
       `${_icon(t.icon)}<span class="b-rail__label" aria-hidden="true">${t.label}</span></button>`;
 
+    // Wskaźnik połączenia (FOCUS.md §4): token, sieć, sesja CMS, wersja i limit kosztu AI w jednej kropce.
     const titleExtra =
-      `<button type="button" id="b24t-version" class="b-ver b-hide-below-34" data-tip="Sprawdź aktualizacje">${VERSION}</button>` +
-      `<button type="button" id="b24t-upd-chip" class="b-chip b-chip--sm b-upd-chip" hidden></button>`;
+      `<button type="button" id="b24t-conn" class="b-ibtn b-conn" data-state="wait" data-token="wait" aria-haspopup="menu" aria-expanded="false" aria-label="Stan">` +
+      `${_icon('activity')}<span class="b-conn__dot" aria-hidden="true"></span></button>`;
 
     const headExtra =
-      `<span id="b24t-status-badge" class="b-status" data-state="idle" role="status"><span class="b-status__label">Gotowy</span></span>` +
+      `<span id="b24t-status-badge" class="b-status" data-state="idle" role="status" hidden><span class="b-status__label">Gotowy</span></span>` +
       `<button type="button" class="b-ibtn b-hide-below-34" id="b24t-btn-palette" aria-label="Paleta poleceń" data-tip="Paleta poleceń" data-tip-kbd="Ctrl K">${_icon('search')}</button>` +
-      `<button type="button" class="b-ibtn" id="b24t-btn-help" aria-label="Pomoc i samouczki" data-tip="Pomoc i samouczki">${_icon('help')}</button>` +
+      `<button type="button" class="b-ibtn b-hide-below-25" id="b24t-btn-help" aria-label="Pomoc i samouczki" data-tip="Pomoc i samouczki">${_icon('help')}</button>` +
       `<button type="button" class="b-ibtn" id="b24t-btn-features" aria-label="Ustawienia" data-tip="Ustawienia: funkcje, modele AI, aktualizacje">${_icon('settings')}</button>`;
 
     const rail =
@@ -9268,11 +9401,7 @@
         </div>
 
         <div class="b-grid">
-          <section class="b-card" aria-labelledby="b24t-project-name">
-            <div class="b-card__head">
-              <span class="b-card__title b-card__title--lg b-ell" id="b24t-project-name">—</span>
-              <span class="b-hint b-mono" id="b24t-project-meta">Przejdź do zakładki Mentions</span>
-            </div>
+          <section class="b-card" aria-label="Plik z ocenami">
             <div id="b24t-file-zone" class="b-file is-empty" role="button" tabindex="0" aria-label="Wybierz plik z ocenami" data-tip="Najpewniejszy jest JSON: XLSX potrafi obciąć 19-cyfrowe ID z TikToka i X">
               ${_icon('file')}
               <div class="b-file__text">
@@ -9284,11 +9413,6 @@
             <input type="file" id="b24t-file-input" accept=".csv,.json,.xlsx" hidden>
             <div class="b-row b-small b-text2" id="b24t-date-range" hidden>
               ${_icon('calendar')}<span id="b24t-date-from">—</span><span aria-hidden="true">–</span><span id="b24t-date-to">—</span>
-            </div>
-            <div class="b-row b-row--wrap b-small">
-              <span id="b24t-token-status" class="b-token" data-state="pending">Czekam na token Brand24</span>
-              ${_info('Zielona kropka: wtyczka ma token Brand24 i może w nim zapisywać. Szara: wtyczka czeka na pierwsze zapytanie strony Brand24, na przykład po zmianie filtra albo strony wyników.', 'połączenie z Brand24')}
-              <button type="button" id="b24t-latency-badge" class="b-chip b-chip--sm b-net" hidden></button>
             </div>
           </section>
 
@@ -9462,7 +9586,9 @@
     var hidden = !!lsGet('b24tagger_panel_hidden');
     if (hidden) Win.hide('panel');
     Edge.setVisible('panel', hidden);
+    _panelTitleRender();
     updateTokenUI(!!state.tokenSeen);
+    _connRender();
     return w.el;
   }
 
@@ -9470,6 +9596,87 @@
     if (on) Win.hide('panel'); else Win.show('panel');
     Edge.setVisible('panel', on);
     lsSet('b24tagger_panel_hidden', on);
+  }
+
+  // ── Nagłówek panelu (FOCUS.md §4) ──
+  // Tytuł to projekt otwarty w Brand24, wspólny cel kart Plik, Quick Tag, Usuwanie, AI Tag i Sentyment. Nazwa wtyczki
+  // zostaje w logo i w pigułce (spec.title), a bez projektu tytuł „B24 Tagger” jest w kolorze pomocniczym.
+  function _panelTitleRender() {
+    var w = Win.get('panel');
+    if (!w) return;
+    var pid = state.projectId, name = pid ? state.projectName || _pnResolve(pid) || 'Projekt ' + pid : '';
+    Win.setTitle('panel', name || 'B24 Tagger');
+    w.title.classList.toggle('is-muted', !name);
+    w.title.setAttribute('data-tip', pid ? 'ID projektu: ' + pid : 'Otwórz wyniki projektu w Brand24');
+    w.el.removeAttribute('aria-labelledby');
+    w.el.setAttribute('aria-label', name ? 'B24 Tagger: ' + name : 'B24 Tagger');
+  }
+
+  // Wskaźnik połączenia: kolor kropki to najgorszy stan z wierszy okienka „Stan” (_connRows). Pogorszenie daje
+  // jednorazowy błysk kropki (≤ 1,2 s, FOCUS.md §1.3); w zestawie ograniczonym zmienia się sam kolor.
+  var CONN_RANK = { wait: 0, ok: 1, info: 2, warn: 3, danger: 4 };
+  var CONN_AI_TTL = 60000;   // stan limitu AI bez zmian w tej karcie; po minucie liczy się od nowa (nowy miesiąc)
+  var _conn = { rank: -1, ai: null, aiAt: 0 };
+
+  // _connRender biegnie przy każdym zapytaniu do Brand24 (_netEval), a stan limitu czyta ustawienia AI z promptami:
+  // trzymany w pamięci, czyszczony przy zapisie wydatków i zmianie limitu.
+  function _connAi() {
+    if (!_conn.ai || Date.now() - _conn.aiAt > CONN_AI_TTL) { _conn.ai = _aiSpendState(); _conn.aiAt = Date.now(); }
+    return _conn.ai;
+  }
+
+  // Wiersze okienka „Stan”: { state (klucz CONN_RANK), label, hint }.
+  function _connRows() {
+    var el = _$('b24t-conn'), rows = [];
+    rows.push(el && el.dataset.token === 'ok'
+      ? { state: 'ok', label: 'Token Brand24 aktywny', hint: 'Wtyczka może zapisywać w Brand24' }
+      : { state: 'wait', label: 'Czekam na token Brand24', hint: 'Pojawi się przy pierwszym zapytaniu strony Brand24, np. po zmianie filtra' });
+    rows.push(_netRow());
+    // Sesję CMS wtyczka sprawdza dopiero przy projektach bez dostępu (_cmsProbe); wcześniej wiersza nie ma.
+    if (_cmsDeny.session === true) rows.push({ state: 'ok', label: 'Zalogowano do CMS', hint: 'Projekty innych kont Brand24 są dostępne' });
+    else if (_cmsDeny.session === false) rows.push({ state: 'warn', label: 'Brak sesji CMS', hint: 'Projekty innych kont Brand24 wymagają zalogowania do CMS' });
+    rows.push(_updRow());
+    var ai = _connAi();
+    if (ai.rows.length) {
+      var top = ai.rows.filter(function(r) { return r.limit; }).sort(function(a, b) { return b.ratio - a.ratio; })[0];
+      rows.push({ state: ai.state === 'none' ? 'wait' : ai.state, label: 'AI w tym miesiącu: ' + _aiFmtUsd(ai.usd),
+        hint: top ? AI_PROVIDER_LABEL[top.p] + ': ' + Math.round(top.ratio * 100) + '% limitu ' + _aiFmtUsd(top.limit)
+          : 'Bez limitu; liczone z wywołań w tej przeglądarce' });
+    }
+    return rows;
+  }
+
+  function _connRender() {
+    var el = _$('b24t-conn');
+    if (!el) return;
+    var rows = _connRows(), worst = rows[0];
+    rows.forEach(function(r) { if (CONN_RANK[r.state] > CONN_RANK[worst.state]) worst = r; });
+    var rank = CONN_RANK[worst.state];
+    var label = 'Stan: ' + (rank === 1 ? 'wszystko w normie' : worst.label), tip = rows.map(function(r) { return r.label; }).join('\n');
+    if (el.dataset.state !== worst.state) el.dataset.state = worst.state;
+    if (el.getAttribute('aria-label') !== label) el.setAttribute('aria-label', label);
+    if (el.getAttribute('data-tip') !== tip) el.setAttribute('data-tip', tip);
+    if (_conn.rank >= 0 && rank > _conn.rank && rank >= CONN_RANK.info && _uiFull()) {
+      // Kolory z wartości obliczonych: kropka jest jeszcze w trakcie przejścia do nowego koloru.
+      var cs = getComputedStyle(el), c = cs.getPropertyValue('--conn').trim(), f = cs.getPropertyValue('--c-frame').trim();
+      el.querySelector('.b-conn__dot').animate([{ boxShadow: '0 0 0 2px ' + f + ', 0 0 0 2px ' + c },
+        { boxShadow: '0 0 0 2px ' + f + ', 0 0 0 10px transparent' }], { duration: 1200, easing: WIN_EASE_OUT });
+    }
+    _conn.rank = rank;
+  }
+
+  function _connMenu() {
+    var btn = _$('b24t-conn'), rows = _connRows(), acts = [], base = _b24HostBase();
+    if (nmState.enabled) acts.push({ label: 'Network Monitor', icon: 'activity', onSelect: openNetworkMonitorPanel });
+    if (_cmsDeny.session === false && base) {
+      acts.push({ label: 'Zaloguj się do CMS', icon: 'external', onSelect: function() { window.open(base + '/cms33/', '_blank', 'noopener'); } });
+    }
+    // Odświeżenie przerwałoby przebieg albo ocenę sentymentu; powiadomienie „Odśwież stronę” mówi, kiedy zadziała.
+    if (_upd.refresh) acts.push({ label: 'Odśwież stronę', icon: 'refresh', onSelect: function() { if (_updBusy()) _updOpenCard('installed'); else location.reload(); } });
+    else if (_upd.remote) acts.push({ label: 'Zainstaluj ' + _upd.remote, icon: 'upload', onSelect: _updInstall });
+    else acts.push({ label: _upd.checking ? 'Sprawdzam aktualizacje…' : 'Sprawdź aktualizacje', icon: 'refresh', disabled: !!_upd.checking, onSelect: function() { _updCheck(true); } });
+    if (_connAi().rows.length) acts.push({ label: 'Koszt AI i limity', icon: 'settings', onSelect: function() { showFeaturesModal('ai'); } });
+    Menu.open(btn, [{ head: 'Stan' }].concat(rows, ['sep'], acts));
   }
 
   // Pozycje nad menu położenia w „⋯”: dzienniki, zgłoszenie, schowanie panelu; potem pomoc: paleta, skróty, samouczek.
@@ -9685,11 +9892,9 @@
     panel.querySelector('#b24t-btn-help').addEventListener('click', _tutCatalog);
     panel.querySelector('#b24t-btn-palette').addEventListener('click', () => Palette.open());
 
-    // Latency badge → otwiera Network Monitor
-    panel.querySelector('#b24t-latency-badge')?.addEventListener('click', function() {
-      if (nmState.enabled) openNetworkMonitorPanel();
-      else Toast.show('Szczegóły zapytań pokazuje Network Monitor: włącza się go w Ustawieniach.', 'info');
-    });
+    panel.querySelector('#b24t-conn').addEventListener('click', _connMenu);
+    // Wydatki AI z innej karty (drugi panel Brand24, News) zmieniają stan limitu.
+    try { GM_addValueChangeListener(AI_SPEND_GM, function(n, o, v, remote) { if (remote) { _conn.ai = null; _connRender(); } }); } catch (e) {}
 
     // Dodatkowe funkcje
     panel.querySelector('#b24t-btn-features')?.addEventListener('click', () => showFeaturesModal());
@@ -10697,8 +10902,7 @@
         if (!_isFallbackProjectName(state.projectName)) return;   // tytuł zdążył pierwszy
         state.projectName = apiName;
         _pnSetVerified(projectId, apiName, PN_SRC_GQL, _b24HostBase());
-        var elN = _$('b24t-project-name');
-        if (elN) elN.textContent = apiName;
+        _panelTitleRender();
       });
 
       let retryCount = 0;
@@ -10707,8 +10911,7 @@
         if (!_isFallbackProjectName(t)) {
           state.projectName = t;
           _pnSet(projectId, t); // zapisz trwale do PROJECT_NAMES
-          const el = _$('b24t-project-name');
-          if (el) el.textContent = state.projectName;
+          _panelTitleRender();
           return true;
         }
         return false;
@@ -10720,8 +10923,7 @@
       }, 500);
     }
 
-    _$('b24t-project-name').textContent = state.projectName;
-    _$('b24t-project-meta').textContent = `ID: ${projectId}`;
+    _panelTitleRender();
     _registerProjectIdentity(projectId, state.projectName);
 
     // Load tags
@@ -15355,11 +15557,18 @@
     entry.trTotal = pairs.length;
     if (_newsCardRenderer) _newsCardRenderer(entry);
 
-    var seenText = '', tail = '', modelText = '', landed = 0, streamErr = '', settled = false;
+    var seenText = '', tail = '', modelText = '', landed = 0, streamErr = '', settled = false, streamUsage = null;
+
+    // Koszt liczy się raz na tłumaczenie, także nieudane: tokeny strumienia są już zapłacone.
+    function _spend() {
+      if (streamUsage) _aiSpendAdd(model, key, streamUsage);
+      streamUsage = null;
+    }
 
     function _fail(msg) {
       if (settled) return;
       settled = true;
+      _spend();
       // Częściowe tłumaczenie znika razem z błędem — powód przy kontroli długości niżej.
       entry.tr = null;
       entry.trStatus = 'error';
@@ -15396,6 +15605,7 @@
         var got = _aiStreamEvent(provider, ev);
         if (got.text) modelText += got.text;
         if (got.error) streamErr = got.error;
+        if (got.usage) streamUsage = Object.assign(streamUsage || {}, got.usage);
       }
       _land();
     }
@@ -15428,6 +15638,7 @@
       // `entry.tr`) — lepszy brak tłumaczenia niż polski tekst podpisany nie tym fragmentem.
       if (arr.length !== pairs.length) { _fail('model zwrócił ' + arr.length + ' z ' + pairs.length + ' fragmentów'); return; }
       settled = true;
+      _spend();
       // Przepisanie z kompletnej odpowiedzi, nie ze strumienia: skaner przyrostowy widzi
       // tylko domknięte elementy, a ostatni domyka się dopiero tutaj.
       var tr = { title: null, ctx: [], snippet: null };
@@ -20133,6 +20344,47 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.7",
+      "date": "2026-10-03",
+      "label": "new",
+      "changes": [
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Nazwa otwartego projektu w nagłówku panelu",
+          "items": [
+            "Nazwa projektu stoi w miejscu nazwy wtyczki, a dymek nad nią podaje ID projektu.",
+            "Karta Plik zaczyna się od wyboru pliku.",
+            "Chip stanu przebiegu pokazuje się tylko w trakcie, po pauzie, po błędzie i po zakończeniu przebiegu."
+          ],
+          "text": "Nazwa otwartego projektu w nagłówku panelu. Nazwa projektu stoi w miejscu nazwy wtyczki, a dymek nad nią podaje ID projektu. Karta Plik zaczyna się od wyboru pliku. Chip stanu przebiegu pokazuje się tylko w trakcie, po pauzie, po błędzie i po zakończeniu przebiegu."
+        },
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Kropka stanu połączenia w nagłówku panelu",
+          "items": [
+            "Kolor kropki pokazuje najpoważniejszy z problemów: token Brand24, szybkość Brand24, sesję CMS, nową wersję wtyczki i limit wydatków na AI.",
+            "Kliknięcie otwiera okienko „Stan” z opisem każdego z nich i działaniami: „Network Monitor”, „Zaloguj się do CMS”, „Zainstaluj”, „Sprawdź aktualizacje”.",
+            "Token, plakietka sieci i numer wersji zniknęły z karty Plik i z nagłówka, bo są w okienku „Stan”."
+          ],
+          "text": "Kropka stanu połączenia w nagłówku panelu. Kolor kropki pokazuje najpoważniejszy z problemów: token Brand24, szybkość Brand24, sesję CMS, nową wersję wtyczki i limit wydatków na AI. Kliknięcie otwiera okienko „Stan” z opisem każdego z nich i działaniami: „Network Monitor”, „Zaloguj się do CMS”, „Zainstaluj”, „Sprawdź aktualizacje”. Token, plakietka sieci i numer wersji zniknęły z karty Plik i z nagłówka, bo są w okienku „Stan”."
+        },
+        {
+          "type": "new",
+          "area": "Ustawienia AI",
+          "title": "Koszt kluczy AI w miesiącu i limit miesięczny",
+          "items": [
+            "Ustawienia → AI podają koszt każdego klucza w bieżącym miesiącu, liczbę wywołań i koszt poprzedniego miesiąca.",
+            "Koszt liczy się z wywołań w tej przeglądarce, więc ten sam klucz użyty gdzie indziej kosztuje więcej.",
+            "Od 80% ustawionego limitu kropka stanu w nagłówku panelu robi się pomarańczowa, po przekroczeniu czerwona.",
+            "Karta AI Tag podaje koszt przebiegu po jego zakończeniu."
+          ],
+          "text": "Koszt kluczy AI w miesiącu i limit miesięczny. Ustawienia → AI podają koszt każdego klucza w bieżącym miesiącu, liczbę wywołań i koszt poprzedniego miesiąca. Koszt liczy się z wywołań w tej przeglądarce, więc ten sam klucz użyty gdzie indziej kosztuje więcej. Od 80% ustawionego limitu kropka stanu w nagłówku panelu robi się pomarańczowa, po przekroczeniu czerwona. Karta AI Tag podaje koszt przebiegu po jego zakończeniu."
+        }
+      ]
+    },
+    {
       "version": "0.38.6",
       "date": "2026-10-03",
       "label": "improved",
@@ -20723,129 +20975,6 @@
           "text": "Naprawiono błąd, przez który włączony Network Monitor wywoływał pasek błędu w panelu. Zapytania Brand24 z odpowiedzią w formacie JSON nie trafiały do monitora, a nad przyciskiem Start pojawiał się czerwony pasek błędu. Monitor pokazuje także zapytania z odpowiedzią JSON."
         }
       ]
-    },
-    {
-      "version": "0.37.0",
-      "date": "2026-10-01",
-      "label": "new",
-      "changes": [
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Nowy dziennik zmian",
-          "items": [
-            "Wersje nowsze niż ostatnio przeczytana są na górze, starsze zwinięte.",
-            "Filtr obszaru i wyszukiwanie obejmują całą historię.",
-            "Każda zmiana ma typ (new, improved, fix) i obszar wtyczki.",
-            "Dziennik obejmuje wersje od 0.32.0, przepisane w tym układzie."
-          ],
-          "comment": "Stary dziennik był jedną długą listą, w której każda wersja wyglądała na równie ważną. Ten da się filtrować i przeszukiwać.",
-          "text": "Nowy dziennik zmian. Wersje nowsze niż ostatnio przeczytana są na górze, starsze zwinięte. Filtr obszaru i wyszukiwanie obejmują całą historię. Każda zmiana ma typ (new, improved, fix) i obszar wtyczki. Dziennik obejmuje wersje od 0.32.0, przepisane w tym układzie."
-        },
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Kropka i połysk na przycisku dziennika przy nieprzeczytanej wersji",
-          "items": [
-            "Znikają po otwarciu dziennika."
-          ],
-          "comment": "Subtelna presja, żeby jednak zajrzeć.",
-          "text": "Kropka i połysk na przycisku dziennika przy nieprzeczytanej wersji. Znikają po otwarciu dziennika."
-        },
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Okno z opisem dużej zmiany po aktualizacji",
-          "items": [
-            "Pokazuje się raz, przy pierwszym otwarciu panelu po aktualizacji, która zawiera dużą zmianę.",
-            "„Zobacz w dzienniku zmian” otwiera dziennik na tej zmianie."
-          ],
-          "text": "Okno z opisem dużej zmiany po aktualizacji. Pokazuje się raz, przy pierwszym otwarciu panelu po aktualizacji, która zawiera dużą zmianę. „Zobacz w dzienniku zmian” otwiera dziennik na tej zmianie."
-        },
-        {
-          "type": "improved",
-          "area": "Przegląd sentymentu",
-          "title": "Przegląd sentymentu obejmuje wzmianki z każdym sentymentem",
-          "items": [
-            "Źródło „Wzmianki z zakresu dat” pobiera wzmianki z sentymentami zaznaczonymi na karcie Sentyment: negatywnymi, neutralnymi i pozytywnymi. Domyślnie zaznaczone są wszystkie, a wybór jest zapamiętywany dla projektu.",
-            "Jeden przegląd obejmuje do 5 000 wzmianek."
-          ],
-          "comment": "Przegląd zaczął się od negatywów, ale raport potrzebuje poprawnego sentymentu w każdą stronę.",
-          "text": "Przegląd sentymentu obejmuje wzmianki z każdym sentymentem. Źródło „Wzmianki z zakresu dat” pobiera wzmianki z sentymentami zaznaczonymi na karcie Sentyment: negatywnymi, neutralnymi i pozytywnymi. Domyślnie zaznaczone są wszystkie, a wybór jest zapamiętywany dla projektu. Jeden przegląd obejmuje do 5 000 wzmianek."
-        },
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Okno nowej wersji pod nagłówkiem panelu",
-          "items": [
-            "Okno pokazuje się tylko na stronie wyników Brand24 i zawiera listę zmian z nowej wersji.",
-            "„Później” zamyka okno na 24 godziny. Znacznik z numerem nowej wersji w nagłówku panelu otwiera je w każdej chwili.",
-            "Po instalacji okno przypomina o odświeżeniu strony. W trakcie przebiegu, oceny albo zapisu sentymentu przycisk „Odśwież stronę” jest nieaktywny, bo odświeżenie by je przerwało.",
-            "Kliknięcie numeru wersji w nagłówku panelu sprawdza dostępność aktualizacji i pokazuje wynik."
-          ],
-          "text": "Okno nowej wersji pod nagłówkiem panelu. Okno pokazuje się tylko na stronie wyników Brand24 i zawiera listę zmian z nowej wersji. „Później” zamyka okno na 24 godziny. Znacznik z numerem nowej wersji w nagłówku panelu otwiera je w każdej chwili. Po instalacji okno przypomina o odświeżeniu strony. W trakcie przebiegu, oceny albo zapisu sentymentu przycisk „Odśwież stronę” jest nieaktywny, bo odświeżenie by je przerwało. Kliknięcie numeru wersji w nagłówku panelu sprawdza dostępność aktualizacji i pokazuje wynik."
-        },
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Kanał Stabilny ma dziennik aktualizacji z pełnym opisem wersji",
-          "items": [
-            "Po instalacji przyciskiem „Zainstaluj w Tampermonkey” opis nowej wersji otwiera się sam.",
-            "Po automatycznej aktualizacji przez Tampermonkey pod nagłówkiem panelu pojawia się okno „Wtyczka została zaktualizowana” z przyciskiem „Zobacz zmiany”.",
-            "Na kanale Experimental przycisk dziennika otwiera dziennik zmian."
-          ],
-          "text": "Kanał Stabilny ma dziennik aktualizacji z pełnym opisem wersji. Po instalacji przyciskiem „Zainstaluj w Tampermonkey” opis nowej wersji otwiera się sam. Po automatycznej aktualizacji przez Tampermonkey pod nagłówkiem panelu pojawia się okno „Wtyczka została zaktualizowana” z przyciskiem „Zobacz zmiany”. Na kanale Experimental przycisk dziennika otwiera dziennik zmian."
-        },
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Instalacje na kanale Experimental przechodzą na kanał Stabilny",
-          "items": [
-            "Przełączenie odbywa się raz, gdy ta wersja jest dostępna na kanale Stabilnym, osobno w app.brand24.com i panel.brand24.pl.",
-            "Zmienia się tylko kanał aktualizacji. Ustawienia, klucze API i funkcje zostają bez zmian."
-          ],
-          "action": "Jeśli wtyczka ma dalej dostawać wersje testowe, trzeba wybrać w ustawieniach w sekcji „Kanał aktualizacji” opcję „Eksperymentalny”.",
-          "text": "Instalacje na kanale Experimental przechodzą na kanał Stabilny. Przełączenie odbywa się raz, gdy ta wersja jest dostępna na kanale Stabilnym, osobno w app.brand24.com i panel.brand24.pl. Zmienia się tylko kanał aktualizacji. Ustawienia, klucze API i funkcje zostają bez zmian. Jeśli wtyczka ma dalej dostawać wersje testowe, trzeba wybrać w ustawieniach w sekcji „Kanał aktualizacji” opcję „Eksperymentalny”."
-        },
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Zgłaszanie błędów i pomysłów z wtyczki",
-          "items": [
-            "Przycisk zgłoszenia w panelu i w oknach przeglądu sentymentu i News oraz „Zgłoś” na pasku błędu otwierają okienko zgłoszenia.",
-            "Do zgłoszenia błędu wtyczka dołącza ostatnie zdarzenia, wersję i stan funkcji. Klucze API, tokeny i treści wzmianek zostają w przeglądarce.",
-            "Gdy wysyłka się nie uda, „Kopiuj zgłoszenie” kopiuje treść do schowka."
-          ],
-          "comment": "Najtrudniej naprawić błąd, którego nikt nie umie opisać. Teraz wtyczka opisuje go sama.",
-          "text": "Zgłaszanie błędów i pomysłów z wtyczki. Przycisk zgłoszenia w panelu i w oknach przeglądu sentymentu i News oraz „Zgłoś” na pasku błędu otwierają okienko zgłoszenia. Do zgłoszenia błędu wtyczka dołącza ostatnie zdarzenia, wersję i stan funkcji. Klucze API, tokeny i treści wzmianek zostają w przeglądarce. Gdy wysyłka się nie uda, „Kopiuj zgłoszenie” kopiuje treść do schowka."
-        },
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Log w panelu domyślnie ukryty",
-          "items": [
-            "Log włącza się w ustawieniach opcją „Log w panelu”.",
-            "Bez logu błędy pokazuje pasek nad przyciskiem Start."
-          ],
-          "text": "Log w panelu domyślnie ukryty. Log włącza się w ustawieniach opcją „Log w panelu”. Bez logu błędy pokazuje pasek nad przyciskiem Start."
-        },
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Pierwsze uruchomienie bez przewodnika z dymkami",
-          "comment": "Przewodnik pokazywał panel sprzed kilkunastu wersji, więc częściej mylił, niż pomagał. Przeszedł na zasłużoną emeryturę.",
-          "text": "Pierwsze uruchomienie bez przewodnika z dymkami."
-        },
-        {
-          "type": "fix",
-          "area": "Panel",
-          "title": "Naprawiono nieczytelne okno nowej wersji na stronach spoza Brand24",
-          "items": [
-            "Okno trzyma się strony wyników Brand24 i nie zwiedza innych stron."
-          ],
-          "text": "Naprawiono nieczytelne okno nowej wersji na stronach spoza Brand24. Okno trzyma się strony wyników Brand24 i nie zwiedza innych stron."
-        }
-      ]
     }
   ];
 
@@ -20858,7 +20987,6 @@
     clSeen:  'b24t_changelog_seen',    // ostatnio przeczytana wersja dziennika zmian
     check:   'b24t_update_check_',     // + kanał: {t, remote, err}, wynik sprawdzenia wspólny dla kart
     later:   'b24t_update_later',      // {until}: „Później” albo ✕ na powiadomieniu nowej wersji
-    opened:  'b24t_update_opened',     // wersja, której powiadomienie już się pokazało; do niej znacznik w nagłówku pulsuje
     running: 'b24t_latest_running',    // najnowsza wersja uruchomiona w którejkolwiek karcie
     pending: 'b24t_update_pending',    // {kind: highlights|changelog, from, to}: okno czeka na pierwsze otwarcie panelu
     cache:   'b24t_rel_cache_',        // + plik: {t, data}
@@ -21438,7 +21566,7 @@
   // Jedno powiadomienie na raz, w stanie `_upd.card`: new (dostępna nowa wersja), installed (odśwież stronę po
   // instalacji), updated (wtyczka zaktualizowana), error (sprawdzenie nieudane). Samo pokazuje się tylko przy
   // otwartym panelu: nad oknem roboczym zasłaniałoby jego prawy dolny róg.
-  var _upd = { panel: null, card: null, toast: null, remote: null, refresh: null, installFor: null, okUntil: 0, ready: false, checking: false, busy: false };
+  var _upd = { panel: null, card: null, toast: null, remote: null, refresh: null, installFor: null, ready: false, checking: false, busy: false };
 
   // Numer wersji z pierwszego 1 KB pliku: jest w nagłówku, a cała wtyczka ma ok. 1,5 MB (TAMPERMONKEY.md §2.1).
   // `done(null)`: brak odpowiedzi albo nagłówka.
@@ -21462,7 +21590,7 @@
     // Znacznik czasu przed zapytaniem: inne karty widzą świeże sprawdzenie i nie pytają równolegle.
     _relGmSet(key, { t: Date.now(), remote: prev ? prev.remote : null, err: false });
     _upd.checking = manual;
-    _updRenderChip();
+    _connRender();
     var done = function(remote) {
       _relGmSet(key, { t: Date.now(), remote: remote || (prev ? prev.remote : null), err: !remote });
       _upd.checking = false;
@@ -21470,7 +21598,7 @@
       if (!manual) return;
       if (!remote) _updOpenCard('error');
       else if (_relCmp(remote, VERSION) > 0) _updOpenCard('new');
-      else { _upd.okUntil = Date.now() + 3000; _updRenderChip(); setTimeout(_updRenderChip, 3100); }
+      else Toast.show('Zainstalowana wersja ' + VERSION + ' jest najnowsza.', 'ok');
     };
     _relRemoteVersion(getRawUrl(), done);
   }
@@ -21482,7 +21610,7 @@
     _upd.refresh = running && _relCmp(running, VERSION) > 0 ? running : null;
     var notice = _relGm(REL_GM.notice, null);
     if (_upd.card === 'updated' && !(notice && notice.to === VERSION)) _updCloseCard();
-    _updRenderChip();
+    _connRender();
     _updSideDot();
     if (_upd.card) _updRenderCard();
     else _updMaybeOpen();
@@ -21542,32 +21670,18 @@
     }, 1000);
   }
 
-  function _updRenderChip() {
-    var chip = _$('b24t-upd-chip'), ver = _$('b24t-version');
-    if (!chip || !ver) return;
-    var ok = Date.now() < _upd.okUntil;
-    ver.hidden = ok;
-    ver.classList.toggle('is-busy', !!_upd.checking);
-    chip.className = 'b-chip b-chip--sm b-upd-chip';
-    chip.removeAttribute('data-tip');
-    chip.removeAttribute('aria-label');
-    if (ok) {
-      chip.classList.add('b-chip--ok', 'is-ok');
-      chip.innerHTML = _icon('check') + 'Najnowsza wersja';
-    } else if (_upd.refresh) {
-      chip.classList.add('b-chip--info');
-      chip.innerHTML = _icon('refresh') + 'Odśwież';
-      chip.setAttribute('data-tip', 'Zainstalowana wersja ' + _upd.refresh + ' działa po odświeżeniu strony');
-      chip.setAttribute('aria-label', 'Zainstalowana wersja ' + _upd.refresh + ' działa po odświeżeniu strony');
-    } else if (_upd.remote) {
-      chip.classList.add('b-chip--info');
-      chip.innerHTML = _icon('upload') + _escHtml(_upd.remote);
-      chip.setAttribute('data-tip', 'Dostępna wersja ' + _upd.remote);
-      chip.setAttribute('aria-label', 'Dostępna wersja ' + _upd.remote);
-      if (_relGm(REL_GM.opened, null) !== _upd.remote) chip.classList.add('is-ping');
-    }
-    chip.hidden = !(ok || _upd.refresh || _upd.remote);
-    chip.classList.toggle('is-on', !!_upd.card && _upd.card !== 'updated');
+  // Wiersz wersji w okienku „Stan” w nagłówku panelu (_connRows).
+  function _updRow() {
+    var chan = _relChannel() === 'experimental' ? 'kanał Experimental' : 'kanał Stabilny';
+    if (_upd.refresh) return { state: 'info', label: 'Zainstalowano wersję ' + _upd.refresh, hint: 'Działa po odświeżeniu strony' };
+    if (_upd.remote) return { state: 'info', label: 'Dostępna wersja ' + _upd.remote, hint: 'Zainstalowana ' + VERSION + ', ' + chan };
+    if (_upd.checking) return { state: 'wait', label: 'Wersja ' + VERSION, hint: 'Sprawdzam aktualizacje…' };
+    var st = _relGm(REL_GM.check + _relChannel(), null);
+    if (!st) return { state: 'wait', label: 'Wersja ' + VERSION, hint: chan + ', aktualizacji jeszcze nie sprawdzono' };
+    if (st.err) return { state: 'wait', label: 'Wersja ' + VERSION, hint: chan + ', ostatnie sprawdzenie nieudane' };
+    var d = new Date(st.t), today = d.toDateString() === new Date().toDateString();
+    var at = d.toLocaleString('pl-PL', today ? { hour: '2-digit', minute: '2-digit' } : { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    return { state: 'ok', label: 'Wersja ' + VERSION + ', najnowsza', hint: chan + ', sprawdzono ' + at };
   }
   function _updSideDot() {
     var tab = _$('b24t-panel-side-tab');
@@ -21580,14 +21694,13 @@
 
   function _updOpenCard(kind) {
     _upd.card = kind;
-    if (kind === 'new' && _upd.remote) _relGmSet(REL_GM.opened, _upd.remote);
     _updRenderCard();
-    _updRenderChip();
+    _connRender();
   }
   function _updCloseCard() {
     _upd.card = null;
     if (_upd.toast) { var t = _upd.toast; _upd.toast = null; t.close(); }
-    _updRenderChip();
+    _connRender();
   }
   function _updDismissNotice() {
     _relGmSet(REL_GM.notice, null);
@@ -21603,7 +21716,7 @@
     _upd.card = null;
     if (reason === 'close' && kind === 'new') _updLater();
     else if (reason === 'close' && kind === 'updated') _relGmSet(REL_GM.notice, null);
-    _updRenderChip();
+    _connRender();
   }
 
   function _updNoteHtml(n, withFeatures) {
@@ -21771,19 +21884,6 @@
       _relOnChannel();
     });
 
-    // Znacznik wersji w nagłówku.
-    var ver = panel.querySelector('#b24t-version'), chip = panel.querySelector('#b24t-upd-chip');
-    ver.addEventListener('click', function() { if (!_upd.checking) _updCheck(true); });
-    chip.addEventListener('click', function() {
-      if (chip.classList.contains('is-ok')) return;
-      if (_upd.card && _upd.card !== 'updated') {
-        // Zamknięcie znacznikiem działa jak ✕: powiadomienie nowej wersji wraca po 24 h.
-        if (_upd.card === 'new') _updLater();
-        _updCloseCard();
-        return;
-      }
-      _updOpenCard(_upd.refresh ? 'installed' : 'new');
-    });
     _relRenderClBtn();
 
     new MutationObserver(_updOnPanelChange).observe(panel, { attributes: true, attributeFilter: ['class', 'style', 'hidden'] });
@@ -21792,7 +21892,7 @@
       _updCheck(false);
       _updOnPanelChange();
     });
-    [REL_GM.check + 'stable', REL_GM.check + 'experimental', REL_GM.running, REL_GM.notice, REL_GM.opened].forEach(function(k) {
+    [REL_GM.check + 'stable', REL_GM.check + 'experimental', REL_GM.running, REL_GM.notice].forEach(function(k) {
       GM_addValueChangeListener(k, function(name, oldV, newV, remote) { if (remote) _updApply(); });
     });
     _upd.ready = _updPanelReady();
@@ -22690,6 +22790,10 @@
             '<div id="b24t-ai-key-result-' + p + '" class="b-set-msg b-small b-set-kv__full" role="status" hidden></div>';
         }).join('') + '</div>' +
       '</section>' +
+      '<section class="b-set-sec"><h3 class="b-set-sec__title">Koszt w tym miesiącu</h3>' +
+        '<p class="b-hint b-set-sec__hint">Liczony z tokenów wywołań w tej przeglądarce i cennika modeli; ten sam klucz użyty gdzie indziej kosztuje więcej. Od 80% limitu kropka stanu w nagłówku panelu zmienia kolor.</p>' +
+        '<div class="b-set-kv" id="b24t-ai-spend"></div>' +
+      '</section>' +
       '<section class="b-set-sec"><h3 class="b-set-sec__title">News</h3>' +
         '<div class="b-set-kv">' + model('news', 'Model') + '</div>' +
         _setRow('Ocena AI w module News', 'Model AI ocenia artykuły na liście News.', _setSwitch('b24t-ai-news-enabled', s.news.enabled), { label: true }) +
@@ -22717,6 +22821,47 @@
       sentB: [function (c) { return c.sentiment.modelB; }, function (c, v) { c.sentiment.modelB = v; }, SENT_PROVIDERS]
     };
     var sel = function (k) { return pane.querySelector('#b24t-ai-model-' + k); };
+
+    // Wydatek bieżącego klucza każdego dostawcy i limit miesięczny (pusty = bez limitu). Przebudowa przy zmianie
+    // klucza i otwarciu zakładki; zmiana limitu poprawia tylko opis wiersza, żeby pole nie traciło fokusu.
+    var spendBox = pane.querySelector('#b24t-ai-spend');
+    function spendHint(p, sp, limit) {
+      var prev = new Date(); prev.setDate(1); prev.setMonth(prev.getMonth() - 1);
+      var pm = _aiSpendOf(p, _aiMonth(prev)), parts = [_plPl(sp.n, 'wywołanie', 'wywołania', 'wywołań')];
+      if (limit) parts.push(Math.round(sp.usd / limit * 100) + '% limitu');
+      if (sp.nf) parts.push(sp.nf + ' bez cennika modelu');
+      if (pm && pm.n) parts.push(REL_MONTHS[prev.getMonth()] + ' ' + _aiFmtUsd(pm.usd));
+      return parts.join(' · ');
+    }
+    function renderSpend() {
+      var cfg = _aiGetSettings(), lim = cfg.spendLimit || {}, html = '';
+      ['anthropic', 'openai', 'google'].forEach(function (p) {
+        var sp = _aiSpendOf(p, null, cfg);
+        if (!sp) return;
+        var limit = +lim[p] > 0 ? +lim[p] : 0;
+        html += '<span class="b-label">' + AI_PROVIDER_LABEL[p] + '</span>' +
+          '<div class="b-row b-row--wrap"><span class="b-strong b-mono">' + _aiFmtUsd(sp.usd) + '</span>' +
+            '<span class="b-hint" id="b24t-ai-spend-hint-' + p + '">' + _escHtml(spendHint(p, sp, limit)) + '</span><span class="b-sp"></span>' +
+            '<label class="b-hint" for="b24t-ai-limit-' + p + '">Limit</label>' +
+            '<input type="number" class="b-input b-input--sm b-set-limit" id="b24t-ai-limit-' + p + '" data-limit="' + p + '" min="0" step="1" inputmode="decimal" placeholder="brak"' +
+              (limit ? ' value="' + limit + '"' : '') + '><span class="b-hint">$</span></div>';
+      });
+      spendBox.innerHTML = html || '<p class="b-hint b-set-kv__full">Bez kluczy nie ma kosztu: suma pojawi się po pierwszym wywołaniu modelu.</p>';
+    }
+    renderSpend();
+    spendBox.addEventListener('change', function (e) {
+      var inp = e.target.closest('[data-limit]');
+      if (!inp) return;
+      var p = inp.dataset.limit, v = parseFloat(String(inp.value).replace(',', '.')), cfg = _aiGetSettings();
+      cfg.spendLimit = cfg.spendLimit || {};
+      if (v > 0) cfg.spendLimit[p] = v; else { delete cfg.spendLimit[p]; inp.value = ''; }
+      _aiSaveSettings(cfg);
+      var sp = _aiSpendOf(p, null, cfg);
+      if (sp) pane.querySelector('#b24t-ai-spend-hint-' + p).textContent = spendHint(p, sp, v > 0 ? v : 0);
+      _conn.ai = null;
+      _connRender();
+      ctx.saved();
+    });
 
     // Selecty modeli budowane z list pobranych od dostawców — przerysowujemy je po każdej
     // zmianie klucza i po teście, żeby nowy dostawca od razu pojawił się do wyboru.
@@ -22778,6 +22923,9 @@
         if (!save(input.value.trim())) return;
         _setSay(result, '');
         renderModelSelects();
+        renderSpend();
+        _conn.ai = null;
+        _connRender();
       });
       testBtn.addEventListener('click', function () {
         if (_setIsBusy(testBtn)) return;
@@ -22811,6 +22959,7 @@
     });
 
     pane.addEventListener('b24t-tab-show', function () {
+      if (!spendBox.contains(_activeEl())) renderSpend();
       var cfg = _aiGetSettings(), n = cfg.prompts.length;
       var active = cfg.prompts.find(function (x) { return x.id === cfg.tagging.activePromptId; });
       pane.querySelector('#b24t-set-ai-prompts').textContent = n ? n + ' ' + _relPl(n, 'prompt systemowy', 'prompty systemowe', 'promptów systemowych') : 'Brak promptów systemowych';
@@ -26456,7 +26605,7 @@
       const batchSize = 10, total = mentions.length, model = (s.tagging && s.tagging.model) || 'claude-haiku-4-5';
       const AIT_CONCURRENCY = 6; // ile batchy do Claude leci równolegle (notebook: 20; tu ostrożniej przez limity API)
       let done = 0, applied = 0, deleted = 0, skipped = 0, unmapped = 0, errors = 0, replaced = 0;
-      let usageIn = 0, usageOut = 0, cacheRead = 0;
+      let usageIn = 0, usageOut = 0, cacheRead = 0, costUsd = 0, costUnknown = false;
       const tagBuckets = {}, untagBuckets = {}, deleteIds = [];
       const hadTarget = new Set(); // tryb Nadpisz: wzmianki, które mają już docelowy tag i tracą tylko inne tagi AI
       const aiTagIds = new Set(Object.values(tagMap).map(v => parseInt(v)));
@@ -26505,6 +26654,7 @@
           return;
         }
         if (res.usage) { usageIn += res.usage.input_tokens || 0; usageOut += res.usage.output_tokens || 0; cacheRead += res.usage.cache_read_input_tokens || 0; }
+        if (res.usd == null) costUnknown = true; else costUsd += res.usd;
         const assess = res.assessments || [];
         batch.forEach((m, idx) => decide(m, assess[idx]));
         done += batch.length; setBar(done / total * 100);
@@ -26569,7 +26719,8 @@
         (deleted ? ' · usunięto ' + deleted : '') +
         (skipped ? ' · pominięto ' + skipped : '') +
         (unmapped ? ' · bez mapowania ' + unmapped : '') +
-        (errors ? ' · błędy ' + errors : '');
+        (errors ? ' · błędy ' + errors : '') +
+        (costUsd && !costUnknown ? ' · koszt ≈ ' + _aiFmtUsd(costUsd) : '');
       setStatus(summary, errors ? 'warn' : 'ok');
       addLog('🤖 AI Tagowanie — koniec. ' + summary + ' | tokeny in=' + usageIn + ' out=' + usageOut + ' cache_read=' + cacheRead, 'success');
     } catch(e) {
@@ -26614,8 +26765,6 @@
   var SENT_GM_DECISIONS = 'b24t_sent_decisions';  // { id: { at, pid, url, from, to, a, b } }
   var SENT_LS_PROJECT = 'b24t_sent_project_cfg';  // { pid: { brand, source, sentiments } }
   var SENT_LS_HIDE_DONE = 'b24t_sent_hide_done';  // przełącznik „Ukryj załatwione” w oknie
-  // $ za mln tokenów wejścia i wyjścia, cennik z 2026-09-30. Model spoza listy — bez kwoty.
-  var SENT_PRICE = { 'gemini-3.8-flash': [0.75, 3.75], 'gpt-6-luna': [0.10, 0.50] };
   // Ocena od tylu wzmianek bez werdyktu w pamięci czeka na potwierdzenie z szacunkiem kosztu.
   var SENT_CONFIRM_FROM = 1000;
   // Koszt 1 000 wzmianek z przebiegu promptu v4 (SENTIMENT.md §7.4). Partie Gemini kosztowały od 0,36 do 3,37 $
@@ -27021,8 +27170,8 @@
   }
 
   function _sentCost(st) {
-    var p = SENT_PRICE[st.model];
-    return p && (st.inTok || st.outTok) ? (st.inTok * p[0] + st.outTok * p[1]) / 1e6 : null;
+    var p = _aiPrice(st.model);
+    return p && (st.inTok || st.outTok) ? (st.inTok * p[0] + st.outTok * p[3]) / 1e6 : null;
   }
   function _sentFmtUsd(x) {
     return x == null ? '' : '≈ ' + x.toFixed(x < 0.1 ? 3 : 2).replace('.', ',') + ' $';
@@ -27814,7 +27963,7 @@
     var item = function(id, source, author, date, orig, text, a, b) {
       return { id: id, url: 'https://example.com/' + id, date: date, source: source, author: author, text: text, orig: orig, now: orig, v: { a: a, b: b }, dec: null };
     };
-    // Tokeny dobrane do kosztu z cennika SENT_PRICE: 1,71 $ i 0,12 $ za 1 240 wzmianek.
+    // Tokeny dobrane do kosztu z cennika AI_PRICE: 1,71 $ i 0,12 $ za 1 240 wzmianek.
     var run = { models: { a: _sentModelState('gemini-3.8-flash'), b: _sentModelState('gpt-6-luna') } };
     [[1000000, 256000], [1000000, 40000]].forEach(function(t, i) {
       var st = run.models[i ? 'b' : 'a'];
@@ -28119,9 +28268,10 @@
   var NET_LONG = 8000;     // operacja bez zwykłego czasu liczy się jako bardzo wolna od 8 s
   var NET_CALM = 15000;    // tyle trwa lepszy stan, zanim plakietka go pokaże
   var NET_LS = 'b24tagger_net_base';
+  // Stan sieci → [stan wskaźnika w nagłówku (CONN_RANK), nazwa w okienku „Stan”].
   var NET_UI = {
-    ok: ['', 'Brand24 w normie'], slow: ['b-chip--warn', 'Brand24 wolniej'],
-    bad: ['b-chip--danger', 'Brand24 bardzo wolno'], error: ['b-chip--danger', 'Brand24: błędy']
+    ok: ['ok', 'Brand24 w normie'], slow: ['warn', 'Brand24 wolniej'],
+    bad: ['danger', 'Brand24 bardzo wolno'], error: ['danger', 'Brand24: błędy']
   };
   var NET_RANK = { '': 0, ok: 1, slow: 2, bad: 3, error: 4 };
   var _net = { base: null, recent: [], st: '', better: 0, timer: 0, saveT: 0 };
@@ -28175,28 +28325,23 @@
     _net.errs = errs;
     clearTimeout(_net.timer);
     if (n) _net.timer = setTimeout(_netEval, 5000);
-    _netRender();
+    _connRender();
   }
 
-  function _netRender() {
-    var badge = _$('b24t-latency-badge'), ui = NET_UI[_net.st];
-    if (!badge) return;
-    if (!ui) { badge.hidden = true; return; }
+  // Wiersz sieci w okienku „Stan”; minuta bez zapytań to stan nieznany, nie awaria.
+  function _netRow() {
+    var ui = NET_UI[_net.st];
+    if (!ui) return { state: 'wait', label: 'Brak zapytań do Brand24', hint: 'Stan sieci liczy się z zapytań strony z ostatniej minuty' };
     var n = _net.recent.length, worst = null;
     _net.recent.forEach(function (x) { if (x.ok && x.r != null && (!worst || x.r > worst.r)) worst = x; });
-    var tip = ['Ostatnia minuta: ' + _plPl(n, 'zapytanie', 'zapytania', 'zapytań') + ' do Brand24'];
-    if (_net.m) tip.push('Ostatnie zapytania: ' + _net.m.toFixed(1).replace('.', ',') + '× zwykłego czasu (mediana)');
+    var hint = [_plPl(n, 'zapytanie', 'zapytania', 'zapytań') + ' w ostatniej minucie'];
+    if (_net.m) hint.push(_net.m.toFixed(1).replace('.', ',') + '× zwykłego czasu (mediana)');
     if (worst && worst.r >= NET_SLOW) {
       var u = _netUsual(worst.op);
-      tip.push('Najwolniej: ' + worst.op + ' ' + _netSec(worst.ms) + (u ? ' (zwykle ' + _netSec(u) + ')' : ''));
+      hint.push('najwolniej ' + worst.op + ' ' + _netSec(worst.ms) + (u ? ' (zwykle ' + _netSec(u) + ')' : ''));
     }
-    if (_net.errs) tip.push('Bez odpowiedzi albo z błędem serwera: ' + _net.errs + ' z ostatnich ' + Math.min(n, NET_LAST));
-    tip.push(nmState.enabled ? 'Kliknięcie otwiera Network Monitor' : 'Szczegóły zapytań: Network Monitor w Ustawieniach');
-    badge.className = 'b-chip b-chip--sm b-net' + (ui[0] ? ' ' + ui[0] : '');
-    badge.dataset.state = _net.st;
-    badge.innerHTML = _icon('activity') + ui[1];
-    badge.setAttribute('data-tip', tip.join('\n'));
-    badge.hidden = false;
+    if (_net.errs) hint.push('bez odpowiedzi albo z błędem serwera: ' + _net.errs + ' z ostatnich ' + Math.min(n, NET_LAST));
+    return { state: ui[0], label: ui[1], hint: hint.join('; ') };
   }
 
   var NM_SHOWN = 100;     // wierszy w tabeli; lista w pamięci trzyma NM_MAX zapytań

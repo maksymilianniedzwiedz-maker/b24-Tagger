@@ -1,5 +1,46 @@
 [
   {
+    "version": "0.38.7",
+    "date": "2026-10-03",
+    "label": "new",
+    "changes": [
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Nazwa otwartego projektu w nagłówku panelu",
+        "items": [
+          "Nazwa projektu stoi w miejscu nazwy wtyczki, a dymek nad nią podaje ID projektu.",
+          "Karta Plik zaczyna się od wyboru pliku.",
+          "Chip stanu przebiegu pokazuje się tylko w trakcie, po pauzie, po błędzie i po zakończeniu przebiegu."
+        ],
+        "text": "Nazwa otwartego projektu w nagłówku panelu. Nazwa projektu stoi w miejscu nazwy wtyczki, a dymek nad nią podaje ID projektu. Karta Plik zaczyna się od wyboru pliku. Chip stanu przebiegu pokazuje się tylko w trakcie, po pauzie, po błędzie i po zakończeniu przebiegu."
+      },
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "Kropka stanu połączenia w nagłówku panelu",
+        "items": [
+          "Kolor kropki pokazuje najpoważniejszy z problemów: token Brand24, szybkość Brand24, sesję CMS, nową wersję wtyczki i limit wydatków na AI.",
+          "Kliknięcie otwiera okienko „Stan” z opisem każdego z nich i działaniami: „Network Monitor”, „Zaloguj się do CMS”, „Zainstaluj”, „Sprawdź aktualizacje”.",
+          "Token, plakietka sieci i numer wersji zniknęły z karty Plik i z nagłówka, bo są w okienku „Stan”."
+        ],
+        "text": "Kropka stanu połączenia w nagłówku panelu. Kolor kropki pokazuje najpoważniejszy z problemów: token Brand24, szybkość Brand24, sesję CMS, nową wersję wtyczki i limit wydatków na AI. Kliknięcie otwiera okienko „Stan” z opisem każdego z nich i działaniami: „Network Monitor”, „Zaloguj się do CMS”, „Zainstaluj”, „Sprawdź aktualizacje”. Token, plakietka sieci i numer wersji zniknęły z karty Plik i z nagłówka, bo są w okienku „Stan”."
+      },
+      {
+        "type": "new",
+        "area": "Ustawienia AI",
+        "title": "Koszt kluczy AI w miesiącu i limit miesięczny",
+        "items": [
+          "Ustawienia → AI podają koszt każdego klucza w bieżącym miesiącu, liczbę wywołań i koszt poprzedniego miesiąca.",
+          "Koszt liczy się z wywołań w tej przeglądarce, więc ten sam klucz użyty gdzie indziej kosztuje więcej.",
+          "Od 80% ustawionego limitu kropka stanu w nagłówku panelu robi się pomarańczowa, po przekroczeniu czerwona.",
+          "Karta AI Tag podaje koszt przebiegu po jego zakończeniu."
+        ],
+        "text": "Koszt kluczy AI w miesiącu i limit miesięczny. Ustawienia → AI podają koszt każdego klucza w bieżącym miesiącu, liczbę wywołań i koszt poprzedniego miesiąca. Koszt liczy się z wywołań w tej przeglądarce, więc ten sam klucz użyty gdzie indziej kosztuje więcej. Od 80% ustawionego limitu kropka stanu w nagłówku panelu robi się pomarańczowa, po przekroczeniu czerwona. Karta AI Tag podaje koszt przebiegu po jego zakończeniu."
+      }
+    ]
+  },
+  {
     "version": "0.38.6",
     "date": "2026-10-03",
     "label": "improved",

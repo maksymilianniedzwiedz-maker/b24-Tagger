@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.10
+// @version      0.38.11
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -173,7 +173,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.10';
+  const VERSION = '0.38.11';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -218,6 +218,7 @@
     NA_CONSENT:     'b24t_na_consent',          // zgoda na analitykę News: '1' | '0'
     SOUNDS:         'b24t_sounds',              // Powiadomienia → Dźwięki: { done, error, captcha: true | false }
     RAIL_ORDER:     'b24tagger_rail_order',     // kolejność kart górnej grupy paska: [main, quicktag, …]
+    EXP_ACCESS:     'b24t_exp_access',          // dostęp do kanału Experimental: { by: code | channel, v: wersja } (_expGrant)
   };
   const MAX_BATCH_SIZE = 50;
   const DEL_BATCH_DEFAULT = 25; // domyślny batch równoległych deletów (edytowalny w UI)
@@ -6100,6 +6101,12 @@
       }
       .b-set-choice:hover { border-color: var(--c-borderHover); }
       .b-set-choice:has(> input:checked) { border-color: var(--c-accent); background-color: var(--c-accentSoft); }
+      .b-set-lock { display: inline-flex; margin-left: 0.35em; vertical-align: -0.1em; color: var(--c-text3); }
+      .b-set-lock > svg { width: 0.95em; height: 0.95em; }
+      .b-set-code { padding-top: 0.75em; }
+      .b-set-code .b-row { flex-wrap: wrap; }
+      .b-set-code__input { width: 11em; font-family: var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+      .b-set-code__input::placeholder { text-transform: none; letter-spacing: normal; }
       /* Prompty: karta z nazwą, miejscami użycia i podglądem; edytor w miejscu karty. */
       .b-set-list { display: flex; flex-direction: column; gap: 0.5em; min-width: 0; padding-top: 0.75em; }
       .b-set-prompt {
@@ -20654,6 +20661,33 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.11",
+      "date": "2026-10-03",
+      "label": "new",
+      "changes": [
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Kanał Experimental z kodem dostępu",
+          "items": [
+            "W Ustawieniach → Aktualizacje wybór „Eksperymentalny” prosi o kod dostępu; kod daje właściciel wtyczki.",
+            "Kto jest już na kanale Experimental, zostaje na nim bez kodu i po przejściu na Stabilny może na niego wrócić."
+          ],
+          "text": "Kanał Experimental z kodem dostępu. W Ustawieniach → Aktualizacje wybór „Eksperymentalny” prosi o kod dostępu; kod daje właściciel wtyczki. Kto jest już na kanale Experimental, zostaje na nim bez kodu i po przejściu na Stabilny może na niego wrócić."
+        },
+        {
+          "type": "fix",
+          "area": "Panel",
+          "title": "Naprawiono przełącznik „Logi programistyczne” po zmianie kanału",
+          "items": [
+            "Przełącznik od razu pokazuje stan dla nowego kanału, bez ponownego otwierania Ustawień."
+          ],
+          "experimental": true,
+          "text": "Naprawiono przełącznik „Logi programistyczne” po zmianie kanału. Przełącznik od razu pokazuje stan dla nowego kanału, bez ponownego otwierania Ustawień."
+        }
+      ]
+    },
+    {
       "version": "0.38.10",
       "date": "2026-10-03",
       "label": "new",
@@ -21096,33 +21130,6 @@
           "text": "Naprawiono linię, która przy niskim panelu przecinała tekst nad stopką. Gdy treść ciągnie się pod stopką, stopka rzuca cień w górę. Napis „Gotowy do startu” nie wygląda więc na odwołany."
         }
       ]
-    },
-    {
-      "version": "0.38.1",
-      "date": "2026-10-03",
-      "label": "improved",
-      "changes": [
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Samouczek nowego wyglądu z wyraźniejszymi zadaniami",
-          "items": [
-            "Każdy krok mówi, co działa inaczej niż w starym wyglądzie, a zadanie do wypróbowania stoi osobno pod tekstem.",
-            "Wykonane zadanie dostaje ptaszka i przekreślenie, a następny krok pojawia się po chwili.",
-            "Krok o skrótach klawiszowych wskazuje menu „⋯”, w którym jest ściągawka."
-          ],
-          "text": "Samouczek nowego wyglądu z wyraźniejszymi zadaniami. Każdy krok mówi, co działa inaczej niż w starym wyglądzie, a zadanie do wypróbowania stoi osobno pod tekstem. Wykonane zadanie dostaje ptaszka i przekreślenie, a następny krok pojawia się po chwili. Krok o skrótach klawiszowych wskazuje menu „⋯”, w którym jest ściągawka."
-        },
-        {
-          "type": "fix",
-          "area": "Panel",
-          "title": "Naprawiono samouczek, który przechodził dalej w trakcie przeciągania panelu",
-          "items": [
-            "Krok czeka, aż przycisk myszy zostanie puszczony."
-          ],
-          "text": "Naprawiono samouczek, który przechodził dalej w trakcie przeciągania panelu. Krok czeka, aż przycisk myszy zostanie puszczony."
-        }
-      ]
     }
   ];
 
@@ -21170,6 +21177,21 @@
     return 0;
   }
   function _relChannel() { return gmGet(PREF.UPDATE_CHANNEL, 'stable') === 'experimental' ? 'experimental' : 'stable'; }
+
+  // Kanał Experimental za kodem dostępu od właściciela wtyczki (decyzja 2026-10-03 16:27). Wtyczka zna tylko skrót
+  // kodu. To bariera przed przypadkowym wyborem, nie zabezpieczenie: plik z experimental leży publicznie na GitHubie,
+  // a znacznik dostępu da się ustawić w pamięci Tampermonkeya.
+  const EXP_CODE_HASH = 'f28d1b0605df31a202fa9f596a0667647dcfcc6984845fad6a48e956e91694e6';
+  function _expAccess() { return !!gmGet(PREF.EXP_ACCESS, null); }
+  // by: code (wpisany kod) albo channel (instalacja była już na Experimental).
+  function _expGrant(by) { gmSet(PREF.EXP_ACCESS, { by: by, v: VERSION }); }
+  // Wielkość liter, myślnik i spacje bez znaczenia, bo kod przekazuje się ustnie albo w wiadomości.
+  async function _expCheck(code) {
+    var norm = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!norm) return false;
+    var d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('b24t-experimental:' + norm));
+    return Array.from(new Uint8Array(d), function (b) { return b.toString(16).padStart(2, '0'); }).join('') === EXP_CODE_HASH;
+  }
   // Twarda spacja w grupach cyfr („1 000”), żeby liczba nie łamała się na końcu wiersza (CHANGELOG_STYLE.md §5).
   function _relNb(s) { return String(s).replace(/(\d) (?=\d{3}(?!\d))/g, '$1 '); }
   // Nazwy z ekranu w „…” pogrubione. Działa na tekście już escapowanym, więc nie wpuszcza HTML-a z pliku.
@@ -22020,6 +22042,9 @@
       if (pend && pend.to === VERSION) _relDefer(pend.kind, pend.from);
       else if (pend) _relGmSet(REL_GM.pending, null);
     }
+    // Instalacje, które są już na Experimental, zostają tam bez kodu (decyzja 2026-10-03 16:27). Przed
+    // _relMoveToStable: przeniesiona na Stabilny wraca na Experimental bez kodu.
+    if (_relChannel() === 'experimental' && !_expAccess()) _expGrant('channel');
     _relMoveToStable(function() {
       // Aktualizacja, po której nastąpiło przełączenie, kończy się jak na kanale Stabilnym: powiadomieniem
       // „Wtyczka została zaktualizowana” zamiast okna dużej zmiany, o ile tamto jeszcze się nie otworzyło.
@@ -22943,7 +22968,7 @@
 
   // Aktualizacje: kanał, zainstalowana wersja, sprawdzenie i dziennik.
   function _setPaneUpdates(pane, ctx) {
-    var channel = _relChannel();
+    var channel = _relChannel(), locked = !_expAccess();
     var channels = [
       ['stable', 'Stabilny', 'Sprawdzone wersje; zalecany do codziennej pracy.'],
       ['experimental', 'Eksperymentalny', 'Najnowsze zmiany przed wydaniem stabilnym; mogą zawierać błędy.']
@@ -22951,10 +22976,19 @@
     pane.innerHTML =
       '<section class="b-set-sec"><h3 class="b-set-sec__title">Kanał aktualizacji</h3>' +
         '<div class="b-set-choices" role="radiogroup" aria-label="Kanał aktualizacji">' + channels.map(function (c) {
+          var lock = c[0] === 'experimental' && locked;
           return '<label class="b-radio b-set-choice" data-channel="' + c[0] + '"><input type="radio" name="b24t-channel" value="' + c[0] + '"' +
-            (c[0] === channel ? ' checked' : '') + '><span class="b-set-row__text"><span class="b-set-row__label">' + c[1] + '</span>' +
-            '<span class="b-hint">' + c[2] + '</span></span></label>';
+            (c[0] === channel ? ' checked' : '') + '><span class="b-set-row__text"><span class="b-set-row__label">' + c[1] +
+            (lock ? '<span class="b-set-lock" data-tip="Wymaga kodu dostępu">' + _icon('lock') + '</span>' : '') + '</span>' +
+            '<span class="b-hint">' + c[2] + (lock ? ' Wymaga kodu dostępu od właściciela wtyczki.' : '') + '</span></span></label>';
         }).join('') + '</div>' +
+        '<div class="b-set-code" id="b24t-set-exp" hidden>' +
+          _setRow('Kod dostępu do kanału Experimental', 'Kanał jest dla osób testujących nowe wersje. Kod daje właściciel wtyczki.',
+            '<div class="b-row"><input class="b-input b-set-code__input" id="b24t-set-exp-code" type="text" autocomplete="off" spellcheck="false" maxlength="24" placeholder="XXXX-XXXX" aria-describedby="b24t-set-exp-msg">' +
+            '<button type="button" class="b-btn b-btn--primary b-btn--sm" id="b24t-set-exp-ok">Odblokuj</button>' +
+            '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-set-exp-cancel">Anuluj</button></div>', { cls: 'b-set-row--top', for: 'b24t-set-exp-code' }) +
+          '<div class="b-set-msg b-small" id="b24t-set-exp-msg" role="status" hidden></div>' +
+        '</div>' +
       '</section>' +
       '<section class="b-set-sec"><h3 class="b-set-sec__title">Wersja</h3>' +
         _setRow('Zainstalowana wersja ' + VERSION, '<span id="b24t-set-upd-state"></span>',
@@ -22992,16 +23026,63 @@
       applyFeatures();
       ctx.saved();
     });
-    pane.addEventListener('change', function (e) {
-      if (e.target.name !== 'b24t-channel') return;
+    var expBox = pane.querySelector('#b24t-set-exp'), expCode = pane.querySelector('#b24t-set-exp-code'),
+      expOk = pane.querySelector('#b24t-set-exp-ok'), expMsg = pane.querySelector('#b24t-set-exp-msg');
+    function setChannel(value) {
       // Wybór kanału jest ostateczny: bez znacznika jednorazowe przełączenie (_relMoveToStable) cofało
       // „Eksperymentalny” przy następnym otwarciu panelu, gdy na main była ta sama wersja.
       if (!gmGet(PREF.CHANNEL_MOVED, null)) gmSet(PREF.CHANNEL_MOVED, VERSION);
-      gmSet(PREF.UPDATE_CHANNEL, e.target.value);
+      gmSet(PREF.UPDATE_CHANNEL, value);
       _relOnChannel();
-      addLog('ℹ Kanał aktualizacji: ' + (e.target.value === 'experimental' ? 'Eksperymentalny' : 'Stabilny') + '.', 'info');
+      // Bez własnego wyboru logi programistyczne idą za kanałem (_devLogs).
+      devEl.checked = _devLogs();
+      addLog('ℹ Kanał aktualizacji: ' + (value === 'experimental' ? 'Eksperymentalny' : 'Stabilny') + '.', 'info');
       say();
       ctx.saved();
+    }
+    function codeBox(open) {
+      expBox.hidden = !open;
+      _setSay(expMsg, '');
+      if (!open) return;
+      expCode.value = '';
+      expCode.focus();
+    }
+    async function unlock() {
+      if (_setIsBusy(expOk)) return;
+      _setBusy(expOk, 'Sprawdzam…');
+      var ok = await _expCheck(expCode.value);
+      _setBusy(expOk, null);
+      if (!ok) {
+        _setSay(expMsg, expCode.value.trim() ? 'Nieprawidłowy kod. Sprawdź go u właściciela wtyczki.' : 'Wpisz kod dostępu.', 'danger');
+        expCode.select();
+        return;
+      }
+      _expGrant('code');
+      codeBox(false);
+      pane.querySelectorAll('.b-set-lock').forEach(function (n) { n.remove(); });
+      var hint = pane.querySelector('[data-channel="experimental"] .b-hint');
+      hint.textContent = channels[1][2];
+      pane.querySelector('[name="b24t-channel"][value="experimental"]').checked = true;
+      setChannel('experimental');
+      Toast.show('Kanał Experimental odblokowany. Nowe wersje przyjdą z tego kanału.', 'ok');
+    }
+    expOk.addEventListener('click', unlock);
+    expCode.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); unlock(); }
+      // Pierwszy Esc czyści pole, drugi zamyka okno (Win.onKey pomija zdarzenie z defaultPrevented).
+      else if (e.key === 'Escape' && expCode.value) { e.preventDefault(); expCode.value = ''; }
+    });
+    pane.querySelector('#b24t-set-exp-cancel').addEventListener('click', function () { codeBox(false); });
+    pane.addEventListener('change', function (e) {
+      if (e.target.name !== 'b24t-channel') return;
+      // Experimental bez dostępu: wybór wraca na bieżący kanał, a kanał zmienia dopiero poprawny kod.
+      if (e.target.value === 'experimental' && !_expAccess()) {
+        pane.querySelector('[name="b24t-channel"][value="' + _relChannel() + '"]').checked = true;
+        codeBox(true);
+        return;
+      }
+      codeBox(false);
+      setChannel(e.target.value);
     });
     pane.addEventListener('b24t-tab-show', say);
   }

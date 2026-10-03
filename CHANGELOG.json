@@ -1,5 +1,32 @@
 [
   {
+    "version": "0.38.11",
+    "date": "2026-10-03",
+    "label": "new",
+    "changes": [
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "Kanał Experimental z kodem dostępu",
+        "items": [
+          "W Ustawieniach → Aktualizacje wybór „Eksperymentalny” prosi o kod dostępu; kod daje właściciel wtyczki.",
+          "Kto jest już na kanale Experimental, zostaje na nim bez kodu i po przejściu na Stabilny może na niego wrócić."
+        ],
+        "text": "Kanał Experimental z kodem dostępu. W Ustawieniach → Aktualizacje wybór „Eksperymentalny” prosi o kod dostępu; kod daje właściciel wtyczki. Kto jest już na kanale Experimental, zostaje na nim bez kodu i po przejściu na Stabilny może na niego wrócić."
+      },
+      {
+        "type": "fix",
+        "area": "Panel",
+        "title": "Naprawiono przełącznik „Logi programistyczne” po zmianie kanału",
+        "items": [
+          "Przełącznik od razu pokazuje stan dla nowego kanału, bez ponownego otwierania Ustawień."
+        ],
+        "experimental": true,
+        "text": "Naprawiono przełącznik „Logi programistyczne” po zmianie kanału. Przełącznik od razu pokazuje stan dla nowego kanału, bez ponownego otwierania Ustawień."
+      }
+    ]
+  },
+  {
     "version": "0.38.10",
     "date": "2026-10-03",
     "label": "new",

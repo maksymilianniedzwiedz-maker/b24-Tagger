@@ -1,5 +1,75 @@
 [
   {
+    "version": "0.38.2",
+    "date": "2026-10-03",
+    "label": "new",
+    "changes": [
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "Samouczki funkcji i okno „Pomoc i samouczki” zamiast trybu pomocy",
+        "items": [
+          "Samouczki pokazują nowy wygląd, tagowanie z pliku, przegląd sentymentu i AI Tag. Każdy krok wskazuje element panelu i daje jedno zadanie do wykonania.",
+          "Przy pierwszym użyciu funkcji wtyczka raz proponuje jej samouczek. Wszystkie są też pod znakiem zapytania w nagłówku panelu i w palecie poleceń.",
+          "Krok przechodzi dalej sam po wykonaniu zadania, ale czeka, dopóki kursor albo fokus jest w dymku. „Wstecz” wraca do poprzedniego kroku.",
+          "Opisy pól i przycisków są w dymkach i w okienkach (i) obok pól."
+        ],
+        "comment": "Tryb pomocy pokazywał opisy całego panelu naraz. Samouczek zjawia się przy funkcji, której ktoś właśnie zaczyna używać, i pozwala ją wypróbować na miejscu.",
+        "text": "Samouczki funkcji i okno „Pomoc i samouczki” zamiast trybu pomocy. Samouczki pokazują nowy wygląd, tagowanie z pliku, przegląd sentymentu i AI Tag. Każdy krok wskazuje element panelu i daje jedno zadanie do wykonania. Przy pierwszym użyciu funkcji wtyczka raz proponuje jej samouczek. Wszystkie są też pod znakiem zapytania w nagłówku panelu i w palecie poleceń. Krok przechodzi dalej sam po wykonaniu zadania, ale czeka, dopóki kursor albo fokus jest w dymku. „Wstecz” wraca do poprzedniego kroku. Opisy pól i przycisków są w dymkach i w okienkach (i) obok pól."
+      },
+      {
+        "type": "improved",
+        "area": "Narzędzia annotatora",
+        "title": "Plakietka szybkości Brand24 porównuje zapytania z ich zwykłym czasem",
+        "items": [
+          "Każde zapytanie jest mierzone względem swojego zwykłego czasu, więc z natury wolne zapytanie nie podnosi alarmu.",
+          "Stan wynika z ostatnich 9 zapytań z minuty: „Brand24 wolniej” przy dwukrotnie dłuższym czasie, „Brand24 bardzo wolno” przy czterokrotnie, „Brand24: błędy” przy 3 błędach serwera albo braku odpowiedzi.",
+          "Lepszy stan wraca po 15 s bez spowolnień. Kliknięcie plakietki otwiera Network Monitor.",
+          "Network Monitor pokazuje w dymku czasu, ile razy wolniej od zwykłego poszło zapytanie."
+        ],
+        "comment": "Jedno wolniejsze zapytanie raz na jakiś czas wystarczało, żeby plakietka ogłaszała wolne zapytania. Mierzymy więc każde zapytanie jego własną miarą.",
+        "text": "Plakietka szybkości Brand24 porównuje zapytania z ich zwykłym czasem. Każde zapytanie jest mierzone względem swojego zwykłego czasu, więc z natury wolne zapytanie nie podnosi alarmu. Stan wynika z ostatnich 9 zapytań z minuty: „Brand24 wolniej” przy dwukrotnie dłuższym czasie, „Brand24 bardzo wolno” przy czterokrotnie, „Brand24: błędy” przy 3 błędach serwera albo braku odpowiedzi. Lepszy stan wraca po 15 s bez spowolnień. Kliknięcie plakietki otwiera Network Monitor. Network Monitor pokazuje w dymku czasu, ile razy wolniej od zwykłego poszło zapytanie."
+      },
+      {
+        "type": "improved",
+        "area": "Quick Delete",
+        "title": "Brak dostępu do projektów innych kont opisany zamiast błędu",
+        "items": [
+          "Okno „Wszystkie projekty” rozróżnia niezalogowany CMS, przy którym jest przycisk „Otwórz CMS”, i konto bez uprawnień do projektu mimo zalogowania.",
+          "Błędy z wielu projektów zbierają się w jedno powiadomienie zamiast serii błędów w logu."
+        ],
+        "text": "Brak dostępu do projektów innych kont opisany zamiast błędu. Okno „Wszystkie projekty” rozróżnia niezalogowany CMS, przy którym jest przycisk „Otwórz CMS”, i konto bez uprawnień do projektu mimo zalogowania. Błędy z wielu projektów zbierają się w jedno powiadomienie zamiast serii błędów w logu."
+      },
+      {
+        "type": "fix",
+        "area": "Panel",
+        "title": "Naprawiono poziomy suwak strony przy panelu przyklejonym z prawej",
+        "items": [
+          "Strona Brand24 zwęża się o szerokość przyklejonego panelu."
+        ],
+        "text": "Naprawiono poziomy suwak strony przy panelu przyklejonym z prawej. Strona Brand24 zwęża się o szerokość przyklejonego panelu."
+      },
+      {
+        "type": "fix",
+        "area": "Panel",
+        "title": "Naprawiono kropkę przy „⋯”, po której w menu nie było widać nowości",
+        "items": [
+          "Kropka i zielony dopisek „nowa wersja” stoją przy pozycji „Dziennik zmian”."
+        ],
+        "text": "Naprawiono kropkę przy „⋯”, po której w menu nie było widać nowości. Kropka i zielony dopisek „nowa wersja” stoją przy pozycji „Dziennik zmian”."
+      },
+      {
+        "type": "fix",
+        "area": "Panel",
+        "title": "Naprawiono linię, która przy niskim panelu przecinała tekst nad stopką",
+        "items": [
+          "Gdy treść ciągnie się pod stopką, stopka rzuca cień w górę. Napis „Gotowy do startu” nie wygląda więc na odwołany."
+        ],
+        "text": "Naprawiono linię, która przy niskim panelu przecinała tekst nad stopką. Gdy treść ciągnie się pod stopką, stopka rzuca cień w górę. Napis „Gotowy do startu” nie wygląda więc na odwołany."
+      }
+    ]
+  },
+  {
     "version": "0.38.1",
     "date": "2026-10-03",
     "label": "improved",

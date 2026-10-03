@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.1
+// @version      0.38.2
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -173,7 +173,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.1';
+  const VERSION = '0.38.2';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -209,7 +209,8 @@
     UI_MOTION:          'b24tagger_ui_motion',  // ruch: auto | full | lite
     WIN_LAYOUT:         'b24tagger_win_layout', // układ okien według screen.width (design/SURFACES.md §2.6)
     PALETTE_RECENT:     'b24tagger_palette_recent', // 4 ostatnie polecenia palety (Ctrl+K)
-    TOUR:               'b24tagger_tour',       // samouczek nowego wyglądu: done | skipped
+    TOUR:               'b24tagger_tour',       // do 0.38.1 stan samouczka nowego wyglądu (done | skipped); czytany tylko przy przejściu do TUTORIALS
+    TUTORIALS:          'b24tagger_tutorials',  // stan samouczków: { id: { st, at } } (design/TUTORIALS.md §6)
   };
   const MAX_BATCH_SIZE = 50;
   const DEL_BATCH_DEFAULT = 25; // domyślny batch równoległych deletów (edytowalny w UI)
@@ -1718,15 +1719,17 @@
       // Stos tego błędu zawiera ten wrapper, więc bez oznaczenia dziennik diagnostyczny brał go za błąd wtyczki
       // i zapalał pasek błędu (zgłoszenie nr 4: hooks.zapier.com). Własne zapytania wtyczki idą przez origFetch.
       _diagForeign(err);
+      // Przerwane przez stronę (zmiana filtra w trakcie ładowania) to nie awaria sieci.
+      if (url.includes('graphql') && !(err && err.name === 'AbortError')) _netSample(_gqlOp(bodyStr), Math.round(performance.now() - _nmT0), false);
       throw err;
     }
 
+    var _dur = Math.round(performance.now() - _nmT0);
+    var _isGql = url.includes('graphql');
+    var _opName = _isGql ? _gqlOp(bodyStr) : '';
+    var _ratio = _isGql ? _netSample(_opName, _dur, res.status < 500 && res.status !== 429) : null;
     if (nmState.enabled && !nmState.paused) {
-      var _dur = Math.round(performance.now() - _nmT0);
-      var _isGql = url.includes('graphql');
-      var _opName = '';
-      if (_isGql && bodyStr) { try { _opName = JSON.parse(bodyStr).operationName || ''; } catch(e) {} }
-      var _nmEnt = _nmNewEntry({ method: (opts.method || 'GET').toUpperCase(), url: url, opName: _opName, status: res.status, duration: _dur, isError: !res.ok, reqSnippet: bodyStr.substring(0, 300) });
+      var _nmEnt = _nmNewEntry({ method: (opts.method || 'GET').toUpperCase(), url: url, opName: _opName, status: res.status, duration: _dur, isError: !res.ok, reqSnippet: bodyStr.substring(0, 300), ratio: _ratio });
       if (!res.ok) { res.clone().text().then(function(b) { _nmEnt.resSnippet = b.substring(0, 400); _nmRefreshRow(_nmEnt.id); }).catch(function(){}); }
     }
 
@@ -1775,11 +1778,11 @@
           xhr.addEventListener('loadend', function() {
             if (!nmState.enabled || nmState.paused) return;
             var dur = Math.round(performance.now() - _t0);
-            var isGql = _u.includes('graphql'); var opName = '';
-            if (isGql && _rb) { try { opName = JSON.parse(_rb).operationName || ''; } catch(e) {} }
+            var isGql = _u.includes('graphql'), opName = isGql ? _gqlOp(_rb) : '';
             // responseText rzuca InvalidStateError przy responseType innym niż '' i 'text'; Brand24 używa 'json'.
             var rt = xhr.responseType, resBody = rt === '' || rt === 'text' ? xhr.responseText : rt === 'json' && xhr.response != null ? JSON.stringify(xhr.response) : '';
-            _nmNewEntry({ method: _m.toUpperCase(), url: _u, opName: opName, status: xhr.status, duration: dur, isError: xhr.status >= 400 || xhr.status === 0, reqSnippet: _rb, resSnippet: (resBody || '').substring(0, 400) });
+            _nmNewEntry({ method: _m.toUpperCase(), url: _u, opName: opName, status: xhr.status, duration: dur, isError: xhr.status >= 400 || xhr.status === 0, reqSnippet: _rb, resSnippet: (resBody || '').substring(0, 400),
+              ratio: isGql ? _netRatio(opName, dur) : null });
           }, { once: true });
         }
         return _origSend.apply(xhr, arguments);
@@ -1845,11 +1848,24 @@
     try {
       const data = await _gqlCall(operationName, variables, query, opts);
       _diagPush({ k: 'gql', op: operationName, ms: Date.now() - t0, ok: true });
+      _netSample(operationName, Date.now() - t0, true);
       return data;
     } catch (e) {
-      _diagPush({ k: 'gql', op: operationName, ms: Date.now() - t0, ok: false, err: String(e && e.message || e), vars: _diagShort(variables) });
+      const msg = String(e && e.message || e);
+      _diagPush({ k: 'gql', op: operationName, ms: Date.now() - t0, ok: false, err: msg, vars: _diagShort(variables) });
+      // Stan sieci: liczy się brak odpowiedzi, 5xx i 429; odrzucenie przez Brand24 (UserError, 4xx) ma czas odpowiedzi.
+      if (msg !== 'TOKEN_NOT_READY') {
+        const down = /^GRAPHQL_HTTP_ERROR_(5\d\d|429)$/.test(msg) || e instanceof TypeError;
+        _netSample(operationName, Date.now() - t0, !down);
+      }
       throw e;
     }
+  }
+
+  // Nazwa operacji GraphQL z treści zapytania; pusty napis, gdy treść nie jest JSON-em.
+  function _gqlOp(body) {
+    if (!body) return '';
+    try { return JSON.parse(body).operationName || ''; } catch (e) { return ''; }
   }
 
   async function _gqlCall(operationName, variables, query, opts) {
@@ -1890,7 +1906,12 @@
       const _errCode = data.errors[0]?.extensions?.code;
       const _errMsg = data.errors[0]?.message || 'GRAPHQL_ERROR';
       if (_errCode === 'PERMISSION_DENIED') {
-        if (!opts?.silent) addLog(`✕ [AUTORYZACJA] ${operationName} — brak uprawnień (PERMISSION_DENIED). Sprawdź rolę konta w Brand24.`, 'error');
+        // Projekt spoza konta zalogowanego w panelu GraphQL Brand24 oddaje tylko przy sesji CMS (CMS_CAPABILITIES.md §1).
+        // Zestawienia wielu projektów (Annotators, „Wszystkie projekty”) dostawały ten błąd za każdy cudzy projekt;
+        // zbiera je _cmsDenied w jeden wpis i jedno powiadomienie (zgłoszenie nr 5).
+        const _pid = variables && variables.projectId;
+        if (_pid && String(_pid) !== String(state.projectId)) _cmsDenied(_pid);
+        else if (!opts?.silent) addLog(`✕ [AUTORYZACJA] ${operationName} — brak uprawnień (PERMISSION_DENIED). Sprawdź rolę konta w Brand24.`, 'error');
         throw new Error('GRAPHQL_PERMISSION_DENIED');
       }
       if (_errCode === 'UNAUTHENTICATED' || _errMsg.toLowerCase().includes('unauthenticated')) {
@@ -1901,6 +1922,66 @@
       throw new Error(_errMsg || 'GRAPHQL_ERROR');
     }
     return data.data;
+  }
+
+  // Projekty bez dostępu z tej sesji, zbierane przez 1,5 s serii zapytań: jeden wpis w logu na serię, powiadomienie
+  // raz na załadowanie strony. Treść zależy od sesji CMS (_cmsProbe): bez niej pomaga zalogowanie do CMS, z nią
+  // odmowa to brak uprawnień konta albo nieistniejący projekt.
+  var _cmsDeny = { pids: {}, timer: 0, told: false, session: null, probing: null, probedAt: 0 };
+  var CMS_PROBE_TTL = 60000;   // logowanie do CMS w innej karcie zmienia odpowiedź w każdej chwili
+
+  // Sesja CMS: niezalogowany CMS przekierowuje /cms33/ na /cms33/login/ (CMS_CAPABILITIES.md §1, [ŻYWO]).
+  // → true (sesja jest), false (brak sesji), null (nie wiadomo: błąd sieci, strona spoza Brand24).
+  function _cmsProbe() {
+    if (_cmsDeny.probing && Date.now() - _cmsDeny.probedAt < CMS_PROBE_TTL) return _cmsDeny.probing;
+    var base = _b24HostBase();
+    if (!base) return Promise.resolve(null);
+    _cmsDeny.probedAt = Date.now();
+    _cmsDeny.probing = origFetch(base + '/cms33/', { credentials: 'include' }).then(function (res) {
+      // Treść strony CMS nie jest potrzebna: wystarcza adres po przekierowaniach.
+      if (res.body) res.body.cancel().catch(function () {});
+      _cmsDeny.session = res.ok && !/\/cms33\/login/.test(res.url);
+      return _cmsDeny.session;
+    }, function () {
+      _cmsDeny.session = null;
+      return null;
+    });
+    return _cmsDeny.probing;
+  }
+
+  // Tekst o projektach bez dostępu według stanu sesji CMS; `n` = liczba projektów.
+  function _cmsDenyText(n, session) {
+    var what = _plPl(n, 'projekt', 'projekty', 'projektów');
+    if (session === true) return what + ' bez uprawnień mimo zalogowania do CMS: konto nie ma do nich dostępu albo projekty nie istnieją.';
+    if (session === false) return what + ' z innych kont Brand24: liczby pojawią się po zalogowaniu do CMS i ponownym liczeniu.';
+    return what + ' bez dostępu. Projekty innych kont Brand24 wymagają zalogowania do CMS; przy zalogowanym CMS konto nie ma do nich uprawnień.';
+  }
+
+  function _cmsDenied(pid) {
+    _cmsDeny.pids[pid] = true;
+    _cmsProbe();
+    clearTimeout(_cmsDeny.timer);
+    _cmsDeny.timer = setTimeout(function () {
+      var pids = Object.keys(_cmsDeny.pids);
+      _cmsDeny.pids = {};
+      _cmsProbe().then(function (session) {
+        var names = pids.map(function (id) { return _pnResolve(id) || id; });
+        addLog('⚠ [AUTORYZACJA] ' + _cmsDenyText(pids.length, session) + ' (' + names.slice(0, 5).join(', ') +
+          (names.length > 5 ? ' i ' + (names.length - 5) + ' innych' : '') + ')', 'warn');
+        // Okno dialogowe („Wszystkie projekty”) ma własny baner; powiadomienie zasłaniałoby jego przyciski.
+        if (_cmsDeny.told || Win.list().some(function (id) { return WIN_MODAL[Win.get(id).kind]; })) return;
+        _cmsDeny.told = true;
+        var base = _b24HostBase();
+        Toast.show(_cmsDenyText(pids.length, session), session === true ? 'warn' : 'info', {
+          title: session === true ? 'Brak uprawnień do projektów' : 'Brak dostępu do projektów', sticky: true,
+          actions: session !== true && base ? [{ label: 'Otwórz CMS', primary: true, onClick: function () { window.open(base + '/cms33/', '_blank', 'noopener'); } }] : []
+        });
+      });
+    }, 1500);
+  }
+  // Krótki opis błędu zapytania w wierszu tabeli projektu; szczegóły braku dostępu są w banerze albo powiadomieniu.
+  function _errShort(msg) {
+    return msg === 'GRAPHQL_PERMISSION_DENIED' ? 'brak dostępu' : msg || 'błąd zapytania';
   }
 
   async function gqlRetry(operationName, variables, query, retries = 3, opts) {
@@ -4916,7 +4997,14 @@
       @keyframes b-edge-in { from { opacity: 0; } to { opacity: 1; } }
       /* Kontener bez czego przewijać (_uiWatchScroll): bez cieni sterowanych przewijaniem. */
       .b-scroll.is-static::before, .b-scroll.is-static::after { animation: none; }
-      .b-win:has(.b-main.is-static) :is(.b-head, .b-bar) { animation: none; }
+      .b-win:has(.b-main.is-static) :is(.b-head, .b-bar, .b-foot) { animation: none; }
+      /* Główna treść okna: dalszą treść nad i pod widokiem sygnalizują cienie nagłówka i stopki, nie cieniowanie
+         kolorem tła na treści. Cieniowanie leżało na kartach w innym kolorze i przy niskim panelu wyglądało jak
+         przecięcie tekstu nad stopką (uwaga właściciela 2026-10-03). Bez widocznej stopki dolne cieniowanie zostaje. */
+      .b-main.b-scroll--lead::before { display: none; }
+      .b-win:has(> .b-clip > .b-foot:not([hidden])) .b-main.b-scroll--lead::after { display: none; }
+      .b-foot { position: relative; z-index: 2; animation: b-foot-shadow linear both; animation-timeline: --b-lead; animation-range: calc(100% - 24px) 100%; }
+      @keyframes b-foot-shadow { from { box-shadow: 0 -6px 12px -8px rgba(16,24,40,0.28); } to { box-shadow: none; } }
       @keyframes b-edge-out { from { opacity: 1; } to { opacity: 0; } }
 
       /* ── Przyciski (stany: plansza StatesH) ── */
@@ -5136,6 +5224,20 @@
         background: var(--c-tipBg); color: var(--c-tipText); font-family: var(--font); font-size: 12px; font-weight: 500;
         line-height: 1.35; box-shadow: var(--sh-pop); white-space: pre-line;
       }
+      .b-tip__keys { display: inline-flex; gap: 3px; margin-left: 0.5em; vertical-align: -0.15em; }
+      .b-tip .b-kbd { height: 1.4em; min-width: 1.4em; font-size: 11px; border-color: color-mix(in srgb, var(--c-tipText) 35%, transparent); background: transparent; color: var(--c-tipText); }
+      .b-info {
+        display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 1.5em; height: 1.5em; margin: -0.25em 0;
+        padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--c-text3); cursor: pointer; vertical-align: middle;
+      }
+      .b-info > svg { width: 1.1em; height: 1.1em; }
+      .b-info:hover, .b-info[aria-expanded="true"] { color: var(--c-accentInk); background: var(--c-hover); }
+      .b-info:focus-visible { outline: 2px solid var(--c-focus); outline-offset: 1px; }
+      .b-infotip {
+        position: fixed; z-index: 600; width: max-content; max-width: 20em; padding: 0.6em 0.75em; border-radius: 10px;
+        background: var(--c-chrome); border: 1px solid var(--c-panelLine); box-shadow: var(--sh-pop);
+        color: var(--c-text2); font-size: max(12px, 0.923em); font-weight: 400; line-height: 1.45; white-space: normal;
+      }
       .b-menu {
         position: fixed; z-index: 600; width: max-content; min-width: 13em; max-width: 24em; padding: 0.375em; border-radius: 12px;
         background: var(--c-chrome); border: 1px solid var(--c-panelLine); box-shadow: var(--sh-pop);
@@ -5153,6 +5255,17 @@
       .b-menu__sep { height: 1px; margin: 0.25em 0.375em; background: var(--c-border); }
       .b-menu__head { padding: 0.4em 0.75em 0.2em; font-size: max(12px, 0.923em); color: var(--c-text3); font-weight: 600; }
       .b-menu__hint { margin-left: auto; padding-left: 1em; font-size: max(12px, 0.923em); color: var(--c-text3); font-weight: 400; }
+      /* Pozycja, której dotyczy kropka na „⋯”: ta sama kropka w rogu ikony, mignięcie przy otwarciu menu. */
+      .b-menu__item.has-dot { position: relative; }
+      .b-menu__item.has-dot::before {
+        content: ""; position: absolute; left: 1.5em; top: 0.4em; width: 0.5em; height: 0.5em; border-radius: 50%;
+        background: var(--c-bar); box-shadow: 0 0 0 2px var(--c-chrome);
+      }
+      .b-menu__item.has-dot .b-menu__hint { padding: 0.1em 0.6em; border-radius: 999px; background: var(--c-okSoft); color: var(--c-ok); font-weight: 600; }
+      [data-b24t-motion="full"] .b-menu__item.has-dot::before { animation: b-mdot 1s var(--ease-in) 0.15s 2; }
+      [data-b24t-motion="lite"] .b-menu__item.has-dot::before { animation: b-mdot-lite 0.9s ease-in-out 0.15s 2; }
+      @keyframes b-mdot { from { box-shadow: 0 0 0 2px var(--c-chrome), 0 0 0 2px var(--c-bar); } to { box-shadow: 0 0 0 2px var(--c-chrome), 0 0 0 9px transparent; } }
+      @keyframes b-mdot-lite { 50% { opacity: 0.25; } }
 
       /* ── Paleta poleceń (§4.3): nad oknami dialogowymi, pod powiadomieniami ── */
       .b-pal-scrim { position: fixed; inset: 0; z-index: 499; background: var(--c-scrim); }
@@ -5191,17 +5304,33 @@
       .b-tour-spot.is-moving { transition: left 240ms var(--ease-in), top 240ms var(--ease-in), width 240ms var(--ease-in), height 240ms var(--ease-in); }
       [data-b24t-motion="lite"] .b-tour-spot.is-moving { transition: none; }
       .b-tour {
-        position: fixed; z-index: 510; width: min(23em, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 0.5em;
-        padding: 1em 1em 0.75em; border-radius: 14px; background: var(--c-chrome); border: 1px solid var(--c-panelLine);
-        box-shadow: var(--sh-pop); outline: none;
+        position: fixed; z-index: 510; width: min(23em, calc(100vw - 32px)); padding: 1em 1em 0.75em; border-radius: 14px;
+        background: var(--c-chrome); border: 1px solid var(--c-panelLine); box-shadow: var(--sh-pop); outline: none;
       }
+      .b-tour--offer { width: min(21em, calc(100vw - 32px)); }
+      [data-b24t-motion="full"] .b-tour.is-moving { transition: left 240ms var(--ease-in), top 240ms var(--ease-in); }
+      .b-tour__body { display: flex; flex-direction: column; gap: 0.5em; }
+      /* Strzałka do celu (TUTORIALS.md §5): kwadrat obrócony o 45° na krawędzi od strony celu, na linii jego środka
+         (--b-arrow od górnej albo lewej krawędzi dymku); dwie krawędzie kwadratu niosą obrys dymku. */
+      .b-tour__arrow {
+        position: absolute; display: none; width: 10px; height: 10px; background: var(--c-chrome);
+        border: 1px solid var(--c-panelLine); transform: rotate(45deg);
+      }
+      .b-tour[data-side="left"] .b-tour__arrow { display: block; right: -6px; top: calc(var(--b-arrow) - 5px); border-left: 0; border-bottom: 0; }
+      .b-tour[data-side="right"] .b-tour__arrow { display: block; left: -6px; top: calc(var(--b-arrow) - 5px); border-right: 0; border-top: 0; }
+      .b-tour[data-side="bottom"] .b-tour__arrow { display: block; top: -6px; left: calc(var(--b-arrow) - 5px); border-right: 0; border-bottom: 0; }
+      .b-tour[data-side="top"] .b-tour__arrow { display: block; bottom: -6px; left: calc(var(--b-arrow) - 5px); border-left: 0; border-top: 0; }
+      .b-tour__head { display: flex; align-items: center; gap: 0.75em; }
       .b-tour__count { font-size: max(12px, 0.923em); font-weight: 600; color: var(--c-text3); }
+      .b-tour__prog { display: flex; gap: 3px; margin-left: auto; }
+      .b-tour__prog > i { width: 1.25em; height: 4px; border-radius: 2px; background: var(--c-border); }
+      .b-tour__prog > i.is-on { background: var(--c-accent); }
       .b-tour__title { margin: 0; font-size: 1.15em; font-weight: 650; color: var(--c-text); }
       .b-tour__text { margin: 0; line-height: 1.45; color: var(--c-text2); }
       .b-tour__try { display: flex; flex-direction: column; gap: 0.4em; margin-top: 0.25em; }
       .b-tour__try-label { margin: 0; font-weight: 600; color: var(--c-text); }
       .b-tour__task {
-        display: flex; align-items: flex-start; gap: 0.6em; padding: 0.65em 0.75em; border-radius: 10px; border: 1px solid var(--c-accent);
+        position: relative; overflow: hidden; display: flex; align-items: flex-start; gap: 0.6em; padding: 0.65em 0.75em; border-radius: 10px; border: 1px solid var(--c-accent);
         background: var(--c-accentSoft); color: var(--c-accentInk); font-weight: 600; line-height: 1.4;
         transition: background-color 300ms var(--ease-in), border-color 300ms var(--ease-in), color 300ms var(--ease-in);
       }
@@ -5216,6 +5345,16 @@
       .b-tour__do { background: linear-gradient(currentColor, currentColor) no-repeat 0 58% / 0 2px; transition: background-size 520ms var(--ease-in) 140ms; }
       .b-tour__task[data-done="true"] .b-tour__do { background-size: 100% 2px; }
       .b-tour__foot { display: flex; align-items: center; gap: 0.375em; margin-top: 0.25em; }
+      /* Odliczanie do następnego kroku: pasek kurczy się w 1,8 s i stoi, gdy kursor albo fokus jest w dymku. */
+      .b-tour__timer { position: absolute; left: 0; bottom: 0; width: 100%; height: 3px; background: var(--c-ok); opacity: 0.55; transform-origin: left; }
+      /* Katalog „Pomoc i samouczki” (TUTORIALS.md §7). */
+      .b-tut-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5em; }
+      .b-tut-row { display: flex; align-items: center; gap: 0.75em; padding: 0.75em 0.875em; border: 1px solid var(--c-border); border-radius: 12px; }
+      .b-tut-row__main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0.2em; }
+      .b-tut-row__title { font-weight: 600; color: var(--c-text); }
+      .b-tut-row > .b-btn { flex-shrink: 0; }
+      .b-tut-links { display: flex; flex-direction: column; gap: 1px; }
+      .b-tut-link { justify-content: flex-start; width: 100%; }
 
       /* ── Pasek funkcji (panel): tryb według szerokości panelu, progi w em rosną z tekstem ── */
       .b-rail {
@@ -5291,6 +5430,7 @@
       .b-token::before { content: ""; width: 0.45em; height: 0.45em; border-radius: 50%; background: var(--c-text3); flex-shrink: 0; }
       .b-token[data-state="ok"]::before { background: var(--c-ok); }
       .b-token[data-state="error"]::before { background: var(--c-dangerIcon); }
+      .b-net[data-state="ok"] > svg { color: var(--c-ok); }
 
       /* Plik: wiersz z nazwą i stanem; bez pliku przerywana ramka zaprasza do upuszczenia. */
       .b-file {
@@ -5380,25 +5520,6 @@
       }
       .b-edge__dot { position: absolute; top: 6px; left: 50%; margin-left: -4px; width: 8px; height: 8px; border-radius: 50%; background: var(--c-bar); }
 
-      /* ── Tryb pomocy (§1.10): strefy nad elementami, dymek z opisem, pasek wyjścia u góry panelu ── */
-      .b-help-cover { position: fixed; z-index: 580; border-radius: var(--r-win); background: var(--c-scrim); }
-      .b-help-zone {
-        position: fixed; z-index: 590; border-radius: 8px; cursor: help;
-        box-shadow: inset 0 0 0 2px var(--c-focus); background: var(--c-outline);
-      }
-      .b-help-zone:hover, .b-help-zone.is-active { background: color-mix(in srgb, var(--c-focus) 24%, transparent); }
-      .b-help-bar {
-        position: fixed; z-index: 600; display: flex; align-items: center; gap: 0.5em; padding: 0.375em 0.375em 0.375em 0.75em;
-        border-radius: 99px; background: var(--c-tipBg); color: var(--c-tipText); box-shadow: var(--sh-pop); white-space: nowrap;
-      }
-      .b-help-bar > svg { width: 1.15em; height: 1.15em; }
-      .b-help-bar .b-btn { color: var(--c-tipText); }
-      .b-help-tip {
-        position: fixed; z-index: 600; width: min(20em, calc(100vw - 24px)); padding: 0.75em 0.875em; border-radius: 12px;
-        background: var(--c-chrome); border: 1px solid var(--c-panelLine); box-shadow: var(--sh-pop); display: flex; flex-direction: column; gap: 0.3em;
-      }
-      .b-help-tip__title { font-weight: 600; padding-right: 1.75em; }
-      .b-help-tip > .b-ibtn { position: absolute; top: 0.375em; right: 0.375em; }
 
       /* ── Zmiana rozmiaru, obrys magnesu, pigułka ── */
       .b-rz { position: absolute; z-index: 5; touch-action: none; }
@@ -6428,7 +6549,9 @@
     }
 
     // Zadokowany panel zwęża stronę o swoją szerokość marginesem na <html>. Elementy strony z position: fixed
-    // zostają na miejscu (IMPLEMENTATION.md §5: zachowanie układu Brand24 niesprawdzone na żywo).
+    // zostają na miejscu. Brand24 trzyma <html> na pełnej szerokości okna (pomiar na żywo 2026-10-03: html 1426 px
+    // przy marginesie 527 px, scrollWidth 1953), więc sam margines dokłada poziomy suwak; width: auto i min-width: 0
+    // pozwalają <html> zwęzić się o margines.
     // Uchwyty prawej krawędzi stają przy lewej krawędzi zadokowanego panelu (--b-dock w .b-edge).
     function dockPage(w) {
       var st = document.getElementById('b24t-dock-page'), app = _uiEnsure().app;
@@ -6443,7 +6566,7 @@
         document.head.appendChild(st);
       }
       var dw = rect(w).w;
-      st.textContent = 'html { margin-right: ' + dw + 'px !important; }';
+      st.textContent = 'html { margin-right: ' + dw + 'px !important; width: auto !important; min-width: 0 !important; }';
       app.style.setProperty('--b-dock', dw + 'px');
     }
 
@@ -7157,6 +7280,7 @@
       u.root.addEventListener('keydown', onKey);
       window.addEventListener('resize', onResize);
       Tip.init();
+      Info.init();
     }
 
     return {
@@ -7297,6 +7421,9 @@
         _uiMount(el);
       }
       el.textContent = text;
+      var kbd = target.getAttribute('data-tip-kbd');
+      if (kbd) el.insertAdjacentHTML('beforeend', '<span class="b-tip__keys">' +
+        kbd.split(' ').map(function (k) { return '<span class="b-kbd">' + _escHtml(k) + '</span>'; }).join('') + '</span>');
       el.style.display = 'block';
       var r = target.getBoundingClientRect(), tw = el.offsetWidth, th = el.offsetHeight;
       var below = r.top - th - 8 < 4;
@@ -7358,6 +7485,79 @@
     return { init: init, hide: hide };
   })();
 
+  // Okienko (i) przy etykiecie opcji z ukrytą logiką (design/TUTORIALS.md §2). Przycisk niesie opis w data-info;
+  // jeden nasłuch w korzeniu cienia otwiera go obok przycisku. Fokus zostaje na przycisku, a opis trafia do regionu
+  // żywego, więc czytnik ekranu go przeczyta; ponowne otwarcie wpisuje tekst po 100 ms, żeby czytnik przeczytał go
+  // jeszcze raz (TUTORIAL_RESEARCH.md §10). Kliknięcie obok, przewinięcie i Esc zamykają.
+  function _info(text, label) {
+    return '<button type="button" class="b-info" aria-expanded="false" aria-label="' + _escHtml('Więcej: ' + label) +
+      '" data-info="' + _escHtml(text) + '">' + _icon('info') + '</button>';
+  }
+
+  var Info = (function () {
+    var el = null, owner = null, timer = 0;
+
+    function close() {
+      clearTimeout(timer);
+      if (!owner) return;
+      owner.setAttribute('aria-expanded', 'false');
+      owner = null;
+      el.hidden = true;
+      el.textContent = '';
+    }
+
+    function open(btn) {
+      close();
+      Tip.hide();
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'b-ui b-infotip';
+        el.setAttribute('role', 'status');
+        _uiMount(el);
+      }
+      owner = btn;
+      btn.setAttribute('aria-expanded', 'true');
+      el.hidden = false;
+      el.textContent = btn.getAttribute('data-info');
+      var r = btn.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
+      var up = r.bottom + 6 + h > _vh() - 4 && r.top - 6 - h >= 4;
+      el.style.left = Math.round(_clamp(r.left - 8, 4, _vw() - w - 4)) + 'px';
+      el.style.top = Math.round(up ? r.top - 6 - h : Math.min(r.bottom + 6, _vh() - h - 4)) + 'px';
+      el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: WIN_EASE_IN });
+      var text = el.textContent;
+      el.textContent = '';
+      timer = setTimeout(function () { if (owner === btn) el.textContent = text; }, 100);
+    }
+
+    function init() {
+      var u = _uiEnsure();
+      if (u.infoInit) return;
+      u.infoInit = true;
+      u.root.addEventListener('click', function (e) {
+        var b = e.target.closest && e.target.closest('.b-info');
+        if (!b) return;
+        e.preventDefault();
+        if (owner === b) close(); else open(b);
+      });
+      u.root.addEventListener('pointerdown', function (e) {
+        if (owner && !(e.target.closest && e.target.closest('.b-info, .b-infotip'))) close();
+      }, true);
+      document.addEventListener('pointerdown', close, true);
+      u.root.addEventListener('scroll', close, true);
+      window.addEventListener('resize', close);
+      u.root.addEventListener('keydown', function (e) {
+        if (e.key !== 'Escape' || !owner) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var b = owner;
+        close();
+        if (b.isConnected) b.focus({ preventScroll: true });
+      }, true);
+    }
+
+    return { init: init, close: close };
+  })();
+
   // Menu: pozycje { label, icon, hint, checked, disabled, onSelect } albo 'sep' albo { head }. Strzałki,
   // Home i End zmieniają pozycję, Enter i spacja wybierają, Esc i kliknięcie obok zamykają (§1.10).
   var Menu = (function () {
@@ -7390,7 +7590,7 @@
         if (it.head) { var h = document.createElement('div'); h.className = 'b-menu__head'; h.textContent = it.head; el.appendChild(h); return; }
         var b = document.createElement('button');
         b.type = 'button';
-        b.className = 'b-menu__item';
+        b.className = 'b-menu__item' + (it.dot ? ' has-dot' : '');
         b.tabIndex = -1;
         b.setAttribute('role', it.checked != null ? 'menuitemradio' : 'menuitem');
         if (it.checked != null) b.setAttribute('aria-checked', it.checked ? 'true' : 'false');
@@ -7847,9 +8047,11 @@
     }
     var dark = lsGet(LS.THEME, 'light') === 'dark';
     add('theme', dark ? 'Motyw jasny' : 'Motyw ciemny', 'Wygląd', dark ? 'sun' : 'moon', function () { applyTheme(dark ? 'light' : 'dark'); });
-    add('help', 'Tryb pomocy: opis elementów panelu', 'Pomoc', 'help', function () { toTab(_panelTab || 'main'); toggleHelpMode(); });
+    add('help', 'Pomoc i samouczki', 'Pomoc', 'help', _tutCatalog);
     add('keys', 'Skróty klawiszowe', 'Pomoc', 'keyboard', _keysOpen, '?');
-    add('tour', 'Samouczek nowego wyglądu', 'Pomoc', 'info', function () { Tour.start(); });
+    _tutDefs().forEach(function (d) {
+      if (!d.ready()) add('tut-' + d.id, 'Samouczek: ' + d.title, 'Pomoc', 'info', function () { Tutor.start(d.id); });
+    });
     return cmds;
   }
 
@@ -7860,7 +8062,7 @@
   var KEYS_COMMON = [
     ['Ctrl K', 'Paleta poleceń: okna i działania wtyczki'],
     ['?', 'Ta ściągawka'],
-    ['Esc', 'Zamyka menu, dymek albo okno, w którym jest fokus; kończy tryb pomocy'],
+    ['Esc', 'Zamyka menu, dymek albo okno, w którym jest fokus; kończy samouczek, gdy fokus jest w jego dymku'],
     ['Dwuklik nagłówka', 'Panel zwija się do pigułki, okno narzędziowe zajmuje cały ekran', 'mysz'],
     ['Alt', 'W trakcie przeciągania okna wyłącza przyciąganie do krawędzi']
   ];
@@ -7904,89 +8106,313 @@
 
 
   // ───────────────────────────────────────────
-  // UI - SAMOUCZEK NOWEGO WYGLĄDU
+  // UI - SAMOUCZKI (design/TUTORIALS.md)
   // ───────────────────────────────────────────
-  // Opcjonalny przewodnik po pasku funkcji, oknach, pigułce i klawiaturze (TASKS.md, plan wydania 0.38 pkt 2).
-  // Krok z zadaniem kończy się sam, gdy zadanie jest wykonane; „Dalej” je pomija. Stan zadania i położenie
-  // podświetlenia są sprawdzane w każdej klatce, bo w trakcie kroku panel się przesuwa albo zwija. Samouczek nie
-  // blokuje strony: przyciemnienie przepuszcza kliknięcia. Dymek stoi nad paletą i oknami dialogowymi, bo dwa
-  // kroki je otwierają; krok bez celu ustawia dymek w lewym dolnym rogu, z dala od palety i ściągawki.
-  var Tour = (function () {
-    var cur = null;
-    var TOUR_TRY = 'A teraz wypróbuj, jak to działa:';
-    var TOUR_DONE = 'Zrobione! Za chwilę kolejny krok.';
-    var TOUR_HOLD = 1800;   // od odhaczenia do następnego kroku: ptaszek, przekreślenie (660 ms) i chwila na zobaczenie efektu
-    var TOUR_RESUME = 1200; // od puszczenia przycisku, gdy ktoś chwycił okno w trakcie odliczania
+  // Samouczek: karta wstępu, kroki z zadaniem na prawdziwym interfejsie, koniec. Stan zadania i położenie celu są
+  // sprawdzane w każdej klatce, bo w trakcie kroku panel się przesuwa, zwija albo przerysowuje. Przyciemnienie
+  // przepuszcza kliknięcia; dymek stoi nad paletą i oknami dialogowymi, bo kroki je otwierają. Ten sam moduł
+  // pokazuje propozycję samouczka przy pierwszym użyciu funkcji i katalog „Pomoc i samouczki”.
+  var TUT_TRY = 'A teraz wypróbuj, jak to działa:';
+  var TUT_DONE = 'Zrobione! Za chwilę kolejny krok.';
+  var TUT_ALREADY = 'To już jest zrobione.';
+  var TUT_HOLD = 1800;   // od odhaczenia do następnego kroku: ptaszek, przekreślenie (660 ms) i chwila na zobaczenie efektu
+  var TUT_LATER = 864e5; // „Później” wraca po 24 h (TUTORIAL_RESEARCH.md §2)
 
-    function panelEl() { return _$('b24t-panel'); }
-    function expandPanel() { Win.expand('panel'); }
+  // Stan samouczków: { id: { st: done | skipped | never | later, at } } (TUTORIALS.md §6). Stan sprzed katalogu
+  // to jeden klucz samouczka nowego wyglądu (LS.TOUR).
+  function _tutAll() {
+    var all = lsGet(LS.TUTORIALS, null);
+    if (all) return all;
+    var old = lsGet(LS.TOUR, null);
+    return old ? { layout: { st: old, at: Date.now() } } : {};
+  }
+  function _tutGet(id) { return _tutAll()[id] || null; }
+  function _tutSet(id, st) {
+    var all = _tutAll();
+    all[id] = { st: st, at: Date.now() };
+    lsSet(LS.TUTORIALS, all);
+  }
 
-    function steps() {
-      return [
-        { intro: true, title: 'Tagger po remoncie',
-          text: 'Każde okno wtyczki dostało ten sam wygląd, a panel nauczył się kilku nowych sztuczek. Sześć krótkich kroków pokazuje, co gdzie stoi i co działa wygodniej niż do tej pory. Każdy krok da się pominąć, a samouczek czeka potem w menu „⋯” → Pomoc.' },
-        { title: 'Pasek funkcji', target: function () { return _q('#b24t-tabs'); }, enter: expandPanel,
-          text: 'Karty nie tłoczą się już w jednym rzędzie z uciętymi nazwami. Mają własny pasek po lewej stronie panelu, a Historia i Powiadomienia stoją na jego dole. Gdy panel jest wąski, pasek pokazuje same ikony, a nazwę karty podpowiada dymek.',
-          start: function (s) { s.tab = _panelTab === 'quicktag' ? 'main' : 'quicktag'; s.task = 'Kliknij na pasku kartę ' + (s.tab === 'main' ? 'Plik' : 'Quick Tag'); },
-          done: function (s) { return _panelTab === s.tab; } },
-        { title: 'Przesuwanie i rozmiar', target: function () { return _q('#b24t-panel .b-head'); }, enter: expandPanel,
-          text: 'Panel przestał stać w jednym miejscu i zasłaniać wyniki. Przesuwa się za nagłówek, rośnie i maleje od każdej krawędzi i rogu, a przy krawędzi ekranu sam się do niej przyciąga (Alt w trakcie przeciągania to wyłącza). Położenie zapamiętuje osobno dla laptopa i dla monitora.',
-          task: 'Złap panel za nagłówek i przesuń go albo pociągnij za krawędź, żeby zmienić rozmiar',
-          start: function (s) { s.r = panelEl().getBoundingClientRect(); },
-          done: function (s) {
-            var r = panelEl().getBoundingClientRect();
-            return Math.abs(r.left - s.r.left) + Math.abs(r.top - s.r.top) > 24 || Math.abs(r.width - s.r.width) + Math.abs(r.height - s.r.height) > 24;
-          } },
-        { title: 'Pigułka', target: function () { return _q('#b24t-panel .b-win__collapse'); }, enter: expandPanel,
-          text: 'Gdy panel przeszkadza, nie trzeba go zamykać: zwija się do pigułki w rogu ekranu. Pigułka nie próżnuje, bo w trakcie tagowania pokazuje postęp, na przykład „37 z 108”. Przy dużych oknach, jak przegląd sentymentu albo News, panel zwija się sam i wraca po ich zamknięciu.',
-          task: 'Zwiń panel podświetlonym przyciskiem albo dwuklikiem nagłówka',
-          done: function () { return Win.get('panel').collapsed; } },
-        { title: 'Powrót z pigułki', target: function () { return _q('.b-pill'); },
-          when: function () { return Win.get('panel').collapsed; },
-          text: 'Panel wraca w to samo miejsce i na tę samą kartę, na której został.',
-          task: 'Kliknij pigułkę',
-          done: function () { return !Win.get('panel').collapsed; } },
-        { title: 'Paleta poleceń',
-          target: function () { var b = _$('b24t-btn-palette'); return b && b.offsetParent ? b : _q('#b24t-panel .b-win__menu'); },
-          text: 'Zamiast szukać przycisku po oknach, można go wpisać. Ctrl+K otwiera paletę ze wszystkimi oknami i działaniami wtyczki: kilka liter, na przykład „log” albo „zglos”, i Enter. Ostatnio używane polecenia czekają na górze listy, a paleta jest też w menu „⋯” → Pomoc.',
-          task: 'Naciśnij Ctrl+K, a potem zamknij paletę klawiszem Esc',
-          done: function (s) { if (Palette.isOpen()) s.seen = true; return s.seen && !Palette.isOpen(); } },
-        { title: 'Skróty klawiszowe', target: function () { return _q('#b24t-panel .b-win__menu'); },
-          text: 'Skróty przestały być wiedzą tajemną. Klawisz „?” otwiera ściągawkę ze skrótami wszystkich otwartych okien, a ta sama ściągawka jest w podświetlonym menu „⋯” → Pomoc. Esc zamyka menu, dymek albo okno, a strzałki chodzą po pasku funkcji.',
-          task: 'Naciśnij „?” albo wybierz „⋯” → Pomoc → Skróty klawiszowe, a potem zamknij ściągawkę klawiszem Esc',
-          done: function (s) { if (Win.get('keys')) s.seen = true; return s.seen && !Win.get('keys'); } },
-        { outro: true, title: 'Gotowe, można tagować',
-          text: 'Resztę podpowie tryb pomocy: przycisk ze znakiem zapytania w nagłówku panelu opisuje każdy jego element. Pełna lista zmian jest w dzienniku w menu „⋯”. Miłego tagowania!' }
-      ];
+  // Pierwszy element z niezerowym wymiarem z listy celów: cel, który znika po wykonaniu zadania, ma na liście
+  // następcę (przycisk zwijania → pigułka, TUTORIALS.md §5).
+  function _tutTargetEl(t) {
+    var list = typeof t === 'function' ? [t] : t || [];
+    for (var i = 0; i < list.length; i++) {
+      var el = list[i]();
+      if (!el || !el.isConnected) continue;
+      var r = el.getBoundingClientRect();
+      if (r.width && r.height) return el;
+    }
+    return null;
+  }
+  function _tutTarget(t) {
+    var el = _tutTargetEl(t);
+    return el ? el.getBoundingClientRect() : null;
+  }
+  // Prostokąt okna wtyczki, w którym stoi cel; okno robocze zajmuje prawie cały ekran, więc tam dymek stoi przy celu.
+  function _tutOuter(t) {
+    var el = _tutTargetEl(t), w = el && el.closest('.b-win');
+    return w && w.getAttribute('data-kind') !== 'work' ? w.getBoundingClientRect() : null;
+  }
+
+  function _tutShowPanel(tab) {
+    var pw = Win.get('panel');
+    if (!pw) return;
+    if (pw.hidden) _panelHide(false);
+    Win.expand('panel');
+    if (tab) _panelShowTab(tab);
+  }
+  function _tutPanelOpen() {
+    var pw = Win.get('panel');
+    return !!pw && !pw.hidden && !pw.collapsed;
+  }
+  function _tutVisible(el) { return !!el && el.style.display !== 'none' && !el.hidden; }
+  function _tutPanelReady() { return Win.get('panel') ? '' : 'Panel wtyczki działa na stronie wzmianek projektu w Brand24.'; }
+  // Ślad wcześniejszego użycia funkcji (historia sesji, zapisane mapowania, dziennik decyzji): kto już pracował
+  // funkcją przed wersją z samouczkami, nie dostaje propozycji „pierwszego użycia”; katalog działa bez zmian.
+  function _tutSentList() { return _sentPart('b24t-sent-list'); }
+  function _tutHas(v) { return !!v && (Array.isArray(v) ? v.length > 0 : typeof v === 'object' && Object.keys(v).length > 0); }
+
+  function _tutDefs() {
+    return [
+      {
+        id: 'layout', title: 'Nowy wygląd', minutes: 2,
+        lead: 'Co gdzie stoi po remoncie i co działa wygodniej niż przedtem.',
+        intro: { title: 'Tagger po remoncie', text: 'Te same funkcje, nowy wygląd i kilka sztuczek, których panel wcześniej nie znał. Sześć krótkich kroków, każdy z jedną rzeczą do wypróbowania.' },
+        outro: { title: 'Gotowe, można tagować', text: 'Samouczki funkcji czekają pod „?” w nagłówku panelu, a pełna lista zmian w „⋯” → Dziennik zmian. Miłego tagowania!' },
+        ready: _tutPanelReady,
+        prepare: function () { _tutShowPanel(); },
+        steps: [
+          { title: 'Wszystkie funkcje na jednym pasku', target: function () { return _q('#b24t-tabs'); }, enter: function () { _tutShowPanel(); },
+            text: 'Karty nie tłoczą się już w rzędzie z uciętymi nazwami: mają własny pasek po lewej. Przy wąskim panelu zostają same ikony, a nazwę podpowiada dymek.',
+            start: function (s) { s.tab = _panelTab === 'quicktag' ? 'main' : 'quicktag'; s.task = 'Kliknij na pasku kartę ' + (s.tab === 'main' ? 'Plik' : 'Quick Tag'); },
+            done: function (s) { return _panelTab === s.tab; } },
+          { title: 'Panel ustępuje miejsca', target: function () { return _q('#b24t-panel .b-head'); }, enter: function () { _tutShowPanel(); },
+            text: 'Panel nie stoi już na sztywno nad wynikami. Przesuwa się za nagłówek, rośnie od każdej krawędzi, a położenie pamięta osobno dla laptopa i monitora.',
+            task: 'Przeciągnij panel za nagłówek albo pociągnij za jego krawędź',
+            start: function (s) { s.r = _$('b24t-panel').getBoundingClientRect(); },
+            done: function (s) {
+              var r = _$('b24t-panel').getBoundingClientRect();
+              return Math.abs(r.left - s.r.left) + Math.abs(r.top - s.r.top) > 24 || Math.abs(r.width - s.r.width) + Math.abs(r.height - s.r.height) > 24;
+            } },
+          { title: 'Więcej miejsca na wyniki',
+            target: [function () { return _q('#b24t-panel .b-win__collapse'); }, function () { return _q('.b-pill'); }],
+            enter: function () { _tutShowPanel(); },
+            text: 'Panel nie musi znikać, żeby zrobić miejsce: zwija się do pigułki. W trakcie tagowania pigułka pokazuje postęp, na przykład „37 z 108”.',
+            task: 'Zwiń panel podświetlonym przyciskiem albo dwuklikiem nagłówka',
+            done: function () { return Win.get('panel').collapsed; } },
+          { title: 'Powrót jednym kliknięciem', target: function () { return _q('.b-pill'); },
+            when: function () { return Win.get('panel').collapsed; },
+            text: 'Panel wraca w to samo miejsce i na tę samą kartę. Przy dużych oknach, jak przegląd sentymentu, zwija się i wraca sam.',
+            task: 'Kliknij pigułkę',
+            done: function () { return !Win.get('panel').collapsed; } },
+          { title: 'Wpisz zamiast szukać',
+            target: [function () { return _$('b24t-btn-palette'); }, function () { return _q('#b24t-panel .b-win__menu'); }],
+            text: 'Ctrl+K otwiera paletę ze wszystkimi oknami i działaniami wtyczki. Kilka liter, na przykład „log”, i Enter; ostatnio używane polecenia czekają na górze.',
+            task: 'Naciśnij Ctrl+K, a potem zamknij paletę klawiszem Esc',
+            done: function (s) { if (Palette.isOpen()) s.seen = true; return s.seen && !Palette.isOpen(); } },
+          { title: 'Pomoc pod znakiem zapytania', target: function () { return _$('b24t-btn-help'); },
+            text: 'Klawisz „?” otwiera ściągawkę skrótów wszystkich otwartych okien. Przycisk ze znakiem zapytania w nagłówku prowadzi do samouczków poszczególnych funkcji.',
+            task: 'Naciśnij „?”, a potem zamknij ściągawkę klawiszem Esc',
+            done: function (s) { if (Win.get('keys')) s.seen = true; return s.seen && !Win.get('keys'); } }
+        ]
+      },
+      {
+        id: 'file', title: 'Tagowanie z pliku', minutes: 2,
+        lead: 'Od pliku z ocenami do sprawdzonego przebiegu, bez zmian w Brand24.',
+        intro: { title: 'Tagowanie z pliku', text: 'Plik z ocenami zamienia się w tagi Brand24. Cztery kroki prowadzą od pliku do próby w trybie Test Run, która niczego w Brand24 nie zmienia.' },
+        outro: { title: 'Gotowe do próby', text: 'Start w trybie Test Run pokaże w logu cały przebieg. Gdy wynik się zgadza, tryb Właściwy i Start zapisują tagi w Brand24.' },
+        ready: _tutPanelReady,
+        prepare: function () { _tutShowPanel('main'); },
+        offer: {
+          used: function () { return _tutHas(lsGet(LS.HISTORY, null)) || _tutHas(lsGet(LS.SCHEMAS, null)); },
+          when: function () { return _tutPanelOpen() && _panelTab === 'main' && !state.file; },
+          target: function () { return _$('b24t-file-zone'); }
+        },
+        steps: [
+          { title: 'Plik zamiast klikania', target: function () { return _$('b24t-file-zone'); }, enter: function () { _tutShowPanel('main'); },
+            text: 'Wtyczka czyta CSV, JSON i XLSX z adresami wzmianek i ocenami. Najpewniejszy jest JSON: XLSX potrafi obciąć 19-cyfrowe identyfikatory z TikToka i X.',
+            task: 'Upuść plik w polu albo kliknij pole i wybierz plik',
+            done: function () { return !!state.file; } },
+          { title: 'Ocena → tag, raz na projekt', target: function () { return _$('b24t-mapping-section'); }, enter: function () { _tutShowPanel('main'); },
+            text: 'Każda ocena z pliku dostaje tag Brand24. Mapowanie zapisuje się dla projektu i samo wraca przy następnym pliku z tymi samymi ocenami.',
+            task: 'Wybierz tag dla każdej oceny z listy',
+            done: function () {
+              var n = _qa('#b24t-mapping-section .b24t-tag-select').length;
+              return n > 0 && Object.keys(state.mapping).length >= n;
+            } },
+          { title: 'Próba bez ryzyka',
+            target: function () { var r = _q('#b24t-panel input[name="b24t-run-mode"]'); return r && r.closest('.b-opt'); },
+            enter: function () {
+              _tutShowPanel('main');
+              var t = _$('b24t-settings-toggle');
+              if (t && t.getAttribute('aria-expanded') === 'false') t.click();
+            },
+            text: 'Test Run przechodzi cały przebieg, ale niczego nie zapisuje w Brand24; log pokazuje, co by się stało. Po przeładowaniu strony tryb wraca na Właściwy.',
+            task: 'Przełącz tryb na Test Run',
+            done: function () { return state.testRunMode; } },
+          { title: 'Najpierw dopasowanie', target: function () { return _$('b24t-btn-preview'); }, enter: function () { _tutShowPanel('main'); },
+            text: 'Match sprawdza, ile adresów z pliku wtyczka znajduje w Brand24, zanim cokolwiek otaguje. Niedopasowane adresy da się podejrzeć.',
+            task: 'Kliknij Match i poczekaj na wynik',
+            done: function () { var p = _$('b24t-match-preview'); return !!p && !p.hidden; } }
+        ]
+      },
+      {
+        id: 'sentiment', title: 'Przegląd sentymentu', minutes: 1,
+        lead: 'Przegląd samą klawiaturą: przechodzenie, decyzja, cofnięcie, porządek na ekranie.',
+        intro: { title: 'Przegląd sentymentu', text: 'Modele już oceniły wzmianki, zostały decyzje. Cztery kroki pokazują, jak przejść przegląd samą klawiaturą i jak cofnąć pomyłkę.' },
+        outro: { title: 'Do dzieła', text: 'Grupa „Zgodna zmiana” zapisuje się jednym przyciskiem, a „Dziennik decyzji” w nagłówku pokazuje decyzje z ostatnich 12 miesięcy.' },
+        ready: function () {
+          if (!_tutVisible(_$('b24t-sent-tab-btn'))) return 'Włącz przegląd sentymentu w Ustawieniach → AI.';
+          var run = sentState.run;
+          if (!run || (run.phase !== 'done' && run.phase !== 'stopped') || !run.items.length) return 'Samouczek prowadzi przez gotowy przegląd: najpierw oceń wzmianki na karcie Sentyment.';
+          return '';
+        },
+        prepare: function () { if (!sentState.win) _sentShow(); },
+        offer: {
+          used: function () { return _tutHas(_sentGmRead(SENT_GM_DECISIONS)); },
+          when: function () { var run = sentState.run; return !!sentState.win && !!run && run.phase === 'done' && _sentTileEls().length > 1; },
+          target: function () { return _sentTileEls()[0]; }
+        },
+        steps: [
+          { title: 'Bez sięgania po mysz', target: function () { return _sentTile(sentState.focusId) || _sentTileEls()[0]; }, focus: _tutSentList,
+            text: 'J i K przechodzą między kafelkami, spacja rozwija całą treść wzmianki, a O otwiera jej źródło.',
+            task: 'Naciśnij J, żeby przejść do następnego kafelka',
+            start: function (s) { s.id = sentState.focusId; },
+            done: function (s) { return !!sentState.focusId && sentState.focusId !== s.id; } },
+          { title: 'Decyzja jednym klawiszem', target: function () { return _sentTile(sentState.focusId) || _sentTileEls()[0]; }, focus: _tutSentList,
+            text: 'N, U i P zapisują sentyment od razu w Brand24, a wybór obecnego sentymentu zostawia go bez zapisu. Fokus sam przechodzi na następny kafelek bez decyzji.',
+            task: 'Oceń kafelek klawiszem N, U albo P',
+            start: function (s) { s.n = sentState.decisions; },
+            done: function (s) { return sentState.decisions > s.n; } },
+          { title: 'Pomyłka? Z', target: function () { return _sentTile(sentState.lastDoneId); }, focus: _tutSentList,
+            when: function () { return !!sentState.lastDoneId; },
+            text: 'Z cofa ostatnią decyzję: Brand24 wraca do sentymentu sprzed przeglądu, a kafelek czeka na nową ocenę.',
+            task: 'Naciśnij Z, żeby cofnąć decyzję z poprzedniego kroku',
+            start: function (s) { s.n = sentState.undos; },
+            done: function (s) { return sentState.undos > s.n; } },
+          { title: 'Mniej na ekranie', target: function () { var c = _$('b24t-sent-hidedone'); return c && (c.closest('label') || c); },
+            text: '„Ukryj załatwione” chowa kafelki z decyzją, a pola na pasku zostawiają wybrane grupy, źródła albo treść.',
+            task: 'Włącz przełącznik „Ukryj załatwione”',
+            done: function () { return sentState.hideDone; } }
+        ]
+      },
+      {
+        id: 'aitag', title: 'AI Tag', minutes: 1,
+        lead: 'Tagowanie promptem bez pliku: prompt, tagi ocen, wzmianki z tagiem AI.',
+        intro: { title: 'AI Tag', text: 'Model czyta wzmianki z Brand24 i nadaje tagi według promptu, bez pliku. Trzy kroki pokazują ustawienia, od których zależy wynik.' },
+        outro: { title: 'Gotowe do startu', text: '„Taguj przez AI” startuje ocenę. Test Run z karty Plik działa także tutaj: model ocenia wzmianki, a tagi zostają tylko w logu.' },
+        ready: function () {
+          var r = _tutPanelReady();
+          if (r) return r;
+          return _tutVisible(_$('b24t-aitag-tab-btn')) ? '' : 'Włącz tagowanie AI w Ustawieniach → AI.';
+        },
+        prepare: function () { _tutShowPanel('aitag'); },
+        offer: {
+          used: function () { return _tutHas(lsGet(LS.AI_TAG_PROJECT_CFG, null)); },
+          when: function () { return _tutPanelOpen() && _panelTab === 'aitag'; },
+          target: function () { return _$('b24t-ait-prompt'); }
+        },
+        steps: [
+          { title: 'Prompt decyduje', target: function () { return _$('b24t-ait-prompt'); }, enter: function () { _tutShowPanel('aitag'); },
+            text: 'Prompt mówi modelowi, jak oceniać wzmianki i jakie oceny zwracać. Lista pochodzi z biblioteki w Ustawieniach → Prompty.',
+            task: 'Wybierz prompt z listy',
+            done: function () { var p = _$('b24t-ait-prompt'); return !!p && !!p.value; } },
+          { title: 'Ocena → tag', target: function () { return _$('b24t-ait-map'); }, enter: function () { _tutShowPanel('aitag'); },
+            text: 'Każda ocena modelu dostaje tag Brand24, „Pomiń” albo „Usuń wzmiankę”. Ustawienie zapisuje się dla projektu.',
+            task: 'Wybierz tag dla co najmniej jednej oceny',
+            done: function () { return Array.prototype.some.call(_qa('#b24t-ait-map .b24t-ait-mapsel'), function (s) { return /^\d+$/.test(s.value); }); } },
+          { title: 'Drugi przebieg bez dubli',
+            target: function () { var r = _q('#b24t-panel input[name="b24t-ait-conflict"]'); return r && r.closest('fieldset'); },
+            enter: function () { _tutShowPanel('aitag'); },
+            text: 'Wzmianka może mieć tag AI z wcześniejszego przebiegu. Pomiń zostawia ją bez zmian, Nadpisz wymienia tag, Dopisz dodaje drugi obok.' }
+        ]
+      }
+    ];
+  }
+
+  function _tutDef(id) { return _tutDefs().filter(function (d) { return d.id === id; })[0] || null; }
+  function _tutStepsLabel(d) { return _plPl(d.steps.length, 'krok', 'kroki', 'kroków') + ' · ok. ' + d.minutes + ' min'; }
+
+  var Tutor = (function () {
+    var cur = null, offerCur = null, offered = false, pokeTimer = 0;
+
+    // Dymek obok celu: z lewej, z prawej, pod, nad; pierwsze miejsce mieszczące się w oknie przeglądarki. Cel
+    // w panelu albo oknie narzędziowym ma dymek z boku całego okna (`o`), żeby dymek nie zasłaniał paska funkcji
+    // ani reszty okna; strzałka stoi na linii środka celu także wtedy, gdy dymek przesunął się do krawędzi
+    // (TUTORIALS.md §5).
+    function placeAt(b, r, o) {
+      var VW = _vw(), VH = _vh(), bw = b.offsetWidth, bh = b.offsetHeight, g = 14, m = 8;
+      var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      o = o || r;
+      var c = [
+        ['left', o.left - g - bw, cy - bh / 2, o.left - g - bw >= m],
+        ['right', o.right + g, cy - bh / 2, o.right + g + bw <= VW - m],
+        ['bottom', cx - bw / 2, r.bottom + g, r.bottom + g + bh <= VH - m],
+        ['top', cx - bw / 2, r.top - g - bh, r.top - g - bh >= m]
+      ].filter(function (p) { return p[3]; })[0];
+      if (!c) return { x: (VW - bw) / 2, y: VH - bh - 16, side: '' };
+      var x = _clamp(c[1], m, VW - bw - m), y = _clamp(c[2], m, VH - bh - m);
+      var vertical = c[0] === 'left' || c[0] === 'right';
+      var arrow = vertical ? _clamp(cy - y, 18, bh - 18) : _clamp(cx - x, 18, bw - 18);
+      return { x: x, y: y, side: c[0], arrow: arrow };
     }
 
+    function applyPlace(b, p) {
+      b.style.left = Math.round(p.x) + 'px';
+      b.style.top = Math.round(p.y) + 'px';
+      if (p.side) {
+        b.dataset.side = p.side;
+        b.style.setProperty('--b-arrow', Math.round(p.arrow) + 'px');
+      } else b.removeAttribute('data-side');
+    }
+
+    function makeBubble(cls) {
+      var b = document.createElement('div');
+      b.className = 'b-ui b-tour' + (cls ? ' ' + cls : '');
+      b.tabIndex = -1;
+      b.innerHTML = '<span class="b-tour__arrow" aria-hidden="true"></span><div class="b-tour__body"></div>';
+      _uiMount(b);
+      return b;
+    }
+
+    // ── Samouczek ──
     function render() {
-      var st = cur.steps[cur.i], n = cur.steps.length - 2, b = cur.bubble;
+      var st = cur.steps[cur.i], n = cur.steps.length - 2, d = cur.def, body = cur.bubble.querySelector('.b-tour__body');
       var task = st.task || cur.s.task;
-      b.innerHTML =
-        (st.intro || st.outro ? '' : '<div class="b-tour__count">Krok ' + cur.i + ' z ' + n + '</div>') +
+      var head = st.intro ? '<div class="b-tour__count">Samouczek · ' + _escHtml(_tutStepsLabel(d)) + '</div>'
+        : st.outro ? ''
+        : '<div class="b-tour__head"><span class="b-tour__count">Krok ' + cur.i + ' z ' + n + '</span>' +
+          '<span class="b-tour__prog" role="progressbar" aria-label="Postęp samouczka" aria-valuemin="1" aria-valuemax="' + n + '" aria-valuenow="' + cur.i + '">' +
+          d.steps.map(function (x, k) { return '<i' + (k < cur.i ? ' class="is-on"' : '') + '></i>'; }).join('') + '</span></div>';
+      var btn = function (t, label, primary) { return '<button type="button" class="b-btn ' + (primary ? 'b-btn--primary' : 'b-btn--quiet') + ' b-btn--sm" data-t="' + t + '">' + label + '</button>'; };
+      body.innerHTML = head +
         '<h2 class="b-tour__title" id="b24t-tour-title">' + _escHtml(st.title) + '</h2>' +
         '<p class="b-tour__text">' + _escHtml(st.text) + '</p>' +
-        (task ? '<div class="b-tour__try"><p class="b-tour__try-label" aria-live="polite">' + TOUR_TRY + '</p>' +
+        (task ? '<div class="b-tour__try"><p class="b-tour__try-label" aria-live="polite">' + TUT_TRY + '</p>' +
           '<div class="b-tour__task" data-done="false"><span class="b-tour__mark"></span><span><span class="b-tour__do">' + _escHtml(task) +
           '</span></span></div></div>' : '') +
         '<div class="b-tour__foot">' +
-          (st.intro ? '<button type="button" class="b-btn b-btn--quiet b-btn--sm" data-t="skip">Nie teraz</button><span class="b-sp"></span>' +
-                      '<button type="button" class="b-btn b-btn--primary b-btn--sm" data-t="next">Zaczynamy</button>'
-          : st.outro ? '<button type="button" class="b-btn b-btn--quiet b-btn--sm" data-t="back">Wstecz</button><span class="b-sp"></span>' +
-                       '<button type="button" class="b-btn b-btn--primary b-btn--sm" data-t="done">Zakończ</button>'
-          : '<button type="button" class="b-btn b-btn--quiet b-btn--sm" data-t="back">Wstecz</button><span class="b-sp"></span>' +
-            '<button type="button" class="b-btn b-btn--quiet b-btn--sm" data-t="skip">Zakończ</button>' +
-            '<button type="button" class="b-btn b-btn--primary b-btn--sm" data-t="next">Dalej</button>') +
+          (st.intro ? btn('later', 'Nie teraz') + '<span class="b-sp"></span>' + btn('next', 'Zaczynamy', true)
+          : st.outro ? btn('back', 'Wstecz') + '<span class="b-sp"></span>' + btn('catalog', 'Samouczki') + btn('done', 'Zakończ', true)
+          : btn('back', 'Wstecz') + '<span class="b-sp"></span>' + btn('skip', 'Zakończ') + btn('next', 'Dalej', true)) +
         '</div>';
+      body.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: WIN_EASE_IN });
       cur.key = '';
-      b.querySelector('.b-btn--primary').focus({ preventScroll: true });
     }
 
-    // Kierunek dir pomija kroki, których warunek nie zachodzi (powrót z pigułki bez zwiniętego panelu).
+    function focusPrimary() {
+      var p = cur.bubble.querySelector('.b-btn--primary');
+      if (p) p.focus({ preventScroll: true });
+    }
+
+    // Kierunek dir pomija kroki, których warunek nie zachodzi (powrót z pigułki bez zwiniętego panelu). Fokus
+    // przechodzi na nowy krok tylko z dymku; fokus na kontrolce użytkownika zostaje na niej (TUTORIALS.md §4).
+    // Krok z `focus` przenosi fokus na wskazany element.
     function go(i, dir) {
-      clearTimeout(cur.timer);
+      if (cur.anim) { cur.anim.onfinish = null; cur.anim.cancel(); cur.anim = null; }
       while (i > 0 && i < cur.steps.length - 1 && cur.steps[i].when && !cur.steps[i].when()) i += dir;
+      var inBubble = cur.bubble.contains(_activeEl());
       cur.i = i;
       cur.ok = false;
       cur.s = {};
@@ -7994,79 +8420,71 @@
       if (st.enter) st.enter();
       if (st.start) st.start(cur.s);
       render();
+      // Cel w przewijanej treści (opcje przebiegu na dole karty Plik, kafelek przeglądu) staje w widoku.
+      var te = st.target && _tutTargetEl(st.target);
+      if (te) te.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      // Krok z klawiszami okna (przegląd sentymentu) oddaje fokus temu oknu, bo jego skróty słuchają tylko w nim.
+      var f = st.focus && st.focus();
+      if (f) f.focus({ preventScroll: true });
+      else if (inBubble) focusPrimary();
       cur.spot.classList.add('is-moving');
+      cur.bubble.classList.add('is-moving');
       clearTimeout(cur.moveTimer);
-      cur.moveTimer = setTimeout(function () { if (cur) cur.spot.classList.remove('is-moving'); }, 260);
+      cur.moveTimer = setTimeout(function () { if (cur) { cur.spot.classList.remove('is-moving'); cur.bubble.classList.remove('is-moving'); } }, 260);
+      // Warunek spełniony przy wejściu w krok: zadanie od razu odhaczone (plik już wczytany, przełącznik włączony).
+      if (st.done && st.done(cur.s)) complete(true);
     }
 
-    // Odhaczenie: ptaszek, wyszarzenie i przekreślenie zadania (CSS .b-tour__do), potem chwila na zobaczenie efektu
-    // i następny krok.
-    function complete() {
+    // Odhaczenie: ptaszek, wyszarzenie i przekreślenie zadania (CSS .b-tour__do), pasek odliczania i następny krok.
+    // Pasek stoi, dopóki kursor jest nad dymkiem, fokus klawiatury jest w dymku albo przycisk myszy jest wciśnięty
+    // (frame), i rusza dalej od miejsca, w którym stanął.
+    function complete(already) {
       cur.ok = true;
       var t = cur.bubble.querySelector('.b-tour__task');
-      if (t) {
-        t.dataset.done = 'true';
-        t.querySelector('.b-tour__mark').outerHTML = _icon('okCircle');
+      if (!t) return;
+      t.dataset.done = 'true';
+      t.querySelector('.b-tour__mark').outerHTML = _icon('okCircle');
+      if (!already) {
         t.firstElementChild.animate(_uiFull() ? [{ transform: 'scale(0.6)' }, { transform: 'scale(1.12)', offset: 0.6 }, { transform: 'none' }]
           : [{ opacity: 0 }, { opacity: 1 }], { duration: _uiFull() ? 260 : 160, easing: WIN_EASE_IN });
-        cur.bubble.querySelector('.b-tour__try-label').textContent = TOUR_DONE;
       }
-      advance(TOUR_HOLD);
+      cur.bubble.querySelector('.b-tour__try-label').textContent = already ? TUT_ALREADY : TUT_DONE;
+      var bar = document.createElement('span');
+      bar.className = 'b-tour__timer';
+      t.appendChild(bar);
+      cur.anim = bar.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: TUT_HOLD, fill: 'forwards' });
+      cur.anim.onfinish = function () { if (cur) go(cur.i + 1, 1); };
     }
 
-    function advance(ms) {
-      clearTimeout(cur.timer);
-      cur.timer = setTimeout(function () { if (cur) go(cur.i + 1, 1); }, ms);
-    }
-
-    // Wciśnięty przycisk myszy wstrzymuje odhaczenie i przejście dalej: przeciąganie i zmiana rozmiaru spełniają
-    // warunek kroku w trakcie ruchu, a krok nie ma się zmieniać pod trzymanym oknem. Nasłuch w fazie przechwytywania
-    // na window: Win przechwytuje wskaźnik nagłówka, więc pointerup trafia do nagłówka, ale przechodzi przez window.
-    function onDown() {
-      cur.down = true;
-      if (cur.ok) clearTimeout(cur.timer);
-    }
-    function onUp() {
-      if (!cur.down) return;
-      cur.down = false;
-      if (cur.ok) advance(TOUR_RESUME);
-    }
+    // Wciśnięty przycisk myszy wstrzymuje odhaczenie i odliczanie: przeciąganie i zmiana rozmiaru spełniają warunek
+    // kroku w trakcie ruchu, a krok nie ma się zmieniać pod trzymanym oknem. Nasłuch w fazie przechwytywania na
+    // window: Win przechwytuje wskaźnik nagłówka, więc pointerup trafia do nagłówka, ale przechodzi przez window.
+    function onDown() { if (cur) cur.down = true; }
+    function onUp() { if (cur) cur.down = false; }
 
     // Paleta (warstwa 499) i dialog (400) otwarte w kroku leżą nad podświetleniem (480) albo pod nim, a pod dymkiem (510).
     // Na czas ich otwarcia podświetlenie znika, a dymek schodzi do lewego dolnego rogu, gdzie przy 1366 px nie zasłania
     // ani palety, ani ściągawki skrótów.
     function covered() {
-      return Palette.isOpen() || Win.list().some(function (id) { return Win.get(id).kind === 'dialog'; });
+      return Palette.isOpen() || Win.list().some(function (id) { return WIN_MODAL[Win.get(id).kind]; });
     }
 
-    // Dymek obok celu: lewo, prawo, pod, nad, w tej kolejności, pierwsze miejsce mieszczące się w oknie.
-    // Bez celu: wstęp i koniec na środku, kroki w lewym dolnym rogu. Style zmieniają się tylko przy zmianie układu.
+    // Bez celu dymek zostaje w ostatnim miejscu, żeby nie skakał, gdy cel na chwilę znika; krok, który od początku
+    // nie ma celu, stoi w lewym dolnym rogu. Style zmieniają się tylko przy zmianie układu.
     function place() {
-      var st = cur.steps[cur.i], t = st.target && !covered() && st.target(), r = t ? t.getBoundingClientRect() : null;
-      if (r && (!r.width || !r.height)) r = null;
-      var VW = _vw(), VH = _vh(), b = cur.bubble, bw = b.offsetWidth, bh = b.offsetHeight, g = 14, m = 8, x, y;
-      if (r) {
-        var c = [
-          [r.left - g - bw, r.top, r.left - g - bw >= m],
-          [r.right + g, r.top, r.right + g + bw <= VW - m],
-          [r.left, r.bottom + g, r.bottom + g + bh <= VH - m],
-          [r.left, r.top - g - bh, r.top - g - bh >= m]
-        ].filter(function (p) { return p[2]; });
-        var p = c[0] || [VW / 2 - bw / 2, VH - bh - 16];
-        x = _clamp(p[0], m, VW - bw - m);
-        y = _clamp(p[1], m, VH - bh - m);
-      } else if (st.intro || st.outro) {
-        x = (VW - bw) / 2;
-        y = (VH - bh) / 2;
-      } else {
-        x = 16;
-        y = VH - bh - 16;
-      }
-      var key = Math.round(x) + ',' + Math.round(y) + (r ? ',' + Math.round(r.left) + ',' + Math.round(r.top) + ',' + Math.round(r.width) + ',' + Math.round(r.height) : '');
+      var st = cur.steps[cur.i], cov = covered(), b = cur.bubble, VW = _vw(), VH = _vh();
+      var r = !cov && st.target ? _tutTarget(st.target) : null, p;
+      if (r) p = placeAt(b, r, _tutOuter(st.target));
+      else if (st.intro || st.outro) p = { x: (VW - b.offsetWidth) / 2, y: (VH - b.offsetHeight) / 2 };
+      else if (cov || !cur.last) p = { x: 16, y: VH - b.offsetHeight - 16 };
+      else p = { x: _clamp(cur.last.x, 8, VW - b.offsetWidth - 8), y: _clamp(cur.last.y, 8, VH - b.offsetHeight - 8) };
+      if (!p.side) p.side = '';
+      var key = [Math.round(p.x), Math.round(p.y), p.side, Math.round(p.arrow || 0)].join() +
+        (r ? ',' + [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)].join() : '');
       if (key === cur.key) return;
       cur.key = key;
-      b.style.left = Math.round(x) + 'px';
-      b.style.top = Math.round(y) + 'px';
+      applyPlace(b, p);
+      if (!cov && !st.intro && !st.outro) cur.last = { x: p.x, y: p.y };
       cur.spot.hidden = !r;
       if (r) {
         var pad = 6;
@@ -8080,43 +8498,52 @@
     function frame() {
       if (!cur) return;
       var st = cur.steps[cur.i];
-      if (st.done && !cur.ok && !cur.down && st.done(cur.s)) complete();
+      if (st.done && !cur.ok && !cur.down && st.done(cur.s)) complete(false);
+      if (cur.anim) {
+        var hold = cur.down || cur.bubble.matches(':hover') || !!cur.bubble.querySelector(':focus-visible');
+        if (hold && cur.anim.playState === 'running') cur.anim.pause();
+        else if (!hold && cur.anim.playState === 'paused') cur.anim.play();
+      }
       place();
       cur.raf = requestAnimationFrame(frame);
     }
 
-    function start() {
-      if (cur) return;
-      var pw = Win.get('panel');
-      if (!pw) return;
+    function start(id) {
+      var d = _tutDef(id);
+      if (!d) return;
+      var why = d.ready();
+      if (why) { Toast.show(why, 'info'); return; }
+      if (cur) end(cur.i >= cur.steps.length - 1 ? 'done' : 'skipped');
+      dropOffer();
       Palette.close(false);
       Menu.close(false);
-      if (pw.hidden) _panelHide(false);
+      Win.close('help');
+      if (d.prepare) d.prepare();
       var spot = document.createElement('div');
       spot.className = 'b-ui b-tour-spot';
       spot.hidden = true;
-      var bubble = document.createElement('div');
-      bubble.className = 'b-ui b-tour';
+      _uiMount(spot);
+      var bubble = makeBubble();
       bubble.setAttribute('role', 'dialog');
       bubble.setAttribute('aria-labelledby', 'b24t-tour-title');
-      bubble.tabIndex = -1;
       bubble.addEventListener('click', function (e) {
         var a = e.target.closest('[data-t]');
-        if (!a) return;
+        if (!a || !cur) return;
         var t = a.dataset.t;
         if (t === 'next') go(cur.i + 1, 1);
         else if (t === 'back') go(cur.i - 1, -1);
+        else if (t === 'later') end('later');
+        else if (t === 'catalog') { end('done'); _tutCatalog(); }
         else end(t === 'done' ? 'done' : 'skipped');
       });
       bubble.addEventListener('keydown', function (e) {
         if (e.key !== 'Escape') return;
         e.preventDefault();
         e.stopPropagation();
-        end('skipped');
+        end(cur.i === 0 ? 'later' : 'skipped');
       });
-      _uiMount(spot);
-      _uiMount(bubble);
-      cur = { steps: steps(), i: 0, s: {}, spot: spot, bubble: bubble, key: '', down: false };
+      var steps = [{ intro: true, title: d.intro.title, text: d.intro.text }].concat(d.steps, [{ outro: true, title: d.outro.title, text: d.outro.text }]);
+      cur = { def: d, steps: steps, i: 0, s: {}, spot: spot, bubble: bubble, key: '', down: false, anim: null, last: null };
       window.addEventListener('pointerdown', onDown, true);
       window.addEventListener('pointerup', onUp, true);
       window.addEventListener('pointercancel', onUp, true);
@@ -8124,29 +8551,154 @@
       bubble.animate(_uiFull() ? [{ opacity: 0, transform: 'scale(0.98)' }, { opacity: 1, transform: 'none' }] : [{ opacity: 0 }, { opacity: 1 }],
         { duration: _uiFull() ? 200 : 160, easing: WIN_EASE_IN });
       go(0, 1);
+      focusPrimary();
       cur.raf = requestAnimationFrame(frame);
     }
 
-    // how: 'done' po ostatnim kroku, 'skipped' przy wcześniejszym wyjściu (LS.TOUR; propozycja samouczka po
-    // aktualizacji pyta tylko, gdy klucza nie ma).
+    // how: 'done' po ostatnim kroku, 'skipped' przy wcześniejszym wyjściu, 'later' przy „Nie teraz” na wstępie.
+    // Ponowne przejście ukończonego samouczka nie zmienia stanu „done”.
     function end(how) {
       if (!cur) return;
       var c = cur;
       cur = null;
       cancelAnimationFrame(c.raf);
-      clearTimeout(c.timer);
       clearTimeout(c.moveTimer);
+      if (c.anim) { c.anim.onfinish = null; c.anim.cancel(); }
       window.removeEventListener('pointerdown', onDown, true);
       window.removeEventListener('pointerup', onUp, true);
       window.removeEventListener('pointercancel', onUp, true);
       window.removeEventListener('blur', onUp);
-      lsSet(LS.TOUR, how);
+      var prev = _tutGet(c.def.id);
+      if (how === 'done' || !prev || (prev.st !== 'done' && !(how === 'later' && prev.st === 'skipped'))) _tutSet(c.def.id, how);
       c.spot.remove();
       c.bubble.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, easing: WIN_EASE_OUT, fill: 'forwards' }).onfinish = function () { c.bubble.remove(); };
     }
 
-    return { start: start, end: end, isOpen: function () { return !!cur; } };
+    // ── Propozycja samouczka przy pierwszym użyciu funkcji (TUTORIALS.md §6) ──
+    function eligible(id) {
+      var e = _tutGet(id);
+      return !e || (e.st === 'later' && Date.now() - e.at > TUT_LATER);
+    }
+    function blocked() {
+      return !!cur || !!offerCur || covered() || Menu.isOpen() || state.status === 'running' || state.status === 'paused';
+    }
+
+    // Wołane po pokazaniu karty panelu albo okna funkcji; propozycja pojawia się po chwili, gdy funkcja jest
+    // już narysowana. Najwyżej jedna propozycja na załadowanie strony.
+    function poke() {
+      if (offered) return;
+      clearTimeout(pokeTimer);
+      pokeTimer = setTimeout(function () {
+        if (offered || blocked()) return;
+        var d = _tutDefs().filter(function (x) { return x.offer && eligible(x.id) && !x.offer.used() && !x.ready() && x.offer.when(); })[0];
+        if (d) showOffer(d);
+      }, 800);
+    }
+
+    function showOffer(d) {
+      offered = true;
+      var b = makeBubble('b-tour--offer');
+      b.setAttribute('role', 'region');
+      b.setAttribute('aria-labelledby', 'b24t-tut-offer-title');
+      b.setAttribute('aria-live', 'polite');
+      b.querySelector('.b-tour__body').innerHTML =
+        '<div class="b-tour__count">Samouczek · ' + _escHtml(_tutStepsLabel(d)) + '</div>' +
+        '<h2 class="b-tour__title" id="b24t-tut-offer-title">' + _escHtml(d.title) + '</h2>' +
+        '<p class="b-tour__text">' + _escHtml(d.lead) + '</p>' +
+        '<div class="b-tour__foot">' +
+          '<button type="button" class="b-btn b-btn--quiet b-btn--sm" data-o="never">Nie pokazuj</button><span class="b-sp"></span>' +
+          '<button type="button" class="b-btn b-btn--quiet b-btn--sm" data-o="later">Później</button>' +
+          '<button type="button" class="b-btn b-btn--primary b-btn--sm" data-o="show">Pokaż</button>' +
+        '</div>';
+      b.addEventListener('click', function (e) {
+        var a = e.target.closest('[data-o]');
+        if (!a) return;
+        answer(a.dataset.o);
+      });
+      offerCur = { def: d, el: b, key: '' };
+      window.addEventListener('keydown', offerKey, true);
+      b.animate(_uiFull() ? [{ opacity: 0, transform: 'scale(0.98)' }, { opacity: 1, transform: 'none' }] : [{ opacity: 0 }, { opacity: 1 }],
+        { duration: _uiFull() ? 200 : 160, easing: WIN_EASE_IN });
+      offerCur.raf = requestAnimationFrame(offerFrame);
+    }
+
+    // Karta znika bez zmiany stanu, gdy funkcja zniknie z ekranu (inna karta, zamknięte okno, otwarte okno dialogowe).
+    function offerFrame() {
+      if (!offerCur) return;
+      var d = offerCur.def, r = d.offer.when() && !covered() ? _tutTarget(d.offer.target) : null;
+      if (!r) { dropOffer(); return; }
+      var p = placeAt(offerCur.el, r, _tutOuter(d.offer.target)), key = [Math.round(p.x), Math.round(p.y), p.side, Math.round(p.arrow || 0)].join();
+      if (key !== offerCur.key) { offerCur.key = key; applyPlace(offerCur.el, p); }
+      offerCur.raf = requestAnimationFrame(offerFrame);
+    }
+
+    // Esc działa jak „Później”, chyba że zajęło go coś innego (menu, dymek, okno z fokusem).
+    function offerKey(e) {
+      if (e.key !== 'Escape' || e.defaultPrevented || Menu.isOpen()) return;
+      var a = _activeEl();
+      if (a && a !== document.body && !offerCur.el.contains(a) && a.closest && a.closest('.b-win')) return;
+      e.preventDefault();
+      answer('later');
+    }
+
+    function answer(o) {
+      var d = offerCur.def;
+      dropOffer();
+      if (o === 'show') { start(d.id); return; }
+      _tutSet(d.id, o === 'never' ? 'never' : 'later');
+      if (o === 'never') Toast.show('Samouczek zostaje w katalogu pod „?” w nagłówku panelu.', 'info');
+    }
+
+    function dropOffer() {
+      if (!offerCur) return;
+      var o = offerCur;
+      offerCur = null;
+      cancelAnimationFrame(o.raf);
+      window.removeEventListener('keydown', offerKey, true);
+      o.el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, easing: WIN_EASE_OUT, fill: 'forwards' }).onfinish = function () { o.el.remove(); };
+    }
+
+    return { start: start, end: end, poke: poke, isOpen: function () { return !!cur; } };
   })();
+
+  // ── Katalog „Pomoc i samouczki” (TUTORIALS.md §7) ──
+  function _tutCatalog() {
+    if (Win.get('help')) { Win.front('help'); return; }
+    var exp = _relChannel() === 'experimental';
+    var row = function (d) {
+      var why = d.ready(), e = _tutGet(d.id), st = e && e.st === 'done' ? 'Ukończony' : e && e.st === 'skipped' ? 'Przerwany' : '';
+      return '<li class="b-tut-row">' +
+        '<div class="b-tut-row__main">' +
+          '<div class="b-row b-row--wrap"><span class="b-tut-row__title">' + _escHtml(d.title) + '</span>' +
+            (st ? '<span class="b-chip b-chip--sm' + (st === 'Ukończony' ? ' b-chip--ok' : '') + '">' + st + '</span>' : '') + '</div>' +
+          '<div class="b-small b-text2">' + _escHtml(why || d.lead) + '</div>' +
+          '<div class="b-small b-muted">' + _escHtml(_tutStepsLabel(d)) + '</div>' +
+        '</div>' +
+        '<button type="button" class="b-btn b-btn--sm ' + (e && e.st === 'done' ? 'b-btn--neutral' : 'b-btn--primary') + '" data-tut="' + d.id + '"' +
+          (why ? ' aria-disabled="true"' : '') + '>' + _icon('play') + (e && e.st === 'done' ? 'Powtórz' : 'Pokaż') + '</button>' +
+      '</li>';
+    };
+    var link = function (go, icon, label, kbd) {
+      return '<button type="button" class="b-btn b-btn--quiet b-tut-link" data-go="' + go + '">' + _icon(icon) + '<span>' + label + '</span>' +
+        (kbd ? '<span class="b-sp"></span>' + kbd.split(' ').map(function (k) { return '<span class="b-kbd">' + k + '</span>'; }).join(' ') : '') + '</button>';
+    };
+    var w = Win.open({
+      id: 'help', kind: 'dialog', width: 36, title: 'Pomoc i samouczki', icon: 'help',
+      body: '<div class="b-stack">' +
+        '<section class="b-stack b-stack--sm"><h3 class="b-card__title">Samouczki</h3><ul class="b-tut-list">' + _tutDefs().map(row).join('') + '</ul></section>' +
+        '<section class="b-stack b-stack--sm"><h3 class="b-card__title">Na skróty</h3><div class="b-tut-links">' +
+          link('palette', 'search', 'Paleta poleceń', 'Ctrl K') + link('keys', 'keyboard', 'Skróty klawiszowe', '?') +
+          link('changelog', 'notes', exp ? 'Dziennik zmian' : 'Dziennik aktualizacji') + link('report', 'chat', 'Zgłoś błąd albo pomysł') +
+        '</div></section></div>'
+    });
+    w.el.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-tut]'), g = e.target.closest('[data-go]');
+      if (t) { if (t.getAttribute('aria-disabled') !== 'true') Tutor.start(t.dataset.tut); return; }
+      if (!g) return;
+      Win.close('help');
+      ({ palette: function () { Palette.open(); }, keys: _keysOpen, changelog: function () { showChangelog(); }, report: function () { showReportModal(); } })[g.dataset.go]();
+    });
+  }
 
   // ───────────────────────────────────────────
   // UI - HTML
@@ -8178,9 +8730,9 @@
 
     const headExtra =
       `<span id="b24t-status-badge" class="b-status" data-state="idle" role="status"><span class="b-status__label">Gotowy</span></span>` +
-      `<button type="button" class="b-ibtn b-hide-below-34" id="b24t-btn-palette" aria-label="Paleta poleceń" data-tip="Paleta poleceń · Ctrl K">${_icon('search')}</button>` +
-      `<button type="button" class="b-ibtn" id="b24t-btn-help" aria-label="Tryb pomocy" data-tip="Tryb pomocy">${_icon('help')}</button>` +
-      `<button type="button" class="b-ibtn" id="b24t-btn-features" aria-label="Ustawienia" data-tip="Ustawienia">${_icon('settings')}</button>`;
+      `<button type="button" class="b-ibtn b-hide-below-34" id="b24t-btn-palette" aria-label="Paleta poleceń" data-tip="Paleta poleceń" data-tip-kbd="Ctrl K">${_icon('search')}</button>` +
+      `<button type="button" class="b-ibtn" id="b24t-btn-help" aria-label="Pomoc i samouczki" data-tip="Pomoc i samouczki">${_icon('help')}</button>` +
+      `<button type="button" class="b-ibtn" id="b24t-btn-features" aria-label="Ustawienia" data-tip="Ustawienia: funkcje, modele AI, aktualizacje">${_icon('settings')}</button>`;
 
     const rail =
       `<nav id="b24t-tabs" class="b-rail b-scroll b-scroll--bare" aria-label="Funkcje">` +
@@ -8212,7 +8764,7 @@
               <span class="b-card__title b-card__title--lg b-ell" id="b24t-project-name">—</span>
               <span class="b-hint b-mono" id="b24t-project-meta">Przejdź do zakładki Mentions</span>
             </div>
-            <div id="b24t-file-zone" class="b-file is-empty" role="button" tabindex="0" aria-label="Wybierz plik z ocenami">
+            <div id="b24t-file-zone" class="b-file is-empty" role="button" tabindex="0" aria-label="Wybierz plik z ocenami" data-tip="Najpewniejszy jest JSON: XLSX potrafi obciąć 19-cyfrowe ID z TikToka i X">
               ${_icon('file')}
               <div class="b-file__text">
                 <span class="b-file__name b-ell" id="b24t-file-name">Wybierz plik albo upuść go tutaj</span>
@@ -8226,7 +8778,8 @@
             </div>
             <div class="b-row b-row--wrap b-small">
               <span id="b24t-token-status" class="b-token" data-state="pending">Czekam na token Brand24</span>
-              <button type="button" id="b24t-latency-badge" class="b-chip b-chip--sm b-chip--warn" hidden></button>
+              ${_info('Zielona kropka: wtyczka ma token Brand24 i może w nim zapisywać. Szara: wtyczka czeka na pierwsze zapytanie strony Brand24, na przykład po zmianie filtra albo strony wyników.', 'połączenie z Brand24')}
+              <button type="button" id="b24t-latency-badge" class="b-chip b-chip--sm b-net" hidden></button>
             </div>
           </section>
 
@@ -8268,6 +8821,7 @@
         <section class="b-card" id="b24t-mapping-section" hidden>
           <div class="b-card__head">
             <span class="b-card__title">Mapowanie ocen</span>
+            ${_info('Każda ocena z pliku dostaje tag Brand24 i rodzaj. Mapowanie zapisuje się dla projektu i wraca przy pliku z tymi samymi ocenami.', 'mapowanie ocen')}
             <div id="b24t-column-override-section" hidden>
               <button type="button" class="b-btn b-btn--link b-small" id="b24t-col-override-toggle" aria-expanded="false">Zmień wykryte kolumny</button>
             </div>
@@ -8295,14 +8849,14 @@
           </button>
           <div id="b24t-settings-content" class="b-stack">
             <div class="b-opt">
-              <span class="b-label">Tryb</span>
+              <span class="b-label">Tryb ${_info('Test Run przechodzi cały przebieg bez zapisu w Brand24, a log pokazuje, co by się stało. Działa też w Quick Tag, AI Tag, Usuwaniu i przeglądzie sentymentu. Po przeładowaniu strony tryb wraca na Właściwy.', 'tryb przebiegu')}</span>
               <div class="b-seg">
                 <label><input type="radio" name="b24t-run-mode" value="real" checked>Właściwy</label>
                 <label><input type="radio" name="b24t-run-mode" value="test">Test Run</label>
               </div>
             </div>
             <div class="b-opt">
-              <span class="b-label">Mapa wzmianek</span>
+              <span class="b-label">Mapa wzmianek ${_info('Nieotagowane: adresy z pliku są szukane tylko wśród wzmianek bez tagu. Wszystkie: także wśród otagowanych; wtedy pojawia się wybór, co zrobić przy konflikcie tagów.', 'mapa wzmianek')}</span>
               <div class="b-seg">
                 <label><input type="radio" name="b24t-map-mode" value="untagged" checked>Nieotagowane</label>
                 <label><input type="radio" name="b24t-map-mode" value="full">Wszystkie</label>
@@ -8366,7 +8920,7 @@
       <div class="b-foot__group" data-for="quicktag" hidden>
         <button type="button" class="b-btn b-btn--primary" id="b24t-qt-run">${_icon('tag')}Taguj teraz</button>
         <span class="b-sp"></span>
-        <button type="button" class="b-btn b-btn--quiet" id="b24t-qt-untag">Usuń tag z widocznych</button>
+        <button type="button" class="b-btn b-btn--quiet" id="b24t-qt-untag" data-tip="Zdejmuje wybrany tag ze wzmianek widocznych w Brand24">Usuń tag z widocznych</button>
       </div>
       <div class="b-foot__group" data-for="aitag" hidden>
         <button type="button" class="b-btn b-btn--primary" id="b24t-ait-run">${_icon('ai')}Taguj przez AI</button>
@@ -8419,13 +8973,13 @@
     var exp = _relChannel() === 'experimental';
     var unread = exp && _relCmp(VERSION, _relGm(REL_GM.clSeen, '0.0.0')) > 0;
     return [
-      { label: exp ? 'Dziennik zmian' : 'Dziennik aktualizacji', icon: 'notes', hint: unread ? 'nowa wersja' : '', onSelect: function () { showChangelog(); } },
+      { label: exp ? 'Dziennik zmian' : 'Dziennik aktualizacji', icon: 'notes', hint: unread ? 'nowa wersja' : '', dot: unread, onSelect: function () { showChangelog(); } },
       { label: 'Zgłoś błąd albo pomysł', icon: 'chat', onSelect: function () { showReportModal(); } },
       { label: 'Schowaj do krawędzi', icon: 'chevRight', onSelect: function () { _panelHide(true); } },
       'sep', { head: 'Pomoc' },
       { label: 'Paleta poleceń', icon: 'search', hint: 'Ctrl K', onSelect: function () { Palette.open(); } },
       { label: 'Skróty klawiszowe', icon: 'keyboard', hint: '?', onSelect: _keysOpen },
-      { label: 'Samouczek', icon: 'info', onSelect: function () { Tour.start(); } }
+      { label: 'Samouczki', icon: 'info', onSelect: _tutCatalog }
     ];
   }
 
@@ -8457,6 +9011,7 @@
       main.scrollTop = _panelScroll[tab] || 0;
     }
     _panelTab = tab;
+    Tutor.poke();
   }
 
   // Pasek funkcji: kliknięcie przełącza kartę; strzałki w górę i w dół przechodzą między widocznymi pozycjami.
@@ -8645,14 +9200,17 @@
     });
 
     // Help
-    panel.querySelector('#b24t-btn-help').addEventListener('click', toggleHelpMode);
+    panel.querySelector('#b24t-btn-help').addEventListener('click', _tutCatalog);
     panel.querySelector('#b24t-btn-palette').addEventListener('click', () => Palette.open());
 
     // Wąski panel: Match, Audit i eksport w menu „Więcej działań”
     panel.querySelector('#b24t-btn-more-actions').addEventListener('click', (e) => _panelMoreActions(e.currentTarget));
 
     // Latency badge → otwiera Network Monitor
-    panel.querySelector('#b24t-latency-badge')?.addEventListener('click', function() { openNetworkMonitorPanel(); });
+    panel.querySelector('#b24t-latency-badge')?.addEventListener('click', function() {
+      if (nmState.enabled) openNetworkMonitorPanel();
+      else Toast.show('Szczegóły zapytań pokazuje Network Monitor: włącza się go w Ustawieniach.', 'info');
+    });
 
     // Dodatkowe funkcje
     panel.querySelector('#b24t-btn-features')?.addEventListener('click', () => showFeaturesModal());
@@ -9748,391 +10306,6 @@
   }
 
   // ───────────────────────────────────────────
-  // HELP / TUTORIAL
-  // ───────────────────────────────────────────
-
-  let helpModeActive = false;
-  let helpZoneElements = [];
-  let helpTipElement = null;
-  let helpStickyTip = false;
-
-  function toggleHelpMode() {
-    if (helpModeActive) {
-      exitHelpMode();
-    } else {
-      enterHelpMode();
-    }
-  }
-
-  // Tryb pomocy (powierzchnia nr 16, §1.10): zasłona nad panelem i otwartym Dashboardem Annotatora, strefy nad
-  // ich elementami, opis w dymku po najechaniu, fokusie albo kliknięciu (kliknięcie przypina dymek). Pasek
-  // wyjścia stoi nad panelem; Esc i „Zakończ” wracają do pracy. Strefy liczą się raz, więc zmiana wymiarów
-  // okna kończy tryb.
-  function enterHelpMode() {
-    const panel = _$('b24t-panel');
-    if (!panel || panel.hidden) return;
-    helpModeActive = true;
-    const helpBtn = _$('b24t-btn-help');
-    if (helpBtn) helpBtn.setAttribute('aria-pressed', 'true');
-    Tip.hide();
-
-    const cur = panel.querySelector('#b24t-tabs [aria-current="page"]');
-    const wins = [{ el: panel, zones: getHelpZones(cur ? cur.dataset.tab : 'main') }];
-    const ann = Win.get('annotator');
-    if (ann && !ann.hidden) wins.push({ el: ann.el, zones: ANN_HELP_ZONES });
-    // Strefa powstaje tylko nad elementem, który widać: środek elementu przewiniętego poza obszar okna albo
-    // przykrytego drugim oknem trafia w coś innego. Pomiar przed zasłonami, które same przykryłyby środek.
-    const root = _uiEnsure().root, found = [];
-    wins.forEach(function(w) {
-      w.rect = w.el.getBoundingClientRect();
-      w.zones.forEach(function(z) {
-        const target = _q(z.selector);
-        if (!target) return;
-        const r = target.getBoundingClientRect();
-        if (!r.width || !r.height) return;
-        const hit = root.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-        if (hit && target.contains(hit)) found.push({ z: z, r: r });
-      });
-    });
-    wins.forEach(function(w) {
-      const cover = document.createElement('div');
-      cover.className = 'b-ui b-help-cover';
-      Object.assign(cover.style, { left: w.rect.left + 'px', top: w.rect.top + 'px', width: w.rect.width + 'px', height: w.rect.height + 'px' });
-      cover.addEventListener('click', hideHelpTip);
-      _uiMount(cover);
-      helpZoneElements.push(cover);
-    });
-    // Obrys wszystkich okien w trybie: pasek wyjścia stoi poza nim, żeby nie zasłaniał stref.
-    const box = wins.reduce(function(a, w) {
-      const r = w.rect;
-      return { l: Math.min(a.l, r.left), t: Math.min(a.t, r.top), r: Math.max(a.r, r.right), b: Math.max(a.b, r.bottom) };
-    }, { l: Infinity, t: Infinity, r: -Infinity, b: -Infinity });
-
-    found.forEach(function(f) {
-      const z = f.z, r = f.r;
-      const zone = document.createElement('button');
-      zone.type = 'button';
-      zone.className = 'b-ui b-help-zone';
-      zone.setAttribute('aria-label', z.title);
-      Object.assign(zone.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
-      zone.addEventListener('pointerenter', function() { if (!helpStickyTip) showHelpTip(zone, z, false); });
-      zone.addEventListener('pointerleave', function() { if (!helpStickyTip) hideHelpTip(); });
-      zone.addEventListener('focus', function() { if (!helpStickyTip) showHelpTip(zone, z, false); });
-      zone.addEventListener('click', function() { showHelpTip(zone, z, true); });
-      _uiMount(zone);
-      helpZoneElements.push(zone);
-    });
-
-    const bar = document.createElement('div');
-    bar.className = 'b-ui b-help-bar';
-    bar.setAttribute('role', 'status');
-    bar.innerHTML = _icon('help') + '<span>Tryb pomocy: wskaż element ' + (wins.length > 1 ? 'panelu albo Dashboardu' : 'panelu') + '</span>' +
-      '<button type="button" class="b-btn b-btn--quiet b-btn--sm">Zakończ <span class="b-kbd">Esc</span></button>';
-    bar.querySelector('button').addEventListener('click', exitHelpMode);
-    _uiMount(bar);
-    // Kolejność miejsc: nad oknami, pod nimi, z lewej, z prawej; bez miejsca w żadnym — u góry, na oknach.
-    const bw = bar.offsetWidth, bh = bar.offsetHeight, VW = _vw(), VH = _vh();
-    const cx = _clamp((box.l + box.r) / 2 - bw / 2, 8, VW - bw - 8), ty = _clamp(box.t, 8, VH - bh - 8);
-    const spot = [
-      [box.t - bh - 8 >= 8, cx, box.t - bh - 8],
-      [box.b + 8 + bh <= VH - 8, cx, box.b + 8],
-      [box.l - 8 - bw >= 8, box.l - 8 - bw, ty],
-      [box.r + 8 + bw <= VW - 8, box.r + 8, ty],
-      [true, cx, box.t + 8]
-    ].find(function(s) { return s[0]; });
-    bar.style.left = spot[1] + 'px';
-    bar.style.top = spot[2] + 'px';
-    helpZoneElements.push(bar);
-
-    window.addEventListener('keydown', _helpKey, true);
-    window.addEventListener('resize', exitHelpMode);
-  }
-
-  // Esc zamyka dymek albo tryb; Tab, Enter, spacja i strzałki chodzą po strefach. Każdy inny klawisz („?”, Ctrl+K)
-  // kończy tryb i działa dalej: zasłona trybu stoi nad dialogami i paletą, które by otworzył.
-  function _helpKey(e) {
-    if (e.key !== 'Escape') {
-      if (!/^(Tab|Enter| |Shift|Control|Alt|Meta|Arrow\w+)$/.test(e.key)) exitHelpMode();
-      return;
-    }
-    e.preventDefault();
-    e.stopPropagation();
-    if (helpStickyTip) hideHelpTip(); else exitHelpMode();
-  }
-
-  function exitHelpMode() {
-    if (!helpModeActive) return;
-    helpModeActive = false;
-    hideHelpTip();
-    window.removeEventListener('keydown', _helpKey, true);
-    window.removeEventListener('resize', exitHelpMode);
-    const helpBtn = _$('b24t-btn-help');
-    if (helpBtn) helpBtn.setAttribute('aria-pressed', 'false');
-    helpZoneElements.forEach(function(z) { z.remove(); });
-    helpZoneElements = [];
-  }
-
-  // Dymek obok strefy: po lewej, gdy jest miejsce (panel stoi zwykle przy prawej krawędzi), inaczej po prawej.
-  function showHelpTip(zone, z, sticky) {
-    hideHelpTip();
-    helpStickyTip = !!sticky;
-    helpZoneElements.forEach(function(el) { el.classList.toggle('is-active', el === zone); });
-    const tip = document.createElement('div');
-    tip.className = 'b-ui b-help-tip';
-    tip.setAttribute('role', 'tooltip');
-    tip.innerHTML = '<div class="b-help-tip__title"></div><div class="b-small b-text2"></div>';
-    tip.firstChild.textContent = z.title;
-    tip.lastChild.textContent = z.desc;
-    if (sticky) {
-      const x = _ibtn('x', 'Zamknij opis', 'b-ibtn--sm');
-      x.addEventListener('click', hideHelpTip);
-      tip.appendChild(x);
-    }
-    _uiMount(tip);
-    helpTipElement = tip;
-    const r = zone.getBoundingClientRect(), tw = tip.offsetWidth, th = tip.offsetHeight;
-    const left = r.left - tw - 12 >= 8 ? r.left - tw - 12 : Math.min(r.right + 12, _vw() - tw - 8);
-    tip.style.left = Math.max(8, left) + 'px';
-    tip.style.top = _clamp(r.top, 8, _vh() - th - 8) + 'px';
-  }
-
-  function hideHelpTip() {
-    helpStickyTip = false;
-    helpZoneElements.forEach(function(el) { el.classList.remove('is-active'); });
-    if (helpTipElement) { helpTipElement.remove(); helpTipElement = null; }
-  }
-
-  // Strefy trybu pomocy: wspólne dla panelu i dla bieżącej karty. Kolejność ma znaczenie: późniejsza strefa
-  // leży wyżej, więc przyciski nagłówka stoją nad strefą całego nagłówka.
-  // Strefy Dashboardu Annotatora; elementy innych zakładek mają wymiar 0 i tryb pomocy je pomija.
-  const ANN_HELP_ZONES = [
-    {
-      selector: '#b24t-annotator-panel [role="tablist"]',
-      title: 'Widoki Dashboardu',
-      desc: 'Projekt: liczby otwartego projektu. Tagi: projekty z wzmiankami do weryfikacji (REQ) i do usunięcia (DEL). Grupy: zestawy projektów do Overall i Trafności AI. Overall: postęp grupy w miesiącu. Trafność AI: werdykty AI wobec oceny człowieka. Strzałki zmieniają widok.',
-    },
-    {
-      selector: '#b24t-ann-ts-search',
-      title: 'Szukaj projektu',
-      desc: 'Zostawia na liście projekty, których nazwa zawiera wpisany tekst.',
-    },
-    {
-      selector: '#b24t-ann-tab-tagstats thead',
-      title: 'Sortowanie',
-      desc: 'Nagłówek kolumny sortuje listę: nazwy od A, liczby od największej. Ponowne kliknięcie odwraca kolejność.',
-    },
-    {
-      selector: '#b24t-ann-ts-rows a',
-      title: 'Nazwa projektu',
-      desc: 'Otwiera wzmianki projektu w Brand24 z tym samym zakresem dat; kliknięcie w wiersz działa tak samo.',
-    },
-    {
-      selector: '#b24t-overall-group-sel',
-      title: 'Grupa projektów',
-      desc: 'Overall sumuje wszystkie projekty wybranej grupy. Grupy powstają w widoku Grupy, a ikona obok ustawia tagi grupy.',
-    },
-    {
-      selector: '#b24t-ann-tab-overall .b-month',
-      title: 'Miesiąc',
-      desc: 'Strzałki zmieniają miesiąc, najdalej 12 wstecz. „Auto” wraca do wyboru automatycznego: poprzedni miesiąc, dopóki któryś projekt grupy nie jest w nim domknięty, potem bieżący.',
-    },
-    {
-      selector: '#b24t-mc-force-close',
-      title: 'Zamknij miesiąc',
-      desc: 'Oznacza projekty grupy jako domknięte w tym miesiącu; wybór automatyczny przechodzi wtedy na następny. Powiadomienie przez 8 s pozwala cofnąć zamknięcie.',
-    },
-    {
-      selector: '#b24t-aiacc-scope',
-      title: 'Tylko bieżący projekt',
-      desc: 'Trafność liczy się dla projektu otwartego w Brand24 zamiast dla całej grupy.',
-    },
-    {
-      selector: '#b24t-aiacc-run',
-      title: 'Policz trafność',
-      desc: 'Porównuje werdykty AI z oceną człowieka w projektach grupy. W trakcie liczenia ten przycisk je zatrzymuje; wynik obejmuje wtedy policzone projekty.',
-    },
-    {
-      selector: '#b24t-aiacc-copy',
-      title: 'Kopiuj raport',
-      desc: 'Kopiuje wynik ostatniego liczenia jako tabelę do wklejenia w arkusz: okres, precyzja, recall, F1 i wiersze projektów.',
-    },
-    {
-      selector: '#b24t-ann-tab-aitag .b-month',
-      title: 'Miesiąc',
-      desc: 'Strzałki zmieniają miesiąc, najdalej 12 wstecz. „Auto” wraca do miesiąca wybieranego tak samo jak w Overall.',
-    },
-    {
-      selector: '#b24t-annotator-panel .b-win__menu',
-      title: 'Położenie okna',
-      desc: 'Cztery rogi ekranu i powrót do położenia domyślnego.',
-    },
-    {
-      selector: '#b24t-annotator-panel .b-win__max',
-      title: 'Maksymalizacja',
-      desc: 'Okno zajmuje cały ekran, ponowne kliknięcie przywraca rozmiar. To samo robi dwuklik nagłówka.',
-    },
-  ];
-
-  function getHelpZones(activeTab) {
-    const common = [
-      {
-        selector: '#b24t-panel .b-head',
-        title: 'Nagłówek panelu',
-        desc: 'Przeciągnięcie przesuwa panel; przy prawej krawędzi okna panel przykleja się do niej, a strona Brand24 zwęża się o jego szerokość. Dwuklik zwija panel do pigułki.',
-      },
-      {
-        selector: '#b24t-status-badge',
-        title: 'Stan',
-        desc: 'Co robi wtyczka: gotowa, w toku, wstrzymana, zakończona albo błąd.',
-      },
-      {
-        selector: '#b24t-btn-help',
-        title: 'Tryb pomocy',
-        desc: 'Ten tryb. Esc albo „Zakończ” wraca do pracy.',
-      },
-      {
-        selector: '#b24t-btn-features',
-        title: 'Ustawienia',
-        desc: 'Funkcje opcjonalne, modele AI, analityka i kanał aktualizacji.',
-      },
-      {
-        selector: '#b24t-panel .b-win__menu',
-        title: 'Więcej',
-        desc: 'Dziennik zmian, zgłoszenie błędu albo pomysłu, schowanie panelu do uchwytu przy prawej krawędzi i położenie panelu: rogi, przyklejenie z prawej, układ domyślny.',
-      },
-      {
-        selector: '#b24t-panel .b-win__collapse',
-        title: 'Zwiń do pigułki',
-        desc: 'Panel zmienia się w pigułkę przy dolnej krawędzi, która w trakcie przebiegu pokazuje postęp. Kliknięcie pigułki rozwija panel.',
-      },
-      {
-        selector: '#b24t-tabs',
-        title: 'Pasek funkcji',
-        desc: 'Plik, Quick Tag, AI Tag, Sentyment i Usuwanie, a na dole Historia i Powiadomienia. Strzałki przechodzą między pozycjami; przy wąskim panelu zostają same ikony.',
-      },
-    ];
-
-    // Strefy per zakładka
-    const byTab = {
-      main: [
-        {
-          selector: '#b24t-file-zone',
-          title: 'Plik z ocenami',
-          desc: 'Kliknięcie albo upuszczenie pliku CSV, JSON lub XLSX. JSON jest najpewniejszy: XLSX potrafi obciąć 19-cyfrowe identyfikatory wzmianek z TikToka i X.',
-        },
-        {
-          selector: '#b24t-project-name',
-          title: 'Projekt',
-          desc: 'Wykryty projekt Brand24. Nazwa i identyfikator pojawiają się po wejściu we wzmianki projektu.',
-        },
-        {
-          selector: '#b24t-token-status',
-          title: 'Połączenie z Brand24',
-          desc: 'Zielona kropka: wtyczka ma token i może zapisywać w Brand24. Szara: czeka na pierwsze zapytanie strony.',
-        },
-        {
-          selector: '#b24t-progress-section',
-          title: 'Postęp',
-          desc: 'Pasek i bieżący krok, czas sesji oraz liczby otagowanych, pominiętych i pozostałych wzmianek. Kliknięcie „Pominięto” pokazuje wzmianki bez dopasowania.',
-        },
-        {
-          selector: '#b24t-mapping-section',
-          title: 'Mapowanie ocen',
-          desc: 'Każda ocena z pliku dostaje tag Brand24 i rodzaj. Mapowanie zapisuje się dla projektu i wraca przy pliku z tymi samymi ocenami.',
-        },
-        {
-          selector: '#b24t-settings-section',
-          title: 'Ustawienia przebiegu',
-          desc: 'Test Run sprawdza wszystko bez zapisu w Brand24. Mapa „Wszystkie” obejmuje też otagowane wzmianki i odsłania obsługę konfliktów tagów.',
-        },
-        {
-          selector: '#b24t-log-section',
-          title: 'Log',
-          desc: 'Przebieg sesji wpis po wpisie: ostrzeżenia na pomarańczowo, błędy na czerwono. Przycisk ze strzałką otwiera log w osobnym oknie.',
-        },
-        {
-          selector: '#b24t-actions',
-          title: 'Działania',
-          desc: 'Start uruchamia tagowanie, w trakcie są Pauza i Stop. Match sprawdza dopasowanie adresów bez tagowania, Audit porównuje plik z tagami w Brand24, strzałka zapisuje log do CSV.',
-        },
-      ],
-      quicktag: [
-        {
-          selector: '#b24t-qt-view-info',
-          title: 'Info o bieżącym widoku',
-          desc: 'Pokazuje aktywny projekt, zakres dat i liczbę wzmianek widocznych w Brand24. Odświeża się automatycznie.',
-        },
-        {
-          selector: '#b24t-qt-tag',
-          title: 'Wybór tagu',
-          desc: 'Tag który zostanie nadany wzmiankom. Lista pochodzi z bieżącego projektu Brand24.',
-        },
-        {
-          selector: 'input[name="b24t-qt-scope"]',
-          title: 'Zakres tagowania',
-          desc: 'Bieżąca strona — tylko wzmianki z aktualnej strony. Wszystkie strony — przetwarza cały widok po kolei (może potrwać dłużej).',
-        },
-        {
-          selector: '#b24t-qt-run',
-          title: '▶ Taguj teraz',
-          desc: 'Uruchamia Quick Tag dla wybranego tagu i zakresu. Nie wymaga pliku CSV — taguje to co widać w Brand24.',
-        },
-        {
-          selector: '#b24t-qt-untag',
-          title: 'Usuń tag z widocznych',
-          desc: 'Odwrotność Quick Tag — usuwa wybrany tag ze wszystkich widocznych wzmianek. Przydatne do korekty błędnych tagowań.',
-        },
-      ],
-      delete: [
-        {
-          selector: '#b24t-del-tag',
-          title: 'Tag do usunięcia',
-          desc: 'Wybierz tag którego wzmianki mają zostać usunięte. Operacja trwała — nie można cofnąć.',
-        },
-        {
-          selector: '#b24t-del-dateinfo',
-          title: 'Zakres dat',
-          desc: 'Pokazuje aktywny zakres dat z URL Brand24. Możesz przełączyć na własny zakres lub operację na wszystkich projektach.',
-        },
-        {
-          selector: 'input[name="b24t-del-scope"]',
-          title: 'Zakres operacji',
-          desc: 'Aktualny widok — daty z URL Brand24. Własny zakres — ręczne daty. 🌐 Wszystkie projekty — usuwa tag ze wszystkich znanych projektów (wymaga panelu Annotatora).',
-        },
-        {
-          selector: '#b24t-del-run',
-          title: '🗑 Usuń wzmianki z tagiem',
-          desc: 'Uruchamia masowe usuwanie. Przy pierwszym użyciu pojawi się ostrzeżenie. Tego nie można cofnąć.',
-        },
-        {
-          selector: '#b24t-delview-info',
-          title: 'Usuń wyświetlane wzmianki',
-          desc: 'Usuwa wzmianki aktualnie widoczne w panelu Brand24 — niezależnie od tagu. Działa z aktywnymi filtrami i zakresem dat.',
-        },
-        {
-          selector: '#b24t-delview-run',
-          title: '🗑 Usuń wyświetlane wzmianki',
-          desc: 'Usuwa wszystkie wzmianki widoczne w aktualnym widoku Brand24. Tego nie można cofnąć.',
-        },
-      ],
-      history: [
-        {
-          selector: '#b24t-history-list',
-          title: 'Historia sesji',
-          desc: 'Lista ostatnich sesji tagowania z danego projektu: liczba otagowanych, pominiętych, czas trwania i nazwa pliku.',
-        },
-        {
-          selector: '#b24t-history-clear',
-          title: 'Wyczyść historię',
-          desc: 'Usuwa całą historię sesji z pamięci przeglądarki (localStorage). Nie wpływa na dane w Brand24.',
-        },
-      ],
-    };
-
-    return common.concat(byTab[activeTab] || byTab.main);
-  }
-
-  // ───────────────────────────────────────────
   // F1 - MATCH PREVIEW
 
   function renderMatchPreview(preview) {
@@ -10403,7 +10576,7 @@
       '<div class="b-row">' +
         '<span class="b-card__title">Historia sesji</span><span class="b-sp"></span>' +
         '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-history-export">' + _icon('download') + 'CSV</button>' +
-        '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-history-clear">Wyczyść</button>' +
+        '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-history-clear" data-tip="Czyści historię w tej przeglądarce; Brand24 bez zmian">Wyczyść</button>' +
       '</div>' +
       '<div id="b24t-history-list" class="b-stack b-stack--sm"></div>';
     return div;
@@ -16548,7 +16721,7 @@
           '<div id="b24t-news-preview-header" class="b-npv-head" hidden>',
             '<span id="b24t-news-preview-url-label" class="b-mono b-small b-muted b-ell"></span><span class="b-sp"></span>',
             '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-news-preview-switch-rich-btn" hidden></button>',
-            '<button type="button" class="b-ibtn b-ibtn--sm" id="b24t-news-preview-open-link" aria-label="Otwórz w oknie" data-tip="Otwórz w oknie (Enter)">' + _icon('external') + '</button>',
+            '<button type="button" class="b-ibtn b-ibtn--sm" id="b24t-news-preview-open-link" aria-label="Otwórz w oknie" aria-keyshortcuts="Enter" data-tip="Otwórz w oknie" data-tip-kbd="Enter">' + _icon('external') + '</button>',
           '</div>',
           '<div id="b24t-news-preview-empty" class="b-empty b-npv-empty">' + _icon('notes') + '<div class="b-empty__title">Podgląd adresu z listy</div>',
             '<div class="b-npv-keys">',
@@ -16650,7 +16823,7 @@
         '<div id="b24t-news-submit-status" class="b-nstatus b-nstate" aria-live="polite"></div>',
         '<div class="b-row">',
           '<button type="button" class="b-btn b-btn--quiet" id="b24t-news-clear-btn">Wyczyść</button>',
-          '<button type="button" class="b-btn b-btn--primary b-nsubmit" id="b24t-news-submit-btn" aria-keyshortcuts="Control+Enter" data-tip="Ctrl+Enter">' + _icon('plus') + '<span>Dodaj wzmiankę</span></button>',
+          '<button type="button" class="b-btn b-btn--primary b-nsubmit" id="b24t-news-submit-btn" aria-keyshortcuts="Control+Enter" data-tip="Skrót" data-tip-kbd="Ctrl Enter">' + _icon('plus') + '<span>Dodaj wzmiankę</span></button>',
         '</div>',
       '</div>'
     ].join(''));
@@ -19510,6 +19683,76 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.2",
+      "date": "2026-10-03",
+      "label": "new",
+      "changes": [
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Samouczki funkcji i okno „Pomoc i samouczki” zamiast trybu pomocy",
+          "items": [
+            "Samouczki pokazują nowy wygląd, tagowanie z pliku, przegląd sentymentu i AI Tag. Każdy krok wskazuje element panelu i daje jedno zadanie do wykonania.",
+            "Przy pierwszym użyciu funkcji wtyczka raz proponuje jej samouczek. Wszystkie są też pod znakiem zapytania w nagłówku panelu i w palecie poleceń.",
+            "Krok przechodzi dalej sam po wykonaniu zadania, ale czeka, dopóki kursor albo fokus jest w dymku. „Wstecz” wraca do poprzedniego kroku.",
+            "Opisy pól i przycisków są w dymkach i w okienkach (i) obok pól."
+          ],
+          "comment": "Tryb pomocy pokazywał opisy całego panelu naraz. Samouczek zjawia się przy funkcji, której ktoś właśnie zaczyna używać, i pozwala ją wypróbować na miejscu.",
+          "text": "Samouczki funkcji i okno „Pomoc i samouczki” zamiast trybu pomocy. Samouczki pokazują nowy wygląd, tagowanie z pliku, przegląd sentymentu i AI Tag. Każdy krok wskazuje element panelu i daje jedno zadanie do wykonania. Przy pierwszym użyciu funkcji wtyczka raz proponuje jej samouczek. Wszystkie są też pod znakiem zapytania w nagłówku panelu i w palecie poleceń. Krok przechodzi dalej sam po wykonaniu zadania, ale czeka, dopóki kursor albo fokus jest w dymku. „Wstecz” wraca do poprzedniego kroku. Opisy pól i przycisków są w dymkach i w okienkach (i) obok pól."
+        },
+        {
+          "type": "improved",
+          "area": "Narzędzia annotatora",
+          "title": "Plakietka szybkości Brand24 porównuje zapytania z ich zwykłym czasem",
+          "items": [
+            "Każde zapytanie jest mierzone względem swojego zwykłego czasu, więc z natury wolne zapytanie nie podnosi alarmu.",
+            "Stan wynika z ostatnich 9 zapytań z minuty: „Brand24 wolniej” przy dwukrotnie dłuższym czasie, „Brand24 bardzo wolno” przy czterokrotnie, „Brand24: błędy” przy 3 błędach serwera albo braku odpowiedzi.",
+            "Lepszy stan wraca po 15 s bez spowolnień. Kliknięcie plakietki otwiera Network Monitor.",
+            "Network Monitor pokazuje w dymku czasu, ile razy wolniej od zwykłego poszło zapytanie."
+          ],
+          "comment": "Jedno wolniejsze zapytanie raz na jakiś czas wystarczało, żeby plakietka ogłaszała wolne zapytania. Mierzymy więc każde zapytanie jego własną miarą.",
+          "text": "Plakietka szybkości Brand24 porównuje zapytania z ich zwykłym czasem. Każde zapytanie jest mierzone względem swojego zwykłego czasu, więc z natury wolne zapytanie nie podnosi alarmu. Stan wynika z ostatnich 9 zapytań z minuty: „Brand24 wolniej” przy dwukrotnie dłuższym czasie, „Brand24 bardzo wolno” przy czterokrotnie, „Brand24: błędy” przy 3 błędach serwera albo braku odpowiedzi. Lepszy stan wraca po 15 s bez spowolnień. Kliknięcie plakietki otwiera Network Monitor. Network Monitor pokazuje w dymku czasu, ile razy wolniej od zwykłego poszło zapytanie."
+        },
+        {
+          "type": "improved",
+          "area": "Quick Delete",
+          "title": "Brak dostępu do projektów innych kont opisany zamiast błędu",
+          "items": [
+            "Okno „Wszystkie projekty” rozróżnia niezalogowany CMS, przy którym jest przycisk „Otwórz CMS”, i konto bez uprawnień do projektu mimo zalogowania.",
+            "Błędy z wielu projektów zbierają się w jedno powiadomienie zamiast serii błędów w logu."
+          ],
+          "text": "Brak dostępu do projektów innych kont opisany zamiast błędu. Okno „Wszystkie projekty” rozróżnia niezalogowany CMS, przy którym jest przycisk „Otwórz CMS”, i konto bez uprawnień do projektu mimo zalogowania. Błędy z wielu projektów zbierają się w jedno powiadomienie zamiast serii błędów w logu."
+        },
+        {
+          "type": "fix",
+          "area": "Panel",
+          "title": "Naprawiono poziomy suwak strony przy panelu przyklejonym z prawej",
+          "items": [
+            "Strona Brand24 zwęża się o szerokość przyklejonego panelu."
+          ],
+          "text": "Naprawiono poziomy suwak strony przy panelu przyklejonym z prawej. Strona Brand24 zwęża się o szerokość przyklejonego panelu."
+        },
+        {
+          "type": "fix",
+          "area": "Panel",
+          "title": "Naprawiono kropkę przy „⋯”, po której w menu nie było widać nowości",
+          "items": [
+            "Kropka i zielony dopisek „nowa wersja” stoją przy pozycji „Dziennik zmian”."
+          ],
+          "text": "Naprawiono kropkę przy „⋯”, po której w menu nie było widać nowości. Kropka i zielony dopisek „nowa wersja” stoją przy pozycji „Dziennik zmian”."
+        },
+        {
+          "type": "fix",
+          "area": "Panel",
+          "title": "Naprawiono linię, która przy niskim panelu przecinała tekst nad stopką",
+          "items": [
+            "Gdy treść ciągnie się pod stopką, stopka rzuca cień w górę. Napis „Gotowy do startu” nie wygląda więc na odwołany."
+          ],
+          "text": "Naprawiono linię, która przy niskim panelu przecinała tekst nad stopką. Gdy treść ciągnie się pod stopką, stopka rzuca cień w górę. Napis „Gotowy do startu” nie wygląda więc na odwołany."
+        }
+      ]
+    },
+    {
       "version": "0.38.1",
       "date": "2026-10-03",
       "label": "improved",
@@ -20007,24 +20250,6 @@
             "Dotychczasowe ustawienia z obu paneli przechodzą automatycznie. Prompt o tej samej treści się nie dubluje."
           ],
           "text": "Ustawienia AI są wspólne dla app.brand24.com i panel.brand24.pl. Klucze API, prompty i wybrane modele są zapisane w Tampermonkeyu. Wyczyszczenie danych strony Brand24 ich nie usuwa. Dotychczasowe ustawienia z obu paneli przechodzą automatycznie. Prompt o tej samej treści się nie dubluje."
-        }
-      ]
-    },
-    {
-      "version": "0.36.5",
-      "date": "2026-10-01",
-      "label": "fix",
-      "changes": [
-        {
-          "type": "fix",
-          "area": "Ustawienia AI",
-          "title": "Naprawiono odrzucanie poprawnych kluczy Gemini",
-          "items": [
-            "Klucz Gemini zaczynający się od „AQ.” był uznawany za niepoprawny.",
-            "Pole klucza ostrzega, gdy wklejono klucz innego dostawcy, np. klucz Gemini w polu Claude."
-          ],
-          "action": "Jeśli klucz Gemini zniknął z ustawień, wklej go ponownie.",
-          "text": "Naprawiono odrzucanie poprawnych kluczy Gemini. Klucz Gemini zaczynający się od „AQ.” był uznawany za niepoprawny. Pole klucza ostrzega, gdy wklejono klucz innego dostawcy, np. klucz Gemini w polu Claude. Jeśli klucz Gemini zniknął z ustawień, wklej go ponownie."
         }
       ]
     }
@@ -20548,10 +20773,10 @@
     });
   }
   // Pierwszy fokus stoi na nagłówku (menedżer okien, §1.7), więc Enter wciśnięty w biegu nie zamyka okna.
-  // Kto nie przeszedł ani nie pominął samouczka (LS.TOUR), dostaje go jako główne działanie: duża zmiana
+  // Kto nie ma stanu samouczka nowego wyglądu, dostaje go jako główne działanie: duża zmiana
   // to pierwsze okno po aktualizacji do nowego wyglądu na kanale Experimental.
   function _relHighlightsWin(list, title, sub) {
-    var tour = !lsGet(LS.TOUR);
+    var tour = !_tutGet('layout');
     var w = Win.open({
       id: 'highlights', kind: 'notice', width: 52, icon: 'sparkle', title: title, sub: sub, from: _activeEl(),
       body: '<div class="b-hl">' + list.map(function(h) {
@@ -20572,7 +20797,7 @@
       Win.close('highlights');
       // Duże zmiany pochodzą z dziennika zmian, więc przycisk otwiera go na każdym kanale.
       if (b.dataset.hl === 'log') _relShowChangelogWin({ version: list[0].v, index: list[0].i });
-      else if (b.dataset.hl === 'tour') Tour.start();
+      else if (b.dataset.hl === 'tour') Tutor.start('layout');
     });
   }
 
@@ -20831,7 +21056,7 @@
         var acts = [{ label: 'Zobacz zmiany', primary: true, onClick: function() { showChangelog(); } }];
         // Jak w oknie dużej zmiany: samouczek, dopóki nie został ukończony ani pominięty.
         // Samouczek kończy powiadomienie tak jak „Zobacz zmiany”, inaczej wracało przy każdym otwarciu panelu.
-        if (!lsGet(LS.TOUR)) acts.push({ label: 'Samouczek nowego wyglądu', onClick: function() { _updDismissNotice(); Tour.start(); } });
+        if (!_tutGet('layout')) acts.push({ label: 'Samouczek nowego wyglądu', onClick: function() { _updDismissNotice(); Tutor.start('layout'); } });
         draw({ kind: 'ok', icon: 'okCircle', title: 'Wtyczka została zaktualizowana', msg: sub, body: _updNoteHtml(n, false), actions: acts });
       });
       return;
@@ -21225,7 +21450,7 @@
           '<div id="b24t-rep-st" role="status"></div>' +
         '</div>',
       foot: '<button type="button" class="b-btn b-btn--quiet" data-rep="copy">' + _icon('copy') + 'Kopiuj zgłoszenie</button><span class="b-sp"></span>' +
-        '<button type="button" class="b-btn b-btn--primary" data-rep="send" data-tip="Wyślij (Ctrl+Enter)">' + _icon('send') + 'Wyślij</button>',
+        '<button type="button" class="b-btn b-btn--primary" data-rep="send" aria-keyshortcuts="Control+Enter" data-tip="Skrót" data-tip-kbd="Ctrl Enter">' + _icon('send') + 'Wyślij</button>',
       onClose: function() { saveDraft(); }
     });
     var q = function(sel) { return w.el.querySelector(sel); };
@@ -22358,7 +22583,7 @@
     }
     return '<div class="b-banner b-banner--warn" style="align-items:center">' + _icon('calendar') +
       '<div class="b-sp"><div class="b-banner__title">Domykanie miesiąca</div>' + doneCount + ' z ' + nonPending.length + ' projektów ' + donePlural + '</div>' +
-      '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="' + closeBtnId + '">Zamknij miesiąc</button>' +
+      '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="' + closeBtnId + '" data-tip="Oznacza projekty grupy jako domknięte w tym miesiącu">Zamknij miesiąc</button>' +
     '</div>';
   }
 
@@ -22378,6 +22603,7 @@
       arrow('prev', 'chevLeft', 'Poprzedni miesiąc', canBack) +
       '<span class="b-month__label">' + _escHtml(label || '') + '</span>' +
       arrow('next', 'chevRight', 'Następny miesiąc', canFwd) +
+      _info('Strzałki zmieniają miesiąc, najdalej 12 wstecz. Wybór automatyczny: poprzedni miesiąc, dopóki któryś projekt grupy nie jest w nim domknięty, potem bieżący.', 'wybór miesiąca') +
       (hasOverride ? '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="' + idPrefix + '-auto" data-tip="Wróć do miesiąca wybieranego automatycznie">' + _icon('undo') + 'Auto</button>' : '') +
       '<span class="b-hint b-mono">' + dateFrom + ' – ' + dateTo + '</span>' +
     '</div>';
@@ -22481,7 +22707,7 @@
     if (!state.tokenHeaders || !tagId) return;
     var groupId = _apGroupId;
     var cached = bgCache.allProjects[tagId];
-    if (cached && cached.groupId === groupId && _bgCacheFresh(cached)) return cached;
+    if (cached && cached.groupId === groupId && _bgCacheFresh(cached) && !cached.results.some(function (r) { return r.count < 0; })) return cached;
     var projects = getKnownProjects(groupId);
     if (!projects.length) return;
     // Cleanup zakres: prev month start → today (covers tagowanie pliku z poprzedniego miesiąca po przekręceniu kalendarza)
@@ -22502,7 +22728,8 @@
           p._dateTo   = dateTo;
           return count > 0 ? { p: p, count: count } : null;
         } catch(e) {
-          addLog('✕ [DIAG] getMentions(' + p.id + '/' + tagName + '): ' + e.message, 'diag');
+          // Brak dostępu zbiera _cmsDenied w jeden wpis.
+          if (e.message !== 'GRAPHQL_PERMISSION_DENIED') addLog('✕ [DIAG] getMentions(' + p.id + '/' + tagName + '): ' + e.message, 'diag');
           return { p: p, count: -1, error: e.message };
         }
       }));
@@ -22635,7 +22862,10 @@
 
   // Zakładki okna: [klucz, etykieta]. Klucze to wartości data-ann-tab i końcówki identyfikatorów treści
   // (b24t-ann-tab-<klucz>), do których odwołują się funkcje rysujące i harness.
-  var ANN_TABS = [['project', 'Projekt'], ['tagstats', 'Tagi'], ['groups', 'Grupy'], ['overall', 'Overall'], ['aitag', 'Trafność AI']];
+  // [id, nazwa, dymek z opisem widoku]
+  var ANN_TABS = [['project', 'Projekt', 'Liczby projektu otwartego w Brand24'], ['tagstats', 'Tagi', 'Projekty ze wzmiankami do weryfikacji (REQ) i do usunięcia (DEL)'],
+    ['groups', 'Grupy', 'Zestawy projektów do Overall i Trafności AI'], ['overall', 'Overall', 'Postęp grupy projektów w miesiącu'],
+    ['aitag', 'Trafność AI', 'Werdykty AI wobec oceny człowieka']];
   var _annTab = 'project', _annScroll = {};
 
   function _annInit() {
@@ -22655,7 +22885,7 @@
     var u = _uiBasePx();
     var bar = '<div class="b-seg" role="tablist" aria-label="Widoki Dashboardu">' + ANN_TABS.map(function(t) {
       return '<button type="button" role="tab" data-ann-tab="' + t[0] + '" id="' + (t[0] === 'aitag' ? 'b24t-ann-tab-btn-aitag' : 'b24t-ann-tabbtn-' + t[0]) + '"' +
-        ' aria-controls="b24t-ann-tab-' + t[0] + '" aria-selected="false" tabindex="-1">' + t[1] + '</button>';
+        ' aria-controls="b24t-ann-tab-' + t[0] + '" aria-selected="false" tabindex="-1" data-tip="' + t[2] + '">' + t[1] + '</button>';
     }).join('') + '</div>';
     var body = ANN_TABS.map(function(t) {
       var inner = { project: 'b24t-ann-project-content', tagstats: 'b24t-ann-tagstats-content', groups: 'b24t-ann-tab-groups-content',
@@ -23560,6 +23790,16 @@
     if (fresh && _apTag().id === tag.id && _apGroupId === groupId) _renderAllProjectsList(fresh.results, tag.name);
   }
 
+  // Baner o projektach bez dostępu; treść zależy od sesji CMS, więc po wyniku sprawdzenia (_cmsProbe) rysuje się
+  // ponownie: lista bywa gotowa, zanim sprawdzenie się skończy.
+  function _apCmsBanner(n) {
+    var base = _b24HostBase(), html = '<div class="b-banner b-banner--' + (_cmsDeny.session === true ? 'warn' : 'info') + ' b-small" id="b24t-ap-cms">' + _icon('info') +
+      '<div class="b-sp">' + _escHtml(_cmsDenyText(n, _cmsDeny.session)) + '</div>' +
+      (_cmsDeny.session !== true && base ? '<a class="b-btn b-btn--neutral b-btn--sm" href="' + base + '/cms33/" target="_blank" rel="noopener">Otwórz CMS</a>' : '') + '</div>';
+    if (_cmsDeny.probing) _cmsDeny.probing.then(function () { var el = _$('b24t-ap-cms'); if (el && el.dataset.s !== String(_cmsDeny.session)) el.outerHTML = _apCmsBanner(n); });
+    return html.replace('id="b24t-ap-cms"', 'id="b24t-ap-cms" data-s="' + String(_cmsDeny.session) + '"');
+  }
+
   function _renderAllProjectsList(results, tagName) {
     var list = _$('b24t-ap-list'), totalEl = _$('b24t-ap-total'), delBtn = _$('b24t-ap-delete-all');
     if (!list) return;
@@ -23577,7 +23817,8 @@
       list.innerHTML = _annEmpty('okCircle', 'Nic do usunięcia', 'Żaden projekt w zakresie nie ma wzmianek z tagiem ' + _escHtml(tagName) + '.');
       return;
     }
-    list.innerHTML = '<section class="b-card b-card--table"><table class="b-table">' +
+    var denied = withErrors.filter(function(r) { return r.error === 'GRAPHQL_PERMISSION_DENIED'; }).length;
+    list.innerHTML = (denied ? _apCmsBanner(denied) : '') + '<section class="b-card b-card--table"><table class="b-table">' +
       '<thead><tr><th>Projekt</th><th class="b-num b-fit">Wzmianki</th><th class="b-fit" aria-label="Działanie"></th></tr></thead><tbody>' +
       withData.map(function(r) {
         return '<tr data-pid="' + r.p.id + '"><td><span class="b-ell">' + _escHtml(r.p.name) + '</span></td>' +
@@ -23587,7 +23828,7 @@
       }).join('') +
       withErrors.map(function(r) {
         return '<tr><td><span class="b-ell">' + _escHtml(r.p.name) + '</span></td>' +
-          '<td colspan="2" class="b-danger">Nie udało się policzyć: ' + _escHtml(r.error || 'błąd zapytania') + '</td></tr>';
+          '<td colspan="2" class="b-danger">Nie udało się policzyć: ' + _escHtml(_errShort(r.error)) + '</td></tr>';
       }).join('') +
       '</tbody></table></section>';
   }
@@ -24030,6 +24271,7 @@
         '</select>' +
         '<button type="button" class="b-ibtn b-ibtn--sm" id="b24t-overall-settings-btn" aria-label="Tagi grupy" data-tip="Tagi grupy"' + (selectedGroup ? '' : ' disabled') + '>' + _icon('settings') + '</button>' +
         '<button type="button" class="b-ibtn b-ibtn--sm" id="b24t-overall-refresh-btn" aria-label="Policz ponownie" data-tip="Policz ponownie"' + (selectedGroup ? '' : ' disabled') + '>' + _icon('refresh') + '</button>' +
+        _info('Overall sumuje wszystkie projekty wybranej grupy. Grupy powstają w widoku Grupy, a ikona obok listy ustawia tagi grupy.', 'grupa projektów') +
       '</div>' +
       (selectedGroup ? '<div id="b24t-overall-data" class="b-stack"></div>'
         : _annEmpty('grid', 'Wybierz grupę projektów', 'Overall pokaże liczby wzmianek w jej projektach.'));
@@ -24149,7 +24391,7 @@
     var rows = results.map(function(r) {
       var name = _escHtml(r.name);
       if (r.loading) return '<tr data-pid="' + r.pid + '" data-loading="1"><td><span class="b-ell">' + name + '</span></td><td colspan="' + colCount + '" class="b-num b-muted">liczę…</td></tr>';
-      if (r.error) return '<tr data-pid="' + r.pid + '" data-error="1"><td><span class="b-ell">' + name + '</span></td><td colspan="' + colCount + '" class="b-danger">Błąd: ' + _escHtml(r.error) + '</td></tr>';
+      if (r.error) return '<tr data-pid="' + r.pid + '" data-error="1"><td><span class="b-ell">' + name + '</span></td><td colspan="' + colCount + '" class="b-danger">Błąd: ' + _escHtml(_errShort(r.error)) + '</td></tr>';
       var done = isMonthClosing && completedPids.includes(r.pid);
       return '<tr data-pid="' + r.pid + '"' + (done ? ' class="is-done"' : '') + '>' +
         '<td' + (done ? ' data-tip="Projekt domknięty w tym miesiącu"' : '') + '><span class="b-ell">' + (done ? _icon('check') : '') + name + '</span></td>' +
@@ -24405,7 +24647,8 @@
           '</div>' +
           '<div class="b-row">' +
             '<button type="button" class="b-btn b-btn--primary b-btn--sm" id="b24t-aiacc-run"></button>' +
-            '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-aiacc-copy"' + (hasLast && !_aiAccRun ? '' : ' disabled') + '>' + _icon('copy') + 'Kopiuj raport</button>' +
+            '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-aiacc-copy" data-tip="Kopiuje wynik jako tabelę do arkusza"' + (hasLast && !_aiAccRun ? '' : ' disabled') + '>' + _icon('copy') + 'Kopiuj raport</button>' +
+            _info('Porównuje werdykty AI z oceną człowieka w projektach grupy: precyzja, recall i F1. W trakcie liczenia przycisk je zatrzymuje, a wynik obejmuje policzone projekty. „Tylko bieżący projekt” liczy projekt otwarty w Brand24.', 'trafność AI') +
           '</div>' +
           '<div id="b24t-aiacc-data" class="b-stack"></div>'
         : _annEmpty('grid', 'Wybierz grupę projektów', 'Trafność porówna werdykty AI z oceną człowieka w jej projektach.'));
@@ -24585,7 +24828,7 @@
       var rows = results.map(function(r) {
         var name = '<td><span class="b-ell">' + _escHtml(r.name) + '</span></td>';
         if (r.loading) return '<tr>' + name + '<td colspan="5" class="b-num b-muted">liczę…</td></tr>';
-        if (r.error)   return '<tr>' + name + '<td colspan="5" class="b-danger">Błąd: ' + _escHtml(r.error) + '</td></tr>';
+        if (r.error)   return '<tr>' + name + '<td colspan="5" class="b-danger">Błąd: ' + _escHtml(_errShort(r.error)) + '</td></tr>';
         var x = _aiAccSummary([r]);
         return '<tr>' + name + '<td class="b-num">' + x.tp + '</td><td class="b-num">' + x.fp + '</td><td class="b-num">' + x.fn + '</td>' +
           '<td class="b-num b-strong">' + _aiPct(x.precision) + '</td><td class="b-num b-strong">' + _aiPct(x.recall) + '</td></tr>';
@@ -24674,7 +24917,7 @@
           <select class="b-select" id="b24t-del-tag"><option value="">Wybierz tag</option></select>
         </label>
         <div class="b-field">
-          <span class="b-label">Zakres dat</span>
+          <span class="b-label">Zakres dat ${_info('Aktualny widok bierze daty z adresu strony Brand24, Własny — daty wpisane poniżej. Wszystkie projekty otwiera okno z listą projektów i liczbą wzmianek przed usunięciem.', 'zakres usuwania')}</span>
           <div class="b-seg">
             <label><input type="radio" name="b24t-del-scope" value="view" checked>Aktualny widok</label>
             <label><input type="radio" name="b24t-del-scope" value="custom">Własny</label>
@@ -25793,6 +26036,7 @@
     groups: { decide: true, change: true, keep: false }, query: '', q: '', source: '', searchKeys: {},
     queue: [], inFlight: 0, undoAfterSave: {},
     hideDone: lsGet(SENT_LS_HIDE_DONE, false) === true, lastDoneId: null,
+    decisions: 0, undos: 0,   // liczniki decyzji i cofnięć; samouczek przeglądu rozpoznaje po nich wykonane zadanie
   };
 
   function _sentProjectCfg(pid) {
@@ -26194,10 +26438,12 @@
       it.dec = { to: to, status: 'queued' };
       _sentEnqueue(it, to, false);
       _sentSetLastDone(id);
+      sentState.decisions++;
     } else if (it.now === it.orig && !_sentIsDone(it)) {
       it.dec = { to: to, status: 'kept', at: Date.now() };
       _sentPersist(it);
       _sentSetLastDone(id);
+      sentState.decisions++;
     }
     _sentRefreshTile(id);
     _sentFocusNextOpen(id, fromKeyboard);
@@ -26210,6 +26456,7 @@
   function _sentUndo(id) {
     var it = sentState.run && sentState.run.byId[id], d = it && it.dec;
     if (!d || _sentBusy(it)) return;
+    sentState.undos++;
     if (d.status === 'kept' || d.status === 'earlier') { it.dec = null; _sentForget(id); }
     // Zapis w trybie testowym nie dotknął Brand24 — cofnięcie też nie musi.
     else if (d.status === 'test') { it.now = it.orig; it.dec = null; }
@@ -26540,6 +26787,7 @@
     _sentRenderFilters();
     _sentRenderKeys();
     _sentRenderList();
+    if (ready) Tutor.poke();
   }
 
   function _sentRenderFilters() {
@@ -26763,7 +27011,7 @@
       (cur ? ' aria-current="true"' : '') + '>' +
       '<div class="b-sent-meta"><span class="b-sent-src">' + _escHtml(it.source) + '</span>' +
         '<span class="b-sent-by">' + _escHtml([it.author, it.date].filter(Boolean).join(' · ')) + '</span>' +
-        (url ? '<a class="b-ibtn b-ibtn--sm" href="' + _escHtml(url) + '" target="_blank" rel="noopener noreferrer" aria-label="Otwórz wzmiankę (O)" data-tip="Otwórz wzmiankę (O)">' +
+        (url ? '<a class="b-ibtn b-ibtn--sm" href="' + _escHtml(url) + '" target="_blank" rel="noopener noreferrer" aria-label="Otwórz wzmiankę" aria-keyshortcuts="O" data-tip="Otwórz wzmiankę" data-tip-kbd="O">' +
           _icon('external') + '</a>' : '') +
         '<span class="b-sent-cur">Brand24 ' + _sentChip(it.now) + '</span></div>' +
       '<p class="b-sent-text" data-sent-expand>' + _escHtml(it.text || '(brak treści)') + '</p>' +
@@ -27120,12 +27368,12 @@
       opName: opts.opName || '', status: opts.status || 0,
       duration: opts.duration || 0, isError: !!opts.isError,
       reqSnippet: opts.reqSnippet || '', resSnippet: opts.resSnippet || '',
+      ratio: opts.ratio != null ? opts.ratio : null,
     };
     nmState.entries.unshift(entry);
     if (nmState.entries.length > NM_MAX) nmState.entries.length = NM_MAX;
     _nmPushRow(entry);
     _nmUpdateCount();
-    _nmUpdateLatencyBadge();
     return entry;
   }
 
@@ -27168,32 +27416,106 @@
     el.textContent = filtered ? shown + ' z ' + n : n + ' ' + _relPl(n, 'zapytanie', 'zapytania', 'zapytań');
   }
 
-  // Plakietka przy połączeniu z Brand24: wolne albo błędne zapytania wśród ostatnich 30; kliknięcie otwiera
-  // Network Monitor.
-  function _nmUpdateLatencyBadge() {
-    var badge = _$('b24t-latency-badge');
+  // ── Stan sieci Brand24: plakietka przy połączeniu z Brand24 i czasy w Network Monitorze ──
+  // Czas zapytania GraphQL liczy się względem zwykłego czasu tej samej operacji, nie progiem w ms: getMentions
+  // z filtrami trwa zwykle kilka razy dłużej niż mutacja tagu, więc stały próg 500 ms zapalał alarm na zwykłych
+  // zapytaniach. Stan to mediana ilorazów ostatnich 9 zapytań, najwyżej sprzed minuty: jedno wolne zapytanie go nie
+  // zmienia, pięć wolnych z dziewięciu zmienia go od razu (przy tagowaniu to kilka sekund), a powrót do lepszego
+  // stanu czeka 15 s, żeby plakietka nie migała na granicy progu
+  // (uwagi właściciela 2026-10-03). Zwykły czas operacji to mediana jej ostatnich 30 zapytań bez spowolnienia,
+  // zapamiętana między sesjami. Liczą się zapytania strony i wtyczki do GraphQL Brand24; zapytania do innych
+  // serwisów (analityka, czat) nie mówią nic o Brand24.
+  var NET_WINDOW = 60000;  // najstarsze zapytanie, które liczy się do stanu
+  var NET_LAST = 9;        // stan z tylu ostatnich zapytań
+  var NET_BASE_N = 30;     // zapytań na operację w zwykłym czasie
+  var NET_MIN_BASE = 5;    // od tylu zapytań operacja ma zwykły czas
+  var NET_SLOW = 2;        // mediana od 2× zwykłego czasu: wolniej
+  var NET_VERY = 4;        // od 4×: bardzo wolno
+  var NET_LONG = 8000;     // operacja bez zwykłego czasu liczy się jako bardzo wolna od 8 s
+  var NET_CALM = 15000;    // tyle trwa lepszy stan, zanim plakietka go pokaże
+  var NET_LS = 'b24tagger_net_base';
+  var NET_UI = {
+    ok: ['', 'Brand24 w normie'], slow: ['b-chip--warn', 'Brand24 wolniej'],
+    bad: ['b-chip--danger', 'Brand24 bardzo wolno'], error: ['b-chip--danger', 'Brand24: błędy']
+  };
+  var NET_RANK = { '': 0, ok: 1, slow: 2, bad: 3, error: 4 };
+  var _net = { base: null, recent: [], st: '', better: 0, timer: 0, saveT: 0 };
+
+  function _netMedian(a) {
+    var s = a.slice().sort(function (x, y) { return x - y; }), h = s.length >> 1;
+    return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2;
+  }
+  function _netUsual(op) {
+    if (!_net.base) _net.base = lsGet(NET_LS, {}) || {};
+    var b = _net.base[op];
+    return b && b.length >= NET_MIN_BASE ? _netMedian(b) : 0;
+  }
+  // Iloraz czasu do zwykłego czasu operacji; operacja bez zwykłego czasu ma iloraz tylko przy bardzo długim zapytaniu.
+  function _netRatio(op, ms) {
+    var u = _netUsual(op || 'graphql');
+    return u ? ms / u : ms >= NET_LONG ? NET_VERY : null;
+  }
+  function _netSec(ms) { return (ms / 1000).toFixed(1).replace('.', ',') + ' s'; }
+
+  // ok = false: brak odpowiedzi, 5xx albo 429. Odpowiedź 4xx to błąd zapytania, nie sieci, więc jej czas się liczy.
+  function _netSample(op, ms, ok) {
+    op = op || 'graphql';
+    var r = _netRatio(op, ms);
+    _net.recent.push({ t: Date.now(), op: op, ms: ms, ok: ok, r: r });
+    // Spowolnienie nie wchodzi do zwykłego czasu: po kilkunastu wolnych zapytaniach stałoby się normą.
+    if (ok && (r == null || r < NET_SLOW)) {
+      var b = _net.base[op] || (_net.base[op] = []);
+      b.push(ms);
+      if (b.length > NET_BASE_N) b.shift();
+      if (!_net.saveT) _net.saveT = setTimeout(function () { _net.saveT = 0; lsSet(NET_LS, _net.base); }, 30000);
+    }
+    _netEval();
+    return r;
+  }
+
+  function _netEval() {
+    var now = Date.now();
+    _net.recent = _net.recent.filter(function (x) { return now - x.t < NET_WINDOW; });
+    var rs = [], errs = 0, n = _net.recent.length;
+    _net.recent.slice(-NET_LAST).forEach(function (x) { if (!x.ok) errs++; else if (x.r != null) rs.push(x.r); });
+    var m = rs.length >= 3 ? _netMedian(rs) : 1;
+    var st = !n ? '' : errs >= 3 ? 'error' : m >= NET_VERY ? 'bad' : m >= NET_SLOW ? 'slow' : 'ok';
+    // Gorszy stan od razu, lepszy po NET_CALM; minuta bez zapytań chowa plakietkę.
+    if (st && NET_RANK[st] < NET_RANK[_net.st]) {
+      if (!_net.better) _net.better = now;
+      if (now - _net.better < NET_CALM) st = _net.st;
+    } else _net.better = 0;
+    _net.st = st;
+    _net.m = rs.length >= 3 ? m : 0;
+    _net.errs = errs;
+    clearTimeout(_net.timer);
+    if (n) _net.timer = setTimeout(_netEval, 5000);
+    _netRender();
+  }
+
+  function _netRender() {
+    var badge = _$('b24t-latency-badge'), ui = NET_UI[_net.st];
     if (!badge) return;
-    var recent = nmState.entries.slice(0, 30);
-    var SLOW_MS = 500;
-    var slowCount = 0, errorCount = 0;
-    var durations = [];
-    recent.forEach(function(e) {
-      if (e.duration > 0) durations.push(e.duration);
-      if (e.duration > SLOW_MS || e.isError) slowCount++;
-      if (e.isError) errorCount++;
-    });
-    if (!slowCount) { badge.hidden = true; return; }
-    durations.sort(function(a, b) { return a - b; });
-    var p90 = durations.length ? durations[Math.floor(durations.length * 0.9)] : 0;
-    badge.className = 'b-chip b-chip--sm ' + (errorCount || p90 >= 2000 ? 'b-chip--danger' : 'b-chip--warn');
-    badge.innerHTML = _icon('activity') + (errorCount ? 'Błędy zapytań' : 'Wolne zapytania');
-    badge.setAttribute('data-tip', (errorCount ? 'Błędy: ' + errorCount + '\n' : '') +
-      '90% zapytań do ' + p90 + ' ms\nPonad ' + SLOW_MS + ' ms: ' + slowCount + ' z ' + recent.length + '\nKliknięcie otwiera Network Monitor');
+    if (!ui) { badge.hidden = true; return; }
+    var n = _net.recent.length, worst = null;
+    _net.recent.forEach(function (x) { if (x.ok && x.r != null && (!worst || x.r > worst.r)) worst = x; });
+    var tip = ['Ostatnia minuta: ' + _plPl(n, 'zapytanie', 'zapytania', 'zapytań') + ' do Brand24'];
+    if (_net.m) tip.push('Ostatnie zapytania: ' + _net.m.toFixed(1).replace('.', ',') + '× zwykłego czasu (mediana)');
+    if (worst && worst.r >= NET_SLOW) {
+      var u = _netUsual(worst.op);
+      tip.push('Najwolniej: ' + worst.op + ' ' + _netSec(worst.ms) + (u ? ' (zwykle ' + _netSec(u) + ')' : ''));
+    }
+    if (_net.errs) tip.push('Bez odpowiedzi albo z błędem serwera: ' + _net.errs + ' z ostatnich ' + Math.min(n, NET_LAST));
+    tip.push(nmState.enabled ? 'Kliknięcie otwiera Network Monitor' : 'Szczegóły zapytań: Network Monitor w Ustawieniach');
+    badge.className = 'b-chip b-chip--sm b-net' + (ui[0] ? ' ' + ui[0] : '');
+    badge.dataset.state = _net.st;
+    badge.innerHTML = _icon('activity') + ui[1];
+    badge.setAttribute('data-tip', tip.join('\n'));
     badge.hidden = false;
   }
 
   var NM_SHOWN = 100;     // wierszy w tabeli; lista w pamięci trzyma NM_MAX zapytań
-  var NM_SLOW_MS = 500;   // zapytanie wolne; ten sam próg co w plakietce opóźnień (_nmUpdateLatencyBadge)
+  var NM_SLOW_MS = 1000;  // wolne zapytanie spoza GraphQL Brand24 (bez zwykłego czasu operacji, _netRatio)
   var NM_NO_BODY = 'Brak zapisanej treści.';
   var _nmOpen = {};       // id rozwiniętych wierszy; rozwinięcie przetrwa przebudowę tabeli przy filtrze
 
@@ -27212,6 +27534,15 @@
   }
 
   // Para wierszy tabeli: zapytanie i rozwijane szczegóły z kopiowaniem zapytania i odpowiedzi (katalog nr 27).
+  // Czas zapytania GraphQL na tle zwykłego czasu operacji (dymek z ilorazem); zapytanie spoza GraphQL Brand24
+  // jest wolne od NM_SLOW_MS.
+  function _nmDurCell(entry) {
+    var r = entry.ratio, slow = r != null ? r >= NET_SLOW : entry.duration > NM_SLOW_MS;
+    var u = r != null && entry.opName ? _netUsual(entry.opName) : 0;
+    var tip = u ? (r >= 1 ? r.toFixed(1).replace('.', ',') + '× zwykłego czasu' : 'szybciej niż zwykle') + ' (zwykle ' + _netSec(u) + ')' : '';
+    return '<td class="b-num b-mono' + (slow ? ' b-warn' : '') + '"' + (tip ? ' data-tip="' + _escHtml(tip) + '"' : '') + '>' + entry.duration + ' ms</td>';
+  }
+
   function _nmBuildRowPair(entry) {
     var open = !!_nmOpen[entry.id];
     var tr = document.createElement('tr');
@@ -27225,7 +27556,7 @@
       '<td class="b-mono b-text2">' + _escHtml(entry.method) + '</td>' +
       '<td class="b-nm-op">' + _escHtml(_nmFmtUrl(entry.url, entry.opName)) + '</td>' +
       '<td><span class="b-chip b-chip--sm b-chip--' + _nmStatusKind(entry.status, entry.isError) + '">' + (entry.status || 'brak') + '</span></td>' +
-      '<td class="b-num b-mono' + (entry.duration > NM_SLOW_MS ? ' b-warn' : '') + '">' + entry.duration + ' ms</td>';
+      _nmDurCell(entry);
     var detTr = document.createElement('tr');
     detTr.className = 'b-nm-det';
     detTr.hidden = !open;
@@ -27302,13 +27633,11 @@
     if (!prev.length) return;
     nmState.entries = [];
     _nmRebuildTable();
-    _nmUpdateLatencyBadge();
     Toast.show('Wyczyszczono listę: ' + prev.length + ' ' + _relPl(prev.length, 'zapytanie', 'zapytania', 'zapytań'), 'info', {
       undo: function() {
         // Zapytania zapisane po wyczyszczeniu zostają na górze listy.
         nmState.entries = nmState.entries.concat(prev).slice(0, NM_MAX);
         _nmRebuildTable();
-        _nmUpdateLatencyBadge();
       }
     });
   }

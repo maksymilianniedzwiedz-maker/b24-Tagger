@@ -1,5 +1,44 @@
 [
   {
+    "version": "0.38.9",
+    "date": "2026-10-03",
+    "label": "new",
+    "changes": [
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "Kolejność kart paska do ustawienia przeciąganiem",
+        "items": [
+          "Kartę paska przeciąga się w górę albo w dół; Historia zostaje na dole.",
+          "W Ustawieniach → Narzędzia strzałki przy karcie przesuwają ją o jedną pozycję."
+        ],
+        "text": "Kolejność kart paska do ustawienia przeciąganiem. Kartę paska przeciąga się w górę albo w dół; Historia zostaje na dole. W Ustawieniach → Narzędzia strzałki przy karcie przesuwają ją o jedną pozycję."
+      },
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "Menu prawego przycisku na pasku funkcji i uchwytach przy krawędzi",
+        "items": [
+          "Na karcie paska: „Ukryj z paska” z „Cofnij” w powiadomieniu i „Dostosuj pasek…”, które otwiera Narzędzia na tej karcie.",
+          "Na uchwycie Annotators, Wzmianki, Network Monitor i „Dodaj wzmiankę”: wyłączenie narzędzia i „Dostosuj narzędzia…”.",
+          "Z klawiatury menu otwiera klawisz menu albo Shift+F10."
+        ],
+        "text": "Menu prawego przycisku na pasku funkcji i uchwytach przy krawędzi. Na karcie paska: „Ukryj z paska” z „Cofnij” w powiadomieniu i „Dostosuj pasek…”, które otwiera Narzędzia na tej karcie. Na uchwycie Annotators, Wzmianki, Network Monitor i „Dodaj wzmiankę”: wyłączenie narzędzia i „Dostosuj narzędzia…”. Z klawiatury menu otwiera klawisz menu albo Shift+F10."
+      },
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Ustawienia i wyłączone narzędzia w palecie poleceń",
+        "items": [
+          "Polecenie „Ustawienia: Motyw” i podobne otwiera kategorię z fokusem na tym ustawieniu.",
+          "Wyłączone narzędzie ma polecenie z dopiskiem „(wyłączone)”: Enter włącza je i otwiera.",
+          "„Dostosuj pasek i narzędzia” otwiera Ustawienia → Narzędzia."
+        ],
+        "text": "Ustawienia i wyłączone narzędzia w palecie poleceń. Polecenie „Ustawienia: Motyw” i podobne otwiera kategorię z fokusem na tym ustawieniu. Wyłączone narzędzie ma polecenie z dopiskiem „(wyłączone)”: Enter włącza je i otwiera. „Dostosuj pasek i narzędzia” otwiera Ustawienia → Narzędzia."
+      }
+    ]
+  },
+  {
     "version": "0.38.8",
     "date": "2026-10-03",
     "label": "new",

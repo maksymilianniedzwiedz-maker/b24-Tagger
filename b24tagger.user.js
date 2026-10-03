@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.8
+// @version      0.38.9
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -173,7 +173,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.8';
+  const VERSION = '0.38.9';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -217,6 +217,7 @@
     NA_SETTINGS:    'b24t_na_settings',         // Analityka: { enabled, pat, repo, lastPush }
     NA_CONSENT:     'b24t_na_consent',          // zgoda na analitykę News: '1' | '0'
     SOUNDS:         'b24t_sounds',              // Powiadomienia → Dźwięki: { done, error, captcha: true | false }
+    RAIL_ORDER:     'b24tagger_rail_order',     // kolejność kart górnej grupy paska: [main, quicktag, …]
   };
   const MAX_BATCH_SIZE = 50;
   const DEL_BATCH_DEFAULT = 25; // domyślny batch równoległych deletów (edytowalny w UI)
@@ -5941,6 +5942,8 @@
       .b-set-tool { display: inline-flex; align-items: center; gap: 0.5em; }
       .b-set-tool > svg { width: 1.15em; height: 1.15em; color: var(--c-text2); flex-shrink: 0; }
       .b-set-row.b-set-row--sub { padding-left: 2em; }
+      .b-set-tool__ctl { gap: 0.25em; }
+      .b-rail__item.is-dragging { opacity: 0.6; cursor: grabbing; }
       .b-set-row--sub:has(input:disabled) .b-set-row__label { color: var(--c-textDisabled); }
       label.b-set-row:has(input:disabled) { cursor: default; }
       .b-set-warn { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25em 0.4em; margin-top: 0.25em; color: var(--c-warn); }
@@ -7741,6 +7744,15 @@
         '<span class="b-edge__label">' + _escHtml(spec.label) + '</span>';
       // Puszczenie listwy po przeciągnięciu też daje click; ten click nie otwiera okna.
       el.addEventListener('click', function (e) { if (!suppress) spec.onClick(e); });
+      // spec.menu: pozycje menu kontekstowego (prawy przycisk, klawisz menu, Shift+F10), SETTINGS.md §3.2.
+      if (spec.menu) {
+        el.addEventListener('contextmenu', function (e) { e.preventDefault(); Menu.open(el, spec.menu()); });
+        el.addEventListener('keydown', function (e) {
+          if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return;
+          e.preventDefault();
+          Menu.open(el, spec.menu());
+        });
+      }
       var it = { spec: spec, el: el, open: false };
       var next = list().filter(function (o) { return order(o) > order(it); }).sort(function (a, b) { return order(a) - order(b); })[0];
       bar.insertBefore(el, next ? next.el : null);
@@ -8703,6 +8715,32 @@
 
     add('log', 'Log sesji', 'Okno', 'list', openLogPanel);
     add('settings', 'Ustawienia', 'Okno', 'settings', function () { showFeaturesModal(); });
+    add('tools', 'Dostosuj pasek i narzędzia', 'Ustawienia', 'grid', function () { showFeaturesModal('tools'); });
+    // Wyłączone narzędzie: Enter włącza je i otwiera, powiadomienie ma „Cofnij” (SETTINGS.md §3.2).
+    var ai = _aiGetSettings();
+    SET_TOOLS.forEach(function (sec) {
+      sec[1].forEach(function (t) {
+        if (_toolOn(t.id, f, ai) || (t.id === 'mini_mention' && _isB24)) return;
+        add('tool-' + t.id, t.name + ' (wyłączone)', 'Narzędzia', t.icon, function () {
+          _toolSet(t.id, true);
+          var tab = Object.keys(PANEL_TAB_TOOL).filter(function (k) { return PANEL_TAB_TOOL[k] === t.id; })[0];
+          if (tab) toTab(tab);
+          else if (t.id === 'annotator_dashboard') openAnnotatorPanel();
+          else if (t.id === 'annotator_mentions') openNewsPanels('news');
+          else if (t.id === 'network_monitor') openNetworkMonitorPanel();
+          Toast.show(t.name + ': włączone.', 'ok', { undo: function () { _toolSet(t.id, false); } });
+        });
+      });
+    });
+    // Każde ustawienie: kategoria z fokusem na jego polu (SETTINGS.md §1 nr 9).
+    SET_TOOLS.forEach(function (sec) {
+      sec[1].forEach(function (t) {
+        add('set-tool-' + t.id, 'Ustawienia: ' + t.name, 'Narzędzia', t.icon, function () { showFeaturesModal('tools', '#b24t-tool-' + t.id); });
+      });
+    });
+    SET_CMDS.forEach(function (c) {
+      add('set-' + c[1] + '-' + c[0], 'Ustawienia: ' + c[0], 'Ustawienia', 'settings', function () { showFeaturesModal(c[1], c[2]); });
+    });
     add('prompts', 'Biblioteka promptów', 'Okno', 'notes', function () { showFeaturesModal('prompts'); });
     add('changelog', exp ? 'Dziennik zmian' : 'Dziennik aktualizacji', 'Okno', 'notes', function () { showChangelog(); });
     add('whatsnew', 'Co nowego: największe zmiany ostatnich wersji', 'Okno', 'sparkle', showWhatsNew);
@@ -9772,6 +9810,7 @@
   function _panelSyncRail() {
     var panel = _$('b24t-panel');
     if (!panel) return;
+    _railApplyOrder();
     var f = loadFeatures(), ai = _aiGetSettings(), first = null, on = {};
     PANEL_TABS.forEach(function (t) {
       on[t.tab] = _toolOn(PANEL_TAB_TOOL[t.tab], f, ai);
@@ -9783,14 +9822,131 @@
     _panelShowTab(first || 'none');
   }
 
+  // Kolejność kart górnej grupy paska (SETTINGS.md §1 nr 8): przeciąganie w pasku albo „Wyżej” i „Niżej” w Narzędziach.
+  // Historia zostaje w dolnej grupie. Karta spoza zapisu (nowa w wersji) staje na końcu grupy.
+  function _railOrder() {
+    var main = PANEL_TABS.filter(function (t) { return !t.util; }).map(function (t) { return t.tab; });
+    var saved = (gmGet(PREF.RAIL_ORDER, null) || []).filter(function (t) { return main.indexOf(t) >= 0; });
+    return saved.concat(main.filter(function (t) { return saved.indexOf(t) < 0; }));
+  }
+  function _railApplyOrder() {
+    var nav = _$('b24t-tabs');
+    if (!nav) return;
+    var sp = nav.querySelector('.b-sp');
+    _railOrder().forEach(function (t) { var b = nav.querySelector('.b-rail__item[data-tab="' + t + '"]'); if (b) nav.insertBefore(b, sp); });
+  }
+  function _railSaveOrder(order) {
+    gmSet(PREF.RAIL_ORDER, order);
+    _railApplyOrder();
+  }
+  // Przesunięcie o jedną widoczną pozycję; ukryte karty nie liczą się jako krok.
+  function _railMove(tab, dir) {
+    var order = _railOrder(), f = loadFeatures(), ai = _aiGetSettings();
+    var vis = order.filter(function (t) { return t === tab || _toolOn(PANEL_TAB_TOOL[t], f, ai); });
+    var j = vis.indexOf(tab) + dir;
+    if (j < 0 || j >= vis.length) return false;
+    // Wstawienie przed albo za sąsiadem, nie zamiana: ukryte karty zostają w swoim miejscu względem pozostałych.
+    var other = vis[j];
+    order.splice(order.indexOf(tab), 1);
+    var k = order.indexOf(other);
+    order.splice(dir < 0 ? k : k + 1, 0, tab);
+    _railSaveOrder(order);
+    return true;
+  }
+  function _railLabel(tab) { return PANEL_TABS.filter(function (t) { return t.tab === tab; })[0].label; }
+
+  // Menu kontekstowe pozycji paska (SETTINGS.md §3.2): „Ukryj z paska” i „Dostosuj pasek…”.
+  function _railMenu(b) {
+    var tab = b.dataset.tab, tool = PANEL_TAB_TOOL[tab];
+    Menu.open(b, [
+      { label: 'Ukryj z paska', icon: 'eyeOff', onSelect: function () { _railHide(tab); } },
+      'sep',
+      { label: 'Dostosuj pasek…', icon: 'settings', onSelect: function () { showFeaturesModal('tools', '#b24t-tool-' + tool); } }
+    ]);
+  }
+  // Fokus przechodzi na sąsiednią pozycję, pokazana karta ustępuje następnej (_panelSyncRail).
+  function _railHide(tab) {
+    var nav = _$('b24t-tabs'), tool = PANEL_TAB_TOOL[tab];
+    var items = Array.prototype.filter.call(nav.querySelectorAll('.b-rail__item'), function (x) { return !x.hidden; });
+    var i = items.findIndex(function (x) { return x.dataset.tab === tab; });
+    var next = items[i + 1] || items[i - 1];
+    _toolSet(tool, false);
+    if (next) next.focus({ preventScroll: true });
+    Toast.show('Karta ' + _railLabel(tab) + ' ukryta z paska.', 'info', { undo: function () { _toolSet(tool, true); } });
+  }
+
+  // Menu kontekstowe uchwytu przy krawędzi: wyłączenie narzędzia i droga do Narzędzi (na stronach Brand24).
+  function _toolEdgeMenu(id) {
+    var t = SET_TOOLS.reduce(function (a, sec) { return a.concat(sec[1]); }, []).filter(function (x) { return x.id === id; })[0];
+    var items = [{ label: 'Wyłącz: ' + t.name, icon: 'eyeOff', onSelect: function () {
+      _toolSet(id, false);
+      Toast.show(t.name + ': wyłączone.', 'info', { undo: function () { _toolSet(id, true); } });
+    } }];
+    if (_isB24) items.push('sep', { label: 'Dostosuj narzędzia…', icon: 'settings', onSelect: function () { showFeaturesModal('tools', '#b24t-tool-' + id); } });
+    return items;
+  }
+
+  // Przeciąganie pozycji górnej grupy paska: po 6 px ruchu pozycja jedzie za kursorem, a pozycja pod kursorem zamienia
+  // się z nią miejscem; kolejność zapisuje się po puszczeniu. Kliknięcie bez ruchu przełącza kartę jak dotąd.
+  function _railWireDrag(nav) {
+    var d = null;
+    nav.addEventListener('pointerdown', function (e) {
+      var b = e.target.closest('.b-rail__item');
+      if (e.button !== 0 || !b || b.classList.contains('b-rail__item--util')) return;
+      d = { b: b, y: e.clientY, on: false, id: e.pointerId };
+    });
+    nav.addEventListener('pointermove', function (e) {
+      if (!d || e.pointerId !== d.id) return;
+      if (!d.on) {
+        if (Math.abs(e.clientY - d.y) < 6) return;
+        d.on = true;
+        nav.setPointerCapture(d.id);
+        d.b.classList.add('is-dragging');
+        Tip.hide();
+      }
+      // Kursor nad pierwszą albo pod ostatnią widoczną kartą grupy stawia przeciąganą na początku albo na końcu.
+      var vis = Array.prototype.filter.call(nav.querySelectorAll('.b-rail__item:not(.b-rail__item--util)'), function (x) { return x !== d.b && !x.hidden; });
+      if (!vis.length) return;
+      var first = vis[0].getBoundingClientRect(), last = vis[vis.length - 1].getBoundingClientRect();
+      if (e.clientY < first.top) { nav.insertBefore(d.b, vis[0]); return; }
+      if (e.clientY > last.bottom) { nav.insertBefore(d.b, vis[vis.length - 1].nextSibling); return; }
+      var over = vis.filter(function (x) { var r = x.getBoundingClientRect(); return e.clientY >= r.top && e.clientY <= r.bottom; })[0];
+      if (!over) return;
+      var r = over.getBoundingClientRect();
+      nav.insertBefore(d.b, e.clientY < r.top + r.height / 2 ? over : over.nextSibling);
+    });
+    var end = function (e) {
+      if (!d || e.pointerId !== d.id) return;
+      var was = d;
+      d = null;
+      if (!was.on) return;
+      was.b.classList.remove('is-dragging');
+      // Puszczenie po przeciągnięciu daje click na pozycji; click w ciągu 400 ms nie przełącza karty (_panelWireRail).
+      nav.dataset.dropAt = String(Date.now());
+      var dom = Array.prototype.map.call(nav.querySelectorAll('.b-rail__item:not(.b-rail__item--util)'), function (x) { return x.dataset.tab; });
+      _railSaveOrder(dom);
+    };
+    nav.addEventListener('pointerup', end);
+    nav.addEventListener('pointercancel', end);
+  }
+
   // Pasek funkcji: kliknięcie przełącza kartę; strzałki w górę i w dół przechodzą między widocznymi pozycjami.
   function _panelWireRail(panel) {
     var nav = panel.querySelector('#b24t-tabs');
+    _railWireDrag(nav);
+    nav.addEventListener('contextmenu', function (e) {
+      var b = e.target.closest('.b-rail__item');
+      if (!b) return;
+      e.preventDefault();
+      _railMenu(b);
+    });
     nav.addEventListener('click', function (e) {
       var b = e.target.closest('.b-rail__item');
-      if (b) _panelShowTab(b.dataset.tab);
+      if (b && Date.now() - (+nav.dataset.dropAt || 0) > 400) _panelShowTab(b.dataset.tab);
     });
     nav.addEventListener('keydown', function (e) {
+      var cur = e.target.closest && e.target.closest('.b-rail__item');
+      if (cur && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) { e.preventDefault(); _railMenu(cur); return; }
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
       var items = Array.prototype.filter.call(nav.querySelectorAll('.b-rail__item'), function (b) { return b.offsetParent !== null; });
       var i = items.indexOf(_activeEl());
@@ -20362,6 +20518,45 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.9",
+      "date": "2026-10-03",
+      "label": "new",
+      "changes": [
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Kolejność kart paska do ustawienia przeciąganiem",
+          "items": [
+            "Kartę paska przeciąga się w górę albo w dół; Historia zostaje na dole.",
+            "W Ustawieniach → Narzędzia strzałki przy karcie przesuwają ją o jedną pozycję."
+          ],
+          "text": "Kolejność kart paska do ustawienia przeciąganiem. Kartę paska przeciąga się w górę albo w dół; Historia zostaje na dole. W Ustawieniach → Narzędzia strzałki przy karcie przesuwają ją o jedną pozycję."
+        },
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Menu prawego przycisku na pasku funkcji i uchwytach przy krawędzi",
+          "items": [
+            "Na karcie paska: „Ukryj z paska” z „Cofnij” w powiadomieniu i „Dostosuj pasek…”, które otwiera Narzędzia na tej karcie.",
+            "Na uchwycie Annotators, Wzmianki, Network Monitor i „Dodaj wzmiankę”: wyłączenie narzędzia i „Dostosuj narzędzia…”.",
+            "Z klawiatury menu otwiera klawisz menu albo Shift+F10."
+          ],
+          "text": "Menu prawego przycisku na pasku funkcji i uchwytach przy krawędzi. Na karcie paska: „Ukryj z paska” z „Cofnij” w powiadomieniu i „Dostosuj pasek…”, które otwiera Narzędzia na tej karcie. Na uchwycie Annotators, Wzmianki, Network Monitor i „Dodaj wzmiankę”: wyłączenie narzędzia i „Dostosuj narzędzia…”. Z klawiatury menu otwiera klawisz menu albo Shift+F10."
+        },
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Ustawienia i wyłączone narzędzia w palecie poleceń",
+          "items": [
+            "Polecenie „Ustawienia: Motyw” i podobne otwiera kategorię z fokusem na tym ustawieniu.",
+            "Wyłączone narzędzie ma polecenie z dopiskiem „(wyłączone)”: Enter włącza je i otwiera.",
+            "„Dostosuj pasek i narzędzia” otwiera Ustawienia → Narzędzia."
+          ],
+          "text": "Ustawienia i wyłączone narzędzia w palecie poleceń. Polecenie „Ustawienia: Motyw” i podobne otwiera kategorię z fokusem na tym ustawieniu. Wyłączone narzędzie ma polecenie z dopiskiem „(wyłączone)”: Enter włącza je i otwiera. „Dostosuj pasek i narzędzia” otwiera Ustawienia → Narzędzia."
+        }
+      ]
+    },
+    {
       "version": "0.38.8",
       "date": "2026-10-03",
       "label": "new",
@@ -21003,19 +21198,6 @@
           "area": "Panel",
           "title": "Naprawiono błędy bezpieczeństwa",
           "text": "Naprawiono błędy bezpieczeństwa."
-        }
-      ]
-    },
-    {
-      "version": "0.37.2",
-      "date": "2026-10-03",
-      "label": "fix",
-      "changes": [
-        {
-          "type": "fix",
-          "area": "Panel",
-          "title": "Naprawiono dwa błędy bezpieczeństwa",
-          "text": "Naprawiono dwa błędy bezpieczeństwa."
         }
       ]
     }
@@ -22433,6 +22615,19 @@
       { id: 'mini_mention', icon: 'plus', name: 'Dodaj wzmiankę', desc: 'Uchwyt formularza wzmianki na stronach spoza Brand24, np. na Instagramie.' }
     ]]
   ];
+  // Polecenia palety dla ustawień: [nazwa, kategoria, pole z fokusem]. Narzędzia dochodzą z SET_TOOLS (_palCommands).
+  var SET_CMDS = [
+    ['Motyw', 'look', '[name="b24t-set-theme"]:checked'], ['Rozmiar tekstu', 'look', '[name="b24t-set-text"]:checked'],
+    ['Animacje', 'look', '[name="b24t-set-motion"]:checked'],
+    ['Klucz Claude', 'ai', '#b24t-ai-key-anthropic'], ['Klucz OpenAI', 'ai', '#b24t-ai-key-openai'], ['Klucz Gemini', 'ai', '#b24t-ai-key-google'],
+    ['Koszt AI i limity', 'ai', '#b24t-ai-spend [data-limit]'], ['Model AI Tag', 'ai', '#b24t-ai-model-tagging'],
+    ['Modele przeglądu sentymentu', 'ai', '#b24t-ai-model-sentA'], ['Model News', 'ai', '#b24t-ai-model-news'],
+    ['Ocena AI w module News', 'ai', '#b24t-ai-news-enabled'],
+    ['Dźwięki', 'notify', '[data-snd]'], ['Powiadomienia na telefon (ntfy)', 'notify', '#b24t-ntfy-on'],
+    ['Odśwież listę projektów', 'projects', '#b24t-pn-refresh'],
+    ['Kanał aktualizacji', 'updates', '[name="b24t-channel"]:checked'], ['Sprawdź aktualizacje', 'updates', '#b24t-set-upd-check'],
+    ['Analityka News', 'analytics', '#b24t-na-enabled']
+  ];
   var SET_SUBS = {
     show_log: { name: 'Log w karcie', desc: 'Zdarzenia przebiegu w kartach Plik i AI Tag; błąd pokazuje też pasek błędu.' },
     delete_by_assessment: { name: 'Usuwanie po ocenie', tag: ['Nieodwracalne', 'danger'],
@@ -22730,6 +22925,23 @@
       return '<span class="b-switch"><input type="checkbox" role="switch" id="b24t-tool-' + id + '" data-tool="' + id + '" aria-label="' + name + '"' +
         (on ? ' checked' : '') + (off ? ' disabled' : '') + '></span>';
     };
+    // Karty górnej grupy paska stoją w kolejności paska; strzałki przesuwają kartę o jedną widoczną pozycję.
+    var TAB_OF = {};
+    Object.keys(PANEL_TAB_TOOL).forEach(function (tab) { TAB_OF[PANEL_TAB_TOOL[tab]] = tab; });
+    // Skrajna strzałka zostaje w miejscu jako nieaktywna (aria-disabled, z fokusem), żeby wiersze się nie przesuwały.
+    var visTabs = [];
+    function mover(t, on) {
+      var tab = TAB_OF[t.id];
+      if (!tab || !on || PANEL_TABS.filter(function (x) { return x.tab === tab; })[0].util) return '';
+      var i = visTabs.indexOf(tab), off = function (edge) { return edge ? ' aria-disabled="true"' : ''; };
+      return '<button type="button" class="b-ibtn b-ibtn--sm" data-move="-1" data-tab="' + tab + '"' + off(i === 0) + ' aria-label="Wyżej: ' + t.name + '" data-tip="Wyżej w pasku">' + _icon('chevUp') + '</button>' +
+        '<button type="button" class="b-ibtn b-ibtn--sm" data-move="1" data-tab="' + tab + '"' + off(i === visTabs.length - 1) + ' aria-label="Niżej: ' + t.name + '" data-tip="Niżej w pasku">' + _icon('chevDown') + '</button>';
+    }
+    function ordered(items) {
+      var order = _railOrder();
+      var rank = function (t) { var i = order.indexOf(TAB_OF[t.id]); return i < 0 ? order.length : i; };
+      return items.slice().sort(function (a, b) { return rank(a) - rank(b); });
+    }
     function row(t, f, ai) {
       var on = _toolOn(t.id, f, ai), busy = t.run && _toolRunning(t.id), miss = _toolMissingKey(t.id, ai);
       var hint = busy ? 'Trwa przebieg: przełącznik zadziała po jego zakończeniu.' : t.desc;
@@ -22738,7 +22950,7 @@
           '<button type="button" class="b-btn b-btn--quiet b-btn--sm" data-addkey="' + miss + '">Dodaj klucz</button></span>';
       }
       var html = _setRow('<span class="b-set-tool">' + _icon(t.icon) + t.name + '</span>' + (t.info ? _info(t.info, t.name) : ''), hint,
-        sw(t.id, on, busy, t.name), { label: true, for: 'b24t-tool-' + t.id });
+        '<div class="b-row b-set-tool__ctl">' + mover(t, on) + sw(t.id, on, busy, t.name) + '</div>', { label: true, for: 'b24t-tool-' + t.id });
       (t.subs || []).forEach(function (id) {
         var o = SET_SUBS[id], tag = o.tag ? '<span class="b-chip b-chip--sm b-chip--' + o.tag[1] + '">' + o.tag[0] + '</span>' : '';
         html += _setRow(o.name + tag + (o.info ? _info(o.info, o.name) : ''), on ? o.desc : 'Działa przy włączonym ' + t.loc + '.',
@@ -22748,9 +22960,10 @@
     }
     function render(focusId) {
       var f = loadFeatures(), ai = _aiGetSettings();
+      visTabs = _railOrder().filter(function (tab) { return _toolOn(PANEL_TAB_TOOL[tab], f, ai); });
       box.innerHTML = SET_TOOLS.map(function (sec) {
         return '<section class="b-set-sec"><h3 class="b-set-sec__title">' + sec[0] + '</h3>' +
-          sec[1].map(function (t) { return row(t, f, ai); }).join('') + '</section>';
+          ordered(sec[1]).map(function (t) { return row(t, f, ai); }).join('') + '</section>';
       }).join('');
       var el = focusId && box.querySelector('[data-tool="' + focusId + '"]');
       if (el) el.focus({ preventScroll: true });
@@ -22764,9 +22977,18 @@
       ctx.saved();
     });
     box.addEventListener('click', function (e) {
+      var m = e.target.closest('[data-move]');
+      if (m) {
+        e.preventDefault();   // przycisk stoi w etykiecie wiersza
+        if (m.getAttribute('aria-disabled')) return;
+        if (_railMove(m.dataset.tab, +m.dataset.move)) { render(); ctx.saved(); }
+        var again = box.querySelector('[data-move="' + m.dataset.move + '"][data-tab="' + m.dataset.tab + '"]');
+        if (again) again.focus({ preventScroll: true });
+        return;
+      }
       var b = e.target.closest('[data-addkey]');
       if (!b) return;
-      e.preventDefault();   // przycisk stoi w etykiecie wiersza
+      e.preventDefault();
       ctx.show('ai', false, '#b24t-ai-key-' + b.dataset.addkey);
     });
     // Klucze, modele i przebiegi zmieniają się poza tą kategorią.
@@ -23898,6 +24120,7 @@
   function _annInit() {
     Edge.add({
       id: 'annotator', elId: 'b24t-annotator-tab', side: 'right', label: 'Annotators', icon: 'users', remember: 'edge-annotator',
+      menu: function () { return _toolEdgeMenu('annotator_dashboard'); },
       onClick: function() { if (Win.get('annotator')) Win.close('annotator'); else openAnnotatorPanel(); }
     });
   }
@@ -28674,6 +28897,7 @@
   function _nmInit() {
     Edge.add({
       id: 'nm', elId: 'b24t-nm-tab', side: 'right', label: 'Network Monitor', icon: 'activity', remember: 'edge-nm',
+      menu: function () { return _toolEdgeMenu('network_monitor'); },
       onClick: function() { if (Win.get('nm')) Win.close('nm'); else openNetworkMonitorPanel(); }
     });
   }
@@ -31238,6 +31462,7 @@
     Edge.add({
       id: 'mini', elId: 'b24t-mini-mention-btn', side: 'right', label: 'Dodaj wzmiankę', icon: 'plus',
       remember: 'edge-mini', y: 0.33, switchable: true,
+      menu: function () { return _toolEdgeMenu('mini_mention'); },
       onClick: function() {
         if (Win.get('news-custom')) { closeNewsPanels(); return; }
         openNewsPanels('custom');
@@ -31322,6 +31547,7 @@
     // Uchwyt krawędziowy (powierzchnia nr 70, §1.11); widoczność ustawia _newsApplyFeatures.
     Edge.add({
       id: 'news', elId: 'b24t-news-side-tab', side: 'right', label: 'Wzmianki', icon: 'news', remember: 'edge-news', y: 0.5,
+      menu: function () { return _toolEdgeMenu('annotator_mentions'); },
       onClick: function() {
         var camp = CAMP_WINS.filter(function(id) { return Win.get(id); });
         if (newsState.panelsOpen) closeNewsPanels();
@@ -31374,6 +31600,7 @@
     applyFeatures();
     // Przełączniki zmienione w innej karcie, także na drugim panelu Brand24.
     try { GM_addValueChangeListener(PREF.FEATURES, function(name, oldV, newV, remote) { if (remote) applyFeatures(); }); } catch(e) {}
+    try { GM_addValueChangeListener(PREF.RAIL_ORDER, function(name, oldV, newV, remote) { if (remote) _railApplyOrder(); }); } catch(e) {}
 
   }
 

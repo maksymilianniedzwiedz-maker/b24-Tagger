@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.38.16",
+    "date": "2026-10-04",
+    "label": "new",
+    "changes": [
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "Most testowy w Ustawieniach → Aktualizacje",
+        "items": [
+          "Przełącznik „Most testowy” w sekcji Testowanie udostępnia stan wtyczki do odczytu testom prowadzonym przez rozszerzenie przeglądarki.",
+          "Działa tylko na stronach Brand24 i tylko na kanale Experimental; bez tokenów, kluczy i treści wzmianek."
+        ],
+        "experimental": true,
+        "text": "Most testowy w Ustawieniach → Aktualizacje. Przełącznik „Most testowy” w sekcji Testowanie udostępnia stan wtyczki do odczytu testom prowadzonym przez rozszerzenie przeglądarki. Działa tylko na stronach Brand24 i tylko na kanale Experimental; bez tokenów, kluczy i treści wzmianek."
+      },
+      {
+        "type": "fix",
+        "area": "Panel",
+        "title": "Naprawiono błąd bezpieczeństwa",
+        "text": "Naprawiono błąd bezpieczeństwa."
+      }
+    ]
+  },
+  {
     "version": "0.38.15",
     "date": "2026-10-04",
     "label": "improved",

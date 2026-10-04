@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.15
+// @version      0.38.16
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -174,7 +174,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.15';
+  const VERSION = '0.38.16';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4843,10 +4843,9 @@
   // DEBUG BRIDGE
   // ───────────────────────────────────────────
 
-  // Obiekt żyje w piaskownicy skryptu. Na stronę (konsola DevTools) wychodzi tylko w Brand24 i tylko z flagą
-  // `b24tagger_debug` = 1 w localStorage: ma token Brand24, zapytania GM z ciasteczkami do dowolnego hosta
-  // (`@connect *`) i masowe tagowanie, a skrypt działa na każdej stronie (`@match *://*/*`), więc wystawiony
-  // zawsze dawał to każdej odwiedzanej stronie.
+  // Obiekt żyje wyłącznie w piaskownicy skryptu (`window` skryptu, nie strony): ma token Brand24, zapytania GM
+  // z ciasteczkami do dowolnego hosta (`@connect *`) i masowe tagowanie, a skrypt działa na każdej stronie
+  // (`@match *://*/*`). Nie przypisuj go ani jego metod do `unsafeWindow` (SECURITY.md §3.9).
   window.B24Tagger = {
     state,
     version: VERSION,
@@ -5068,9 +5067,10 @@
     exportReport,
     exportPartitions,
   };
-  try {
-    if (_isBrand24Host && localStorage.getItem('b24tagger_debug') === '1') _win.B24Tagger = _win.b24tagger = window.B24Tagger;
-  } catch (e) {}
+  // Obiekt nie wychodzi na stronę (`unsafeWindow`). Do 0.38.15 wychodził po fladze `b24tagger_debug` w localStorage,
+  // którą mógł ustawić każdy skrypt strony Brand24, a funkcje z piaskownicy na stronie dawały m.in. zapytania GM
+  // z ciasteczkami do dowolnego hosta (SECURITY.md §3.9). Stan dla testów i konsoli DevTools: most testowy
+  // (TEST_BRIDGE.md), który przekazuje stronie tylko napis JSON.
 
   // ───────────────────────────────────────────
   // UI - KORZEŃ CIENIA
@@ -8896,6 +8896,7 @@
       });
     });
     SET_CMDS.forEach(function (c) {
+      if (c[3] === 'exp' && !exp) return;
       add('set-' + c[1] + '-' + c[0], 'Ustawienia: ' + c[0], 'Ustawienia', 'settings', function () { showFeaturesModal(c[1], c[2]); });
     });
     add('prompts', 'Biblioteka promptów', 'Okno', 'notes', function () { showFeaturesModal('prompts'); });
@@ -20765,6 +20766,30 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.16",
+      "date": "2026-10-04",
+      "label": "new",
+      "changes": [
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Most testowy w Ustawieniach → Aktualizacje",
+          "items": [
+            "Przełącznik „Most testowy” w sekcji Testowanie udostępnia stan wtyczki do odczytu testom prowadzonym przez rozszerzenie przeglądarki.",
+            "Działa tylko na stronach Brand24 i tylko na kanale Experimental; bez tokenów, kluczy i treści wzmianek."
+          ],
+          "experimental": true,
+          "text": "Most testowy w Ustawieniach → Aktualizacje. Przełącznik „Most testowy” w sekcji Testowanie udostępnia stan wtyczki do odczytu testom prowadzonym przez rozszerzenie przeglądarki. Działa tylko na stronach Brand24 i tylko na kanale Experimental; bez tokenów, kluczy i treści wzmianek."
+        },
+        {
+          "type": "fix",
+          "area": "Panel",
+          "title": "Naprawiono błąd bezpieczeństwa",
+          "text": "Naprawiono błąd bezpieczeństwa."
+        }
+      ]
+    },
+    {
       "version": "0.38.15",
       "date": "2026-10-04",
       "label": "improved",
@@ -21073,42 +21098,6 @@
             "Karta AI Tag podaje koszt przebiegu po jego zakończeniu."
           ],
           "text": "Koszt kluczy AI w miesiącu i limit miesięczny. Ustawienia → AI podają koszt każdego klucza w bieżącym miesiącu, liczbę wywołań i koszt poprzedniego miesiąca. Koszt liczy się z wywołań w tej przeglądarce, więc ten sam klucz użyty gdzie indziej kosztuje więcej. Od 80% ustawionego limitu kropka stanu w nagłówku panelu robi się pomarańczowa, po przekroczeniu czerwona. Karta AI Tag podaje koszt przebiegu po jego zakończeniu."
-        }
-      ]
-    },
-    {
-      "version": "0.38.6",
-      "date": "2026-10-03",
-      "label": "improved",
-      "changes": [
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Kropla listwy po słabym rzucie wraca na krawędź, z której wyszła",
-          "items": [
-            "Krawędź, z której kropla wyszła, przyciąga ją z powrotem, więc lekkie machnięcie w bok nie przerzuca listwy na drugą stronę.",
-            "Im dalej do drugiej krawędzi, tym mocniej trzeba rzucić; kropla puszczona w miejscu przy krawędzi zostaje przy niej."
-          ],
-          "text": "Kropla listwy po słabym rzucie wraca na krawędź, z której wyszła. Krawędź, z której kropla wyszła, przyciąga ją z powrotem, więc lekkie machnięcie w bok nie przerzuca listwy na drugą stronę. Im dalej do drugiej krawędzi, tym mocniej trzeba rzucić; kropla puszczona w miejscu przy krawędzi zostaje przy niej."
-        },
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Okna Annotators, Network Monitor i Niestandardowe otwierają się przy listwie",
-          "items": [
-            "Okno staje obok listwy, po jej stronie ekranu i na wysokości uchwytu, w zapamiętanym rozmiarze."
-          ],
-          "text": "Okna Annotators, Network Monitor i Niestandardowe otwierają się przy listwie. Okno staje obok listwy, po jej stronie ekranu i na wysokości uchwytu, w zapamiętanym rozmiarze."
-        },
-        {
-          "type": "fix",
-          "area": "Dodawanie wzmianek",
-          "title": "Naprawiono listwę zasłaniającą brzeg okien News i Kampanie H&M",
-          "items": [
-            "Okno News i okna kampanii odsuwają się od listwy, a na pełnym ekranie ich treść kończy się przed listwą.",
-            "Uchwyt „Wzmianki” jest zaznaczony także przy oknach kampanii i zamyka je drugim kliknięciem."
-          ],
-          "text": "Naprawiono listwę zasłaniającą brzeg okien News i Kampanie H&amp;M. Okno News i okna kampanii odsuwają się od listwy, a na pełnym ekranie ich treść kończy się przed listwą. Uchwyt „Wzmianki” jest zaznaczony także przy oknach kampanii i zamyka je drugim kliknięciem."
         }
       ]
     }
@@ -22151,6 +22140,7 @@
   function _relOnChannel() {
     _logDevCache = null;
     _logRedraw();
+    _bridgeSync();
     if (!_upd.panel) return;
     _relRenderClBtn();
     _updCloseCard();
@@ -22612,7 +22602,7 @@
       { id: 'mini_mention', icon: 'plus', name: 'Dodaj wzmiankę', desc: 'Uchwyt formularza wzmianki na stronach spoza Brand24, np. na Instagramie.' }
     ]]
   ];
-  // Polecenia palety dla ustawień: [nazwa, kategoria, pole z fokusem]. Narzędzia dochodzą z SET_TOOLS (_palCommands).
+  // Polecenia palety dla ustawień: [nazwa, kategoria, pole z fokusem, 'exp' = tylko na kanale Experimental]. Narzędzia dochodzą z SET_TOOLS (_palCommands).
   var SET_CMDS = [
     ['Motyw', 'look', '[name="b24t-set-theme"]:checked'], ['Rozmiar tekstu', 'look', '[name="b24t-set-text"]:checked'],
     ['Animacje', 'look', '[name="b24t-set-motion"]:checked'],
@@ -22623,7 +22613,8 @@
     ['Dźwięki', 'notify', '[data-snd]'], ['Powiadomienia na telefon (ntfy)', 'notify', '#b24t-ntfy-on'],
     ['Odśwież listę projektów', 'projects', '#b24t-pn-refresh'],
     ['Kanał aktualizacji', 'updates', '[name="b24t-channel"]:checked'], ['Sprawdź aktualizacje', 'updates', '#b24t-set-upd-check'],
-    ['Analityka News', 'analytics', '#b24t-na-enabled'], ['Logi programistyczne', 'updates', '#b24t-set-devlogs']
+    ['Analityka News', 'analytics', '#b24t-na-enabled'], ['Logi programistyczne', 'updates', '#b24t-set-devlogs'],
+    ['Most testowy', 'updates', '#b24t-set-bridge', 'exp']
   ];
   var SET_SUBS = {
     delete_by_assessment: { name: 'Usuwanie po ocenie', tag: ['Nieodwracalne', 'danger'],
@@ -22705,6 +22696,122 @@
     _panelSyncRail();
     // Prefetch danych w tle — startBgPrefetch sam zarządza tokenem i cyklem
     if (_featOn('annotator_dashboard', features)) startBgPrefetch();
+    _bridgeSync();
+  }
+
+  // ─── MOST TESTOWY (SECURITY.md §3.10, TEST_BRIDGE.md) ───
+  // Odczyt stanu wtyczki ze strony Brand24 dla testów przez rozszerzenie przeglądarki: zdarzenie `b24t-test:request`
+  // na `document`, odpowiedź `b24t-test:snapshot` z JSON-em jako napisem w `detail` (napis przechodzi między światem
+  // piaskownicy a światem strony, obiekt nie). Świadomy, wąski wyjątek od zasady „nic nie wystawiamy stronie”:
+  // - tylko odczyt: `detail` zapytania jest ignorowany, odpowiedź niczego nie wywołuje ani nie zapisuje;
+  // - pola z białej listy (_bridgeSnapshot), czyli to, co interfejs wtyczki i tak pokazuje w otwartym korzeniu cienia;
+  //   bez tokenów, kluczy, kodów, ustawień i pól z treścią wzmianek; całość jeszcze przez _bridgeScrub;
+  // - tylko na app.brand24.com i panel.brand24.pl, na kanale Experimental, po włączeniu w Ustawieniach (pamięć
+  //   Tampermonkeya, której strona nie zmieni); wyłączony nie ma słuchacza.
+  // Hasła ani podpisu nie ma celowo: test działa w tym samym świecie co skrypty Brand24, więc każdy sekret podany przez
+  // test byłby dla nich widoczny. Nie dodawaj tu poleceń wykonujących akcje ani pól spoza białej listy.
+  var BRIDGE_REQ = 'b24t-test:request', BRIDGE_RES = 'b24t-test:snapshot';
+  var BRIDGE_LOGS = 150, BRIDGE_DIAG = 100, BRIDGE_NEWS = 200, BRIDGE_MIN_MS = 250;
+  var _bridge = { on: false, at: 0, json: '', busy: false };
+
+  // Ostatnia zapora, gdyby pole z białej listy kiedyś zawierało sekret (komunikat błędu dostawcy AI, adres z parametrem).
+  // Sekrety o znanych wartościach maskuje się dokładnie: klucze AI, token GitHuba, temat ntfy, nagłówki autoryzacji
+  // (_diagSecrets) i CSRF panelu, reszta wzorcami. Działa na każdym polu przed przycięciem (ucięty klucz mógłby nie
+  // pasować do wzorca) i jeszcze raz na całym JSON-ie; `\t` po Bearer to tabulator po JSON.stringify.
+  var BRIDGE_SECRET_RX = [
+    /Bearer(?:\s|\\[tnr])+[\w.~+\/=-]+/gi,
+    /\beyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}/g,
+    /\bsk-[\w-]{8,}/g,
+    /\bAIza[\w-]{20,}/g,
+    /\bAQ\.[\w-]{20,}/g,
+    /\bgithub_pat_\w{20,}/g,
+    /\bgh[pousr]_\w{20,}/g,
+    /\b[0-9a-f]{32,}\b/gi,
+    /([?&#](?:token|tkn\w*|key|apikey|api_key|access_token|auth|sig|signature|code|topic)=)[^&#\s"\\]+/gi,
+  ];
+  function _bridgeSecrets() {
+    return _diagSecrets().concat([state.tknB24]).filter(function (x) { return typeof x === 'string' && x.length >= 8; });
+  }
+  function _bridgeScrub(s, secrets) {
+    s = String(s);
+    (secrets || []).forEach(function (v) { s = s.split(v).join('[ukryte]'); });
+    BRIDGE_SECRET_RX.forEach(function (rx) {
+      s = s.replace(rx, function (m, p1) { return (typeof p1 === 'string' ? p1 : '') + '[ukryte]'; });
+    });
+    return s;
+  }
+
+  function _bridgeSnapshot(secrets) {
+    var f = state.file, st = state.stats || {}, plan = null;
+    try { plan = _autoDeletePlan(); } catch (e) {}
+    var cut = function (v, n) { return v == null ? null : _bridgeScrub(v, secrets).slice(0, n); };
+    return {
+      bridge: 1,
+      version: VERSION,
+      channel: _relChannel(),
+      t: Date.now(),
+      page: { path: location.pathname, hidden: document.hidden, visibility: document.visibilityState },
+      project: { id: state.projectId || null, name: cut(state.projectName, 120), tags: Object.keys(state.tags || {}).length },
+      run: {
+        status: state.status, testRun: !!state.testRunMode,
+        stats: { tagged: st.tagged || 0, skipped: st.skipped || 0, noMatch: st.noMatch || 0, conflicts: st.conflicts || 0 },
+        partition: state.currentPartitionIdx || 0, partitions: (state.partitions || []).length,
+      },
+      file: f ? { name: cut(f.name, 120), rows: (f.rows || []).length, multiProject: !!(f.colMap && f.colMap.projectId),
+        dateFrom: (f.meta && f.meta.minDate) || null, dateTo: (f.meta && f.meta.maxDate) || null } : null,
+      mapping: Object.keys(state.mapping || {}).map(function (label) {
+        var m = state.mapping[label] || {};
+        return { label: cut(label, 80), type: m.type || null, tagName: cut(m.tagName, 80) };
+      }),
+      autoDelete: {
+        enabled: !!state.autoDeleteEnabled, tagId: state.autoDeleteTagId || null,
+        plan: plan ? { tagName: cut(plan.tagName, 80), targets: plan.targets.map(function (t) {
+          return { pid: t.pid, tagId: t.tagId, dateFrom: t.dateFrom, dateTo: t.dateTo };
+        }) } : null,
+      },
+      news: {
+        mode: newsState.mode, campaign: !!newsState.campaign, active: newsState.activeIdx, count: newsState.urls.length,
+        rows: newsState.urls.slice(0, BRIDGE_NEWS).map(function (e) {
+          return { url: cut(e.url, 300), status: e.status || null, http: e.httpStatus || null, bs: e.bsStatus || null,
+            bsDone: !!e.bsDone, viaBrowser: !!e.scannedViaBrowser };
+        }),
+      },
+      logs: state.logs.slice(-BRIDGE_LOGS).map(function (e) {
+        return { t: e.timestamp, type: e.type, tech: !!e.tech, key: e.key || null, msg: cut(e.message, 300) };
+      }),
+      // Bez wpisów logu (są wyżej) i bez parametrów zapytań (`vars`) oraz stosów wywołań.
+      diag: _diag.ev.filter(function (e) { return e.k !== 'log'; }).slice(-BRIDGE_DIAG).map(function (e) {
+        return { t: e.t, k: e.k, op: cut(e.op, 80), ok: e.ok, ms: e.ms, n: e.n, status: e.status,
+          err: cut(e.err, 200), src: cut(e.src, 60), msg: cut(e.msg, 200) };
+      }),
+    };
+  }
+
+  // Odpowiedź z pamięci przez BRIDGE_MIN_MS: zalew zapytań ze strony nie obciąża wtyczki. `busy` zatrzymuje pętlę, gdy
+  // słuchacz odpowiedzi od razu wysyła kolejne zapytanie (dispatchEvent jest synchroniczny).
+  function _bridgeOnRequest() {
+    if (_bridge.busy) return;
+    var now = Date.now();
+    if (!_bridge.json || now - _bridge.at >= BRIDGE_MIN_MS) {
+      var sec = [];
+      try { sec = _bridgeSecrets(); } catch (e) {}
+      try { _bridge.json = _bridgeScrub(JSON.stringify(_bridgeSnapshot(sec)), sec); }
+      catch (e) { _bridge.json = _bridgeScrub(JSON.stringify({ bridge: 1, error: String((e && e.message) || e).slice(0, 200) }), sec); }
+      _bridge.at = now;
+    }
+    _bridge.busy = true;
+    try { document.dispatchEvent(new CustomEvent(BRIDGE_RES, { detail: _bridge.json })); }
+    catch (e) {}
+    finally { _bridge.busy = false; }
+  }
+
+  function _bridgeSync() {
+    var on = !!_b24HostBase() && _relChannel() === 'experimental' && loadFeatures().test_bridge === true;
+    if (on === _bridge.on) return;
+    _bridge.on = on;
+    _bridge.json = '';
+    if (on) document.addEventListener(BRIDGE_REQ, _bridgeOnRequest);
+    else document.removeEventListener(BRIDGE_REQ, _bridgeOnRequest);
   }
 
   // Funkcja opcjonalna „Annotators”: uchwyt krawędziowy i okno Dashboardu Annotatora.
@@ -23045,6 +23152,11 @@
       '<section class="b-set-sec"><h3 class="b-set-sec__title">Testowanie</h3>' +
         _setRow('Logi programistyczne', 'Log pokazuje też wpisy techniczne: odświeżanie w tle, ponowienia zapytań, partie, kontrole danych. ' +
           'Karta logu stoi wtedy na stałe w kartach Plik i AI Tag.', _setSwitch('b24t-set-devlogs', _devLogs()), { label: true }) +
+        // Tylko na kanale Experimental: most działa wyłącznie tam (_bridgeSync). Wiersz z klasą zamiast kontenera,
+        // bo kreskę między wierszami rysuje `.b-set-row + .b-set-row`.
+          _setRow('Most testowy', 'Stan wtyczki do odczytu dla testów przez rozszerzenie przeglądarki: wersja, projekt, przebieg, ' +
+            'wiersze News, log. Bez tokenów, kluczy i treści wzmianek. Działa tylko na stronach Brand24.',
+            _setSwitch('b24t-set-bridge', loadFeatures().test_bridge === true), { label: true, cls: 'b-set-exptool' }) +
       '</section>';
     var stEl = pane.querySelector('#b24t-set-upd-state'), checkBtn = pane.querySelector('#b24t-set-upd-check');
     function say() {
@@ -23073,6 +23185,24 @@
       applyFeatures();
       ctx.saved();
     });
+    // Most włącza tylko prawdziwe kliknięcie: interfejs wtyczki jest w otwartym korzeniu cienia, więc skrypt strony
+    // mógłby kliknąć przełącznik sam. `el.click()` ze skryptu daje `click` z isTrusted = false, ale `change`, które
+    // przeglądarka wysyła po nim, ma isTrusted = true [harness 2026-10-04], dlatego nieprawdziwe kliknięcie jest
+    // anulowane już w `click` (cofa zaznaczenie, `change` nie powstaje), a `change` wysłane ręcznie odrzuca drugi
+    // warunek. Kliknięcia z testu przez rozszerzenie idą przez CDP i są prawdziwe (SECURITY.md §3.10).
+    var bridgeEl = pane.querySelector('#b24t-set-bridge');
+    bridgeEl.addEventListener('click', function (ev) { if (!ev.isTrusted) ev.preventDefault(); }, true);
+    bridgeEl.addEventListener('change', function (ev) {
+      if (!ev.isTrusted) { bridgeEl.checked = loadFeatures().test_bridge === true; return; }
+      var f = loadFeatures();
+      f.test_bridge = bridgeEl.checked;
+      saveFeatures(f);
+      applyFeatures();
+      ctx.saved();
+    });
+    var expTools = pane.querySelectorAll('.b-set-exptool');
+    function showExpTools(on) { expTools.forEach(function (el) { el.hidden = !on; }); }
+    showExpTools(channel === 'experimental');
     var expBox = pane.querySelector('#b24t-set-exp'), expCode = pane.querySelector('#b24t-set-exp-code'),
       expOk = pane.querySelector('#b24t-set-exp-ok'), expMsg = pane.querySelector('#b24t-set-exp-msg');
     function setChannel(value) {
@@ -23083,6 +23213,7 @@
       _relOnChannel();
       // Bez własnego wyboru logi programistyczne idą za kanałem (_devLogs).
       devEl.checked = _devLogs();
+      showExpTools(value === 'experimental');
       addLog('ℹ Kanał aktualizacji: ' + (value === 'experimental' ? 'Eksperymentalny' : 'Stabilny') + '.', 'info', { tech: true, key: 'settings' });
       say();
       ctx.saved();
@@ -23855,7 +23986,8 @@
   // ───────────────────────────────────────────
 
   // Pobiera z localStorage listę znanych projektów
-  // Zwraca też per-projekt ID tagów REQUIRES_VERIFICATION / TO_DELETE (tagi w Brand24 są per projekt)
+  // Zwraca też per-projekt ID tagów REQUIRES_VERIFICATION / TO_DELETE (tagi w Brand24 należą do konta: ta sama nazwa
+  // ma inne ID w projektach innego konta, BRAND24_NETWORK.md §6 getTags)
   // groupId: tylko projekty tej grupy (zakres okna „Wszystkie projekty”); bez niego wszystkie zapamiętane.
   function getKnownProjects(groupId) {
     const projects = lsGet(LS.PROJECTS, {});
@@ -24030,7 +24162,7 @@
 
   // Liczby wzmianek z tagiem w projektach zakresu okna „Wszystkie projekty” (_apGroupId) — per tagId.
   // Zakres jest częścią wpisu: okno istnieje tylko w trakcie otwarcia, więc wybór grupy nie może żyć w DOM.
-  // tagId to ID tagu w bieżącym projekcie. Tagi w Brand24 są per projekt, więc w pozostałych projektach tag szukany
+  // tagId to ID tagu w bieżącym projekcie. Tagi w Brand24 należą do konta, więc w projektach innych kont tag szukany
   // jest po nazwie w tagach zapamiętanych przy ich otwarciu (p._tagId); projekt bez tagu o tej nazwie dostaje `noTag`
   // i nie jest ani liczony, ani usuwany. Nie dociągamy tu tagów z Brand24 (_tagsFetchFreshAsync): getTags bierze
   // projekt z sesji, a równoległe pobrania dla kilku projektów mogłyby zapisać tagi jednego projektu pod drugim.
@@ -24743,7 +24875,7 @@
 
   // Usuwanie po zakończeniu (Auto-Delete): { tagName, targets: [{ pid, name, tagId, dateFrom, dateTo }] } albo null.
   // Plik jednego projektu: bieżący projekt i zakres dat pliku. Plik z kolumną project_id: każdy projekt z pliku
-  // z zakresem dat jego wierszy, a tag po nazwie w tagach projektu, bo tagi w Brand24 są per projekt
+  // z zakresem dat jego wierszy, a tag po nazwie w tagach projektu, bo tagi w Brand24 należą do konta
   // (runMultiProjectTagging odświeża je przed tagowaniem). Projekt otwarty w przeglądarce nie jest celem, gdy pliku
   // w nim nie ma. Projekt bez tagu o tej nazwie ma tagId null i jest pomijany.
   function _autoDeletePlan() {

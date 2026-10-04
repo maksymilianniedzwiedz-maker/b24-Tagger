@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.14
+// @version      0.38.15
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -174,7 +174,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.14';
+  const VERSION = '0.38.15';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2281,6 +2281,13 @@
     return data.getMentions;
   }
 
+  // Test Run zatrzymuje zapisy w bulkTagMentions, bulkUntagMentions, setMentionSentiment i deleteMention, a liczniki
+  // operacji liczą dalej. Podsumowania operacji idą przez tę funkcję: w Test Run mówią, ile zapisów by poszło,
+  // bo „Otagowano N” czytało się jak zmiana w Brand24.
+  function _trSummary(real, test) {
+    return state.testRunMode ? 'Test Run: ' + test + ', Brand24 bez zmian' : real;
+  }
+
   async function bulkTagMentions(mentionsIds, tagId, retries = 5) {
     if (state.testRunMode) {
       addLog(`[TEST] bulkTag: ${mentionsIds.length} IDs → tagId ${tagId}`, 'info');
@@ -3767,15 +3774,15 @@
     if (state.status === 'running') {
       state.status = 'done';
       updateStatusUI();
-      addLog(`✅ Wszystkie partycje zakończone! ${state.stats.tagged} otagowane.`, 'success');
-      Toast.show('Otagowano ' + state.stats.tagged + ' ' + _relPl(state.stats.tagged, 'wzmiankę', 'wzmianki', 'wzmianek'), 'ok');
+      addLog('✅ ' + _trSummary(`Wszystkie partycje zakończone! ${state.stats.tagged} otagowane.`, `wszystkie partycje zakończone, ${state.stats.tagged} do otagowania`), 'success');
+      Toast.show(_trSummary('Otagowano ' + _plPl(state.stats.tagged, 'wzmiankę', 'wzmianki', 'wzmianek'), _plPl(state.stats.tagged, 'wzmianka', 'wzmianki', 'wzmianek') + ' do otagowania'), 'ok');
       var _tCzas = state.sessionStart ? Date.now() - state.sessionStart : 0;
       var _tPominiete = state.stats.skipped || 0;
       _ntfySend({
         ev: 'tagDone',
-        title: '✅ Tagowanie zakończone',
+        title: state.testRunMode ? '✅ Test Run zakończony, Brand24 bez zmian' : '✅ Tagowanie zakończone',
         message: (_ntfyProjekt() ? _ntfyProjekt() + '\n' : '') +
-                 `otagowano ${state.stats.tagged}` +
+                 (state.testRunMode ? `do otagowania ${state.stats.tagged}` : `otagowano ${state.stats.tagged}`) +
                  (_tPominiete ? `, pominięto ${_tPominiete}` : '') + '\n' +
                  `partycji: ${state.partitions.length}` +
                  (_tCzas ? '\nczas: ' + _ntfyCzas(_tCzas) : '') +
@@ -3792,14 +3799,10 @@
       }
 
       // Auto-Delete after tagging if enabled
-      if (state.autoDeleteEnabled && state.autoDeleteTagId) {
-        const autoTagName = Object.entries(state.tags).find(([, id]) => id === state.autoDeleteTagId)?.[0] || String(state.autoDeleteTagId);
-        const dateFrom = state.file?.meta?.minDate;
-        const dateTo = state.file?.meta?.maxDate;
-        if (dateFrom && dateTo) {
-          addLog(`→ Auto-Delete: uruchamiam dla tagu "${autoTagName}"`, 'warn');
-          await runAutoDeleteAfterTagging(state.autoDeleteTagId, autoTagName, dateFrom, dateTo);
-        }
+      const autoDelete = _autoDeletePlan();
+      if (autoDelete) {
+        if (!state.testRunMode) autoDelete.targets = autoDelete.targets.filter(t => _autoDeleteConfirmedPids.includes(t.pid));
+        await runAutoDeleteAfterTagging(autoDelete);
       }
 
       stopHealthCheck();
@@ -4473,7 +4476,7 @@
     var done = (st.tagged || 0) + (st.skipped || 0) + (st.noMatch || 0);
     var running = state.status === 'running' || state.status === 'paused';
     if (running && total) Win.setPill('panel', { value: Math.min(done, total), max: total });
-    else if (state.status === 'done' && _pillWasRunning) Win.setPill('panel', { done: true, value: total, max: total, label: 'Otagowano ' + (st.tagged || 0) });
+    else if (state.status === 'done' && _pillWasRunning) Win.setPill('panel', { done: true, value: total, max: total, label: (state.testRunMode ? 'Test Run: ' : 'Otagowano ') + (st.tagged || 0) });
     else if (!running) Win.setPill('panel', { label: 'B24 Tagger' });
     _pillWasRunning = running;
   }
@@ -4485,7 +4488,10 @@
       skipped: _$('b24t-stat-skipped'),
       remaining: _$('b24t-stat-remaining'),
     };
-    if (els.tagged)  els.tagged.textContent  = state.stats.tagged;
+    if (els.tagged) {
+      els.tagged.textContent = state.stats.tagged;
+      els.tagged.previousElementSibling.textContent = state.testRunMode ? 'Do otagowania' : 'Otagowano';
+    }
     if (els.skipped) els.skipped.textContent = state.stats.skipped + state.stats.noMatch;
 
     // Remaining = total file rows - tagged - skipped
@@ -4675,10 +4681,11 @@
 
     Win.close('report');
     const w = Win.open({
-      id: 'report', kind: 'dialog', width: failed.length ? 52 : 36, title: 'Raport sesji', from: _$('b24t-btn-start'),
+      id: 'report', kind: 'dialog', width: failed.length ? 52 : 36, title: state.testRunMode ? 'Raport sesji · Test Run' : 'Raport sesji', from: _$('b24t-btn-start'),
       body: `<div class="b-stack">
+        ${state.testRunMode ? `<div class="b-banner b-banner--info">${_icon('info')}<div>Test Run: tagi, usunięcia i sentyment nie trafiły do Brand24. Liczby pokazują, co zapisałby przebieg właściwy.</div></div>` : ''}
         <div class="b-kpis">
-          ${kpi('Otagowano', state.stats.tagged, 'b-ok')}
+          ${kpi(state.testRunMode ? 'Do otagowania' : 'Otagowano', state.stats.tagged, 'b-ok')}
           ${kpi('Pominięto', state.stats.skipped, state.stats.skipped ? 'b-warn' : '')}
           ${kpi('Brak dopasowania', state.stats.noMatch, '')}
           ${kpi('Konflikty', state.stats.conflicts, '')}
@@ -10331,7 +10338,7 @@
 
     // Run mode toggle
     panel.querySelectorAll('input[name="b24t-run-mode"]').forEach(r => {
-      r.addEventListener('change', (e) => { state.testRunMode = e.target.value === 'test'; });
+      r.addEventListener('change', (e) => { state.testRunMode = e.target.value === 'test'; updateStatsUI(); });
     });
 
     // Map mode toggle
@@ -11079,7 +11086,11 @@
   // ponownie, gdy w pauzie zmieniło się mapowanie albo tryb (Test Run → właściwy), bo inaczej zmiana na „Usuń”
   // usuwała wzmianki bez potwierdzenia.
   let _runConfirmedKey = '';
-  function _runConfirmKey() { return JSON.stringify([state.mapping, state.testRunMode]); }
+  // Projekty z usuwaniem po zakończeniu w ostatnim potwierdzeniu. Plik wielu projektów odświeża tagi dopiero w przebiegu
+  // (runMultiProjectTagging), więc projekt pokazany jako „bez tagu” może go po odświeżeniu mieć: usuwanie po przebiegu
+  // idzie tylko w projektach z potwierdzenia.
+  let _autoDeleteConfirmedPids = [];
+  function _runConfirmKey() { return JSON.stringify([state.mapping, state.testRunMode, state.autoDeleteEnabled && state.autoDeleteTagId]); }
   async function _runConfirm() {
     // Potwierdzenie przy dużej liczbie wzmianek (200+) — tylko w trybie właściwym
     if (!state.testRunMode && state.file && state.file.rows && state.file.rows.length >= 200) {
@@ -11105,6 +11116,34 @@
           '<div class="b-banner b-banner--danger">' + _icon('alert') + '<div><div class="b-banner__title">Nieodwracalne</div>' +
           'Brand24 nie ma kosza; usuniętych wzmianek nie da się przywrócić.</div></div>'
       }))) return false;
+    }
+
+    // Usuwanie po zakończeniu sięga poza plik: wszystkie wzmianki z tagiem w zakresie dat. Potwierdzenie podaje projekty,
+    // zakresy i liczbę wzmianek, które mają ten tag przed przebiegiem; po przebiegu dojdą te, które przebieg nim otaguje.
+    const _autoDelete = state.testRunMode ? null : _autoDeletePlan();
+    _autoDeleteConfirmedPids = [];
+    if (_autoDelete) {
+      const _known = _autoDelete.targets.filter(t => t.tagId);
+      const _counts = [];
+      for (let i = 0; i < _known.length; i += BG_CONCURRENCY) {
+        _counts.push(...await Promise.all(_known.slice(i, i + BG_CONCURRENCY).map(t =>
+          getMentions(t.pid, t.dateFrom, t.dateTo, [t.tagId], 1).then(r => r.count || 0, () => null))));
+      }
+      const _row = (k, v, note) => '<div class="b-list__row"><span class="b-strong b-ell">' + _escHtml(k) + '</span><span class="b-sp"></span>' +
+        _escHtml(v) + (note ? '<span class="b-muted">' + _escHtml(note) + '</span>' : '') + '</div>';
+      const _rows = _known.map((t, i) => _row(t.name, t.dateFrom + ' – ' + t.dateTo,
+        _counts[i] == null ? 'nie udało się policzyć' : 'ma tag: ' + _plPl(_counts[i], 'wzmianka', 'wzmianki', 'wzmianek')));
+      const _skipped = _autoDelete.targets.filter(t => !t.tagId).map(t => t.name);
+      if (!(await _dlgConfirm({
+        title: 'Po przebiegu: usunięcie wzmianek z tagiem „' + _autoDelete.tagName + '”', danger: true, confirm: 'Kontynuuj z usuwaniem', from: _$('b24t-btn-start'),
+        body: '<p>Po przebiegu wtyczka usunie wszystkie wzmianki z tym tagiem w podanym zakresie dat, także te spoza pliku.</p>' +
+          (_rows.length ? '<div class="b-list">' + _rows.join('') + '</div>' : '') +
+          (_skipped.length ? '<p class="b-text2">Bez tagu „' + _escHtml(_autoDelete.tagName) + '”, więc bez usuwania: ' + _escHtml(_skipped.join(', ')) + '.</p>' : '') +
+          '<p class="b-text2">Wyłączenie: „Usuwanie po zakończeniu” w Ustawieniach przebiegu.</p>' +
+          '<div class="b-banner b-banner--danger">' + _icon('alert') + '<div><div class="b-banner__title">Nieodwracalne</div>' +
+          'Brand24 nie ma kosza; usuniętych wzmianek nie da się przywrócić.</div></div>'
+      }))) return false;
+      _autoDeleteConfirmedPids = _known.map(t => t.pid);
     }
 
     // Zmiana sentymentu da się cofnąć, ale dotyka danych klienta hurtem — skala przed startem.
@@ -16401,6 +16440,21 @@
     return window._b24tnewsWin;
   }
 
+  // Wiadomość z okna otwartego przez `_newsOpenUrl`. Adres w `ev.data.url` podaje nadawca, a `ev.origin` to domena
+  // dowolnej skanowanej strony, więc o pochodzeniu świadczy tylko `ev.source`. Test odcina inne karty i ramki,
+  // także reklamy osadzone w skanowanej stronie (SECURITY.md §3.3). Pierwsza odrzucona wiadomość wtyczki trafia do logu
+  // diagnostycznego: gdyby piaskownica Tampermonkeya podawała inny obiekt okna niż `window.open`, skan przez przeglądarkę
+  // przestałby działać i bez tego wpisu wyglądałby jak strony, które nie odpowiadają.
+  var _newsForeignMsgLogged = false;
+  function _newsFromScanWin(ev) {
+    if (window._b24tnewsWin && ev.source === window._b24tnewsWin) return true;
+    if (!_newsForeignMsgLogged && ev.data && /^b24t_news_/.test(ev.data.type)) {
+      _newsForeignMsgLogged = true;
+      addLog('[DIAG] Odrzucona wiadomość ' + ev.data.type + ' spoza okna skanu News (' + (ev.origin || '?') + ', okno skanu: ' + (window._b24tnewsWin ? 'otwarte' : 'brak') + ')', 'diag');
+    }
+    return false;
+  }
+
   // ── CSRF TOKEN RESOLUTION ──
   function _newsGetTknB24(cb) {
     var _wantBase = _b24PanelBase(state.projectId || '');
@@ -18692,11 +18746,11 @@
       _bsPump();
     }
 
-    // Treść z okna. Nadawcą jest nasza własna karta (`window.name === '_b24tnews'`), ale
-    // postMessage przyjmuje wszystko — dlatego bierzemy wiadomość tylko wtedy, gdy sami
-    // czekamy na stronę. Adres porównujemy luźno: serwisy przekierowują (www, kraj, AMP),
-    // więc `location.href` w oknie bywa inny niż ten, o który prosiliśmy.
+    // Treść z okna skanu: tylko z tego okna i tylko wtedy, gdy sami czekamy na stronę.
+    // Adres porównujemy luźno: serwisy przekierowują (www, kraj, AMP), więc `location.href`
+    // w oknie bywa inny niż ten, o który prosiliśmy.
     window.addEventListener('message', function(ev) {
+      if (!_newsFromScanWin(ev)) return;
       // Meldunek startu: strona wstała, więc przestajemy odliczać krótki limit i dajemy jej
       // dociągnąć treść.
       if (ev.data && ev.data.type === 'b24t_news_alive' && _bsPending) {
@@ -19953,7 +20007,7 @@
 
     // ── postMessage listener: data z okna artykułu (relay z @match *://*/*) ──
     window.addEventListener('message', function(ev) {
-      if (!ev.data || ev.data.type !== 'b24t_news_date') return;
+      if (!ev.data || ev.data.type !== 'b24t_news_date' || !_newsFromScanWin(ev)) return;
       var date = ev.data.date;
       var url  = ev.data.url;
       if (!date || !RX_ISO_DATE.test(date)) return;
@@ -20711,6 +20765,70 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.15",
+      "date": "2026-10-04",
+      "label": "improved",
+      "changes": [
+        {
+          "type": "improved",
+          "area": "Tagowanie z pliku",
+          "title": "Potwierdzenie „Usuwanie po zakończeniu” przed startem przebiegu",
+          "items": [
+            "Start z włączoną opcją pokazuje tag, projekty, zakresy dat i liczbę wzmianek, które mają już ten tag, także spoza pliku.",
+            "Usuwanie po przebiegu obejmuje tylko projekty wymienione w potwierdzeniu.",
+            "Pod listą tagów opcji stoi opis zakresu usuwania."
+          ],
+          "text": "Potwierdzenie „Usuwanie po zakończeniu” przed startem przebiegu. Start z włączoną opcją pokazuje tag, projekty, zakresy dat i liczbę wzmianek, które mają już ten tag, także spoza pliku. Usuwanie po przebiegu obejmuje tylko projekty wymienione w potwierdzeniu. Pod listą tagów opcji stoi opis zakresu usuwania."
+        },
+        {
+          "type": "fix",
+          "area": "Tagowanie z pliku",
+          "title": "Naprawiono błąd, przez który usuwanie po zakończeniu w pliku wielu projektów szło w otwartym projekcie",
+          "items": [
+            "Usuwanie działa w każdym projekcie z pliku, z tagiem o tej samej nazwie i z zakresem dat wierszy tego projektu.",
+            "Projekt bez tagu o tej nazwie jest pomijany."
+          ],
+          "text": "Naprawiono błąd, przez który usuwanie po zakończeniu w pliku wielu projektów szło w otwartym projekcie. Usuwanie działa w każdym projekcie z pliku, z tagiem o tej samej nazwie i z zakresem dat wierszy tego projektu. Projekt bez tagu o tej nazwie jest pomijany."
+        },
+        {
+          "type": "fix",
+          "area": "Tagowanie z pliku",
+          "title": "Naprawiono błąd, przez który usuwanie po zakończeniu brało tag sprzed zmiany mapowania",
+          "items": [
+            "Lista tagów opcji pokazuje tag, z którym ruszy usuwanie; tag oceny zmienionej z irrelevant na inny rodzaj przestaje być celem.",
+            "„Zawsze włączaj w tym projekcie dla tego tagu” zaznacza opcję razem z tagiem."
+          ],
+          "text": "Naprawiono błąd, przez który usuwanie po zakończeniu brało tag sprzed zmiany mapowania. Lista tagów opcji pokazuje tag, z którym ruszy usuwanie; tag oceny zmienionej z irrelevant na inny rodzaj przestaje być celem. „Zawsze włączaj w tym projekcie dla tego tagu” zaznacza opcję razem z tagiem."
+        },
+        {
+          "type": "fix",
+          "area": "Quick Delete",
+          "title": "Naprawiono błąd, przez który „Wszystkie projekty” brały ID tagu z bieżącego projektu",
+          "items": [
+            "Okno „Usuwanie ze wszystkich projektów” liczy i usuwa w każdym projekcie wzmianki z tagiem o tej samej nazwie.",
+            "Projekty, których wtyczka nie zna z tym tagiem, okno wymienia z nazwy i ich nie rusza. Tagi projektu wtyczka zapamiętuje przy otwarciu jego wzmianek w Brand24."
+          ],
+          "text": "Naprawiono błąd, przez który „Wszystkie projekty” brały ID tagu z bieżącego projektu. Okno „Usuwanie ze wszystkich projektów” liczy i usuwa w każdym projekcie wzmianki z tagiem o tej samej nazwie. Projekty, których wtyczka nie zna z tym tagiem, okno wymienia z nazwy i ich nie rusza. Tagi projektu wtyczka zapamiętuje przy otwarciu jego wzmianek w Brand24."
+        },
+        {
+          "type": "fix",
+          "area": "Tagowanie z pliku",
+          "title": "Naprawiono podsumowania Test Run, które brzmiały jak zapis w Brand24",
+          "items": [
+            "Raport sesji, licznik w karcie Plik, pigułka panelu i powiadomienie o końcu podają liczbę zapisów do wykonania z dopiskiem „Brand24 bez zmian”.",
+            "Tak samo kończą się Quick Tag, Usuwanie i AI Tag w trybie Test Run."
+          ],
+          "text": "Naprawiono podsumowania Test Run, które brzmiały jak zapis w Brand24. Raport sesji, licznik w karcie Plik, pigułka panelu i powiadomienie o końcu podają liczbę zapisów do wykonania z dopiskiem „Brand24 bez zmian”. Tak samo kończą się Quick Tag, Usuwanie i AI Tag w trybie Test Run."
+        },
+        {
+          "type": "fix",
+          "area": "Dodawanie wzmianek",
+          "title": "Naprawiono błąd bezpieczeństwa",
+          "text": "Naprawiono błąd bezpieczeństwa."
+        }
+      ]
+    },
+    {
       "version": "0.38.14",
       "date": "2026-10-03",
       "label": "improved",
@@ -20991,52 +21109,6 @@
             "Uchwyt „Wzmianki” jest zaznaczony także przy oknach kampanii i zamyka je drugim kliknięciem."
           ],
           "text": "Naprawiono listwę zasłaniającą brzeg okien News i Kampanie H&amp;M. Okno News i okna kampanii odsuwają się od listwy, a na pełnym ekranie ich treść kończy się przed listwą. Uchwyt „Wzmianki” jest zaznaczony także przy oknach kampanii i zamyka je drugim kliknięciem."
-        }
-      ]
-    },
-    {
-      "version": "0.38.5",
-      "date": "2026-10-03",
-      "label": "new",
-      "changes": [
-        {
-          "type": "fix",
-          "area": "Przegląd sentymentu",
-          "title": "Naprawiono „Zatrzymaj”, po którym modele jeszcze przez kilka minut oceniały wysłane partie wzmianek",
-          "items": [
-            "„Zatrzymaj” przerywa zapytania do modeli w toku, a wzmianki bez werdyktu trafiają do grupy „Do decyzji”."
-          ],
-          "text": "Naprawiono „Zatrzymaj”, po którym modele jeszcze przez kilka minut oceniały wysłane partie wzmianek. „Zatrzymaj” przerywa zapytania do modeli w toku, a wzmianki bez werdyktu trafiają do grupy „Do decyzji”."
-        },
-        {
-          "type": "improved",
-          "area": "Przegląd sentymentu",
-          "title": "Ocena od 1 000 wzmianek czeka na potwierdzenie z szacunkiem kosztu",
-          "items": [
-            "Okno potwierdzenia podaje projekt, zakres dat, liczbę wzmianek do oceny i szacunkowy koszt każdego z dwóch modeli.",
-            "Wzmianki z werdyktem zapamiętanym z wcześniejszej oceny nie liczą się do progu, bo nie trafiają do modeli."
-          ],
-          "text": "Ocena od 1 000 wzmianek czeka na potwierdzenie z szacunkiem kosztu. Okno potwierdzenia podaje projekt, zakres dat, liczbę wzmianek do oceny i szacunkowy koszt każdego z dwóch modeli. Wzmianki z werdyktem zapamiętanym z wcześniejszej oceny nie liczą się do progu, bo nie trafiają do modeli."
-        },
-        {
-          "type": "improved",
-          "area": "Przegląd sentymentu",
-          "title": "Karta Sentyment bez domyślnie zaznaczonych sentymentów",
-          "items": [
-            "Przy pierwszej ocenie projektu sentymenty do oceny trzeba wybrać, a wybór zapamiętuje się dla projektu."
-          ],
-          "text": "Karta Sentyment bez domyślnie zaznaczonych sentymentów. Przy pierwszej ocenie projektu sentymenty do oceny trzeba wybrać, a wybór zapamiętuje się dla projektu."
-        },
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Podgląd dziennika aktualizacji przed wydaniem wersji na kanale Stabilnym",
-          "items": [
-            "Gdy opis najbliższej wersji stabilnej jest gotowy, dziennik zmian ma przycisk „Podgląd dziennika aktualizacji”.",
-            "Podgląd pokazuje opis w oknie, które po wydaniu zobaczą użytkownicy kanału Stabilnego."
-          ],
-          "experimental": true,
-          "text": "Podgląd dziennika aktualizacji przed wydaniem wersji na kanale Stabilnym. Gdy opis najbliższej wersji stabilnej jest gotowy, dziennik zmian ma przycisk „Podgląd dziennika aktualizacji”. Podgląd pokazuje opis w oknie, które po wydaniu zobaczą użytkownicy kanału Stabilnego."
         }
       ]
     }
@@ -23793,6 +23865,7 @@
       return {
         id: pid,
         name: _pnResolve(pid),
+        tagIds: tagIds,
         reqVerId: tagIds['REQUIRES_VERIFICATION'] || null,
         toDeleteId: tagIds['TO_DELETE'] || null,
       };
@@ -23957,6 +24030,10 @@
 
   // Liczby wzmianek z tagiem w projektach zakresu okna „Wszystkie projekty” (_apGroupId) — per tagId.
   // Zakres jest częścią wpisu: okno istnieje tylko w trakcie otwarcia, więc wybór grupy nie może żyć w DOM.
+  // tagId to ID tagu w bieżącym projekcie. Tagi w Brand24 są per projekt, więc w pozostałych projektach tag szukany
+  // jest po nazwie w tagach zapamiętanych przy ich otwarciu (p._tagId); projekt bez tagu o tej nazwie dostaje `noTag`
+  // i nie jest ani liczony, ani usuwany. Nie dociągamy tu tagów z Brand24 (_tagsFetchFreshAsync): getTags bierze
+  // projekt z sesji, a równoległe pobrania dla kilku projektów mogłyby zapisać tagi jednego projektu pod drugim.
   async function _bgFetchAllProjects(tagId, onProgress) {
     if (!state.tokenHeaders || !tagId) return;
     var groupId = _apGroupId;
@@ -23968,22 +24045,26 @@
     var dates = _getCleanupDateRange();
     var dateFrom = dates.dateFrom;
     var dateTo   = dates.dateTo;
-    var tagName = Object.entries(state.tags || {}).find(function(e){ return e[1] === tagId; })?.[0] || String(tagId);
-    addLog('⟳ [BG] prefetch allProjects[' + tagName + '] (' + projects.length + ' projektów)...', 'info', { tech: true, key: 'bg' });
+    var tagName = Object.entries(state.tags || {}).find(function(e){ return e[1] === tagId; })?.[0] || '';
+    var tagLabel = tagName || String(tagId);
+    addLog('⟳ [BG] prefetch allProjects[' + tagLabel + '] (' + projects.length + ' projektów)...', 'info', { tech: true, key: 'bg' });
     var results = [];
     for (var i = 0; i < projects.length; i += BG_CONCURRENCY) {
       var chunk = projects.slice(i, i + BG_CONCURRENCY);
       var chunkResults = await Promise.all(chunk.map(async function(p) {
+        var pTagId = p.id === state.projectId ? tagId : (tagName && p.tagIds[tagName]) || null;
+        if (!pTagId) return { p: p, count: 0, noTag: true };
         try {
-          var page  = await getMentions(p.id, dateFrom, dateTo, [tagId], 1);
+          var page  = await getMentions(p.id, dateFrom, dateTo, [pTagId], 1);
           var count = page.count || 0;
+          p._tagId    = pTagId;
           p._tagCount = count;
           p._dateFrom = dateFrom;
           p._dateTo   = dateTo;
           return count > 0 ? { p: p, count: count } : null;
         } catch(e) {
           // Brak dostępu zbiera _cmsDenied w jeden wpis.
-          if (e.message !== 'GRAPHQL_PERMISSION_DENIED') addLog('✕ [DIAG] getMentions(' + p.id + '/' + tagName + '): ' + e.message, 'diag');
+          if (e.message !== 'GRAPHQL_PERMISSION_DENIED') addLog('✕ [DIAG] getMentions(' + p.id + '/' + tagLabel + '): ' + e.message, 'diag');
           return { p: p, count: -1, error: e.message };
         }
       }));
@@ -23993,7 +24074,7 @@
     bgCache.allProjects[tagId] = { results: results, ts: Date.now(), groupId: groupId };
     var withData = results.filter(function(r){ return r.count > 0; });
     if (withData.length) {
-      addLog('✓ [BG] allProjects[' + tagName + ']: ' + withData.length + ' projektów z tagiem', 'success', { tech: true, key: 'bg' });
+      addLog('✓ [BG] allProjects[' + tagLabel + ']: ' + withData.length + ' projektów z tagiem', 'success', { tech: true, key: 'bg' });
     }
     return bgCache.allProjects[tagId];
   }
@@ -24562,29 +24643,36 @@
     const section = _$('b24t-auto-delete-section');
     if (!section) return;
 
-    const hasIrrelevant = Object.values(state.mapping).some(m => m.type === 'irrelevant');
-    section.hidden = !hasIrrelevant;
+    const irrelevant = Object.values(state.mapping).filter(m => m.type === 'irrelevant');
+    section.hidden = !irrelevant.length;
+    // Usuwanie po przebiegu bierze tag ze state, nie z listy. Tag spoza ocen irrelevant bieżącego mapowania przestaje
+    // być celem: inaczej ukryta sekcja albo lista z „Wybierz tag” usuwały wzmianki z tagiem sprzed zmiany mapowania.
+    if (!irrelevant.some(m => m.tagId === state.autoDeleteTagId)) state.autoDeleteTagId = null;
+    if (!irrelevant.length) return;
 
-    if (!hasIrrelevant) return;
-
-    // Populate tag dropdown
-    const autoSel = _$('b24t-auto-delete-tag');
-    if (autoSel) {
-      autoSel.innerHTML = '<option value="">Wybierz tag</option>' +
-        Object.entries(state.mapping)
-          .filter(([, m]) => m.type === 'irrelevant')
-          .map(([, m]) => `<option value="${m.tagId}">${_escHtml(m.tagName)}</option>`)
-          .join('');
-    }
-
-    // Restore saved preference if matches current config
+    // Restore saved preference if matches current config. Klucz preferencji to tag pierwszej oceny irrelevant
+    // (getAutoDeletePrefKey), więc bez wyboru z tej sesji wraca ten tag.
     if (getAutoDeletePref()) {
       const cb = _$('b24t-auto-delete-cb');
       const saveCb = _$('b24t-auto-delete-save-cb');
       if (cb) cb.checked = true;
       if (saveCb) { saveCb.checked = true; _$('b24t-auto-delete-save-row').hidden = false; }
       state.autoDeleteEnabled = true;
+      if (!state.autoDeleteTagId) state.autoDeleteTagId = irrelevant[0].tagId;
     }
+
+    // Lista pokazuje dokładnie tag, z którym ruszy usuwanie.
+    const autoSel = _$('b24t-auto-delete-tag');
+    if (autoSel) {
+      autoSel.innerHTML = '<option value="">Wybierz tag</option>' +
+        irrelevant.map(m => `<option value="${m.tagId}">${_escHtml(m.tagName)}</option>`).join('');
+      autoSel.value = state.autoDeleteTagId ? String(state.autoDeleteTagId) : '';
+    }
+    const scope = _$('b24t-auto-delete-scope');
+    if (scope) scope.textContent = (state.file && state.file.colMap && state.file.colMap.projectId
+      ? 'W każdym projekcie z pliku usuwa wszystkie wzmianki z tym tagiem w zakresie dat jego wierszy'
+      : 'Usuwa wszystkie wzmianki projektu z tym tagiem w zakresie dat pliku') +
+      ', także te spoza pliku. Brand24 nie ma kosza.';
   }
 
 
@@ -24649,41 +24737,79 @@
       if (i + BATCH < allIds.length) await sleep(50);
     }
 
-    addLog(`✓ Usunięto ${deleted} wzmianek z tagiem "${tagName}"`, 'success');
+    addLog(_trSummary(`✓ Usunięto ${deleted} wzmianek z tagiem "${tagName}"`, `${deleted} wzmianek z tagiem "${tagName}" do usunięcia`), 'success');
     return deleted;
   }
 
-  // Auto-delete after file tagging run - called from main flow
-  async function runAutoDeleteAfterTagging(tagId, tagName, dateFrom, dateTo) {
-    if (!tagId || !dateFrom || !dateTo) return;
-    addLog(`→ Auto-Delete: "${tagName}" (${dateFrom} → ${dateTo})`, 'warn');
+  // Usuwanie po zakończeniu (Auto-Delete): { tagName, targets: [{ pid, name, tagId, dateFrom, dateTo }] } albo null.
+  // Plik jednego projektu: bieżący projekt i zakres dat pliku. Plik z kolumną project_id: każdy projekt z pliku
+  // z zakresem dat jego wierszy, a tag po nazwie w tagach projektu, bo tagi w Brand24 są per projekt
+  // (runMultiProjectTagging odświeża je przed tagowaniem). Projekt otwarty w przeglądarce nie jest celem, gdy pliku
+  // w nim nie ma. Projekt bez tagu o tej nazwie ma tagId null i jest pomijany.
+  function _autoDeletePlan() {
+    const f = state.file;
+    const tagId = state.autoDeleteTagId;
+    if (!state.autoDeleteEnabled || !tagId || !f || !f.meta) return null;
+    const m = Object.values(state.mapping).find(x => x.type === 'irrelevant' && x.tagId === tagId);
+    const tagName = m ? m.tagName : String(tagId);
+    const colPid = f.colMap && f.colMap.projectId;
+    if (!colPid) {
+      if (!f.meta.minDate || !f.meta.maxDate) return null;
+      return { tagName, targets: [{ pid: state.projectId, name: _pnResolve(state.projectId), tagId, dateFrom: f.meta.minDate, dateTo: f.meta.maxDate }] };
+    }
+    const saved = lsGet(LS.PROJECTS, {});
+    const ranges = {};
+    (f.rows || []).forEach(row => {
+      const pid = (row[colPid] || '').toString().trim();
+      const d = ((f.colMap.date && row[f.colMap.date]) || '').substring(0, 10);
+      if (!pid || !RX_ISO_DATE.test(d)) return;
+      const r = ranges[pid] || (ranges[pid] = { from: d, to: d });
+      if (d < r.from) r.from = d;
+      if (d > r.to) r.to = d;
+    });
+    return { tagName, targets: Object.keys(ranges).map(pid => ({
+      pid: parseInt(pid), name: _pnResolve(pid),
+      tagId: ((saved[pid] && saved[pid].tagIds) || {})[tagName] || null,
+      dateFrom: ranges[pid].from, dateTo: ranges[pid].to,
+    })) };
+  }
 
+  // Auto-delete after file tagging run - called from main flow. Błąd w jednym projekcie kończy usuwanie: przy operacji
+  // nieodwracalnej lepiej zatrzymać się i pokazać przyczynę niż usuwać dalej w kolejnych projektach.
+  async function runAutoDeleteAfterTagging(plan) {
+    const multi = plan.targets.length > 1;
     const setStatus = (msg) => {
       const el = _$('b24t-autodelete-status');
       if (el) el.textContent = msg;
     };
-
-    const onProgress = (phase, cur, total) => {
-      if (phase === 'collect') setStatus(`Zbieram: str. ${cur}/${total}...`);
-      else setStatus(`Usuwam: ${cur}/${total}...`);
-    };
-
-    try {
-      let deleted = await runDeleteByTag(tagId, tagName, dateFrom, dateTo, onProgress);
-      if (deleted === 0) {
-        // Indeks Brand24 mógł jeszcze nie widzieć tagów nadanych przed chwilą: druga próba po 5 s w tym samym zakresie.
-        // Zakres zostaje zakresem pliku. Szersze okno (od początku poprzedniego miesiąca) usuwało bez pytania wzmianki
-        // z tym tagiem spoza pliku, a Brand24 nie ma kosza.
-        addLog(`⚠ Auto-Delete: 0 wzmianek w ${dateFrom}→${dateTo}. Druga próba za 5 s w tym samym zakresie...`, 'warn', { tech: true, key: 'del' });
-        setStatus(`Brak w ${dateFrom}→${dateTo}, druga próba za 5 s...`);
-        await sleep(5000);
-        deleted = await runDeleteByTag(tagId, tagName, dateFrom, dateTo, onProgress);
+    let total = 0;
+    for (const t of plan.targets) {
+      if (!t.tagId) {
+        addLog(`⚠ Auto-Delete: projekt ${t.name} nie ma tagu "${plan.tagName}", pomijam`, 'warn');
+        continue;
       }
-      setStatus(`✓ Usunięto ${deleted} wzmianek`);
-    } catch (e) {
-      addLog(`✕ Auto-Delete błąd: ${e.message}`, 'error');
-      setStatus(`✕ Błąd: ${e.message}`);
+      const at = multi ? t.name + ': ' : '';
+      addLog(`→ Auto-Delete: "${plan.tagName}" (${t.dateFrom} → ${t.dateTo})${multi ? ' w projekcie ' + t.name : ''}`, 'warn');
+      const onProgress = (phase, cur, n) => setStatus(at + (phase === 'collect' ? `Zbieram: str. ${cur}/${n}...` : `Usuwam: ${cur}/${n}...`));
+      try {
+        let deleted = await runDeleteByTag(t.tagId, plan.tagName, t.dateFrom, t.dateTo, onProgress, t.pid);
+        if (deleted === 0) {
+          // Indeks Brand24 mógł jeszcze nie widzieć tagów nadanych przed chwilą: druga próba po 5 s w tym samym zakresie.
+          // Zakres zostaje zakresem pliku. Szersze okno (od początku poprzedniego miesiąca) usuwało bez pytania wzmianki
+          // z tym tagiem spoza pliku, a Brand24 nie ma kosza.
+          addLog(`⚠ Auto-Delete: 0 wzmianek w ${t.dateFrom}→${t.dateTo}. Druga próba za 5 s w tym samym zakresie...`, 'warn', { tech: true, key: 'del' });
+          setStatus(`${at}brak w ${t.dateFrom}→${t.dateTo}, druga próba za 5 s...`);
+          await sleep(5000);
+          deleted = await runDeleteByTag(t.tagId, plan.tagName, t.dateFrom, t.dateTo, onProgress, t.pid);
+        }
+        total += deleted;
+      } catch (e) {
+        addLog(`✕ Auto-Delete błąd${multi ? ' w projekcie ' + t.name : ''}: ${e.message}`, 'error');
+        setStatus(`✕ ${at}błąd: ${e.message}`);
+        return;
+      }
     }
+    setStatus(_trSummary(`✓ Usunięto ${_plPl(total, 'wzmiankę', 'wzmianki', 'wzmianek')}`, `${_plPl(total, 'wzmianka', 'wzmianki', 'wzmianek')} do usunięcia`));
   }
 
   // ───────────────────────────────────────────
@@ -25051,20 +25177,26 @@
     if (!list) return;
     var withData   = results.filter(function(r) { return r.count > 0; });
     var withErrors = results.filter(function(r) { return r.count < 0; });
+    var noTag      = results.filter(function(r) { return r.noTag; });
+    var counted    = results.length - noTag.length;
     var total = withData.reduce(function(s, r) { return s + r.count; }, 0);
     var pl = function(n) { return n + ' ' + _relPl(n, 'wzmianka', 'wzmianki', 'wzmianek'); };
     totalEl.textContent = total
-      ? 'Tag ' + tagName + ': ' + pl(total) + ' w ' + withData.length + ' z ' + results.length + ' ' + _relPl(results.length, 'projektu', 'projektów', 'projektów')
+      ? 'Tag ' + tagName + ': ' + pl(total) + ' w ' + withData.length + ' z ' + counted + ' ' + _relPl(counted, 'projektu', 'projektów', 'projektów')
       : '';
     delBtn.hidden = !total;
     delBtn.disabled = !!_apRun;
     if (total) delBtn.innerHTML = _icon('del') + '<span>Usuń ' + pl(total) + '</span>';
+    // Projekty bez tagu o tej nazwie: poza liczeniem i usuwaniem, z nazwami, żeby było wiadomo, których nie sprawdzono.
+    var noTagHtml = noTag.length ? '<div class="b-hint">Bez tagu ' + _escHtml(tagName) + ' w tagach zapamiętanych przez wtyczkę: ' +
+      _escHtml(noTag.map(function(r) { return r.p.name; }).join(', ')) + '. Tych projektów okno nie liczy i nie usuwa z nich wzmianek; ' +
+      'tagi projektu wtyczka zapamiętuje przy otwarciu jego wzmianek w Brand24.</div>' : '';
     if (!withData.length && !withErrors.length) {
-      list.innerHTML = _annEmpty('okCircle', 'Nic do usunięcia', 'Żaden projekt w zakresie nie ma wzmianek z tagiem ' + _escHtml(tagName) + '.');
+      list.innerHTML = _annEmpty('okCircle', 'Nic do usunięcia', 'Żaden sprawdzony projekt w zakresie nie ma wzmianek z tagiem ' + _escHtml(tagName) + '.') + noTagHtml;
       return;
     }
     var denied = withErrors.filter(function(r) { return r.error === 'GRAPHQL_PERMISSION_DENIED'; }).length;
-    list.innerHTML = (denied ? _apCmsBanner(denied) : '') + '<section class="b-card b-card--table"><table class="b-table">' +
+    list.innerHTML = (denied ? _apCmsBanner(denied) : '') + noTagHtml + '<section class="b-card b-card--table"><table class="b-table">' +
       '<thead><tr><th>Projekt</th><th class="b-num b-fit">Wzmianki</th><th class="b-fit" aria-label="Działanie"></th></tr></thead><tbody>' +
       withData.map(function(r) {
         return '<tr data-pid="' + r.p.id + '"><td><span class="b-ell">' + _escHtml(r.p.name) + '</span></td>' +
@@ -25128,7 +25260,7 @@
         var p = targets[t].p;
         _apStatus(p.name + ': zbieram wzmianki…');
         var ids = await fetchAllIds(
-          function(pg) { return getMentions(p.id, p._dateFrom, p._dateTo, [tag.id], pg); },
+          function(pg) { return getMentions(p.id, p._dateFrom, p._dateTo, [p._tagId], pg); },
           function(cur, pages) { _apStatus(p.name + ': zbieram, strona ' + cur + ' z ' + pages + '…'); }
         );
         addLog('→ Usuwam "' + tag.name + '" z projektu ' + p.name + ' (' + ids.length + ' wzmianek)...', 'warn', { tech: true, key: 'xdel' });
@@ -25145,7 +25277,10 @@
         addLog('✓ ' + p.name + ': usunięto ' + pDeleted + ' wzmianek z tagiem "' + tag.name + '"', 'success');
         if (pDeleted) touched++;
       }
-      var msg = 'usunięto ' + deleted + ' ' + _relPl(deleted, 'wzmiankę', 'wzmianki', 'wzmianek') + ' w ' + touched + ' ' + _relPl(touched, 'projekcie', 'projektach', 'projektach');
+      var where = ' w ' + touched + ' ' + _relPl(touched, 'projekcie', 'projektach', 'projektach');
+      var msg = state.testRunMode
+        ? 'Test Run, Brand24 bez zmian: ' + _plPl(deleted, 'wzmianka', 'wzmianki', 'wzmianek') + ' do usunięcia' + where
+        : 'usunięto ' + _plPl(deleted, 'wzmiankę', 'wzmianki', 'wzmianek') + where;
       if (run.stop) {
         msg = 'Zatrzymano usuwanie: ' + msg;
         _apStatus(msg + '.', 'warn');
@@ -26176,7 +26311,7 @@
           <span class="b-muted" aria-hidden="true">–</span>
           <input type="date" id="b24t-del-date-to" class="b-input b-input--sm" aria-label="Do">
         </div>
-        <div id="b24t-del-allprojects-hint" class="b-hint" hidden>Wybrany tag znika ze wszystkich znanych projektów z tagami TO_DELETE i REQUIRES_VERIFICATION; projekty i liczby pokazuje okno „Usuwanie ze wszystkich projektów”.</div>
+        <div id="b24t-del-allprojects-hint" class="b-hint" hidden>Wzmianki z tagiem o tej nazwie znikają ze wszystkich zapamiętanych projektów, które go mają; projekty i liczby pokazuje okno „Usuwanie ze wszystkich projektów”.</div>
         <div class="b-progress b-progress--danger"><i id="b24t-del-progress"></i></div>
         <div class="b-row"><span id="b24t-del-status" class="b-small b-text2 b-sp" role="status"></span><span id="b24t-del-timer" class="b-small b-muted b-mono">00:00</span></div>
         <div><button type="button" class="b-btn b-btn--danger" id="b24t-del-run">${_icon('del')}<span>Usuń wzmianki z tagiem</span></button></div>
@@ -26222,6 +26357,7 @@
       <select class="b-select b-select--sm" id="b24t-auto-delete-tag" aria-label="Tag wzmianek do usunięcia">
         <option value="">Wybierz tag</option>
       </select>
+      <div class="b-hint" id="b24t-auto-delete-scope"></div>
       <label class="b-check b-small" id="b24t-auto-delete-save-row" hidden><input type="checkbox" id="b24t-auto-delete-save-cb"><span>Zawsze włączaj w tym projekcie dla tego tagu</span></label>
     `;
 
@@ -26404,9 +26540,9 @@
           setStatus(`Zatrzymano: usunięto ${deleted} z ${allIds.length}`, 'warn');
           addLog(`⏹ Quick Delete zatrzymane: ${deleted} z ${allIds.length} wzmianek (tag "${tagName}")`, 'warn');
         } else {
-          setStatus(`Usunięto ${deleted} wzmianek`, 'success');
+          setStatus(_trSummary(`Usunięto ${deleted} wzmianek`, `${deleted} wzmianek do usunięcia`), 'success');
           setProgress(1, 1);
-          addLog(`✓ Quick Delete: ${deleted} wzmianek (tag "${tagName}")`, 'success');
+          addLog(_trSummary(`✓ Quick Delete: ${deleted} wzmianek (tag "${tagName}")`, `Quick Delete, ${deleted} wzmianek (tag "${tagName}") do usunięcia`), 'success');
         }
       } catch (err) {
         setStatus(`Błąd: ${err.message}`, 'error');
@@ -26472,9 +26608,9 @@
           setStatus(`Zatrzymano: usunięto ${deleted} z ${ids.length}`, 'warn');
           addLog(`⏹ Delete view zatrzymane: ${deleted} z ${ids.length} wzmianek`, 'warn');
         } else {
-          setStatus(`Usunięto ${deleted} wzmianek`, 'success');
+          setStatus(_trSummary(`Usunięto ${deleted} wzmianek`, `${deleted} wzmianek do usunięcia`), 'success');
           setProgress(1, 1);
-          addLog(`✓ Delete view: usunięto ${deleted} wzmianek`, 'success');
+          addLog(_trSummary(`✓ Delete view: usunięto ${deleted} wzmianek`, `Delete view, ${deleted} wzmianek do usunięcia`), 'success');
         }
       } catch (err) {
         setStatus(`Błąd: ${err.message}`, 'error');
@@ -26627,8 +26763,8 @@
         _qtStatus(`Otagowano ${tagged} z ${ids.length}…`, 'info');
       }
 
-      _qtStatus(`Gotowe: otagowano ${tagged} wzmianek tagiem „${tagName}”`, 'success');
-      addLog(`✓ Quick Tag: ${tagged} wzmianek → ${tagName}`, 'success');
+      _qtStatus(_trSummary(`Gotowe: otagowano ${tagged} wzmianek tagiem „${tagName}”`, `${tagged} wzmianek do otagowania tagiem „${tagName}”`), 'success');
+      addLog(_trSummary(`✓ Quick Tag: ${tagged} wzmianek → ${tagName}`, `Quick Tag, ${tagged} wzmianek → ${tagName}`), 'success');
       setProgress(1, 1);
 
     } catch (e) {
@@ -26749,8 +26885,8 @@
         for (let i = 0; i < utSlices.length; i += QT_CONCURRENCY) {
           await Promise.all(utSlices.slice(i, i + QT_CONCURRENCY).map(slice => bulkUntagMentions(slice, tag.id)));
         }
-        _qtStatus(`Usunięto tag „${tag.name}” z ${ids.length} wzmianek`, 'success');
-        addLog(`✓ Quick Untag: ${ids.length} wzmianek ← ${tag.name}`, 'success');
+        _qtStatus(_trSummary(`Usunięto tag „${tag.name}” z ${ids.length} wzmianek`, `tag „${tag.name}” do zdjęcia z ${ids.length} wzmianek`), 'success');
+        addLog(_trSummary(`✓ Quick Untag: ${ids.length} wzmianek ← ${tag.name}`, `Quick Untag, ${ids.length} wzmianek ← ${tag.name}`), 'success');
       } catch (err) {
         _qtStatus(`Błąd: ${err.message}`, 'error');
       }
@@ -27183,7 +27319,8 @@
         }
       }
 
-      const summary = (state._aitStop ? 'Zatrzymano · ' : '') + 'Otagowano ' + applied +
+      const summary = (state.testRunMode ? 'Test Run, Brand24 bez zmian · ' : '') + (state._aitStop ? 'Zatrzymano · ' : '') +
+        (state.testRunMode ? 'Do otagowania ' : 'Otagowano ') + applied +
         (replaced ? ' · nadpisano ' + replaced : '') +
         (deleted ? ' · usunięto ' + deleted : '') +
         (skipped ? ' · pominięto ' + skipped : '') +

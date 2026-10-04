@@ -1,5 +1,69 @@
 [
   {
+    "version": "0.38.15",
+    "date": "2026-10-04",
+    "label": "improved",
+    "changes": [
+      {
+        "type": "improved",
+        "area": "Tagowanie z pliku",
+        "title": "Potwierdzenie „Usuwanie po zakończeniu” przed startem przebiegu",
+        "items": [
+          "Start z włączoną opcją pokazuje tag, projekty, zakresy dat i liczbę wzmianek, które mają już ten tag, także spoza pliku.",
+          "Usuwanie po przebiegu obejmuje tylko projekty wymienione w potwierdzeniu.",
+          "Pod listą tagów opcji stoi opis zakresu usuwania."
+        ],
+        "text": "Potwierdzenie „Usuwanie po zakończeniu” przed startem przebiegu. Start z włączoną opcją pokazuje tag, projekty, zakresy dat i liczbę wzmianek, które mają już ten tag, także spoza pliku. Usuwanie po przebiegu obejmuje tylko projekty wymienione w potwierdzeniu. Pod listą tagów opcji stoi opis zakresu usuwania."
+      },
+      {
+        "type": "fix",
+        "area": "Tagowanie z pliku",
+        "title": "Naprawiono błąd, przez który usuwanie po zakończeniu w pliku wielu projektów szło w otwartym projekcie",
+        "items": [
+          "Usuwanie działa w każdym projekcie z pliku, z tagiem o tej samej nazwie i z zakresem dat wierszy tego projektu.",
+          "Projekt bez tagu o tej nazwie jest pomijany."
+        ],
+        "text": "Naprawiono błąd, przez który usuwanie po zakończeniu w pliku wielu projektów szło w otwartym projekcie. Usuwanie działa w każdym projekcie z pliku, z tagiem o tej samej nazwie i z zakresem dat wierszy tego projektu. Projekt bez tagu o tej nazwie jest pomijany."
+      },
+      {
+        "type": "fix",
+        "area": "Tagowanie z pliku",
+        "title": "Naprawiono błąd, przez który usuwanie po zakończeniu brało tag sprzed zmiany mapowania",
+        "items": [
+          "Lista tagów opcji pokazuje tag, z którym ruszy usuwanie; tag oceny zmienionej z irrelevant na inny rodzaj przestaje być celem.",
+          "„Zawsze włączaj w tym projekcie dla tego tagu” zaznacza opcję razem z tagiem."
+        ],
+        "text": "Naprawiono błąd, przez który usuwanie po zakończeniu brało tag sprzed zmiany mapowania. Lista tagów opcji pokazuje tag, z którym ruszy usuwanie; tag oceny zmienionej z irrelevant na inny rodzaj przestaje być celem. „Zawsze włączaj w tym projekcie dla tego tagu” zaznacza opcję razem z tagiem."
+      },
+      {
+        "type": "fix",
+        "area": "Quick Delete",
+        "title": "Naprawiono błąd, przez który „Wszystkie projekty” brały ID tagu z bieżącego projektu",
+        "items": [
+          "Okno „Usuwanie ze wszystkich projektów” liczy i usuwa w każdym projekcie wzmianki z tagiem o tej samej nazwie.",
+          "Projekty, których wtyczka nie zna z tym tagiem, okno wymienia z nazwy i ich nie rusza. Tagi projektu wtyczka zapamiętuje przy otwarciu jego wzmianek w Brand24."
+        ],
+        "text": "Naprawiono błąd, przez który „Wszystkie projekty” brały ID tagu z bieżącego projektu. Okno „Usuwanie ze wszystkich projektów” liczy i usuwa w każdym projekcie wzmianki z tagiem o tej samej nazwie. Projekty, których wtyczka nie zna z tym tagiem, okno wymienia z nazwy i ich nie rusza. Tagi projektu wtyczka zapamiętuje przy otwarciu jego wzmianek w Brand24."
+      },
+      {
+        "type": "fix",
+        "area": "Tagowanie z pliku",
+        "title": "Naprawiono podsumowania Test Run, które brzmiały jak zapis w Brand24",
+        "items": [
+          "Raport sesji, licznik w karcie Plik, pigułka panelu i powiadomienie o końcu podają liczbę zapisów do wykonania z dopiskiem „Brand24 bez zmian”.",
+          "Tak samo kończą się Quick Tag, Usuwanie i AI Tag w trybie Test Run."
+        ],
+        "text": "Naprawiono podsumowania Test Run, które brzmiały jak zapis w Brand24. Raport sesji, licznik w karcie Plik, pigułka panelu i powiadomienie o końcu podają liczbę zapisów do wykonania z dopiskiem „Brand24 bez zmian”. Tak samo kończą się Quick Tag, Usuwanie i AI Tag w trybie Test Run."
+      },
+      {
+        "type": "fix",
+        "area": "Dodawanie wzmianek",
+        "title": "Naprawiono błąd bezpieczeństwa",
+        "text": "Naprawiono błąd bezpieczeństwa."
+      }
+    ]
+  },
+  {
     "version": "0.38.14",
     "date": "2026-10-03",
     "label": "improved",

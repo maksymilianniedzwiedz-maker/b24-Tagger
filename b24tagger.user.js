@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.16
+// @version      0.38.17
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -174,7 +174,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.16';
+  const VERSION = '0.38.17';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -5375,8 +5375,11 @@
       .b-win:has(.b-main.is-static) :is(.b-head, .b-bar, .b-foot) { animation: none; }
       /* Główna treść okna: dalszą treść nad i pod widokiem sygnalizują cienie nagłówka i stopki, nie cieniowanie
          kolorem tła na treści. Cieniowanie leżało na kartach w innym kolorze i przy niskim panelu wyglądało jak
-         przecięcie tekstu nad stopką (uwaga właściciela 2026-10-03). Bez widocznej stopki dolne cieniowanie zostaje. */
+         przecięcie tekstu nad stopką (uwaga właściciela 2026-10-03). Bez widocznej stopki ten sam cień co przy stopce
+         rzuca dolna krawędź okna: cień wewnętrzny o geometrii b-foot-shadow, bo cieniowanie kolorem tła przecinało
+         tak samo ostatni wiersz Ustawień (uwaga właściciela 2026-10-04). */
       .b-main.b-scroll--lead::before { display: none; }
+      .b-main.b-scroll--lead::after { background: none; box-shadow: inset 0 -6px 12px -8px rgba(16,24,40,0.28); }
       .b-win:has(> .b-clip > .b-foot:not([hidden])) .b-main.b-scroll--lead::after { display: none; }
       .b-foot { position: relative; z-index: 2; animation: b-foot-shadow linear both; animation-timeline: --b-lead; animation-range: calc(100% - 24px) 100%; }
       @keyframes b-foot-shadow { from { box-shadow: 0 -6px 12px -8px rgba(16,24,40,0.28); } to { box-shadow: none; } }
@@ -20766,6 +20769,22 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.17",
+      "date": "2026-10-05",
+      "label": "fix",
+      "changes": [
+        {
+          "type": "fix",
+          "area": "Panel",
+          "title": "Naprawiono błąd, przez który ostatni wiersz Ustawień wyglądał na przekreślony",
+          "items": [
+            "W oknach bez stopki, takich jak Ustawienia, dalszą treść pod widokiem zapowiada cień przy dolnej krawędzi okna, a tekst nad nią zostaje czytelny (żadnej opcji nikt nie skreślił, była tylko zacieniona)."
+          ],
+          "text": "Naprawiono błąd, przez który ostatni wiersz Ustawień wyglądał na przekreślony. W oknach bez stopki, takich jak Ustawienia, dalszą treść pod widokiem zapowiada cień przy dolnej krawędzi okna, a tekst nad nią zostaje czytelny (żadnej opcji nikt nie skreślił, była tylko zacieniona)."
+        }
+      ]
+    },
+    {
       "version": "0.38.16",
       "date": "2026-10-04",
       "label": "new",
@@ -21057,47 +21076,6 @@
             "Pasek funkcji nie ma karty Powiadomienia."
           ],
           "text": "Powiadomienia w Ustawieniach: dźwięki i ntfy w jednym miejscu. Dźwięki końca i błędu tagowania z pliku oraz alarm captchy włącza się osobno, a przycisk obok odtwarza każdy z nich. Wybór dźwięków zostaje po przeładowaniu strony. Powiadomienia na telefon (ntfy) mają własny przełącznik, a ustawienia kanału pokazują się dopiero po jego włączeniu. Pasek funkcji nie ma karty Powiadomienia."
-        }
-      ]
-    },
-    {
-      "version": "0.38.7",
-      "date": "2026-10-03",
-      "label": "new",
-      "changes": [
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Nazwa otwartego projektu w nagłówku panelu",
-          "items": [
-            "Nazwa projektu stoi w miejscu nazwy wtyczki, a dymek nad nią podaje ID projektu.",
-            "Karta Plik zaczyna się od wyboru pliku.",
-            "Chip stanu przebiegu pokazuje się tylko w trakcie, po pauzie, po błędzie i po zakończeniu przebiegu."
-          ],
-          "text": "Nazwa otwartego projektu w nagłówku panelu. Nazwa projektu stoi w miejscu nazwy wtyczki, a dymek nad nią podaje ID projektu. Karta Plik zaczyna się od wyboru pliku. Chip stanu przebiegu pokazuje się tylko w trakcie, po pauzie, po błędzie i po zakończeniu przebiegu."
-        },
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Kropka stanu połączenia w nagłówku panelu",
-          "items": [
-            "Kolor kropki pokazuje najpoważniejszy z problemów: token Brand24, szybkość Brand24, sesję CMS, nową wersję wtyczki i limit wydatków na AI.",
-            "Kliknięcie otwiera okienko „Stan” z opisem każdego z nich i działaniami: „Network Monitor”, „Zaloguj się do CMS”, „Zainstaluj”, „Sprawdź aktualizacje”.",
-            "Token, plakietka sieci i numer wersji zniknęły z karty Plik i z nagłówka, bo są w okienku „Stan”."
-          ],
-          "text": "Kropka stanu połączenia w nagłówku panelu. Kolor kropki pokazuje najpoważniejszy z problemów: token Brand24, szybkość Brand24, sesję CMS, nową wersję wtyczki i limit wydatków na AI. Kliknięcie otwiera okienko „Stan” z opisem każdego z nich i działaniami: „Network Monitor”, „Zaloguj się do CMS”, „Zainstaluj”, „Sprawdź aktualizacje”. Token, plakietka sieci i numer wersji zniknęły z karty Plik i z nagłówka, bo są w okienku „Stan”."
-        },
-        {
-          "type": "new",
-          "area": "Ustawienia AI",
-          "title": "Koszt kluczy AI w miesiącu i limit miesięczny",
-          "items": [
-            "Ustawienia → AI podają koszt każdego klucza w bieżącym miesiącu, liczbę wywołań i koszt poprzedniego miesiąca.",
-            "Koszt liczy się z wywołań w tej przeglądarce, więc ten sam klucz użyty gdzie indziej kosztuje więcej.",
-            "Od 80% ustawionego limitu kropka stanu w nagłówku panelu robi się pomarańczowa, po przekroczeniu czerwona.",
-            "Karta AI Tag podaje koszt przebiegu po jego zakończeniu."
-          ],
-          "text": "Koszt kluczy AI w miesiącu i limit miesięczny. Ustawienia → AI podają koszt każdego klucza w bieżącym miesiącu, liczbę wywołań i koszt poprzedniego miesiąca. Koszt liczy się z wywołań w tej przeglądarce, więc ten sam klucz użyty gdzie indziej kosztuje więcej. Od 80% ustawionego limitu kropka stanu w nagłówku panelu robi się pomarańczowa, po przekroczeniu czerwona. Karta AI Tag podaje koszt przebiegu po jego zakończeniu."
         }
       ]
     }

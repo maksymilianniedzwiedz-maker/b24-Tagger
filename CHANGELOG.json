@@ -1,5 +1,21 @@
 [
   {
+    "version": "0.38.17",
+    "date": "2026-10-05",
+    "label": "fix",
+    "changes": [
+      {
+        "type": "fix",
+        "area": "Panel",
+        "title": "Naprawiono błąd, przez który ostatni wiersz Ustawień wyglądał na przekreślony",
+        "items": [
+          "W oknach bez stopki, takich jak Ustawienia, dalszą treść pod widokiem zapowiada cień przy dolnej krawędzi okna, a tekst nad nią zostaje czytelny (żadnej opcji nikt nie skreślił, była tylko zacieniona)."
+        ],
+        "text": "Naprawiono błąd, przez który ostatni wiersz Ustawień wyglądał na przekreślony. W oknach bez stopki, takich jak Ustawienia, dalszą treść pod widokiem zapowiada cień przy dolnej krawędzi okna, a tekst nad nią zostaje czytelny (żadnej opcji nikt nie skreślił, była tylko zacieniona)."
+      }
+    ]
+  },
+  {
     "version": "0.38.16",
     "date": "2026-10-04",
     "label": "new",

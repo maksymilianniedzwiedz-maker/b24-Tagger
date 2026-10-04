@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.37.2
+// @version      0.37.3
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -173,7 +173,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.37.2';
+  const VERSION = '0.37.3';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -199,7 +199,6 @@
     CAMPAIGN_CFG:     'b24tagger_campaign_cfg',
     CAMPAIGN_CHIPS:   'b24tagger_campaign_chips',
     UPDATE_CHANNEL:   'b24tagger_update_channel',
-    CHANNEL_MOVED:    'b24tagger_channel_moved_stable', // wersja, która przełączyła kanał na Stabilny (_relMoveToStable)
     MONTH_CLOSE_DONE: 'b24tagger_month_close_done',
     OVERALL_ACTIVE_MONTH: 'b24tagger_overall_active_month',
     DEL_BATCH:        'b24tagger_del_batch',
@@ -18409,6 +18408,22 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.37.3",
+      "date": "2026-10-05",
+      "label": "improved",
+      "changes": [
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Aktualizacje tylko z kanału Stabilnego",
+          "items": [
+            "Ustawienia nie mają wyboru kanału aktualizacji. Kanał Experimental zapisany w ustawieniach panel przy otwarciu przestawia na Stabilny."
+          ],
+          "text": "Aktualizacje tylko z kanału Stabilnego. Ustawienia nie mają wyboru kanału aktualizacji. Kanał Experimental zapisany w ustawieniach panel przy otwarciu przestawia na Stabilny."
+        }
+      ]
+    },
+    {
       "version": "0.37.2",
       "date": "2026-10-03",
       "label": "fix",
@@ -18416,20 +18431,8 @@
         {
           "type": "fix",
           "area": "Panel",
-          "title": "Naprawiono błąd, przez który strony spoza Brand24 miały dostęp do funkcji wtyczki",
-          "items": [
-            "Skrypt odwiedzanej strony mógł odczytać token Brand24 i wysyłać przez wtyczkę zapytania z danymi logowania użytkownika."
-          ],
-          "text": "Naprawiono błąd, przez który strony spoza Brand24 miały dostęp do funkcji wtyczki. Skrypt odwiedzanej strony mógł odczytać token Brand24 i wysyłać przez wtyczkę zapytania z danymi logowania użytkownika."
-        },
-        {
-          "type": "fix",
-          "area": "Panel",
-          "title": "Naprawiono uruchamianie panelu na stronach spoza Brand24",
-          "items": [
-            "Na stronie z adresem podobnym do strony wyników Brand24 panel wysyłał token Brand24 na serwer tej strony."
-          ],
-          "text": "Naprawiono uruchamianie panelu na stronach spoza Brand24. Na stronie z adresem podobnym do strony wyników Brand24 panel wysyłał token Brand24 na serwer tej strony."
+          "title": "Naprawiono dwa błędy bezpieczeństwa",
+          "text": "Naprawiono dwa błędy bezpieczeństwa."
         }
       ]
     },
@@ -18677,24 +18680,6 @@
           "text": "Naprawiono pobieranie negatywów z zakresu dat w przeglądzie sentymentu. Źródło „Negatywy z zakresu dat” kończyło się błędem i ocena nie startowała. Źródło „Aktualny widok Brand24” działało poprawnie."
         }
       ]
-    },
-    {
-      "version": "0.36.3",
-      "date": "2026-10-01",
-      "label": "fix",
-      "changes": [
-        {
-          "type": "fix",
-          "area": "Ustawienia AI",
-          "title": "Naprawiono błąd, przez który przeglądarka brała pola kluczy API za pola hasła",
-          "items": [
-            "Po wklejeniu klucza przeglądarka proponowała zmianę hasła do Brand24, a zapisane hasło wpisywała w pole klucza.",
-            "To samo dotyczyło pola tokenu GitHub."
-          ],
-          "action": "Jeśli pole klucza jest puste, wklej klucz ponownie.",
-          "text": "Naprawiono błąd, przez który przeglądarka brała pola kluczy API za pola hasła. Po wklejeniu klucza przeglądarka proponowała zmianę hasła do Brand24, a zapisane hasło wpisywała w pole klucza. To samo dotyczyło pola tokenu GitHub. Jeśli pole klucza jest puste, wklej klucz ponownie."
-        }
-      ]
     }
   ];
 
@@ -18738,7 +18723,11 @@
     for (var i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0);
     return 0;
   }
-  function _relChannel() { return lsGet(LS.UPDATE_CHANNEL, 'stable') === 'experimental' ? 'experimental' : 'stable'; }
+  // Od 0.37.3 jedynym kanałem tej linii jest Stabilny (decyzja właściciela 2026-10-05). Kanał Experimental ma od
+  // 0.38.11 kod dostępu, a wybór „Eksperymentalny” w 0.37.2 go omijał: 0.38 wpuszcza bez kodu instalację, która
+  // startuje na tym kanale. Gałęzie dla 'experimental' w tym pliku są nieosiągalne i zostają celowo: linia 0.37
+  // znika z wydaniem 0.38, a mniejsza różnica to prostsze scalenie main do experimental.
+  function _relChannel() { return 'stable'; }
   // Twarda spacja w grupach cyfr („1 000”), żeby liczba nie łamała się na końcu wiersza (CHANGELOG_STYLE.md §5).
   function _relNb(s) { return String(s).replace(/(\d) (?=\d{3}(?!\d))/g, '$1 '); }
   // Nazwy z ekranu w „…” pogrubione. Działa na tekście już escapowanym, więc nie wpuszcza HTML-a z pliku.
@@ -19588,15 +19577,7 @@
       }
       else _relGmSet(REL_GM.notice, { from: prev, to: VERSION });
     }
-    _relMoveToStable(function() {
-      // Aktualizacja, po której nastąpiło przełączenie, kończy się jak na kanale Stabilnym: okienkiem
-      // „Wtyczka została zaktualizowana” zamiast okna dużej zmiany, o ile tamto jeszcze się nie otworzyło.
-      if (updated && _upd.pending === showHighlights) {
-        _upd.pending = null;
-        _relGmSet(REL_GM.notice, { from: prev, to: VERSION });
-      }
-      _relOnChannel();
-    });
+    _relForceStable();
 
     // Znacznik wersji w nagłówku; mousedown nie startuje przeciągania panelu.
     var ver = panel.querySelector('#b24t-version'), chip = panel.querySelector('#b24t-upd-chip');
@@ -19624,32 +19605,14 @@
     setTimeout(function() { _updCheck(false); }, 5000);
     setInterval(function() { if (!document.hidden) _updCheck(false); }, 5 * 60 * 1000);
   }
-  // Jednorazowe przełączenie z Experimental na Stabilny: od 0.37.0 kanałem dla wszystkich jest Stabilny,
-  // a powrót na Experimental to wybór w ⚙, który zostaje na stałe. Zmienia wyłącznie kanał aktualizacji;
-  // funkcje, ustawienia i dane nie zależą od kanału.
-  // Rusza dopiero, gdy na main jest już ta wersja albo nowsza. Wcześniej Stabilny nie ma opisu tej wersji
-  // (RELEASE_NOTES.json leży na main), a użytkownik, który wziął wersję z Experimental przed wydaniem,
-  // straciłby dziennik. Kanał i znacznik leżą w localStorage, czyli osobno dla app.brand24.com
-  // i panel.brand24.pl: każdy panel przełącza się raz, a ręczny powrót na Experimental jest ostateczny.
-  function _relMoveToStable(onMoved) {
-    if (_relChannel() !== 'experimental' || lsGet(LS.CHANNEL_MOVED, null)) return;
-    _relRemoteVersion(RAW_URL_STABLE, function(stable) {
-      if (!stable || _relCmp(stable, VERSION) < 0) return;
-      // Ustawienia mogły zmienić kanał w trakcie zapytania.
-      if (_relChannel() !== 'experimental' || lsGet(LS.CHANNEL_MOVED, null)) return;
-      lsSet(LS.CHANNEL_MOVED, VERSION);
-      lsSet(LS.UPDATE_CHANNEL, 'stable');
-      addLog('ℹ Kanał aktualizacji przełączony na Stabilny. Powrót: ⚙ → Kanał aktualizacji → Eksperymentalny.', 'info');
-      onMoved();
-    });
-  }
-
-  // Zmiana kanału w ustawieniach: inny dziennik i inny plik do sprawdzania.
-  function _relOnChannel() {
-    if (!_upd.panel) return;
-    _relRenderClBtn();
-    _updCloseCard();
-    _updCheck(false);
+  // Zapisany wybór Experimental (z 0.37.2) wraca na Stabilny przy każdym starcie panelu. _relChannel() już go
+  // pomija; zapis trzeba poprawić dla 0.38: instalacja wzięta potem ręcznie z gałęzi experimental dostałaby
+  // dostęp bez kodu, gdyby zastała tu „experimental”. Kanał leży w localStorage, czyli osobno dla
+  // app.brand24.com i panel.brand24.pl.
+  function _relForceStable() {
+    if (lsGet(LS.UPDATE_CHANNEL, 'stable') === 'stable') return;
+    lsSet(LS.UPDATE_CHANNEL, 'stable');
+    addLog('ℹ Kanał aktualizacji przełączony na Stabilny.', 'info');
   }
   function _relInjectStyles() {
     if (document.getElementById('b24t-rel-styles')) return;
@@ -19879,11 +19842,10 @@
   // ADRESY PLIKÓW WTYCZKI W REPOZYTORIUM
   // ───────────────────────────────────────────
   const RAW_URL_STABLE       = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/b24tagger.user.js';
-  const RAW_URL_EXPERIMENTAL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/experimental/b24tagger.user.js';
   // Dziennik zmian zawsze z experimental, opisy wersji stabilnych z main (CHANGELOG_STYLE.md §1).
   const CHANGELOG_URL     = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/experimental/CHANGELOG.json';
   const RELEASE_NOTES_URL = 'https://raw.githubusercontent.com/maksymilianniedzwiedz-maker/b24-Tagger/main/RELEASE_NOTES.json';
-  function getRawUrl() { return lsGet(LS.UPDATE_CHANNEL, 'stable') === 'experimental' ? RAW_URL_EXPERIMENTAL : RAW_URL_STABLE; }
+  function getRawUrl() { return RAW_URL_STABLE; }
 
   // ───────────────────────────────────────────
   // ZGŁOSZENIA BŁĘDÓW I POMYSŁÓW
@@ -20365,25 +20327,6 @@
     modal.id = 'b24t-features-modal';
     modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:2147483647;font-family:\'Geist\',\'Segoe UI\',system-ui,-apple-system,sans-serif;backdrop-filter:blur(4px);animation:b24t-fadein 0.2s ease;';
 
-    const _currentChannel = lsGet(LS.UPDATE_CHANNEL, 'stable');
-    const channelHtml =
-      '<div style="display:flex;gap:8px;">' +
-        ['stable', 'experimental'].map(function(ch) {
-          const active = _currentChannel === ch;
-          const label = ch === 'stable' ? '🔒 Stabilny' : '🔬 Eksperymentalny';
-          const desc  = ch === 'stable' ? 'Rekomendowany &mdash; przetestowane wersje' : 'Najnowsze zmiany, może być niestabilny';
-          return '<label data-channel="' + ch + '" style="display:flex;flex:1;gap:8px;align-items:flex-start;padding:8px 10px;border:1px solid ' +
-            (active ? 'var(--b24t-primary)' : 'var(--b24t-border-sub)') +
-            ';border-radius:7px;background:' + (active ? 'var(--b24t-primary)18' : 'transparent') + ';cursor:pointer;">' +
-            '<input type="radio" name="b24t-channel" value="' + ch + '" ' + (active ? 'checked' : '') +
-              ' style="accent-color:var(--b24t-primary);flex-shrink:0;margin-top:2px;">' +
-            '<div>' +
-              '<div style="font-size:12px;font-weight:600;color:var(--b24t-text);">' + label + '</div>' +
-              '<div style="font-size:10px;color:var(--b24t-text-faint);margin-top:2px;line-height:1.4;">' + desc + '</div>' +
-            '</div>' +
-          '</label>';
-        }).join('') +
-      '</div>';
     let checkboxesHtml = OPTIONAL_FEATURES.map(function(f) {
       const checked = features[f.id] ? 'checked' : '';
       return '<label style="display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-bottom:1px solid var(--b24t-border-sub);cursor:pointer;">' +
@@ -20466,10 +20409,6 @@
         '<div class="b24t-set-pane" data-pane="general">' +
         themeRowHtml +
         '<div style="padding:4px 20px 0;">' + checkboxesHtml + '</div>' +
-        '<div style="padding:12px 20px 4px;border-top:1px solid var(--b24t-border-sub);">' +
-          '<div style="font-size:11px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Kanał aktualizacji</div>' +
-          channelHtml +
-        '</div>' +
         '<div style="padding:12px 20px 14px;border-top:1px solid var(--b24t-border-sub);">' +
           '<div style="font-size:11px;font-weight:700;color:var(--b24t-text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Projekty</div>' +
           '<div style="font-size:11px;color:var(--b24t-text-muted);margin-bottom:9px;">' +
@@ -20929,12 +20868,9 @@
         newFeatures[cb.dataset.feature] = cb.checked;
       });
       saveFeatures(newFeatures);
-      const selectedChannel = (modal.querySelector('input[name="b24t-channel"]:checked') || {}).value || 'stable';
-      lsSet(LS.UPDATE_CHANNEL, selectedChannel);
-      if (selectedChannel !== _currentChannel) _relOnChannel();
       applyFeatures();
       close();
-      addLog('\u2713 Ustawienia zapisane (kanał: ' + selectedChannel + ')', 'success');
+      addLog('\u2713 Ustawienia zapisane', 'success');
     });
   }
 

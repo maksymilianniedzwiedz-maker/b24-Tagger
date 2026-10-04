@@ -1,5 +1,21 @@
 [
   {
+    "version": "0.37.3",
+    "date": "2026-10",
+    "name": "Wydanie 0.37.3",
+    "summary": "Cześć! Krótka aktualizacja porządkowa: wtyczka pobiera wyłącznie oficjalne aktualizacje.",
+    "features": [],
+    "changes": [
+      {
+        "area": "Panel",
+        "items": [
+          "Wtyczka pobiera wyłącznie oficjalne aktualizacje, a ustawienia nie mają wyboru kanału aktualizacji. Inny kanał zapisany w ustawieniach panel przy otwarciu przestawia na domyślny."
+        ]
+      }
+    ],
+    "fixes": []
+  },
+  {
     "version": "0.37.2",
     "date": "2026-10",
     "name": "Wydanie 0.37.2",

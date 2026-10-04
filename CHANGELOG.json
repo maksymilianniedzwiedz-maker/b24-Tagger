@@ -1,5 +1,21 @@
 [
   {
+    "version": "0.37.3",
+    "date": "2026-10-05",
+    "label": "improved",
+    "changes": [
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Aktualizacje tylko z kanału Stabilnego",
+        "items": [
+          "Ustawienia nie mają wyboru kanału aktualizacji. Kanał Experimental zapisany w ustawieniach panel przy otwarciu przestawia na Stabilny."
+        ],
+        "text": "Aktualizacje tylko z kanału Stabilnego. Ustawienia nie mają wyboru kanału aktualizacji. Kanał Experimental zapisany w ustawieniach panel przy otwarciu przestawia na Stabilny."
+      }
+    ]
+  },
+  {
     "version": "0.37.2",
     "date": "2026-10-03",
     "label": "fix",

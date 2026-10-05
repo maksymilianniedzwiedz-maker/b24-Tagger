@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.38.21",
+    "date": "2026-10-05",
+    "label": "new",
+    "changes": [
+      {
+        "type": "new",
+        "area": "Dodawanie wzmianek",
+        "title": "Nazwa projektu w nagłówku okna i nad przyciskiem „Dodaj wzmiankę”",
+        "items": [
+          "Okna News i Niestandardowe pokazują pod tytułem projekt, do którego trafiają wzmianki.",
+          "Ten sam projekt stoi nad przyciskiem „Dodaj wzmiankę”, a dymek na nim podaje ID projektu."
+        ],
+        "comment": "Okno News zasłania panel Brand24 razem z nazwą projektu, więc dodawanie do innego projektu niż zamierzony nie dawało żadnego sygnału.",
+        "text": "Nazwa projektu w nagłówku okna i nad przyciskiem „Dodaj wzmiankę”. Okna News i Niestandardowe pokazują pod tytułem projekt, do którego trafiają wzmianki. Ten sam projekt stoi nad przyciskiem „Dodaj wzmiankę”, a dymek na nim podaje ID projektu."
+      },
+      {
+        "type": "fix",
+        "area": "Dodawanie wzmianek",
+        "title": "Naprawiono błąd, przez który News dodawał wzmianki do innego projektu niż otwarty w Brand24",
+        "items": [
+          "Po pracy w Niestandardowym na innym projekcie News dodaje do projektu otwartego w Brand24.",
+          "Po przełączeniu projektu w Brand24 bez odświeżenia strony przycisk „Dodaj wzmiankę” czeka na odświeżenie, a wiersz projektu nad nim podaje, który projekt jest otwarty."
+        ],
+        "text": "Naprawiono błąd, przez który News dodawał wzmianki do innego projektu niż otwarty w Brand24. Po pracy w Niestandardowym na innym projekcie News dodaje do projektu otwartego w Brand24. Po przełączeniu projektu w Brand24 bez odświeżenia strony przycisk „Dodaj wzmiankę” czeka na odświeżenie, a wiersz projektu nad nim podaje, który projekt jest otwarty."
+      }
+    ]
+  },
+  {
     "version": "0.38.20",
     "date": "2026-10-05",
     "label": "new",

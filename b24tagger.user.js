@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.20
+// @version      0.38.21
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -174,7 +174,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.20';
+  const VERSION = '0.38.21';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -6653,6 +6653,11 @@
         padding: 0.625em 1em 0.75em; background: var(--c-frame); border-top: 1px solid var(--c-border);
       }
       .b-nform__foot > .b-row > .b-nsubmit { flex: 1 1 auto; }
+      /* Projekt docelowy nad przyciskiem dodawania (FOCUS.md §2): etykieta i nazwa, pod nimi ostrzeżenie. */
+      .b-ntarget { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.125em 0.5em; min-width: 0; border-radius: var(--r-field); }
+      .b-ntarget > b { flex: 1 1 0; font-weight: 600; color: var(--c-text); }
+      .b-ntarget__hint { flex-basis: 100%; font-size: max(12px, 0.923em); color: var(--c-warn); }
+      .b-ntarget.is-warn > b { color: var(--c-warn); }
       .b-nform .b-field > .b-hint:empty { display: none; }
       .b-nform :is(.b-input, .b-textarea)[data-auto="fill"] { border-color: color-mix(in srgb, var(--c-accent) 45%, transparent); }
       .b-nform .b-input[data-auto="date"] { border-color: color-mix(in srgb, var(--c-ok) 55%, transparent); }
@@ -11316,6 +11321,7 @@
       // Tożsamość zapisujemy NATYCHMIAST, bez nazwy — projekt ma istnieć cross-domain nawet wtedy,
       // gdy tytuł karty nigdy się nie ustabilizuje.
       _registerProjectIdentity(pid, null);
+      if (newsState.panelsOpen) _newsTargetRender(true);
       if (_pnGet(pid)) return;   // nazwę tego projektu już znamy — nie ma czego szukać
       _panelNameWhenReady(prevName, function(name) {
         if (String(getProjectId()) !== String(pid)) return;   // poszedł dalej — nie nadpisuj
@@ -13440,10 +13446,13 @@
     // przy kafelkach launchera). Wpływa na: worek chipów, prompt AI i nagłówek panelu.
     campaign: false,
     formOnly: false, // tryb tylko-formularz w Niestandardowe (ukrywa listę + podgląd)
-    // Przycisk „Dodaj wzmiankę" ma dwóch niezależnych blokujących. Trzymamy je osobno, bo
+    // Przycisk „Dodaj wzmiankę" ma niezależnych blokujących. Trzymamy je osobno, bo
     // szarpanie .disabled z kilku miejsc kończyło się tym, że odblokowanie po jednym powodzie
     // kasowało blokadę z drugiego (patrz _customSubmitGate).
-    submitBlock: { cms: false, dup: false },
+    submitBlock: { cms: false, dup: false, project: false },
+    // Projekt strony Brand24 ({ id, tags }) sprzed wyboru projektu w Niestandardowym; oddaje go
+    // _newsRestorePanelProject. Null, gdy Niestandardowe nie zmieniło projektu.
+    panelProject: null,
   };
 
   // ── CATEGORY AUTO-DETECT (Brand24 category IDs) — używane w trybie Niestandardowe ──
@@ -16892,6 +16901,10 @@
       // przez `_newsRefillProjectSelect` — patrz PANEL_STATE.md §5.8.
       var _lastPid = B24Bridge.lastProject.get() || lsGet('b24tagger_mini_last_project', '') || '';
       var _pProjects = _gmGetProjects();
+      // `state.projectId` jest wspólny z News i kartami panelu, a te pracują na projekcie otwartym w Brand24.
+      // Projekt strony zapamiętujemy przed pierwszą zmianą; _newsRestorePanelProject oddaje go przy przejściu
+      // do News i po zamknięciu modułu. Bez tego News dodawał do projektu wybranego tu wcześniej.
+      if (getProjectId() && !newsState.panelProject) newsState.panelProject = { id: state.projectId, tags: state.tags };
       if (_lastPid && _pProjects[_lastPid]) {
         var _pData = _pProjects[_lastPid] || {};
         state.projectId = parseInt(_lastPid);
@@ -16914,6 +16927,50 @@
       // kropka zostawała na startowym „● CMS", a bramka trzymała starą wartość — więc przycisk mógł
       // być aktywny mimo że nie ma do czego wysłać.
       _accessRefresh(state.projectId, false);
+    } else {
+      _newsRestorePanelProject();
+    }
+  }
+
+  function _newsRestorePanelProject() {
+    var p = newsState.panelProject;
+    if (!p) return;
+    newsState.panelProject = null;
+    state.projectId = p.id;
+    state.tags = p.tags;
+  }
+
+  // Projekt otwarty w Brand24, gdy różni się od celu dodawania w News, albo null. Brand24 przełącza projekt bez
+  // przeładowania strony, a wtyczka zostaje przy projekcie z chwili startu (_projectMoved). W Niestandardowym
+  // projekt wybiera się w formularzu, więc różnica jest tam zamierzona.
+  function _newsProjectMoved() {
+    if (newsState.mode === 'custom') return null;
+    var pid = getProjectId();
+    return pid && state.projectId && String(pid) !== String(state.projectId) ? pid : null;
+  }
+
+  // Projekt docelowy dodawania (FOCUS.md §2). Okna modułu zasłaniają panel Brand24 razem z nazwą projektu, więc
+  // cel stoi w podtytule okna i nad przyciskiem dodawania, z ID w dymku. Inny projekt w Brand24 (_newsProjectMoved)
+  // daje ton ostrzeżenia, blokadę przycisku i, przy zmianie w trakcie pracy, jednorazowe wyróżnienie wiersza.
+  function _newsTargetRender(flash) {
+    var row = _$('b24t-news-target');
+    if (!row) return;
+    var pid = state.projectId, name = pid ? _pnResolve(pid) : '', moved = _newsProjectMoved();
+    row.hidden = !pid;
+    _$('b24t-news-target-name').textContent = name;
+    row.setAttribute('data-tip', pid ? 'ID projektu: ' + pid : '');
+    row.classList.toggle('is-warn', !!moved);
+    var hint = _$('b24t-news-target-hint');
+    hint.textContent = moved ? 'W Brand24 otwarty jest ' + _pnResolve(moved) + '. Odświeżenie strony przełącza dodawanie na niego.' : '';
+    hint.hidden = !moved;
+    _customSubmitGate('project', !!moved);
+    ['news', 'news-custom'].forEach(function(id) {
+      var w = Win.get(id);
+      if (w) Win.setTitle(id, w.title.textContent, name);
+    });
+    if (flash && moved && _uiFull()) {
+      var c = getComputedStyle(row).getPropertyValue('--c-warn').trim();
+      row.animate([{ boxShadow: '0 0 0 2px ' + c }, { boxShadow: '0 0 0 8px transparent' }], { duration: 1200, easing: WIN_EASE_OUT });
     }
   }
 
@@ -16960,6 +17017,7 @@
     _newsPark(_newsUi.form, _newsUi.cols);
     // Zmiana trybu: drugie okno modułu już stoi, więc sesja trwa dalej.
     if (Win.get('news') || Win.get('news-custom')) return;
+    _newsRestorePanelProject();
     if (newsState.sessionId && gmGet(PREF.NA_CONSENT) === '1') {
       var _naClose = _naAggSession();
       var _naStats = lsGet(LS.NA_SESSION_STATS, []);
@@ -17015,6 +17073,7 @@
     if (isCustom) _newsOpenCustom(); else _newsOpenWork();
     // Okno drugiego trybu zamykamy po otwarciu nowego: _newsAfterClose widzi wtedy, że moduł dalej jest otwarty.
     Win.close(isCustom ? 'news' : 'news-custom');
+    _newsTargetRender();
     _newsEdgePressed(true);
     if (!isCustom) _naShowConsentIfNeeded();
     requestAnimationFrame(function() {
@@ -17934,6 +17993,8 @@
         '</div>',
       '</div>',
       '<div class="b-nform__foot">',
+        '<div id="b24t-news-target" class="b-ntarget" hidden><span class="b-label">Projekt</span>' +
+          '<b id="b24t-news-target-name" class="b-ell"></b><span id="b24t-news-target-hint" class="b-ntarget__hint" hidden></span></div>',
         '<div id="b24t-news-submit-status" class="b-nstatus b-nstate" aria-live="polite"></div>',
         '<div class="b-row">',
           '<button type="button" class="b-btn b-btn--quiet" id="b24t-news-clear-btn">Wyczyść</button>',
@@ -18262,6 +18323,7 @@
         var pData = projects[pid] || {};
         state.projectId = parseInt(pid);
         state.tags = pData.tagIds || {};
+        _newsTargetRender();
         B24Bridge.lastProject.set(pid);
         lsSet('b24tagger_mini_last_project', pid);
         var _tagsCached = Object.keys(state.tags).length > 0;
@@ -20525,6 +20587,15 @@
 
         var sid = state.projectId || '';
         if (!sid) { showErr('Brak projektu. Projekt wybiera się w polu Projekt albo na stronie projektu Brand24.'); return; }
+        // Bramka 'project' odświeża się co sekundę razem z adresem (_watchPanelProject); to sprawdzenie łapie
+        // przełączenie projektu w Brand24 tuż przed kliknięciem.
+        var _moved = _newsProjectMoved();
+        if (_moved) {
+          _newsTargetRender(true);
+          showErr('W Brand24 otwarty jest projekt ' + _escHtml(_pnResolve(_moved)) + ', a wzmianka trafiłaby do projektu ' +
+                  _escHtml(_pnResolve(sid)) + '. Odświeżenie strony przełącza dodawanie na otwarty projekt.');
+          return;
+        }
 
         _submitBusy('Pobieram token…');
 
@@ -20797,6 +20868,34 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.21",
+      "date": "2026-10-05",
+      "label": "new",
+      "changes": [
+        {
+          "type": "new",
+          "area": "Dodawanie wzmianek",
+          "title": "Nazwa projektu w nagłówku okna i nad przyciskiem „Dodaj wzmiankę”",
+          "items": [
+            "Okna News i Niestandardowe pokazują pod tytułem projekt, do którego trafiają wzmianki.",
+            "Ten sam projekt stoi nad przyciskiem „Dodaj wzmiankę”, a dymek na nim podaje ID projektu."
+          ],
+          "comment": "Okno News zasłania panel Brand24 razem z nazwą projektu, więc dodawanie do innego projektu niż zamierzony nie dawało żadnego sygnału.",
+          "text": "Nazwa projektu w nagłówku okna i nad przyciskiem „Dodaj wzmiankę”. Okna News i Niestandardowe pokazują pod tytułem projekt, do którego trafiają wzmianki. Ten sam projekt stoi nad przyciskiem „Dodaj wzmiankę”, a dymek na nim podaje ID projektu."
+        },
+        {
+          "type": "fix",
+          "area": "Dodawanie wzmianek",
+          "title": "Naprawiono błąd, przez który News dodawał wzmianki do innego projektu niż otwarty w Brand24",
+          "items": [
+            "Po pracy w Niestandardowym na innym projekcie News dodaje do projektu otwartego w Brand24.",
+            "Po przełączeniu projektu w Brand24 bez odświeżenia strony przycisk „Dodaj wzmiankę” czeka na odświeżenie, a wiersz projektu nad nim podaje, który projekt jest otwarty."
+          ],
+          "text": "Naprawiono błąd, przez który News dodawał wzmianki do innego projektu niż otwarty w Brand24. Po pracy w Niestandardowym na innym projekcie News dodaje do projektu otwartego w Brand24. Po przełączeniu projektu w Brand24 bez odświeżenia strony przycisk „Dodaj wzmiankę” czeka na odświeżenie, a wiersz projektu nad nim podaje, który projekt jest otwarty."
+        }
+      ]
+    },
+    {
       "version": "0.38.20",
       "date": "2026-10-05",
       "label": "new",
@@ -21047,33 +21146,6 @@
             "Przełącznik „Powiadomienie poza panelem” w Ustawieniach → Powiadomienia: bez własnego wyboru włączony na Stabilnym, wyłączony na Experimental."
           ],
           "text": "Nowa wersja wtyczki widoczna także poza panelem. Gdy wyjdzie nowa wersja, wtyczka wysyła powiadomienie systemowe; kliknięcie przenosi do karty Brand24 i pokazuje okienko instalacji. Tytuł karty Brand24 w tle miga, dopóki ktoś do niej nie zajrzy, a z włączonym ntfy powiadomienie przychodzi też na telefon. Przełącznik „Powiadomienie poza panelem” w Ustawieniach → Powiadomienia: bez własnego wyboru włączony na Stabilnym, wyłączony na Experimental."
-        }
-      ]
-    },
-    {
-      "version": "0.38.11",
-      "date": "2026-10-03",
-      "label": "new",
-      "changes": [
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Kanał Experimental z kodem dostępu",
-          "items": [
-            "W Ustawieniach → Aktualizacje wybór „Eksperymentalny” prosi o kod dostępu; kod daje właściciel wtyczki.",
-            "Kto jest już na kanale Experimental, zostaje na nim bez kodu i po przejściu na Stabilny może na niego wrócić."
-          ],
-          "text": "Kanał Experimental z kodem dostępu. W Ustawieniach → Aktualizacje wybór „Eksperymentalny” prosi o kod dostępu; kod daje właściciel wtyczki. Kto jest już na kanale Experimental, zostaje na nim bez kodu i po przejściu na Stabilny może na niego wrócić."
-        },
-        {
-          "type": "fix",
-          "area": "Panel",
-          "title": "Naprawiono przełącznik „Logi programistyczne” po zmianie kanału",
-          "items": [
-            "Przełącznik od razu pokazuje stan dla nowego kanału, bez ponownego otwierania Ustawień."
-          ],
-          "experimental": true,
-          "text": "Naprawiono przełącznik „Logi programistyczne” po zmianie kanału. Przełącznik od razu pokazuje stan dla nowego kanału, bez ponownego otwierania Ustawień."
         }
       ]
     }
@@ -30624,9 +30696,10 @@
     var btn = _$('b24t-news-submit-btn');
     if (!btn) return;
     var blockedBy = newsState.submitBlock;
-    if (blockedBy.cms || blockedBy.dup) btn.setAttribute('aria-disabled', 'true');
+    if (blockedBy.cms || blockedBy.dup || blockedBy.project) btn.setAttribute('aria-disabled', 'true');
     else btn.removeAttribute('aria-disabled');
-    btn.setAttribute('data-tip', blockedBy.cms ? 'Brak dostępu do projektu: znacznik dostępu nad formularzem mówi, co zrobić'
+    btn.setAttribute('data-tip', blockedBy.project ? 'W Brand24 otwarty jest inny projekt niż ten nad przyciskiem; odświeżenie strony przełącza dodawanie'
+              : blockedBy.cms ? 'Brak dostępu do projektu: znacznik dostępu nad formularzem mówi, co zrobić'
               : blockedBy.dup ? 'Ten adres już jest w projekcie; „dodaj mimo to” przy wyniku sprawdzenia odblokowuje wysyłkę'
               : 'Ctrl+Enter');
   }

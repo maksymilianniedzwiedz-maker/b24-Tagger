@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.18
+// @version      0.38.19
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -174,7 +174,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.18';
+  const VERSION = '0.38.19';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -20775,6 +20775,25 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.19",
+      "date": "2026-10-05",
+      "label": "new",
+      "changes": [
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Raport wersji wtyczki dla autora",
+          "items": [
+            "Raz na dobę i po każdej aktualizacji wtyczka wysyła autorowi numer wersji, kanał aktualizacji, nazwę przeglądarki i losowy identyfikator tej przeglądarki.",
+            "Raport nie zawiera danych konta Brand24, projektów ani treści pracy.",
+            "Opis raportu i identyfikator przeglądarki są w Ustawieniach → Aktualizacje."
+          ],
+          "comment": "Przed wydaniem 1.0 chcemy wiedzieć, która wersja działa u kogo, bez dopytywania każdego z osobna.",
+          "text": "Raport wersji wtyczki dla autora. Raz na dobę i po każdej aktualizacji wtyczka wysyła autorowi numer wersji, kanał aktualizacji, nazwę przeglądarki i losowy identyfikator tej przeglądarki. Raport nie zawiera danych konta Brand24, projektów ani treści pracy. Opis raportu i identyfikator przeglądarki są w Ustawieniach → Aktualizacje."
+        }
+      ]
+    },
+    {
       "version": "0.38.18",
       "date": "2026-10-05",
       "label": "new",
@@ -21042,45 +21061,6 @@
             "Pasek błędu pokazuje się dopiero, gdy zapytanie nie przejdzie po wszystkich ponowieniach."
           ],
           "text": "Naprawiono pasek błędu po chwilowym błędzie Brand24, który ponowienie już naprawiło. Pasek błędu pokazuje się dopiero, gdy zapytanie nie przejdzie po wszystkich ponowieniach."
-        }
-      ]
-    },
-    {
-      "version": "0.38.9",
-      "date": "2026-10-03",
-      "label": "new",
-      "changes": [
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Kolejność kart paska do ustawienia przeciąganiem",
-          "items": [
-            "Kartę paska przeciąga się w górę albo w dół; Historia zostaje na dole.",
-            "W Ustawieniach → Narzędzia strzałki przy karcie przesuwają ją o jedną pozycję."
-          ],
-          "text": "Kolejność kart paska do ustawienia przeciąganiem. Kartę paska przeciąga się w górę albo w dół; Historia zostaje na dole. W Ustawieniach → Narzędzia strzałki przy karcie przesuwają ją o jedną pozycję."
-        },
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Menu prawego przycisku na pasku funkcji i uchwytach przy krawędzi",
-          "items": [
-            "Na karcie paska: „Ukryj z paska” z „Cofnij” w powiadomieniu i „Dostosuj pasek…”, które otwiera Narzędzia na tej karcie.",
-            "Na uchwycie Annotators, Wzmianki, Network Monitor i „Dodaj wzmiankę”: wyłączenie narzędzia i „Dostosuj narzędzia…”.",
-            "Z klawiatury menu otwiera klawisz menu albo Shift+F10."
-          ],
-          "text": "Menu prawego przycisku na pasku funkcji i uchwytach przy krawędzi. Na karcie paska: „Ukryj z paska” z „Cofnij” w powiadomieniu i „Dostosuj pasek…”, które otwiera Narzędzia na tej karcie. Na uchwycie Annotators, Wzmianki, Network Monitor i „Dodaj wzmiankę”: wyłączenie narzędzia i „Dostosuj narzędzia…”. Z klawiatury menu otwiera klawisz menu albo Shift+F10."
-        },
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Ustawienia i wyłączone narzędzia w palecie poleceń",
-          "items": [
-            "Polecenie „Ustawienia: Motyw” i podobne otwiera kategorię z fokusem na tym ustawieniu.",
-            "Wyłączone narzędzie ma polecenie z dopiskiem „(wyłączone)”: Enter włącza je i otwiera.",
-            "„Dostosuj pasek i narzędzia” otwiera Ustawienia → Narzędzia."
-          ],
-          "text": "Ustawienia i wyłączone narzędzia w palecie poleceń. Polecenie „Ustawienia: Motyw” i podobne otwiera kategorię z fokusem na tym ustawieniu. Wyłączone narzędzie ma polecenie z dopiskiem „(wyłączone)”: Enter włącza je i otwiera. „Dostosuj pasek i narzędzia” otwiera Ustawienia → Narzędzia."
         }
       ]
     }
@@ -22587,6 +22567,52 @@
     });
   }
 
+  // ── Raport wersji ──
+  // Raz na dobę i po każdej zmianie wersji skrzynka zgłoszeń dostaje wersję, kanał, blokadę (_lockReason), menedżer
+  // skryptów i przeglądarkę z losowym identyfikatorem tej przeglądarki; zapisuje je w tabeli w issue z etykietą
+  // „wersje” (zgloszenia/README.md, „Raport wersji”). Bez danych osoby i konta Brand24 (decyzja właściciela
+  // 2026-10-05): pracuje się na wielu kontach Brand24, więc konto nie wskazuje osoby.
+  var VER_ID = 'b24t_install_id';
+  var VER_SENT = 'b24t_version_report';   // { v, t }: ostatnia próba, także nieudana
+  var VER_EVERY_MS = 24 * 3600 * 1000;
+
+  function _verId() {
+    var id = gmGet(VER_ID, null);
+    if (!id) {
+      id = Array.from(crypto.getRandomValues(new Uint8Array(8)), function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+      gmSet(VER_ID, id);
+    }
+    return id;
+  }
+
+  function _verBrowser() {
+    var ua = navigator.userAgent, m = /Edg\/(\d+)/.exec(ua) || /OPR\/(\d+)/.exec(ua) || /Firefox\/(\d+)/.exec(ua) || /Chrome\/(\d+)/.exec(ua);
+    var name = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : 'inna';
+    return name + (m ? ' ' + m[1] : '');
+  }
+
+  // Nieudana wysyłka czeka do następnej doby jak udana: raport nie jest pilny, a skrzynka ma limit zapytań.
+  function _verReport() {
+    var last = gmGet(VER_SENT, null);
+    if (last && last.v === VERSION && Date.now() - last.t < VER_EVERY_MS) return;
+    // Zapis przed wysyłką: inne karty widzą próbę i nie wysyłają równolegle.
+    gmSet(VER_SENT, { v: VERSION, t: Date.now() });
+    var gm = typeof GM_info !== 'undefined' ? GM_info : null;
+    GM_xmlhttpRequest({
+      method: 'POST', url: REPORT_INBOX_URL, timeout: 30000,
+      headers: { 'Content-Type': 'application/json' },
+      data: JSON.stringify({ v: 1, kind: 'wersja', id: _verId(), wersja: VERSION, kanal: _relChannel(),
+        blokada: _lock.on ? _lock.why : null, menedzer: gm ? gm.scriptHandler + ' ' + gm.version : null, przegladarka: _verBrowser() }),
+      onload: function (resp) {
+        var res = null;
+        try { res = JSON.parse(resp.responseText); } catch (e) {}
+        if (!(res && res.ok)) addLog('Raport wersji nieudany: ' + (res && res.error ? res.error : 'HTTP ' + resp.status), 'diag');
+      },
+      onerror: function () { addLog('Raport wersji nieudany: brak połączenia ze skrzynką zgłoszeń', 'diag'); },
+      ontimeout: function () { addLog('Raport wersji nieudany: skrzynka nie odpowiedziała w 30 s', 'diag'); },
+    });
+  }
+
   // Domyślne położenie okna zgłoszenia: z lewej strony panelu, żeby nie zasłaniało panelu z paskiem błędu, który
   // się opisuje; gdy tam się nie mieści, w prawym dolnym rogu.
   function _reportAnchor() {
@@ -23385,6 +23411,10 @@
         _setRow('<span id="b24t-set-down-ver"></span>', 'Tampermonkey nie zastąpi sam nowszej wersji starszą. ' +
           'Instalację potwierdza przycisk „Zdezaktualizuj” na stronie Tampermonkeya.',
           '<button type="button" class="b-btn b-btn--primary b-btn--sm" id="b24t-set-upd-stable">Zainstaluj</button>', { cls: 'b-set-down' }) +
+        // Opis raportu wersji (_verReport) bez wyłącznika: decyzja właściciela 2026-10-05.
+        _setRow('Raport wersji', 'Raz na dobę i po każdej aktualizacji wtyczka wysyła autorowi numer wersji, kanał, nazwę przeglądarki ' +
+          'i losowy identyfikator tej przeglądarki. Raport nie zawiera danych konta Brand24, projektów ani treści pracy. ' +
+          'Identyfikator: <span class="b-mono" id="b24t-set-ver-id">' + _escHtml(_verId()) + '</span>.', '') +
       '</section>' +
       '<section class="b-set-sec"><h3 class="b-set-sec__title">Testowanie</h3>' +
         _setRow('Logi programistyczne', 'Log pokazuje też wpisy techniczne: odświeżanie w tle, ponowienia zapytań, partie, kontrole danych. ' +
@@ -32004,6 +32034,9 @@
   function init() {
     _expEnforce();
     _lockInit();
+    // Także z zablokowanej wtyczki: tabela wersji pokazuje, kto utknął na blokadzie. 15 s po starcie, bo blokada
+    // wersji testowej rozstrzyga się dopiero po sprawdzeniu main (_relInit).
+    if (_isBrand24Host && window.top === window.self) setTimeout(_verReport, 15000);
     if (_lock.why) { _lockOn(); return; }
     _initPlugin();
   }

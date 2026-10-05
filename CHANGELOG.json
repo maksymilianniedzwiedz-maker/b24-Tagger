@@ -1,5 +1,24 @@
 [
   {
+    "version": "0.38.19",
+    "date": "2026-10-05",
+    "label": "new",
+    "changes": [
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "Raport wersji wtyczki dla autora",
+        "items": [
+          "Raz na dobę i po każdej aktualizacji wtyczka wysyła autorowi numer wersji, kanał aktualizacji, nazwę przeglądarki i losowy identyfikator tej przeglądarki.",
+          "Raport nie zawiera danych konta Brand24, projektów ani treści pracy.",
+          "Opis raportu i identyfikator przeglądarki są w Ustawieniach → Aktualizacje."
+        ],
+        "comment": "Przed wydaniem 1.0 chcemy wiedzieć, która wersja działa u kogo, bez dopytywania każdego z osobna.",
+        "text": "Raport wersji wtyczki dla autora. Raz na dobę i po każdej aktualizacji wtyczka wysyła autorowi numer wersji, kanał aktualizacji, nazwę przeglądarki i losowy identyfikator tej przeglądarki. Raport nie zawiera danych konta Brand24, projektów ani treści pracy. Opis raportu i identyfikator przeglądarki są w Ustawieniach → Aktualizacje."
+      }
+    ]
+  },
+  {
     "version": "0.38.18",
     "date": "2026-10-05",
     "label": "new",

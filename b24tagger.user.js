@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.17
+// @version      0.38.18
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -174,7 +174,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.17';
+  const VERSION = '0.38.18';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -219,7 +219,7 @@
     NA_CONSENT:     'b24t_na_consent',          // zgoda na analitykę News: '1' | '0'
     SOUNDS:         'b24t_sounds',              // Powiadomienia → Dźwięki: { done, error, captcha: true | false }
     RAIL_ORDER:     'b24tagger_rail_order',     // kolejność kart górnej grupy paska: [main, quicktag, …]
-    EXP_ACCESS:     'b24t_exp_access',          // dostęp do kanału Experimental: { by: code | channel, v: wersja } (_expGrant)
+    EXP_ACCESS:     'b24t_exp_access',          // dostęp do kanału Experimental: { k: początek skrótu kodu, v: wersja } (_expGrant)
     UPD_LOUD:       'b24t_update_loud',         // Powiadomienia → nowa wersja poza panelem: true | false; bez zapisu według kanału (_updLoud)
   };
   const MAX_BATCH_SIZE = 50;
@@ -6015,6 +6015,10 @@
       [data-b24t-motion="lite"] .b-edge.is-caught { animation-name: b-edge-catch-lite; }
       @keyframes b-edge-catch { from { box-shadow: 0 0 0 0 var(--c-accent); } to { box-shadow: 0 0 0 9px transparent; } }
       @keyframes b-edge-catch-lite { from { color: var(--c-accentInk); background-color: var(--c-accentSoft); } }
+      /* Blokada wtyczki (_lockOn): zostają okno blokady z tłem i listwa z samym uchwytem panelu. Reguła obejmuje też
+         okna, powiadomienia i menu otwarte po blokadzie, bez pilnowania każdego miejsca, z którego się otwierają. */
+      .b24t-app[data-b24t-lock] > :not(.b-edgebar, .b-drop, .b-drop-dot, [data-lock-keep]) { display: none !important; }
+      .b24t-app[data-b24t-lock] .b-edge:not(#b24t-panel-side-tab) { display: none !important; }
       /* Kropla oderwanej listwy (Drop): rysunek SVG w zestawie pełnym, kropka w ograniczonym. */
       .b-drop { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; z-index: 450; pointer-events: none; overflow: visible; }
       .b-drop :is(path, circle, ellipse) { fill: var(--c-accent); }
@@ -8972,7 +8976,7 @@
   // Ctrl+K i „?” w całej stronie. Nasłuch w fazie bąbelkowania: skrót, który Brand24 już obsłużył
   // (defaultPrevented), zostaje jego. KeyK zamiast e.key działa też przy układzie klawiatury bez łacinki.
   function _keysGlobal(e) {
-    if (e.defaultPrevented || e.altKey) return;
+    if (e.defaultPrevented || e.altKey || _lock.on) return;
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.code === 'KeyK') { e.preventDefault(); Palette.toggle(); return; }
     if (e.key === '?' && !e.ctrlKey && !e.metaKey && !Palette.isOpen() && !_keysTyping() &&
         !Win.list().some(function (id) { return WIN_MODAL[Win.get(id).kind]; })) {
@@ -9838,6 +9842,8 @@
   }
 
   function _panelHide(on) {
+    // Zablokowana wtyczka (_lockOn) zamiast panelu pokazuje okno blokady.
+    if (!on && _lock.on) { _lockShow(); return; }
     if (on) Win.hide('panel'); else Win.show('panel');
     Edge.setVisible('panel', on);
     lsSet('b24tagger_panel_hidden', on);
@@ -20769,6 +20775,47 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.18",
+      "date": "2026-10-05",
+      "label": "new",
+      "changes": [
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Blokada wtyczki do czasu instalacji wymaganej aktualizacji",
+          "items": [
+            "Gdy na kanale jest wersja oznaczona jako wymagana, okno na środku strony prowadzi do jej instalacji, a funkcje wtyczki są wyłączone do odświeżenia strony z nową wersją.",
+            "Trwające tagowanie z pliku, przegląd sentymentu i AI Tag zatrzymują się; postęp tagowania z pliku zostaje zapisany.",
+            "Po zamknięciu okna zostaje uchwyt „B24 Tagger”, który otwiera je ponownie."
+          ],
+          "text": "Blokada wtyczki do czasu instalacji wymaganej aktualizacji. Gdy na kanale jest wersja oznaczona jako wymagana, okno na środku strony prowadzi do jej instalacji, a funkcje wtyczki są wyłączone do odświeżenia strony z nową wersją. Trwające tagowanie z pliku, przegląd sentymentu i AI Tag zatrzymują się; postęp tagowania z pliku zostaje zapisany. Po zamknięciu okna zostaje uchwyt „B24 Tagger”, który otwiera je ponownie."
+        },
+        {
+          "type": "improved",
+          "area": "Panel",
+          "title": "Kanał Experimental tylko z kodem dostępu",
+          "items": [
+            "Wersja z kanału Experimental bez kodu dostępu jest zablokowana: okno prosi o kod albo prowadzi do instalacji wersji stabilnej.",
+            "Poprzedni kod nie działa, a dostęp przyznany przed tą wersją wygasł.",
+            "Kod wpisany w oknie blokady odblokowuje wtyczkę i przełącza aktualizacje na kanał Experimental."
+          ],
+          "experimental": true,
+          "text": "Kanał Experimental tylko z kodem dostępu. Wersja z kanału Experimental bez kodu dostępu jest zablokowana: okno prosi o kod albo prowadzi do instalacji wersji stabilnej. Poprzedni kod nie działa, a dostęp przyznany przed tą wersją wygasł. Kod wpisany w oknie blokady odblokowuje wtyczkę i przełącza aktualizacje na kanał Experimental."
+        },
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Instalacja wersji stabilnej w miejsce wersji z kanału Experimental",
+          "items": [
+            "Po wyborze kanału Stabilny w Ustawieniach → Aktualizacje przycisk „Zainstaluj” przy wersji stabilnej otwiera jej instalację w Tampermonkeyu.",
+            "Tampermonkey pokazuje ostrzeżenie „Uwaga! Starsza wersja skryptu”, a instalację potwierdza przycisk „Zdezaktualizuj”."
+          ],
+          "experimental": true,
+          "text": "Instalacja wersji stabilnej w miejsce wersji z kanału Experimental. Po wyborze kanału Stabilny w Ustawieniach → Aktualizacje przycisk „Zainstaluj” przy wersji stabilnej otwiera jej instalację w Tampermonkeyu. Tampermonkey pokazuje ostrzeżenie „Uwaga! Starsza wersja skryptu”, a instalację potwierdza przycisk „Zdezaktualizuj”."
+        }
+      ]
+    },
+    {
       "version": "0.38.17",
       "date": "2026-10-05",
       "label": "fix",
@@ -21036,48 +21083,6 @@
           "text": "Ustawienia i wyłączone narzędzia w palecie poleceń. Polecenie „Ustawienia: Motyw” i podobne otwiera kategorię z fokusem na tym ustawieniu. Wyłączone narzędzie ma polecenie z dopiskiem „(wyłączone)”: Enter włącza je i otwiera. „Dostosuj pasek i narzędzia” otwiera Ustawienia → Narzędzia."
         }
       ]
-    },
-    {
-      "version": "0.38.8",
-      "date": "2026-10-03",
-      "label": "new",
-      "changes": [
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Ustawienia z listą kategorii po lewej",
-          "items": [
-            "Kategorie: Narzędzia, Wygląd, AI, Prompty, Powiadomienia, Projekty, Aktualizacje i Analityka; strzałki w górę i w dół przechodzą między nimi.",
-            "W wąskim oknie lista pokazuje same ikony, a nazwa kategorii jest w dymku.",
-            "Motyw ma trzy stany: „Jak w systemie”, „Jasny” i „Ciemny”."
-          ],
-          "text": "Ustawienia z listą kategorii po lewej. Kategorie: Narzędzia, Wygląd, AI, Prompty, Powiadomienia, Projekty, Aktualizacje i Analityka; strzałki w górę i w dół przechodzą między nimi. W wąskim oknie lista pokazuje same ikony, a nazwa kategorii jest w dymku. Motyw ma trzy stany: „Jak w systemie”, „Jasny” i „Ciemny”."
-        },
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Narzędzia: każda karta paska i każdy uchwyt włączany osobno",
-          "items": [
-            "Da się ukryć każdą kartę paska, także Plik; bez żadnej karty panel prowadzi do Ustawień → Narzędzia.",
-            "Dashboard Annotatora, Wzmianki i zakres „Wszystkie projekty” w Usuwaniu mają osobne przełączniki zamiast jednego wspólnego.",
-            "Opcje zależne, np. „Usuwanie po ocenie” pod Plikiem, stoją pod swoim narzędziem i gasną razem z nim.",
-            "Przy AI Tag i Sentymencie bez klucza dostawcy stoi ostrzeżenie z przyciskiem „Dodaj klucz”."
-          ],
-          "text": "Narzędzia: każda karta paska i każdy uchwyt włączany osobno. Da się ukryć każdą kartę paska, także Plik; bez żadnej karty panel prowadzi do Ustawień → Narzędzia. Dashboard Annotatora, Wzmianki i zakres „Wszystkie projekty” w Usuwaniu mają osobne przełączniki zamiast jednego wspólnego. Opcje zależne, np. „Usuwanie po ocenie” pod Plikiem, stoją pod swoim narzędziem i gasną razem z nim. Przy AI Tag i Sentymencie bez klucza dostawcy stoi ostrzeżenie z przyciskiem „Dodaj klucz”."
-        },
-        {
-          "type": "improved",
-          "area": "Powiadomienia",
-          "title": "Powiadomienia w Ustawieniach: dźwięki i ntfy w jednym miejscu",
-          "items": [
-            "Dźwięki końca i błędu tagowania z pliku oraz alarm captchy włącza się osobno, a przycisk obok odtwarza każdy z nich.",
-            "Wybór dźwięków zostaje po przeładowaniu strony.",
-            "Powiadomienia na telefon (ntfy) mają własny przełącznik, a ustawienia kanału pokazują się dopiero po jego włączeniu.",
-            "Pasek funkcji nie ma karty Powiadomienia."
-          ],
-          "text": "Powiadomienia w Ustawieniach: dźwięki i ntfy w jednym miejscu. Dźwięki końca i błędu tagowania z pliku oraz alarm captchy włącza się osobno, a przycisk obok odtwarza każdy z nich. Wybór dźwięków zostaje po przeładowaniu strony. Powiadomienia na telefon (ntfy) mają własny przełącznik, a ustawienia kanału pokazują się dopiero po jego włączeniu. Pasek funkcji nie ma karty Powiadomienia."
-        }
-      ]
     }
   ];
 
@@ -21130,10 +21135,20 @@
   // Kanał Experimental za kodem dostępu od właściciela wtyczki (decyzja 2026-10-03 16:27). Wtyczka zna tylko skrót
   // kodu. To bariera przed przypadkowym wyborem, nie zabezpieczenie: plik z experimental leży publicznie na GitHubie,
   // a znacznik dostępu da się ustawić w pamięci Tampermonkeya.
-  const EXP_CODE_HASH = 'f28d1b0605df31a202fa9f596a0667647dcfcc6984845fad6a48e956e91694e6';
-  function _expAccess() { return !!gmGet(PREF.EXP_ACCESS, null); }
-  // by: code (wpisany kod) albo channel (instalacja była już na Experimental).
-  function _expGrant(by) { gmSet(PREF.EXP_ACCESS, { by: by, v: VERSION }); }
+  const EXP_CODE_HASH = 'b984b42665d14fe3fe5ae89d0000185b39f21ae642c8bb5c5205252255c264be';
+  // Dostęp należy do kodu, którym go uzyskano: nowy kod odbiera dostęp wszystkim (decyzja właściciela 2026-10-05).
+  // Zapis sprzed 0.38.18 ({ by, v }) nie ma `k`, więc nie daje dostępu, także ten przyznany bez kodu instalacji,
+  // która była już na Experimental.
+  const EXP_ACCESS_KEY = EXP_CODE_HASH.slice(0, 16);
+  function _expAccess() { var a = gmGet(PREF.EXP_ACCESS, null); return !!a && a.k === EXP_ACCESS_KEY; }
+  function _expGrant() { gmSet(PREF.EXP_ACCESS, { k: EXP_ACCESS_KEY, v: VERSION }); }
+  // Kanał Experimental bez dostępu wraca na Stabilny przy każdym starcie, na każdej stronie: zapis kanału jest wspólny
+  // dla wszystkich stron, a bez dostępu nowe wersje mają przychodzić tylko z main.
+  function _expEnforce() {
+    if (_relChannel() !== 'experimental' || _expAccess()) return;
+    gmSet(PREF.UPDATE_CHANNEL, 'stable');
+    if (_isBrand24Host) addLog('ℹ Kanał aktualizacji przełączony na Stabilny: kanał Experimental wymaga kodu dostępu.', 'info');
+  }
   // Wielkość liter, myślnik i spacje bez znaczenia, bo kod przekazuje się ustnie albo w wiadomości.
   async function _expCheck(code) {
     var norm = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -21685,39 +21700,49 @@
   // Jedno powiadomienie na raz, w stanie `_upd.card`: new (dostępna nowa wersja), installed (odśwież stronę po
   // instalacji), updated (wtyczka zaktualizowana), error (sprawdzenie nieudane). Samo pokazuje się tylko przy
   // otwartym panelu: nad oknem roboczym zasłaniałoby jego prawy dolny róg.
-  var _upd = { panel: null, card: null, toast: null, remote: null, refresh: null, installFor: null, ready: false, checking: false, busy: false };
+  // `say`: odświeżenie stanu wersji w otwartych Ustawieniach (_setPaneUpdates) po każdym wyniku sprawdzenia.
+  var _upd = { panel: null, card: null, toast: null, remote: null, refresh: null, installFor: null, ready: false, checking: false, busy: false, say: null };
 
   // Numer wersji z pierwszego 1 KB pliku: jest w nagłówku, a cała wtyczka ma ok. 1,5 MB (TAMPERMONKEY.md §2.1).
+  // Drugi argument to wersja krytyczna z `// @b24tCritical` (_lockReason), null bez tego wiersza.
   // `done(null)`: brak odpowiedzi albo nagłówka.
   function _relRemoteVersion(url, done) {
     GM_xmlhttpRequest({
       method: 'GET', url: url + '?_=' + Date.now(), timeout: 15000,
       headers: { Range: 'bytes=0-1023', 'Cache-Control': 'no-cache' },
       onload: function(r) {
-        var m = (r.status === 200 || r.status === 206) && /\/\/ @version\s+(\d+\.\d+\.\d+)/.exec(r.responseText || '');
-        done(m ? m[1] : null);
+        var ok = r.status === 200 || r.status === 206, text = r.responseText || '';
+        var m = ok && /\/\/ @version\s+(\d+\.\d+\.\d+)/.exec(text), c = m && /\/\/ @b24tCritical\s+(\d+\.\d+\.\d+)/.exec(text);
+        done(m ? m[1] : null, c ? c[1] : null);
       },
       onerror: function() { done(null); },
       ontimeout: function() { done(null); }
     });
   }
 
-  // Bez `manual` nie pyta, gdy którakolwiek karta sprawdzała w ciągu UPD_EVERY_MS.
+  // Bez `manual` nie pyta, gdy którakolwiek karta sprawdzała w ciągu UPD_EVERY_MS tą samą wersją wtyczki.
+  // Wynik zapisuje wersja, która pytała (`v`): po aktualizacji wynik starszej wersji bywa sprzed wydania tej,
+  // a blokada wersji testowej (_lockReason) ufa tylko sprawdzeniu bieżącej wersji.
   function _updCheck(manual) {
     var key = REL_GM.check + _relChannel(), prev = _relGm(key, null);
-    if (!manual && prev && Date.now() - prev.t < UPD_EVERY_MS) { _updApply(); return; }
-    // Znacznik czasu przed zapytaniem: inne karty widzą świeże sprawdzenie i nie pytają równolegle.
-    _relGmSet(key, { t: Date.now(), remote: prev ? prev.remote : null, err: false });
+    if (!manual && prev && prev.v === VERSION && Date.now() - prev.t < UPD_EVERY_MS) { _updApply(); return; }
+    // Znacznik czasu przed zapytaniem: inne karty widzą świeże sprawdzenie i nie pytają równolegle. Wynik
+    // poprzedniego sprawdzenia zostaje z jego wersją, bo nowego jeszcze nie ma.
+    _relGmSet(key, Object.assign({}, prev, { t: Date.now(), err: false }));
     _upd.checking = manual;
     _connRender();
-    var done = function(remote) {
-      _relGmSet(key, { t: Date.now(), remote: remote || (prev ? prev.remote : null), err: !remote });
+    var done = function(remote, crit) {
+      _relGmSet(key, remote ? { t: Date.now(), remote: remote, crit: crit, v: VERSION, err: false }
+        : Object.assign({}, prev, { t: Date.now(), err: true }));
       _upd.checking = false;
       _updApply();
       _updAnnounce(manual);
       if (!manual) return;
       if (!remote) _updOpenCard('error');
       else if (_relCmp(remote, VERSION) > 0) _updOpenCard('new');
+      else if (_relCmp(remote, VERSION) < 0 && key === REL_GM.check + 'stable') {
+        Toast.show('Zainstalowana wersja ' + VERSION + ' pochodzi z kanału Experimental. Wersja stabilna to ' + remote + '.', 'info');
+      }
       else Toast.show('Zainstalowana wersja ' + VERSION + ' jest najnowsza.', 'ok');
     };
     _relRemoteVersion(getRawUrl(), done);
@@ -21733,6 +21758,9 @@
     _connRender();
     _updSideDot();
     _updTitleSync();
+    if (_upd.say) _upd.say();
+    _lockSync();
+    if (_lock.on) return;
     if (_upd.card) _updRenderCard();
     else _updMaybeOpen();
   }
@@ -21797,7 +21825,8 @@
     if (_upd.refresh) return { state: 'info', label: 'Zainstalowano wersję ' + _upd.refresh, hint: 'Działa po odświeżeniu strony' };
     if (_upd.remote) return { state: 'info', label: 'Dostępna wersja ' + _upd.remote, hint: 'Zainstalowana ' + VERSION + ', ' + chan };
     if (_upd.checking) return { state: 'wait', label: 'Wersja ' + VERSION, hint: 'Sprawdzam aktualizacje…' };
-    var st = _relGm(REL_GM.check + _relChannel(), null);
+    var st = _relGm(REL_GM.check + _relChannel(), null), down = _relStableBelow();
+    if (down) return { state: 'info', label: 'Wersja ' + VERSION + ' z kanału Experimental', hint: 'Wersja stabilna ' + down + ' czeka na instalację' };
     if (!st) return { state: 'wait', label: 'Wersja ' + VERSION, hint: chan + ', aktualizacji jeszcze nie sprawdzono' };
     if (st.err) return { state: 'wait', label: 'Wersja ' + VERSION, hint: chan + ', ostatnie sprawdzenie nieudane' };
     var d = new Date(st.t), today = d.toDateString() === new Date().toDateString();
@@ -22051,9 +22080,6 @@
       if (pend && pend.to === VERSION) _relDefer(pend.kind, pend.from);
       else if (pend) _relGmSet(REL_GM.pending, null);
     }
-    // Instalacje, które są już na Experimental, zostają tam bez kodu (decyzja 2026-10-03 16:27). Przed
-    // _relMoveToStable: przeniesiona na Stabilny wraca na Experimental bez kodu.
-    if (_relChannel() === 'experimental' && !_expAccess()) _expGrant('channel');
     _relMoveToStable(function() {
       // Aktualizacja, po której nastąpiło przełączenie, kończy się jak na kanale Stabilnym: powiadomieniem
       // „Wtyczka została zaktualizowana” zamiast okna dużej zmiany, o ile tamto jeszcze się nie otworzyło.
@@ -22082,7 +22108,10 @@
     });
     _upd.ready = _updPanelReady();
     setTimeout(_updApply, 1500);
-    setTimeout(function() { _updCheck(false); }, 5000);
+    // Bez dostępu do Experimental i bez porównania tej wersji z main blokada wersji testowej (_lockReason) czeka
+    // na sprawdzenie, więc idzie ono od razu.
+    var ss = _relGm(REL_GM.check + 'stable', null);
+    setTimeout(function() { _updCheck(false); }, !_expAccess() && !(ss && ss.v === VERSION) ? 0 : 5000);
     // Także w karcie w tle: nowa wersja ma dotrzeć do osoby, która nie patrzy na Brand24. Zapytanie i tak idzie
     // najwyżej raz na UPD_EVERY_MS ze wszystkich kart (_updCheck).
     setInterval(function() { _updCheck(false); }, 5 * 60 * 1000);
@@ -22114,6 +22143,20 @@
     });
   }
 
+  // Wersja z main niższa od zainstalowanej na kanale Stabilnym: działa wersja z Experimental, a Tampermonkey niższej
+  // wersji sam nie zainstaluje (TAMPERMONKEY.md §1.9). Do przycisku instalacji wystarcza dowolny zapisany wynik.
+  function _relStableBelow() {
+    if (_relChannel() !== 'stable') return null;
+    var ss = _relGm(REL_GM.check + 'stable', null);
+    return ss && ss.remote && _relCmp(ss.remote, VERSION) < 0 ? ss.remote : null;
+  }
+  // Wersja stabilna w miejsce wersji z Experimental: Tampermonkey pokazuje stronę „Uwaga! Starsza wersja skryptu”
+  // z przyciskiem „Zdezaktualizuj” (TAMPERMONKEY.md §1.9).
+  function _relInstallStable() {
+    gmSet(PREF.UPDATE_CHANNEL, 'stable');
+    window.open(RAW_URL_STABLE, '_blank');
+  }
+
   // Zmiana kanału w ustawieniach: inny dziennik i inny plik do sprawdzania.
   function _relOnChannel() {
     _logDevCache = null;
@@ -22123,6 +22166,218 @@
     _relRenderClBtn();
     _updCloseCard();
     _updCheck(false);
+  }
+
+  // ───────────────────────────────────────────
+  // BLOKADA WTYCZKI
+  // ───────────────────────────────────────────
+  // Zablokowana wtyczka nie daje żadnej funkcji: zostaje okno z powodem i wyjściem z blokady oraz uchwyt
+  // „B24 Tagger”, który to okno otwiera (decyzja właściciela 2026-10-05). Powody (_lockReason):
+  // - critical: plik wtyczki na kanale ma w nagłówku `// @b24tCritical X.Y.Z` (release.py experimental --krytyczna),
+  //   a zainstalowana jest starsza wersja tej samej linii X.Y. Wersji z innej linii blokada nie dotyczy: nie mają
+  //   kodu, który wymusił aktualizację, a wersje stabilne i tak aktualizuje Tampermonkey.
+  // - experimental: działa wersja nowsza niż na main, czyli z kanału Experimental, bez kodu dostępu. Rozstrzyga tylko
+  //   sprawdzenie main wykonane przez tę wersję (`v` w wyniku _updCheck): wynik starszej wersji bywa sprzed wydania
+  //   tej wersji na main, więc tuż po wydaniu stabilnym zablokowałby wszystkich do następnego sprawdzenia.
+  // Stan wynika z pamięci Tampermonkeya: strona blokuje się przy starcie albo w chwili, gdy ta lub inna karta zapisze
+  // wynik sprawdzenia. Blokada przy starcie nie uruchamia żadnej funkcji wtyczki (`full` = false); blokada w działającej
+  // karcie zatrzymuje przebiegi i chowa wszystkie okna wtyczki (styl [data-b24t-lock] w UI_CSS).
+  var _lock = { why: null, to: null, on: false, full: false, installed: false, timer: null };
+  var LOCK_EVERY_MS = 5 * 60 * 1000;   // sprawdzenie w karcie zablokowanej przy starcie; zapytanie i tak raz na UPD_EVERY_MS
+
+  function _relLine(v) { return String(v).split('.').slice(0, 2).join('.'); }
+
+  function _lockReason() {
+    var ss = _relGm(REL_GM.check + 'stable', null), st = _relGm(REL_GM.check + _relChannel(), null);
+    if (!_expAccess() && ss && ss.v === VERSION && ss.remote && _relCmp(VERSION, ss.remote) > 0) {
+      return { why: 'experimental', to: ss.remote };
+    }
+    if (st && st.crit && st.remote && _relLine(st.crit) === _relLine(VERSION) && _relCmp(VERSION, st.crit) < 0) {
+      return { why: 'critical', to: st.remote };
+    }
+    return null;
+  }
+
+  // Start każdej strony, przed funkcjami wtyczki. Zapisy innych kart przychodzą przez nasłuch; własne rozstrzyga
+  // _updApply i odblokowanie kodem.
+  function _lockInit() {
+    var r = _lockReason();
+    if (r) { _lock.why = r.why; _lock.to = r.to; }
+    // Ramka (reklama, osadzona strona) nie ma interfejsu wtyczki; zablokowana przy starcie zostaje taka do przeładowania.
+    if (window.top !== window.self) return;
+    [REL_GM.check + 'stable', REL_GM.check + 'experimental', PREF.EXP_ACCESS].forEach(function(k) {
+      try { GM_addValueChangeListener(k, function(name, oldV, newV, remote) { if (remote) _lockSync(); }); } catch (e) {}
+    });
+  }
+
+  function _lockSync() {
+    var r = _lockReason();
+    if (!r) { if (_lock.on) _lockOff(); return; }
+    if (_lock.on && _lock.why === r.why && _lock.to === r.to) return;
+    _lock.why = r.why;
+    _lock.to = r.to;
+    if (_lock.on) _lockRender(); else _lockOn();
+  }
+
+  function _lockOn() {
+    _lock.on = true;
+    _lock.installed = false;
+    if (window.top !== window.self) return;
+    if (_lock.full) _lockStopWork();
+    // Poza Brand24 uchwyt dostaje tylko osoba, która używa wtyczki (warunek przycisku „Dodaj wzmiankę”); u innych
+    // strona zostaje bez elementów wtyczki.
+    var handle = _isBrand24Host || Object.keys(_gmGetProjects()).length > 0;
+    if (!_ui && !handle) return;
+    _uiEnsure().app.setAttribute('data-b24t-lock', '');
+    if (Win.get('panel')) Win.hide('panel');
+    // Uchwyt panelu otwiera okno blokady (_panelHide). Przy blokadzie przy starcie panelu nie ma, więc uchwyt powstaje tu.
+    if (handle && !Edge.get('panel')) {
+      Edge.add({ id: 'panel', elId: 'b24t-panel-side-tab', side: 'right', label: 'B24 Tagger', icon: 'tag', remember: 'edge-panel',
+        onClick: function () { _panelHide(false); } });
+    }
+    Edge.setVisible('panel', true);
+    _updSideDot();
+    if (!_isBrand24Host) return;
+    // Zablokowana przy starcie karta Brand24 sprawdza wersję sama: bez tego blokada wersji testowej nie zeszłaby
+    // po wydaniu tej wersji na main, gdy wszystkie karty są zablokowane.
+    if (!_lock.full) {
+      _lock.timer = setInterval(function () { _updCheck(false); }, LOCK_EVERY_MS);
+      _updCheck(false);
+    }
+    _lockShow();
+  }
+
+  function _lockOff() {
+    _lock.why = _lock.to = null;
+    _lock.on = false;
+    clearInterval(_lock.timer);
+    _lock.timer = null;
+    Win.close('lock');
+    if (_ui) _ui.app.removeAttribute('data-b24t-lock');
+    if (!_lock.full) {
+      // Uchwyt z blokady przy starcie: panel stawia własny (_panelOpen), a strona bez panelu nie ma go wcale.
+      Edge.remove('panel');
+      _initPlugin();
+      return;
+    }
+    var hidden = !!lsGet('b24tagger_panel_hidden');
+    if (!Win.get('panel')) { Edge.remove('panel'); return; }
+    if (!hidden) Win.show('panel');
+    Edge.setVisible('panel', hidden);
+  }
+
+  // Blokada w trakcie pracy: przebiegi stają jak po „Stop” w swoich kartach. Tagowanie z pliku zapisuje postęp,
+  // więc po aktualizacji da się je wznowić.
+  function _lockStopWork() {
+    if (state.status === 'running' || state.status === 'paused') {
+      _runInterrupt('idle');
+      stopHealthCheck();
+      addLog('⏹ Zatrzymano: wtyczka wymaga aktualizacji.', 'warn');
+      saveCheckpoint();
+    }
+    if (sentState.running) {
+      sentState.stop = true;
+      if (sentState.abort) sentState.abort.abort();
+    }
+    if (state._aitRunning) state._aitStop = true;
+  }
+
+  function _lockShow() {
+    if (!_lock.on) return;
+    if (Win.get('lock')) { Win.front('lock'); return; }
+    var w = Win.open({ id: 'lock', kind: 'dialog', width: 36, title: _lockTitle(), foot: '<span class="b-sp"></span>', from: Edge.get('panel') });
+    w.el.setAttribute('data-lock-keep', '');
+    if (w.scrim) w.scrim.setAttribute('data-lock-keep', '');
+    w.el.addEventListener('click', function (e) {
+      var b = e.target.closest('button[data-lock]');
+      if (!b) return;
+      if (b.dataset.lock === 'unlock') _lockUnlock();
+      else if (b.dataset.lock === 'reload') location.reload();
+      else _lockInstall();
+    });
+    w.el.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && e.target.id === 'b24t-lock-code') { e.preventDefault(); _lockUnlock(); }
+    });
+    _lockRender();
+    // Pierwszy fokus na tytule jak w oknie ogłoszenia: Enter w biegu nie otwiera instalacji przed przeczytaniem.
+    w.title.tabIndex = -1;
+    w.title.focus({ preventScroll: true });
+  }
+
+  function _lockTitle() { return _lock.why === 'critical' ? 'Wymagana aktualizacja wtyczki' : 'Wersja testowa wymaga kodu dostępu'; }
+
+  function _lockRender() {
+    var w = Win.get('lock');
+    if (!w || !_lock.on) return;
+    var to = _escHtml(_lock.to), crit = _lock.why === 'critical', done = _lock.installed;
+    var after = '<p>Po instalacji w Tampermonkeyu odśwież stronę, żeby uruchomić ' + (crit ? 'wersję ' : 'wersję stabilną ') + to + '.</p>';
+    var html;
+    Win.setTitle('lock', _lockTitle());
+    if (crit) {
+      html = '<p>Wersja ' + VERSION + ' wymaga aktualizacji. Funkcje wtyczki wrócą po instalacji wersji ' + to + '.</p>' +
+        (done ? after : '<div data-lock-changes></div><p class="b-hint">Instalacja otwiera się w nowej karcie. ' +
+          'Nowa wersja działa po odświeżeniu tej strony.</p>');
+    } else {
+      html = '<p>Wersja ' + VERSION + ' pochodzi z kanału Experimental, który wymaga kodu dostępu od właściciela wtyczki. ' +
+          'Bez kodu funkcje wtyczki są wyłączone do instalacji wersji stabilnej.</p>' +
+        '<div class="b-field"><label class="b-label" for="b24t-lock-code">Kod dostępu</label><div class="b-row">' +
+          '<input class="b-input" id="b24t-lock-code" type="text" autocomplete="off" spellcheck="false" maxlength="24" placeholder="XXXX-XXXX" aria-describedby="b24t-lock-msg">' +
+          '<button type="button" class="b-btn b-btn--neutral" data-lock="unlock">Odblokuj</button></div></div>' +
+        '<div class="b-set-msg b-small" id="b24t-lock-msg" role="status" hidden></div>' +
+        '<hr class="b-sep">' +
+        (done ? after : '<p>Bez kodu: wersja stabilna ' + to + ' zastąpi wersję testową. Tampermonkey pokaże ostrzeżenie ' +
+          '„Uwaga! Starsza wersja skryptu”; instalację potwierdza przycisk „Zdezaktualizuj” (w wersji angielskiej „Downgrade”).</p>');
+    }
+    w.main.innerHTML = '<div class="b-stack">' + html + '</div>';
+    w.foot.innerHTML = '<span class="b-sp"></span>' + (done
+      ? '<button type="button" class="b-btn b-btn--quiet" data-lock="install">Zainstaluj ponownie</button>' +
+        '<button type="button" class="b-btn b-btn--primary" data-lock="reload">Odśwież stronę</button>'
+      : '<button type="button" class="b-btn b-btn--primary" data-lock="install">' + (crit ? 'Zainstaluj ' + to : 'Zainstaluj wersję stabilną') + '</button>');
+    if (!crit || done) return;
+    // Zmiany od zainstalowanej wersji: na Stabilnym z opisu wersji stabilnej, na Experimental z dziennika zmian.
+    var box = w.main.querySelector('[data-lock-changes]'), ver = _lock.to;
+    var fill = function (html) { if (box.isConnected && _lock.to === ver) box.innerHTML = html; };
+    if (_relChannel() === 'stable') {
+      _relFor(_relNotes, ver, function (notes) { fill(_updNoteHtml((notes || []).filter(function (n) { return n.version === ver; })[0], true)); });
+    } else {
+      _relFor(_relChangelog, ver, function (data) { fill(_updChangesHtml(data || [], ver)); });
+    }
+  }
+
+  // Wersja krytyczna z pliku kanału; po wersji testowej bez kodu wersja stabilna (_relInstallStable). Znacznik
+  // ręcznej instalacji otwiera po aktualizacji dziennik, jak „Zainstaluj” w powiadomieniu nowej wersji.
+  function _lockInstall() {
+    if (_lock.why === 'critical') {
+      window.open(getRawUrl(), '_blank');
+      _relGmSet(REL_GM.manual, { version: _lock.to });
+    } else {
+      _relInstallStable();
+    }
+    _lock.installed = true;
+    _lockRender();
+  }
+
+  // Kod dostępu w oknie blokady: dostęp i kanał Experimental, bo działa wersja z tego kanału.
+  async function _lockUnlock() {
+    var w = Win.get('lock'), input = w && w.el.querySelector('#b24t-lock-code');
+    if (!input) return;
+    var btn = w.el.querySelector('[data-lock="unlock"]'), msg = w.el.querySelector('#b24t-lock-msg');
+    if (_setIsBusy(btn)) return;
+    _setBusy(btn, 'Sprawdzam…');
+    var ok = await _expCheck(input.value);
+    _setBusy(btn, null);
+    if (!ok) {
+      _setSay(msg, input.value.trim() ? 'Nieprawidłowy kod. Sprawdź go u właściciela wtyczki.' : 'Wpisz kod dostępu.', 'danger');
+      input.select();
+      return;
+    }
+    var full = _lock.full;
+    _expGrant();
+    if (!gmGet(PREF.CHANNEL_MOVED, null)) gmSet(PREF.CHANNEL_MOVED, VERSION);
+    gmSet(PREF.UPDATE_CHANNEL, 'experimental');
+    _lockSync();
+    if (full) _relOnChannel();
+    Toast.show('Kanał Experimental odblokowany. Nowe wersje przyjdą z tego kanału.', 'ok');
   }
 
   // ───────────────────────────────────────────
@@ -23126,6 +23381,10 @@
         _setRow('Zainstalowana wersja ' + VERSION, '<span id="b24t-set-upd-state"></span>',
           '<div class="b-row b-row--wrap"><button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-set-upd-check">' + _icon('refresh') + 'Sprawdź aktualizacje</button>' +
           '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-set-upd-log">' + _icon('notes') + 'Dziennik</button></div>') +
+        // Kanał Stabilny przy wersji z Experimental: sama zmiana kanału kodu nie podmienia (TAMPERMONKEY.md §1.9).
+        _setRow('<span id="b24t-set-down-ver"></span>', 'Tampermonkey nie zastąpi sam nowszej wersji starszą. ' +
+          'Instalację potwierdza przycisk „Zdezaktualizuj” na stronie Tampermonkeya.',
+          '<button type="button" class="b-btn b-btn--primary b-btn--sm" id="b24t-set-upd-stable">Zainstaluj</button>', { cls: 'b-set-down' }) +
       '</section>' +
       '<section class="b-set-sec"><h3 class="b-set-sec__title">Testowanie</h3>' +
         _setRow('Logi programistyczne', 'Log pokazuje też wpisy techniczne: odświeżanie w tle, ponowienia zapytań, partie, kontrole danych. ' +
@@ -23136,12 +23395,25 @@
             'wiersze News, log. Bez tokenów, kluczy i treści wzmianek. Działa tylko na stronach Brand24.',
             _setSwitch('b24t-set-bridge', loadFeatures().test_bridge === true), { label: true, cls: 'b-set-exptool' }) +
       '</section>';
-    var stEl = pane.querySelector('#b24t-set-upd-state'), checkBtn = pane.querySelector('#b24t-set-upd-check');
+    var stEl = pane.querySelector('#b24t-set-upd-state'), checkBtn = pane.querySelector('#b24t-set-upd-check'),
+      stableBtn = pane.querySelector('#b24t-set-upd-stable'), downRow = pane.querySelector('.b-set-down');
+    // Wywoływane też po każdym wyniku sprawdzenia (_updApply), dopóki okno jest otwarte.
     function say() {
-      var r = _updRow();
+      if (!stEl.isConnected) { if (_upd.say === say) _upd.say = null; return; }
+      var r = _updRow(), down = _relStableBelow();
       stEl.textContent = r.state === 'info' ? r.label + '.' : r.hint.charAt(0).toUpperCase() + r.hint.slice(1) + '.';
+      downRow.hidden = !down;
+      pane.querySelector('#b24t-set-down-ver').textContent = 'Wersja stabilna ' + (down || '');
     }
+    _upd.say = say;
     say();
+    stableBtn.addEventListener('click', function () {
+      var down = _relStableBelow();
+      if (!down) return;
+      _relInstallStable();
+      _upd.installFor = down;
+      _updOpenCard('installed');
+    });
     checkBtn.addEventListener('click', function () {
       if (_upd.checking) return;
       _updCheck(true);
@@ -23213,7 +23485,7 @@
         expCode.select();
         return;
       }
-      _expGrant('code');
+      _expGrant();
       codeBox(false);
       pane.querySelectorAll('.b-set-lock').forEach(function (n) { n.remove(); });
       var hint = pane.querySelector('[data-channel="experimental"] .b-hint');
@@ -31727,7 +31999,17 @@
   // INIT
   // ───────────────────────────────────────────
 
+  // Blokada (_lockOn) rozstrzyga się przed jakąkolwiek funkcją: zablokowana wtyczka nie startuje kart, uchwytów,
+  // pobierania w tle ani przycisku na innych stronach. Funkcje startują dopiero po zdjęciu blokady (_lockOff).
   function init() {
+    _expEnforce();
+    _lockInit();
+    if (_lock.why) { _lockOn(); return; }
+    _initPlugin();
+  }
+
+  function _initPlugin() {
+    _lock.full = true;
     // Wyniki Google — kolektor adresów kampanii. Dokładany DO zwykłej ścieżki strony
     // zewnętrznej, a nie zamiast niej: mini-button dodawania wzmianek działał tu wcześniej
     // i nie ma powodu go zabierać.

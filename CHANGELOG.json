@@ -1,5 +1,46 @@
 [
   {
+    "version": "0.38.18",
+    "date": "2026-10-05",
+    "label": "new",
+    "changes": [
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "Blokada wtyczki do czasu instalacji wymaganej aktualizacji",
+        "items": [
+          "Gdy na kanale jest wersja oznaczona jako wymagana, okno na środku strony prowadzi do jej instalacji, a funkcje wtyczki są wyłączone do odświeżenia strony z nową wersją.",
+          "Trwające tagowanie z pliku, przegląd sentymentu i AI Tag zatrzymują się; postęp tagowania z pliku zostaje zapisany.",
+          "Po zamknięciu okna zostaje uchwyt „B24 Tagger”, który otwiera je ponownie."
+        ],
+        "text": "Blokada wtyczki do czasu instalacji wymaganej aktualizacji. Gdy na kanale jest wersja oznaczona jako wymagana, okno na środku strony prowadzi do jej instalacji, a funkcje wtyczki są wyłączone do odświeżenia strony z nową wersją. Trwające tagowanie z pliku, przegląd sentymentu i AI Tag zatrzymują się; postęp tagowania z pliku zostaje zapisany. Po zamknięciu okna zostaje uchwyt „B24 Tagger”, który otwiera je ponownie."
+      },
+      {
+        "type": "improved",
+        "area": "Panel",
+        "title": "Kanał Experimental tylko z kodem dostępu",
+        "items": [
+          "Wersja z kanału Experimental bez kodu dostępu jest zablokowana: okno prosi o kod albo prowadzi do instalacji wersji stabilnej.",
+          "Poprzedni kod nie działa, a dostęp przyznany przed tą wersją wygasł.",
+          "Kod wpisany w oknie blokady odblokowuje wtyczkę i przełącza aktualizacje na kanał Experimental."
+        ],
+        "experimental": true,
+        "text": "Kanał Experimental tylko z kodem dostępu. Wersja z kanału Experimental bez kodu dostępu jest zablokowana: okno prosi o kod albo prowadzi do instalacji wersji stabilnej. Poprzedni kod nie działa, a dostęp przyznany przed tą wersją wygasł. Kod wpisany w oknie blokady odblokowuje wtyczkę i przełącza aktualizacje na kanał Experimental."
+      },
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "Instalacja wersji stabilnej w miejsce wersji z kanału Experimental",
+        "items": [
+          "Po wyborze kanału Stabilny w Ustawieniach → Aktualizacje przycisk „Zainstaluj” przy wersji stabilnej otwiera jej instalację w Tampermonkeyu.",
+          "Tampermonkey pokazuje ostrzeżenie „Uwaga! Starsza wersja skryptu”, a instalację potwierdza przycisk „Zdezaktualizuj”."
+        ],
+        "experimental": true,
+        "text": "Instalacja wersji stabilnej w miejsce wersji z kanału Experimental. Po wyborze kanału Stabilny w Ustawieniach → Aktualizacje przycisk „Zainstaluj” przy wersji stabilnej otwiera jej instalację w Tampermonkeyu. Tampermonkey pokazuje ostrzeżenie „Uwaga! Starsza wersja skryptu”, a instalację potwierdza przycisk „Zdezaktualizuj”."
+      }
+    ]
+  },
+  {
     "version": "0.38.17",
     "date": "2026-10-05",
     "label": "fix",

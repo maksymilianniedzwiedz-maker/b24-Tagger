@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.19
+// @version      0.38.20
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -174,7 +174,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.19';
+  const VERSION = '0.38.20';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -395,6 +395,28 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  // Trusted Types: strona z CSP `require-trusted-types-for 'script'` (Gmail, Dokumenty i Kalendarz Google, logowanie
+  // Google) odrzuca napis w innerHTML, outerHTML, insertAdjacentHTML i DOMParser.parseFromString, także napis pusty.
+  // Każdy taki zapis we wtyczce idzie więc przez _html, a element czyści się przez textContent = ''
+  // (check_trusted_types.js pilnuje obu reguł). Polityka przepuszcza napis bez zmian: dane escapuje _escHtml tam, gdzie
+  // składa się HTML. Obiekt polityki zostaje w zasięgu wtyczki, więc skrypty strony nie dostają przez niego dostępu
+  // do sinków. Gdy CSP zawęża nazwy polityk (dyrektywa `trusted-types` bez `b24tagger`), createPolicy rzuca wyjątek:
+  // _html oddaje wtedy napis, sink rzuca, a błąd startu poza Brand24 trafia tylko do dziennika (_initErrorShow).
+  var _ttPolicy;
+  function _html(s) {
+    if (_ttPolicy === undefined) {
+      _ttPolicy = null;
+      if (window.trustedTypes) {
+        try {
+          _ttPolicy = window.trustedTypes.createPolicy('b24tagger', { createHTML: function (h) { return h; } });
+        } catch (e) {
+          _diagPush({ k: 'log', type: 'debug', msg: 'Trusted Types: strona nie pozwala na politykę „b24tagger”: ' + e.message });
+        }
+      }
+    }
+    return _ttPolicy ? _ttPolicy.createHTML(s) : s;
   }
 
   // Nazwa projektu, która niczego nie mówi: pusta, za krótka, generyczny tytuł Brand24 albo
@@ -1387,7 +1409,7 @@
     if (!str || str.indexOf('&') === -1) return str;
     try {
       var ta = document.createElement('textarea');
-      ta.innerHTML = str;
+      ta.innerHTML = _html(str);
       return ta.value;
     } catch(e) { return str; }
   }
@@ -4370,7 +4392,7 @@
     row.className = 'b-log__row';
     row.dataset.type = type;
     // message może pochodzić z pliku CSV, odpowiedzi API, nazwy projektu — zawsze escape
-    row.innerHTML = `<span class="b-log__time">${time}</span><span class="b-log__msg">${_escHtml(message)}</span><span class="b-log__elapsed"></span>`;
+    row.innerHTML = _html(`<span class="b-log__time">${time}</span><span class="b-log__msg">${_escHtml(message)}</span><span class="b-log__elapsed"></span>`);
     return row;
   }
 
@@ -4568,9 +4590,9 @@
     const msg = banner.querySelector('.b24t-crash-msg');
     if (msg) {
       msg.innerHTML =
-        '<div class="b-banner__title">' + _escHtml(crash.errorType || 'Błąd') + '</div>' +
+        _html('<div class="b-banner__title">' + _escHtml(crash.errorType || 'Błąd') + '</div>' +
         '<div class="b-small b-text2">' + _escHtml(crash.localTime || crash.timestamp || '') +
-        (crash.userMessage ? ' · ' + _escHtml(crash.userMessage) : '') + '</div>';
+        (crash.userMessage ? ' · ' + _escHtml(crash.userMessage) : '') + '</div>');
     }
 
     // Szczegoly techniczne - czytelny format
@@ -5027,7 +5049,7 @@
             onload: function(resp) {
               var info = { httpStatus: resp.status, htmlLength: (resp.responseText || '').length };
               try {
-                var doc = (new DOMParser()).parseFromString(resp.responseText, 'text/html');
+                var doc = (new DOMParser()).parseFromString(_html(resp.responseText), 'text/html');
                 info.title    = ((doc.querySelector('title') || {}).textContent || '').trim();
                 info.h1       = ((doc.querySelector('h1') || {}).textContent || '').trim();
                 info.hasArticle = !!doc.querySelector('article');
@@ -6955,7 +6977,7 @@
   function _uiNode(content) {
     if (content && content.nodeType) return content;
     var t = document.createElement('template');
-    t.innerHTML = content || '';
+    t.innerHTML = _html(content || '');
     return t.content;
   }
 
@@ -6965,7 +6987,7 @@
     b.className = 'b-ibtn' + (cls ? ' ' + cls : '');
     b.setAttribute('aria-label', label);
     b.setAttribute('data-tip', label);
-    b.innerHTML = _icon(icon);
+    b.innerHTML = _html(_icon(icon));
     return b;
   }
 
@@ -7303,7 +7325,7 @@
       apply(w);
       persist(w);
       if (w.maxBtn) {
-        w.maxBtn.innerHTML = _icon(w.max ? 'restore' : 'maximize');
+        w.maxBtn.innerHTML = _html(_icon(w.max ? 'restore' : 'maximize'));
         w.maxBtn.setAttribute('aria-label', w.max ? 'Przywróć rozmiar' : 'Maksymalizuj');
         w.maxBtn.setAttribute('data-tip', w.max ? 'Przywróć rozmiar' : 'Maksymalizuj');
       }
@@ -7317,7 +7339,7 @@
       if (w.scrim) w.scrim.hidden = w.full;
       persist(w);
       if (w.fullBtn) {
-        w.fullBtn.innerHTML = _icon(w.full ? 'restore' : 'maximize');
+        w.fullBtn.innerHTML = _html(_icon(w.full ? 'restore' : 'maximize'));
         w.fullBtn.setAttribute('aria-label', w.full ? 'Okno' : 'Pełny ekran');
         w.fullBtn.setAttribute('data-tip', w.full ? 'Okno' : 'Pełny ekran');
       }
@@ -7376,7 +7398,7 @@
       p.className = 'b-ui b-pill';
       p.hidden = true;
       p.setAttribute('aria-label', 'Rozwiń ' + (w.spec.title || 'panel'));
-      p.innerHTML = '<span class="b-pill__label b-ell"></span><span class="b-progress" hidden><i></i></span>';
+      p.innerHTML = _html('<span class="b-pill__label b-ell"></span><span class="b-progress" hidden><i></i></span>');
       p.addEventListener('click', function () { expand(w.id); });
       _uiMount(p);
       w.pill = p;
@@ -7398,7 +7420,7 @@
       if (hasBar) bar.firstChild.style.width = Math.round(100 * _clamp(st.value / st.max, 0, 1)) + '%';
       var ok = p.querySelector('.b-pill__ok');
       if (st.done && !ok) {
-        lab.insertAdjacentHTML('beforebegin', '<span class="b-pill__ok">' + _icon('check') + '</span>');
+        lab.insertAdjacentHTML('beforebegin', _html('<span class="b-pill__ok">' + _icon('check') + '</span>'));
         lab.textContent = st.label || 'Gotowe';
         p.classList.add('is-done');
         if (_uiFull()) {
@@ -7556,8 +7578,8 @@
 
       var head = document.createElement('header');
       head.className = 'b-head' + (spec.headClass ? ' ' + spec.headClass : '');
-      if (spec.logo) head.insertAdjacentHTML('beforeend', '<span class="b-logo">' + _icon(spec.logo) + '</span>');
-      else if (spec.icon) head.insertAdjacentHTML('beforeend', '<span class="b-head__icon">' + _icon(spec.icon) + '</span>');
+      if (spec.logo) head.insertAdjacentHTML('beforeend', _html('<span class="b-logo">' + _icon(spec.logo) + '</span>'));
+      else if (spec.icon) head.insertAdjacentHTML('beforeend', _html('<span class="b-head__icon">' + _icon(spec.icon) + '</span>'));
       var titleWrap = document.createElement('div');
       titleWrap.className = 'b-head__text';
       var title = document.createElement('h2');
@@ -7728,7 +7750,7 @@
 
     function toggleFullIcon(w) {
       if (!w.fullBtn) return;
-      w.fullBtn.innerHTML = _icon('restore');
+      w.fullBtn.innerHTML = _html(_icon('restore'));
       w.fullBtn.setAttribute('aria-label', 'Okno');
       w.fullBtn.setAttribute('data-tip', 'Okno');
     }
@@ -7904,8 +7926,8 @@
       if (spec.elId) el.id = spec.elId;
       el.setAttribute('aria-label', spec.label);
       el.setAttribute('aria-expanded', 'false');
-      el.innerHTML = '<span class="b-edge__ico">' + _icon(spec.icon) + '<span class="b-edge__chev">' + _icon('chevRight') + '</span></span>' +
-        '<span class="b-edge__label">' + _escHtml(spec.label) + '</span>';
+      el.innerHTML = _html('<span class="b-edge__ico">' + _icon(spec.icon) + '<span class="b-edge__chev">' + _icon('chevRight') + '</span></span>' +
+        '<span class="b-edge__label">' + _escHtml(spec.label) + '</span>');
       // Puszczenie listwy po przeciągnięciu też daje click; ten click nie otwiera okna.
       el.addEventListener('click', function (e) { if (!suppress) spec.onClick(e); });
       // spec.menu: pozycje menu kontekstowego (prawy przycisk, klawisz menu, Shift+F10), SETTINGS.md §3.2.
@@ -8141,7 +8163,7 @@
       if (!full) {
         svg = document.createElement('div');
         svg.className = 'b-ui b-drop-dot';
-        svg.innerHTML = _icon('tag');
+        svg.innerHTML = _html(_icon('tag'));
         _uiMount(svg);
         move(px, py);
         return;
@@ -8260,8 +8282,8 @@
       }
       el.textContent = text;
       var kbd = target.getAttribute('data-tip-kbd');
-      if (kbd) el.insertAdjacentHTML('beforeend', '<span class="b-tip__keys">' +
-        kbd.split(' ').map(function (k) { return '<span class="b-kbd">' + _escHtml(k) + '</span>'; }).join('') + '</span>');
+      if (kbd) el.insertAdjacentHTML('beforeend', _html('<span class="b-tip__keys">' +
+        kbd.split(' ').map(function (k) { return '<span class="b-kbd">' + _escHtml(k) + '</span>'; }).join('') + '</span>'));
       el.style.display = 'block';
       var r = target.getBoundingClientRect(), tw = el.offsetWidth, th = el.offsetHeight;
       var below = r.top - th - 8 < 4;
@@ -8424,14 +8446,14 @@
       el.tabIndex = -1;
       var buttons = [];
       items.forEach(function (it) {
-        if (it === 'sep') { el.insertAdjacentHTML('beforeend', '<div class="b-menu__sep" role="separator"></div>'); return; }
+        if (it === 'sep') { el.insertAdjacentHTML('beforeend', _html('<div class="b-menu__sep" role="separator"></div>')); return; }
         if (it.head) { var h = document.createElement('div'); h.className = 'b-menu__head'; h.textContent = it.head; el.appendChild(h); return; }
         // Wiersz stanu (okienko „Stan” w nagłówku panelu): kropka w kolorze stanu, nazwa i wyjaśnienie, bez działania.
         if (it.state) {
           var sr = document.createElement('div');
           sr.className = 'b-menu__state';
           sr.dataset.state = it.state;
-          sr.innerHTML = '<span class="b-menu__state-label"></span>' + (it.hint ? '<span class="b-menu__state-hint"></span>' : '');
+          sr.innerHTML = _html('<span class="b-menu__state-label"></span>' + (it.hint ? '<span class="b-menu__state-hint"></span>' : ''));
           sr.firstChild.textContent = it.label;
           if (it.hint) sr.lastChild.textContent = it.hint;
           el.appendChild(sr);
@@ -8444,8 +8466,8 @@
         b.setAttribute('role', it.checked != null ? 'menuitemradio' : 'menuitem');
         if (it.checked != null) b.setAttribute('aria-checked', it.checked ? 'true' : 'false');
         if (it.disabled) b.setAttribute('aria-disabled', 'true');
-        b.innerHTML = (it.checked ? _icon('check') : it.icon ? _icon(it.icon) : '<svg viewBox="0 0 24 24" aria-hidden="true"></svg>') +
-          '<span class="b-ell"></span>' + (it.hint ? '<span class="b-menu__hint"></span>' : '');
+        b.innerHTML = _html((it.checked ? _icon('check') : it.icon ? _icon(it.icon) : '<svg viewBox="0 0 24 24" aria-hidden="true"></svg>') +
+          '<span class="b-ell"></span>' + (it.hint ? '<span class="b-menu__hint"></span>' : ''));
         b.querySelector('.b-ell').textContent = it.label;
         if (it.hint) b.querySelector('.b-menu__hint').textContent = it.hint;
         b.addEventListener('click', function () {
@@ -8581,7 +8603,7 @@
       var t = document.createElement('div');
       var h = { el: t, close: function () { dismiss(t, 'api'); }, update: function (ch) { Object.assign(o, ch); render(); _uiArm(t); } };
       closers.set(t, function (reason) { if (o.onClose) o.onClose(reason); });
-      t.innerHTML = '<span></span><div class="b-toast__msg"></div><div class="b-toast__acts"></div>';
+      t.innerHTML = _html('<span></span><div class="b-toast__msg"></div><div class="b-toast__acts"></div>');
       var msgEl = t.children[1], acts = t.children[2];
       var addBtn = function (parent, a) {
         var b = document.createElement('button');
@@ -8602,10 +8624,10 @@
         var rich = !!(o.title || o.body || (o.actions && o.actions.length));
         t.className = 'b-toast b-toast--' + k + (rich ? ' b-toast--rich' : '');
         t.setAttribute('role', k === 'error' ? 'alert' : 'status');
-        t.firstElementChild.outerHTML = _icon(UI_ICONS[o.icon] ? o.icon : ICON[k]);
+        t.firstElementChild.outerHTML = _html(_icon(UI_ICONS[o.icon] ? o.icon : ICON[k]));
         if (rich) {
-          msgEl.innerHTML = '<div class="b-toast__title"></div><div class="b-toast__text"></div>' +
-            (o.body ? '<div class="b-toast__body">' + o.body + '</div>' : '') + '<div class="b-toast__foot"></div>';
+          msgEl.innerHTML = _html('<div class="b-toast__title"></div><div class="b-toast__text"></div>' +
+            (o.body ? '<div class="b-toast__body">' + o.body + '</div>' : '') + '<div class="b-toast__foot"></div>');
           msgEl.firstChild.textContent = o.title || '';
           msgEl.children[1].textContent = o.msg || '';
           var foot = msgEl.lastChild;
@@ -8750,7 +8772,7 @@
           '<span class="b-pal__hint">' + _escHtml(r.c.hint) + '</span></div>';
       });
       if (!cur.shown.length) html = '<div class="b-pal__empty">Żadne polecenie nie pasuje do „' + _escHtml(q) + '”.</div>';
-      cur.list.innerHTML = html;
+      cur.list.innerHTML = _html(html);
       cur.list.scrollTop = 0;
       select(0);
     }
@@ -8804,12 +8826,12 @@
       el.setAttribute('aria-modal', 'true');
       el.setAttribute('aria-label', 'Paleta poleceń');
       el.innerHTML =
-        '<div class="b-pal__q">' + _icon('search') +
+        _html('<div class="b-pal__q">' + _icon('search') +
           '<input type="text" role="combobox" aria-expanded="true" aria-controls="b24t-pal-list" aria-autocomplete="list" ' +
           'aria-label="Szukaj polecenia" placeholder="Polecenie albo okno" autocomplete="off" spellcheck="false"></div>' +
         '<div class="b-pal__list b-scroll" id="b24t-pal-list" role="listbox" aria-label="Polecenia"></div>' +
         '<div class="b-pal__foot"><span><span class="b-kbd">↑</span> <span class="b-kbd">↓</span> wybór</span>' +
-          '<span><span class="b-kbd">Enter</span> wykonuje</span><span><span class="b-kbd">Esc</span> zamyka</span></div>';
+          '<span><span class="b-kbd">Enter</span> wykonuje</span><span><span class="b-kbd">Esc</span> zamyka</span></div>');
       cur = { el: el, scrim: scrim, input: el.querySelector('input'), list: el.querySelector('.b-pal__list'), cmds: _palCommands(), shown: [], sel: 0, back: _activeEl() };
       cur.input.addEventListener('input', render);
       cur.input.addEventListener('keydown', onKey);
@@ -9254,7 +9276,7 @@
       var b = document.createElement('div');
       b.className = 'b-ui b-tour' + (cls ? ' ' + cls : '');
       b.tabIndex = -1;
-      b.innerHTML = '<span class="b-tour__arrow" aria-hidden="true"></span><div class="b-tour__body"></div>';
+      b.innerHTML = _html('<span class="b-tour__arrow" aria-hidden="true"></span><div class="b-tour__body"></div>');
       _uiMount(b);
       return b;
     }
@@ -9270,7 +9292,7 @@
           '<span class="b-tour__prog" role="progressbar" aria-label="Postęp samouczka" aria-valuemin="1" aria-valuemax="' + n + '" aria-valuenow="' + cur.i + '">' +
           d.steps.map(function (x, k) { return '<i' + (k < cur.i ? ' class="is-on"' : '') + '></i>'; }).join('') + '</span></div>';
       var btn = function (t, label, primary) { return '<button type="button" class="b-btn ' + (primary ? 'b-btn--primary' : 'b-btn--quiet') + ' b-btn--sm" data-t="' + t + '">' + label + '</button>'; };
-      body.innerHTML = head +
+      body.innerHTML = _html(head +
         '<h2 class="b-tour__title" id="b24t-tour-title">' + _escHtml(st.title) + '</h2>' +
         '<p class="b-tour__text">' + _escHtml(st.text) + '</p>' +
         (task ? '<div class="b-tour__try"><p class="b-tour__try-label" aria-live="polite">' + TUT_TRY + '</p>' +
@@ -9280,7 +9302,7 @@
           (st.intro ? btn('later', 'Nie teraz') + '<span class="b-sp"></span>' + btn('next', 'Zaczynamy', true)
           : st.outro ? btn('back', 'Wstecz') + '<span class="b-sp"></span>' + btn('catalog', 'Samouczki') + btn('done', 'Zakończ', true)
           : btn('back', 'Wstecz') + '<span class="b-sp"></span>' + btn('skip', 'Zakończ') + btn('next', 'Dalej', true)) +
-        '</div>';
+        '</div>');
       body.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: WIN_EASE_IN });
       cur.key = '';
     }
@@ -9327,7 +9349,7 @@
       var t = cur.bubble.querySelector('.b-tour__task');
       if (!t) return;
       t.dataset.done = 'true';
-      t.querySelector('.b-tour__mark').outerHTML = _icon('okCircle');
+      t.querySelector('.b-tour__mark').outerHTML = _html(_icon('okCircle'));
       if (!already) {
         t.firstElementChild.animate(_uiFull() ? [{ transform: 'scale(0.6)' }, { transform: 'scale(1.12)', offset: 0.6 }, { transform: 'none' }]
           : [{ opacity: 0 }, { opacity: 1 }], { duration: _uiFull() ? 260 : 160, easing: WIN_EASE_IN });
@@ -9487,14 +9509,14 @@
       b.setAttribute('aria-labelledby', 'b24t-tut-offer-title');
       b.setAttribute('aria-live', 'polite');
       b.querySelector('.b-tour__body').innerHTML =
-        '<div class="b-tour__count">Samouczek · ' + _escHtml(_tutStepsLabel(d)) + '</div>' +
+        _html('<div class="b-tour__count">Samouczek · ' + _escHtml(_tutStepsLabel(d)) + '</div>' +
         '<h2 class="b-tour__title" id="b24t-tut-offer-title">' + _escHtml(d.title) + '</h2>' +
         '<p class="b-tour__text">' + _escHtml(d.lead) + '</p>' +
         '<div class="b-tour__foot">' +
           '<button type="button" class="b-btn b-btn--quiet b-btn--sm" data-o="never">Nie pokazuj</button><span class="b-sp"></span>' +
           '<button type="button" class="b-btn b-btn--quiet b-btn--sm" data-o="later">Później</button>' +
           '<button type="button" class="b-btn b-btn--primary b-btn--sm" data-o="show">Pokaż</button>' +
-        '</div>';
+        '</div>');
       b.addEventListener('click', function (e) {
         var a = e.target.closest('[data-o]');
         if (!a) return;
@@ -10600,7 +10622,7 @@
 
     // Clear mapping rows
     const mappingRows = _$('b24t-mapping-rows');
-    if (mappingRows) mappingRows.innerHTML = '';
+    if (mappingRows) mappingRows.textContent = '';
 
     updateStatsUI();
     addLog('🗑 Plik usunięty. Wgraj nowy plik.', 'info', { tech: true, key: 'file' });
@@ -10615,7 +10637,7 @@
         if (res.redirected || !res.ok) continue;
         var html = await res.text();
         var parser = new DOMParser();
-        var doc = parser.parseFromString(html, 'text/html');
+        var doc = parser.parseFromString(_html(html), 'text/html');
         var tagSel = doc.getElementById('tag');
         if (!tagSel) continue;
         // Tytuł strony Django ma łamanie wiersza przed „Brand24” (zmierzone:
@@ -10666,8 +10688,8 @@
     el.hidden = false;
     if (projectIds.length) {
       if (unknownPids.length) el.dataset.blocked = '1';
-      el.innerHTML = '<section class="b-card"><div class="b-row b-small b-text2"><span class="b-spin" aria-hidden="true"></span>' +
-        'Odświeżam tagi ' + projectIds.length + ' ' + _relPl(projectIds.length, 'projektu', 'projektów', 'projektów') + '…</div></section>';
+      el.innerHTML = _html('<section class="b-card"><div class="b-row b-small b-text2"><span class="b-spin" aria-hidden="true"></span>' +
+        'Odświeżam tagi ' + projectIds.length + ' ' + _relPl(projectIds.length, 'projektu', 'projektów', 'projektów') + '…</div></section>');
       _updateStartBtnBlock();
       await _autoResolveUnknownProjects(projectIds);
       savedProjects = lsGet(LS.PROJECTS, {});
@@ -10686,13 +10708,13 @@
           : '<span class="b-danger">otwórz projekt w Brand24</span>') +
         '</div>';
     }).join('');
-    el.innerHTML = '<section class="b-card">' +
+    el.innerHTML = _html('<section class="b-card">' +
       '<div class="b-card__head"><span class="b-card__title">Projekty w pliku</span><span class="b-chip b-chip--sm">' + projectIds.length + '</span></div>' +
       '<div class="b-list">' + rows_html + '</div>' +
       (hasUnknown ? '<div class="b-banner b-banner--danger">' + _icon('alertCircle') + '<div><div class="b-banner__title">Start zablokowany</div>' +
         'Otwórz nieznane projekty w Brand24, żeby wtyczka pobrała ich tagi.</div></div>' : '') +
       '<div id="b24t-tag-coverage"></div>' +
-      '</section>';
+      '</section>');
     _updateStartBtnBlock();
     _updateTagCoverage();
   }
@@ -10701,11 +10723,11 @@
     var coverageEl = _$('b24t-tag-coverage');
     if (!coverageEl) return;
     var colMap = state.file && state.file.colMap;
-    if (!colMap || !colMap.projectId) { coverageEl.innerHTML = ''; return; }
+    if (!colMap || !colMap.projectId) { coverageEl.textContent = ''; return; }
 
     var mapping = state.mapping || {};
     var tagEntries = Object.values(mapping).filter(function(m) { return m.tagName && m.tagName !== '__DELETE__' && m.type !== 'sentiment'; });
-    if (!tagEntries.length) { coverageEl.innerHTML = ''; return; }
+    if (!tagEntries.length) { coverageEl.textContent = ''; return; }
 
     // Deduplicate tag names
     var tagNames = [];
@@ -10723,7 +10745,7 @@
       var pid = (row[colMap.projectId] || '').toString().trim();
       if (pid && !seenPids[pid]) { seenPids[pid] = true; projectIds.push(pid); }
     });
-    if (!projectIds.length) { coverageEl.innerHTML = ''; return; }
+    if (!projectIds.length) { coverageEl.textContent = ''; return; }
 
     var singleTag = tagNames.length === 1;
     var html = '<hr class="b-sep" style="margin:0.25em 0 0.75em"><div class="b-stack b-stack--sm">' +
@@ -10744,7 +10766,7 @@
     if (!singleTag) {
       html += '<div class="b-hint">' + tagNames.map(function(name, i) { return (i + 1) + ': ' + _escHtml(name); }).join(' · ') + '</div>';
     }
-    coverageEl.innerHTML = html + '</div>';
+    coverageEl.innerHTML = _html(html + '</div>');
   }
 
   // Parser XLSX z CDN wykonuje się w zasięgu wtyczki (new Function), więc podmieniony plik dostałby jej uprawnienia,
@@ -10893,7 +10915,7 @@
     if (!meta) return;
 
     const source = assessments || meta.assessments;
-    container.innerHTML = '';
+    container.textContent = '';
 
     const deleteEnabled = loadFeatures().delete_by_assessment;
     const sentimentEnabled = loadFeatures().sentiment_by_assessment;
@@ -10922,7 +10944,7 @@
 
       // label pochodzi z pliku CSV/XLSX użytkownika — zawsze escape przed wstawieniem do innerHTML
       const labelEsc = _escHtml(label);
-      row.innerHTML = `
+      row.innerHTML = _html(`
         <div class="b-map__label"><span class="b-map__name" title="${labelEsc}">${labelEsc}</span><span class="b-map__count">${count}</span></div>
         <select class="b-select b-select--sm b24t-tag-select" data-label="${labelEsc}" aria-label="Tag dla oceny ${labelEsc}">
           <option value="">Wybierz tag</option>
@@ -10931,7 +10953,7 @@
         <select class="b-select b-select--sm b24t-type-select" data-label="${labelEsc}" aria-label="Rodzaj oceny ${labelEsc}">
           ${typeOptions}
         </select>
-      `;
+      `);
       container.appendChild(row);
     });
 
@@ -10939,10 +10961,10 @@
     if (meta.noAssessment > 0) {
       const row = document.createElement('div');
       row.className = 'b-map';
-      row.innerHTML = `
+      row.innerHTML = _html(`
         <div class="b-map__label"><span class="b-map__name b-muted">bez oceny</span><span class="b-map__count">${meta.noAssessment}</span></div>
         <span class="b-hint" style="grid-column:span 2">Pomijane</span>
-      `;
+      `);
       container.appendChild(row);
     }
 
@@ -10960,7 +10982,7 @@
       var mpNote = document.createElement('div');
       mpNote.id = 'b24t-multiproject-mapping-note';
       mpNote.className = 'b-banner b-banner--info b-small';
-      mpNote.innerHTML = _icon('info') + '<div>Tryb wielu projektów: mapowanie działa po nazwie tagu, więc nazwa musi być identyczna we wszystkich projektach.</div>';
+      mpNote.innerHTML = _html(_icon('info') + '<div>Tryb wielu projektów: mapowanie działa po nazwie tagu, więc nazwa musi być identyczna we wszystkich projektach.</div>');
       container.parentNode.insertBefore(mpNote, container.nextSibling);
     }
   }
@@ -11000,10 +11022,10 @@
     // Populate switch view dropdown
     if (hasOther) {
       const sel = _$('b24t-switch-view-tag');
-      sel.innerHTML = Object.entries(state.mapping)
+      sel.innerHTML = _html(Object.entries(state.mapping)
         .filter(([, m]) => m.type === 'other')
         .map(([label, m]) => `<option value="${m.tagId}">${_escHtml(m.tagName)} (${_escHtml(label)})</option>`)
-        .join('');
+        .join(''));
       state.switchViewTagId = parseInt(sel.value) || null;
     }
     // F11: tag counts
@@ -11037,7 +11059,7 @@
     }
 
     function populatePicker() {
-      sel.innerHTML = '<option value="">Wybierz kolumnę z ocenami</option>';
+      sel.innerHTML = _html('<option value="">Wybierz kolumnę z ocenami</option>');
       headers.forEach(function(h) {
         const opt = document.createElement('option');
         opt.value = h;
@@ -11536,21 +11558,21 @@
     if (!el) return;
     var v = _match.view;
     el.hidden = v === 'none';
-    if (v === 'none') { el.innerHTML = ''; return; }
+    if (v === 'none') { el.textContent = ''; return; }
     var head = function (extra) {
       return '<div class="b-card__head"><span class="b-card__title">Dopasowanie do Brand24</span>' + (extra || '') + '</div>';
     };
     var again = function (label) { return '<button type="button" class="b-btn b-btn--link b-small" data-match="again">' + label + '</button>'; };
-    if (v === 'wait') { el.innerHTML = head() + '<div class="b-hint">' + _escHtml(_match.why) + '</div>'; return; }
+    if (v === 'wait') { el.innerHTML = _html(head() + '<div class="b-hint">' + _escHtml(_match.why) + '</div>'); return; }
     if (v === 'busy') {
       var done = _match.pages ? Math.round(_match.page / _match.pages * 100) : 0;
-      el.innerHTML = head(_match.pages ? '<span class="b-hint b-mono">strona ' + _match.page + ' z ' + _match.pages + '</span>' : '') +
+      el.innerHTML = _html(head(_match.pages ? '<span class="b-hint b-mono">strona ' + _match.page + ' z ' + _match.pages + '</span>' : '') +
         '<div class="b-progress"><i style="width:' + done + '%"></i></div>' +
-        '<div class="b-hint">Pobieranie wzmianek z dni ' + _escHtml(state.file.meta.minDate) + ' – ' + _escHtml(state.file.meta.maxDate) + '.</div>';
+        '<div class="b-hint">Pobieranie wzmianek z dni ' + _escHtml(state.file.meta.minDate) + ' – ' + _escHtml(state.file.meta.maxDate) + '.</div>');
       return;
     }
     if (v === 'error') {
-      el.innerHTML = head() + '<div class="b-small b-danger">Brand24 nie zwrócił wzmianek: ' + _escHtml(_match.err) + '</div><div>' + again('Spróbuj ponownie') + '</div>';
+      el.innerHTML = _html(head() + '<div class="b-small b-danger">Brand24 nie zwrócił wzmianek: ' + _escHtml(_match.err) + '</div><div>' + again('Spróbuj ponownie') + '</div>');
       return;
     }
     var c = _matchCount(), miss = c.missed.length, pct = Math.round(c.matched / Math.max(1, c.rows) * 100);
@@ -11558,7 +11580,7 @@
     var chip = function (cls, label, n, tip) {
       return n ? '<span class="b-chip b-chip--sm' + cls + '" data-tip="' + tip + '">' + label + ' <b>' + n + '</b></span>' : '';
     };
-    el.innerHTML = head('<span class="b-kpi__val' + tone + '">' + pct + '%</span>') +
+    el.innerHTML = _html(head('<span class="b-kpi__val' + tone + '">' + pct + '%</span>') +
       '<div class="b-progress"><i style="width:' + pct + '%"></i></div>' +
       '<div class="b-small b-text2">' + c.matched + ' z ' + c.rows + ' ' + _relPl(c.rows, 'wiersza', 'wierszy', 'wierszy') + ' z oceną ma wzmiankę w projekcie</div>' +
       '<div class="b-row b-row--wrap">' +
@@ -11576,7 +11598,7 @@
       '</div>' +
       (miss ? '<div class="b-pre" style="max-height:8em"' + (_match.open ? '' : ' hidden') + '>' +
         c.missed.slice(0, 50).map(function (u) { return _escHtml(u || '(pusty adres)'); }).join('\n') +
-        (miss > 50 ? '\n… i ' + (miss - 50) + ' więcej' : '') + '</div>' : '');
+        (miss > 50 ? '\n… i ' + (miss - 50) + ' więcej' : '') + '</div>' : ''));
   }
 
   // ───────────────────────────────────────────
@@ -11606,7 +11628,7 @@
       html += '</select></div>';
     });
     html += '<div id="b24t-col-preview" style="font-size:10px;color:var(--c-text3);margin-top:4px;"></div>';
-    el.innerHTML = html;
+    el.innerHTML = _html(html);
     el.querySelectorAll('.b24t-col-sel').forEach(function(sel) {
       sel.addEventListener('change', function() { applyColumnOverride(el, rows); });
     });
@@ -11760,12 +11782,12 @@
     div.className = 'b-tabpanel';
     div.hidden = true;
     div.innerHTML =
-      '<div class="b-row">' +
+      _html('<div class="b-row">' +
         '<span class="b-card__title">Historia sesji</span><span class="b-sp"></span>' +
         '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-history-export">' + _icon('download') + 'CSV</button>' +
         '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-history-clear" data-tip="Czyści historię w tej przeglądarce; Brand24 bez zmian">Wyczyść</button>' +
       '</div>' +
-      '<div id="b24t-history-list" class="b-stack b-stack--sm"></div>';
+      '<div id="b24t-history-list" class="b-stack b-stack--sm"></div>');
     return div;
   }
 
@@ -11779,12 +11801,12 @@
     if (exp) exp.disabled = !history.length;
     if (clr) clr.disabled = !history.length;
     if (!history.length) {
-      list.innerHTML = '<div class="b-empty">' + _icon('hist') + '<div class="b-empty__title">Brak historii sesji</div>' +
-        '<div>Tu pojawi się każda zakończona sesja tagowania z pliku.</div></div>';
+      list.innerHTML = _html('<div class="b-empty">' + _icon('hist') + '<div class="b-empty__title">Brak historii sesji</div>' +
+        '<div>Tu pojawi się każda zakończona sesja tagowania z pliku.</div></div>');
       return;
     }
     const base = _b24HostBase();
-    list.innerHTML = history.map(function(s) {
+    list.innerHTML = _html(history.map(function(s) {
       const name = _escHtml(s.projectName);
       const title = base && s.projectId
         ? '<a class="b-card__title b-ell" href="' + base + '/panel/results/' + encodeURIComponent(s.projectId) + '/" data-tip="Otwórz projekt w Brand24">' + name + '</a>'
@@ -11801,7 +11823,7 @@
         '</div>' +
         '<div class="b-hint">' + _escHtml(s.mode) + ' · ' + Math.floor(dur / 60) + ' min ' + (dur % 60) + ' s</div>' +
       '</article>';
-    }).join('');
+    }).join(''));
   }
 
   function wireHistoryTab() {
@@ -11896,7 +11918,7 @@
         (title ? '<div class="b-banner__title">' + title + '</div>' : '') +
         list.map(function(w) { return '<div>' + _escHtml(w.msg) + '</div>'; }).join('') + '</div></div>';
     };
-    el.innerHTML = group('error', 'danger', 'alertCircle', 'Start zablokowany: popraw plik') + group('warn', 'warn', 'alert', '') + group('info', 'info', 'info', '');
+    el.innerHTML = _html(group('error', 'danger', 'alertCircle', 'Start zablokowany: popraw plik') + group('warn', 'warn', 'alert', '') + group('info', 'info', 'info', ''));
     _updateStartBtnBlock();
   }
 
@@ -12565,7 +12587,7 @@
   // Pozycje RSS-a: tytuł, data, domena wydawcy i adres PRZEKIEROWANIA (nie artykułu — §RSS.2).
   function _gsRssParse(xml) {
     var doc;
-    try { doc = new DOMParser().parseFromString(xml, 'text/xml'); } catch(e) { return []; }
+    try { doc = new DOMParser().parseFromString(_html(xml), 'text/xml'); } catch(e) { return []; }
     if (!doc || doc.querySelector('parsererror')) return [];
     var out = [];
     doc.querySelectorAll('item').forEach(function(it) {
@@ -12881,7 +12903,7 @@
       'b24t-gs-mute': function(b) {
         _gsAlarmSilence();
         b.disabled = true;
-        b.innerHTML = _icon('mute') + 'Dźwięk wyciszony';
+        b.innerHTML = _html(_icon('mute') + 'Dźwięk wyciszony');
       },
       'b24t-gs-copy': _gsHudCopy,
       'b24t-gs-undo-btn': _gsHudUndo,
@@ -12948,7 +12970,7 @@
     w.el.classList.toggle('is-min', on);
     w.body.hidden = on;
     var b = _$('b24t-gs-min'), label = on ? 'Rozwiń' : 'Zwiń do pigułki';
-    b.innerHTML = _icon(on ? 'plus' : 'minus');
+    b.innerHTML = _html(_icon(on ? 'plus' : 'minus'));
     b.setAttribute('aria-label', label);
     b.setAttribute('data-tip', label);
     _gsHudSync();
@@ -12995,7 +13017,7 @@
       show('b24t-gs-handoff', _gsHud.handoff && !alarm), show('b24t-gs-check', alarm), show('b24t-gs-abort', alarm),
     ];
     w.foot.hidden = w.el.classList.contains('is-min') || acts.indexOf(true) < 0;
-    if (active) _$('b24t-gs-pause').innerHTML = run.paused ? _icon('play') + 'Wznów' : _icon('pause') + 'Pauza';
+    if (active) _$('b24t-gs-pause').innerHTML = _html(run.paused ? _icon('play') + 'Wznów' : _icon('pause') + 'Pauza');
     _$('b24t-gs-copy').setAttribute('aria-disabled', String(!n));
     w.el.classList.toggle('is-alarm', alarm);
 
@@ -13015,9 +13037,9 @@
     var items = _gsCartGet().items;
     _$('b24t-gs-count').textContent = String(items.length);
     var top = list.scrollTop;
-    list.innerHTML = items.length
+    list.innerHTML = _html(items.length
       ? items.slice().reverse().map(_gsHudCartRow).join('')
-      : '<li class="b-hint">Koszyk jest pusty.</li>';
+      : '<li class="b-hint">Koszyk jest pusty.</li>');
     list.scrollTop = top;
     _gsHudSync();
   }
@@ -13078,7 +13100,7 @@
   function _gsHudCopy(btn) {
     if (btn.getAttribute('aria-disabled') === 'true') return;
     var look = function(icon, label) {
-      btn.innerHTML = _icon(icon);
+      btn.innerHTML = _html(_icon(icon));
       btn.setAttribute('aria-label', label);
       btn.setAttribute('data-tip', label);
     };
@@ -13093,7 +13115,7 @@
 
   function _gsHudSay(html, final) {
     var el = _$('b24t-gs-say');
-    if (el) el.innerHTML = html;
+    if (el) el.innerHTML = _html(html);
     if (final) _gsHudTick('');
   }
 
@@ -13117,7 +13139,7 @@
   function _gsHudHandoff(btn) {
     var ok = _gsHandoffToPanel();
     btn.disabled = true;
-    btn.innerHTML = _icon('check') + 'Przekazano';
+    btn.innerHTML = _html(_icon('check') + 'Przekazano');
     // Gdy `opener` przepadł (panel przeładowany albo zamknięty), sygnał czeka w GM i karta panelu podniesie go
     // po powrocie na nią — trzeba to powiedzieć, bo nic się nie stanie samo i wygląda to jak zawieszenie.
     _gsHudSay(ok ? 'Adresy przekazane do karty panelu Brand24.'
@@ -13135,7 +13157,7 @@
         : '') + 'wykryto: ' + why;
       var mute = _$('b24t-gs-mute');
       mute.disabled = false;
-      mute.innerHTML = _icon('mute') + 'Wycisz dźwięk';
+      mute.innerHTML = _html(_icon('mute') + 'Wycisz dźwięk');
     }
     _gsHudSync();
     Win.refit(GS_HUD);
@@ -13167,8 +13189,8 @@
     var modes = {};
     run.queue.forEach(function(t) { modes[t.mode] = true; });
     _$('b24t-gs-market').innerHTML =
-      _gsHudMarket(run.cc, _CC_NAMES[String(run.cc || '').toLowerCase()], !!modes.country, 'globe', 'kraju') +
-      _gsHudMarket(run.lang, _LANG_NAMES[String(run.lang || '').toLowerCase()], !!modes.lang, 'lang', 'języka');
+      _html(_gsHudMarket(run.cc, _CC_NAMES[String(run.cc || '').toLowerCase()], !!modes.country, 'globe', 'kraju') +
+      _gsHudMarket(run.lang, _LANG_NAMES[String(run.lang || '').toLowerCase()], !!modes.lang, 'lang', 'języka'));
 
     var total = run.queue.length, done = Math.min(run.qi, total), pct = Math.round(100 * done / total);
     _$('b24t-gs-prog-label').textContent = run.active
@@ -13177,12 +13199,12 @@
     _$('b24t-gs-prog-pct').textContent = pct + '%';
     _$('b24t-gs-prog-bar').style.width = pct + '%';
     var list = _$('b24t-gs-tasks');
-    list.innerHTML = run.queue.map(function(t, i) {
+    list.innerHTML = _html(run.queue.map(function(t, i) {
       var s = i < run.qi ? 'done' : (i === run.qi && run.active ? 'now' : 'wait');
       var mark = s === 'done' ? _icon('check') : s === 'now' ? _icon('play') : '<span class="b-dot"></span>';
       return '<li class="b-gs-task" data-state="' + s + '">' + mark + '<span class="b-ell">' + _escHtml(t.phrase) + '</span>' +
         '<span class="b-gs-task__mode">' + (t.mode === 'lang' ? 'język' : 'kraj') + '</span></li>';
-    }).join('');
+    }).join(''));
     var now = list.querySelector('[data-state="now"]');
     if (now) list.scrollTop = Math.max(0, now.offsetTop - list.clientHeight / 2);
     _gsHud.prog = true;
@@ -13312,7 +13334,7 @@
   function _newsBanner(el, html) {
     if (!el) return;
     el.hidden = !html;
-    if (html) el.innerHTML = _icon(el.classList.contains('b-banner--danger') ? 'alertCircle' : 'alert') + '<div>' + html + '</div>';
+    if (html) el.innerHTML = _html(_icon(el.classList.contains('b-banner--danger') ? 'alertCircle' : 'alert') + '<div>' + html + '</div>');
   }
 
   // Wiersz stanu (wysyłka, import, dup-check): tekst i kolor z `data-state` (ok, warn, error, wait).
@@ -13354,7 +13376,7 @@
     el.id = id;
     el.setAttribute('role', 'dialog');
     el.tabIndex = -1;
-    el.innerHTML = html;
+    el.innerHTML = _html(html);
     _uiMount(el);
     var r = anchor.getBoundingClientRect(), VW = _vw(), VH = _vh();
     var below = VH - r.bottom - 6 - WIN_GAP, above = r.top - 6 - WIN_GAP;
@@ -14245,7 +14267,7 @@
   function _newsParseContent(html, chips, pageUrl) {
     var doc;
     try {
-      doc = (new DOMParser()).parseFromString(html, 'text/html');
+      doc = (new DOMParser()).parseFromString(_html(html), 'text/html');
     } catch(e) {
       return { status: 'nomatch', score: 0, snippet: '' };
     }
@@ -15576,8 +15598,8 @@
     }
 
     if (sess.total === 0 && !newsState.sessionId) {
-      container.innerHTML = '<div class="b-empty">' + _icon('chart') + '<div class="b-empty__title">Brak danych</div>' +
-        '<div>Statystyki powstają ze skanowania adresów i dodawania wzmianek przy włączonej analityce News.</div></div>';
+      container.innerHTML = _html('<div class="b-empty">' + _icon('chart') + '<div class="b-empty__title">Brak danych</div>' +
+        '<div>Statystyki powstają ze skanowania adresów i dodawania wzmianek przy włączonej analityce News.</div></div>');
       return;
     }
 
@@ -15591,7 +15613,7 @@
     }).join('');
 
     var aiTotal = ai.tp + ai.fp + ai.tn + ai.fn;
-    container.innerHTML = '<div class="b-stack">' +
+    container.innerHTML = _html('<div class="b-stack">' +
       '<div class="b-kpis">' +
         kpi('Precyzja skanera', pct(sc.precision), 'n = ' + (sc.tp + sc.fp)) +
         kpi('Dodane', String(sc.tp + sc.manualAddCount), sc.manualAddCount + ' spoza listy') +
@@ -15615,7 +15637,7 @@
             'AI włączone w <b>' + pct(sess.aiEnabledRate) + '</b> sesji' +
             (meta.countries.length ? ' · kraje: <b>' + _escHtml(meta.countries.join(', ')) + '</b>' : '') + '</div>'
         : '') +
-    '</div>';
+    '</div>');
   }
 
   function _naExportCsv(filters) {
@@ -16589,7 +16611,7 @@
       return;
     }
     var isCustom = newsState.mode === 'custom';
-    tagList.innerHTML = tags.map(function(entry) {
+    tagList.innerHTML = _html(tags.map(function(entry) {
       var name = entry[0], tid = entry[1];
       var isDodane = name.toLowerCase().indexOf('dodane') !== -1;
       // W News tag "dodane" jest auto-zaznaczony; w Niestandardowe — nie
@@ -16599,7 +16621,7 @@
         '<span>' + _escHtml(name) + '</span>' +
         (isDodane ? '<span class="b-ntag__st b-nstate" id="b24t-news-tag-dodane-status">sprawdzam</span>' : '') +
       '</label>';
-    }).join('');
+    }).join(''));
     _newsCheckTagDodane();
     _newsFilterTags();
   }
@@ -16711,8 +16733,8 @@
     // `change` i sztuczka z `_applyNewsMode` (przypisanie wartości, której nie ma, daje pusty string)
     // działają dalej bez zmian. Filtrowanie dotyczy WYŁĄCZNIE widocznej listy — gdyby obcinało też
     // <select>, wybrany projekt mógłby z niego wypaść razem ze swoją wartością.
-    sel.innerHTML = '<option value="">— wybierz projekt —</option>' +
-      rows.map(function(r) { return '<option value="' + _escHtml(String(r.pid)) + '">' + _escHtml(r.name) + '</option>'; }).join('');
+    sel.innerHTML = _html('<option value="">— wybierz projekt —</option>' +
+      rows.map(function(r) { return '<option value="' + _escHtml(String(r.pid)) + '">' + _escHtml(r.name) + '</option>'; }).join(''));
     if (state.projectId) sel.value = String(state.projectId);
 
     if (!combo || !list) return;
@@ -16724,13 +16746,13 @@
     var rawQ = typing ? combo.value : '';
     var shown = _projKeySep(rawQ) ? rows.filter(function(r) { return _projMatches(r.name, rawQ); }) : rows;
 
-    list.innerHTML = shown.length
+    list.innerHTML = _html(shown.length
       ? shown.map(function(r) {
           var on = String(state.projectId) === String(r.pid);
           return '<div class="b24t-proj-item' + (on ? ' b24t-proj-item-on' : '') + '" data-pid="' + r.pid + '">' +
                  _escHtml(r.name) + '</div>';
         }).join('')
-      : '<div class="b24t-proj-empty">brak projektu pasującego do „' + _escHtml(combo.value) + '”</div>';
+      : '<div class="b24t-proj-empty">brak projektu pasującego do „' + _escHtml(combo.value) + '”</div>');
   }
 
   function _projComboOpen(open) {
@@ -17068,7 +17090,7 @@
     var n = newsState.campaign ? _gsCartGet().items.length : 0;
     btn.hidden = !n;
     if (!n) return;
-    btn.innerHTML = _icon('cart') + 'Wklej z koszyka (' + n + ')';
+    btn.innerHTML = _html(_icon('cart') + 'Wklej z koszyka (' + n + ')');
     if (btn.dataset.wired) return;
     btn.dataset.wired = '1';
     btn.addEventListener('click', function() {
@@ -17257,7 +17279,7 @@
     var run = _gsRunGet();
     var st = run ? CAMP_RUN_STATE[run.active ? 'active' : run.stopped] : null;
     var redraw = o.onChange || function() { _campaignCartRender(box, o); };
-    box.innerHTML = '<div class="b-ccart">' + _icon('cart') +
+    box.innerHTML = _html('<div class="b-ccart">' + _icon('cart') +
         '<div class="b-ccart__text"><div><b class="b-ccart__n">' + n + '</b> ' + _relPl(n, 'adres', 'adresy', 'adresów') + ' w koszyku</div>' +
           '<div class="b-hint">' + (!n ? 'Adresy trafiają tu z wyszukiwania zaawansowanego.'
             : run && run.campaign ? 'Kampania: ' + _escHtml(run.campaign) : 'Kampania bez nazwy') + '</div></div>' +
@@ -17265,7 +17287,7 @@
       '</div>' +
       (n ? '<div class="b-row b-row--wrap">' +
         (o.onPaste ? '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-camp-paste">' + _icon('upload') + 'Wklej do importu</button>' : '') +
-        '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-camp-clear">' + _icon('del') + 'Wyczyść koszyk</button></div>' : '');
+        '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-camp-clear">' + _icon('del') + 'Wyczyść koszyk</button></div>' : ''));
     var paste = box.querySelector('#b24t-camp-paste');
     if (paste) paste.addEventListener('click', o.onPaste);
     var clear = box.querySelector('#b24t-camp-clear');
@@ -17482,10 +17504,10 @@
       varsAuto.hidden = vars.manual || vars.backup !== null || !varsEl.value.trim();
       varsAct.hidden = !vars.manual && vars.backup === null;
       if (vars.manual) {
-        varsAct.innerHTML = _icon('refresh') + 'Z nazwy';
+        varsAct.innerHTML = _html(_icon('refresh') + 'Z nazwy');
         varsAct.setAttribute('data-tip', 'Tworzy warianty od nowa z nazwy kampanii');
       } else if (vars.backup !== null) {
-        varsAct.innerHTML = _icon('undo') + 'Przywróć ręczne';
+        varsAct.innerHTML = _html(_icon('undo') + 'Przywróć ręczne');
         varsAct.setAttribute('data-tip', 'Przywraca warianty zmienione ręcznie');
       }
     }
@@ -17550,7 +17572,7 @@
       var parts = [];
       if (c) parts.push('<b>' + _escHtml(c.toUpperCase()) + '</b> ' + _escHtml(_CC_NAMES[c] || 'kraj spoza listy rynków'));
       if (l) parts.push('<b>' + _escHtml(l) + '</b> ' + _escHtml(_LANG_NAMES[l] || 'nie jest kodem języka'));
-      hintEl.innerHTML = parts.join(' · ');
+      hintEl.innerHTML = _html(parts.join(' · '));
       if (_langCodeError(langEl.value, ccEl.value)) hintEl.dataset.state = 'warn';
       else delete hintEl.dataset.state;
     }
@@ -17575,9 +17597,9 @@
     (function fillPrompts() {
       var s = _aiGetSettings();
       var active = (s.campaign && s.campaign.activePromptId) || '';
-      promptEl.innerHTML = '<option value="">Nie wybrano</option>' + (s.prompts || []).map(function(p) {
+      promptEl.innerHTML = _html('<option value="">Nie wybrano</option>' + (s.prompts || []).map(function(p) {
         return '<option value="' + _escHtml(p.id) + '"' + (p.id === active ? ' selected' : '') + '>' + _escHtml(p.name || p.id) + '</option>';
-      }).join('');
+      }).join(''));
     })();
     promptEl.addEventListener('change', function() {
       var s = _aiGetSettings();
@@ -17701,7 +17723,7 @@
     var rssMsg = function(kind, html) {
       rssInfo.hidden = false;
       if (kind) rssInfo.dataset.state = kind; else delete rssInfo.dataset.state;
-      rssInfo.innerHTML = html;
+      rssInfo.innerHTML = _html(html);
     };
     q('b24t-camp-rss').addEventListener('click', function() {
       var btn = this;
@@ -17753,7 +17775,7 @@
     var mk = function(tag, cls, html) {
       var el = document.createElement(tag);
       if (cls) el.className = cls;
-      if (html) el.innerHTML = html;
+      if (html) el.innerHTML = _html(html);
       store.appendChild(el);
       return el;
     };
@@ -18105,7 +18127,7 @@
     }
     if (statusEl)  { statusEl.textContent = 'brak tagu'; statusEl.dataset.state = 'warn'; }
     if (cmsBanner) {
-      if (warnText) warnText.innerHTML = 'Projekt nie ma tagu <b>dodane</b>. Tag dodaje się w Brand24, w ustawieniach tagów projektu.';
+      if (warnText) warnText.innerHTML = _html('Projekt nie ma tagu <b>dodane</b>. Tag dodaje się w Brand24, w ustawieniach tagów projektu.');
       cmsBanner.hidden = false;
     }
   }
@@ -18116,7 +18138,7 @@
     var s = _aiGetSettings();
     var sel = _$('b24t-news-import-prompt-sel');
     if (!sel) return;
-    sel.innerHTML = '<option value="">Bez promptu</option>';
+    sel.innerHTML = _html('<option value="">Bez promptu</option>');
     (s.prompts || []).forEach(function(p) {
       var opt = document.createElement('option');
       opt.value = p.id;
@@ -18180,7 +18202,7 @@
     var s = _aiGetSettings();
     var sel = _$('b24t-news-translate-prompt-sel');
     if (!sel) return;
-    sel.innerHTML = '<option value="">— wybierz —</option>';
+    sel.innerHTML = _html('<option value="">— wybierz —</option>');
     if (s.prompts) s.prompts.forEach(function(p) {
       var opt = document.createElement('option');
       opt.value = p.id;
@@ -18409,10 +18431,10 @@
       var chips = _newsGetKeywords(cc);
       var container = _$('b24t-news-chips');
       if (!container) return;
-      container.innerHTML = chips.map(function(kw, i) {
+      container.innerHTML = _html(chips.map(function(kw, i) {
         return '<span class="b-chip b-chip--sm b-nkw"><span class="b-mono">' + _escHtml(kw) + '</span>' +
           '<button type="button" class="b24t-chip-rm" data-idx="' + i + '" aria-label="Usuń słowo ' + _escHtml(kw) + '">' + _icon('x') + '</button></span>';
-      }).join('');
+      }).join(''));
       container.querySelectorAll('.b24t-chip-rm').forEach(function(btn) {
         btn.addEventListener('click', function() {
           var cc2 = newsState.detectedCountry || 'DEFAULT';
@@ -18494,7 +18516,7 @@
       // Annotator przełączył się na oryginał w trakcie strumienia — tłumaczenie zbiera się
       // w `entry.tr`, ale na karcie nie ma prawa nic podmieniać.
       if (newsState.showOriginal) return;
-      el.innerHTML = _newsHlChips(text, _newsCardHlChips(entry));
+      el.innerHTML = _html(_newsHlChips(text, _newsCardHlChips(entry)));
       el.classList.remove('b24t-tr-wait');
       el.classList.add('b24t-tr-land');
     };
@@ -18926,7 +18948,7 @@
             'Pojedynczo, wolniej i z dłuższym limitem czasu. Pomija błędy sieci (DNS, SSL) i 404: zmierzone 2026-09-14, z 45 takich wierszy nie wrócił ani jeden.') + '">' +
           _icon('refresh') + 'Ponów nieprzeskanowane (' + retryableCount + ' z ' + blockedCount + ')</button>';
       }
-      bar.innerHTML = html;
+      bar.innerHTML = _html(html);
     }
 
     // Akcje zbiorcze listy w menu „⋯”: tylko te, które mają w tej chwili czego dotyczyć.
@@ -19264,11 +19286,11 @@
 
         var displayUrl = entry.url.replace(/^https?:\/\//, '');
         row.innerHTML =
-          '<div class="b-nrow__top"><div class="b-nrow__tags">' + tags.join('') + '</div>' +
+          _html('<div class="b-nrow__top"><div class="b-nrow__tags">' + tags.join('') + '</div>' +
             (isScanning ? '' : '<button type="button" class="b-ibtn b-ibtn--sm b24t-news-del-btn" aria-haspopup="menu" aria-label="Usuń z listy" data-tip="Usuń z listy">' + _icon('x') + '</button>') +
           '</div>' +
           '<div class="b-nrow__url" data-tip="' + _escHtml(entry.url) + '">' + _escHtml(displayUrl) + '</div>' +
-          snippetHtml;
+          snippetHtml);
 
         // (dopiecie do listy nalezy do wywolujacego — patrz `renderUrlList` i `_newsRowRenderer`)
 
@@ -19422,7 +19444,7 @@
         var row = _newsBuildRow(entry, idx, null, animate);
         if (row) { list.appendChild(row); shown++; }
       });
-      if (!shown) list.insertAdjacentHTML('beforeend', '<div class="b-empty b-nlist-none">' + _icon('search') + '<div>Żaden adres nie pasuje do filtra.</div></div>');
+      if (!shown) list.insertAdjacentHTML('beforeend', _html('<div class="b-empty b-nlist-none">' + _icon('search') + '<div>Żaden adres nie pasuje do filtra.</div></div>'));
     }
 
 
@@ -19630,7 +19652,7 @@
       // Przełącznik karta ↔ ramka. Ma sens tylko tam, gdzie serwis w ogóle pozwala się osadzić.
       if (switchBtn) {
         switchBtn.hidden = entry.iframeable !== true;
-        switchBtn.innerHTML = entry._iframeOn ? _icon('notes') + 'Karta' : _icon('frame') + 'Strona w ramce';
+        switchBtn.innerHTML = _html(entry._iframeOn ? _icon('notes') + 'Karta' : _icon('frame') + 'Strona w ramce');
         switchBtn.setAttribute('data-tip', entry._iframeOn ? 'Wraca do karty decyzyjnej' : 'Pokazuje stronę w ramce');
         if (!switchBtn.dataset.wired) {
           switchBtn.dataset.wired = '1';
@@ -19872,7 +19894,7 @@
       parts.push('<div class="b-row"><button type="button" class="b-btn b-btn--neutral" data-url="' + _escHtml(entry.url) + '">' + _icon('external') + 'Otwórz w oknie</button>' +
         '<span class="b-hint">albo <span class="b-kbd">Enter</span></span></div>');
 
-      richEl.innerHTML = parts.join('');
+      richEl.innerHTML = _html(parts.join(''));
       richEl.hidden = false;
       var _rob = richEl.querySelector('button[data-url]');
       if (_rob) _rob.addEventListener('click', function() { _newsOpenUrl(this.dataset.url); });
@@ -19939,7 +19961,7 @@
         var fTitleEl = _$('b24t-news-f-title');
         if (fTitleEl && !fTitleEl.value) {
           try {
-            var _doc = (new DOMParser()).parseFromString(html, 'text/html');
+            var _doc = (new DOMParser()).parseFromString(_html(html), 'text/html');
             // Tytuł: h1 wewnątrz article/main > meta content_title > og:title > <title>
             var _bz = _doc.querySelector('article') || _doc.querySelector('main') || null;
             var _h1El = _bz ? _bz.querySelector('h1') : _doc.querySelector('h1');
@@ -20062,10 +20084,10 @@
       if (!importBtn) return;
       if (text) {
         importBtn.setAttribute('aria-busy', 'true');
-        importBtn.innerHTML = '<span class="b-spin"></span><span>' + _escHtml(text) + '</span>';
+        importBtn.innerHTML = _html('<span class="b-spin"></span><span>' + _escHtml(text) + '</span>');
       } else {
         importBtn.removeAttribute('aria-busy');
-        importBtn.innerHTML = _icon('play') + '<span>Skanuj adresy</span>';
+        importBtn.innerHTML = _html(_icon('play') + '<span>Skanuj adresy</span>');
       }
     }
 
@@ -20466,10 +20488,10 @@
     function _submitBusy(text) {
       if (text) {
         submitBtn.setAttribute('aria-busy', 'true');
-        submitBtn.innerHTML = '<span class="b-spin"></span><span>' + text + '</span>';
+        submitBtn.innerHTML = _html('<span class="b-spin"></span><span>' + text + '</span>');
       } else {
         submitBtn.removeAttribute('aria-busy');
-        submitBtn.innerHTML = _icon('plus') + '<span>Dodaj wzmiankę</span>';
+        submitBtn.innerHTML = _html(_icon('plus') + '<span>Dodaj wzmiankę</span>');
       }
     }
     if (submitBtn) {
@@ -20724,7 +20746,7 @@
       '</div>');
     if (!pop) return;
     var tbody = pop.querySelector('#b24t-lm-tbody');
-    var redraw = function() { tbody.innerHTML = rowsHtml(); };
+    var redraw = function() { tbody.innerHTML = _html(rowsHtml()); };
     pop.querySelector('#b24t-lm-close').addEventListener('click', function() { _newsPopClose(true); });
     tbody.addEventListener('change', function(e) {
       var inp = e.target.closest('.b24t-lm-inp');
@@ -20774,6 +20796,34 @@
   // Format i zasady obu dzienników: Tagger/CHANGELOG_STYLE.md. CHANGELOG_FALLBACK to 10 najnowszych
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
+    {
+      "version": "0.38.20",
+      "date": "2026-10-05",
+      "label": "new",
+      "changes": [
+        {
+          "type": "fix",
+          "area": "Dodawanie wzmianek",
+          "title": "Naprawiono błąd, przez który wtyczka nie startowała w Gmailu i Dokumentach Google",
+          "items": [
+            "Przycisk „Dodaj wzmiankę” i okno dodawania wzmianki działają na stronach Google z dodatkowym zabezpieczeniem treści: w Gmailu, Dokumentach, Kalendarzu i na stronie logowania.",
+            "Błąd startu wtyczki na stronie spoza Brand24 zapisuje się w zdarzeniach wtyczki, bez ramki w rogu strony."
+          ],
+          "text": "Naprawiono błąd, przez który wtyczka nie startowała w Gmailu i Dokumentach Google. Przycisk „Dodaj wzmiankę” i okno dodawania wzmianki działają na stronach Google z dodatkowym zabezpieczeniem treści: w Gmailu, Dokumentach, Kalendarzu i na stronie logowania. Błąd startu wtyczki na stronie spoza Brand24 zapisuje się w zdarzeniach wtyczki, bez ramki w rogu strony."
+        },
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Przycisk „Wyślij zgłoszenie” w ramce błędu startu wtyczki",
+          "items": [
+            "Gdy wtyczka nie uruchomi się na stronie Brand24 i nie zdoła pokazać zwykłego powiadomienia, ramka w prawym dolnym rogu wysyła zgłoszenie jednym kliknięciem: z treścią błędu, wersją, przeglądarką i ostatnimi zdarzeniami wtyczki.",
+            "Numer wysłanego zgłoszenia albo przyczyna nieudanej wysyłki pokazuje się w tej samej ramce.",
+            "Klucze API i tokeny zostają w przeglądarce."
+          ],
+          "text": "Przycisk „Wyślij zgłoszenie” w ramce błędu startu wtyczki. Gdy wtyczka nie uruchomi się na stronie Brand24 i nie zdoła pokazać zwykłego powiadomienia, ramka w prawym dolnym rogu wysyła zgłoszenie jednym kliknięciem: z treścią błędu, wersją, przeglądarką i ostatnimi zdarzeniami wtyczki. Numer wysłanego zgłoszenia albo przyczyna nieudanej wysyłki pokazuje się w tej samej ramce. Klucze API i tokeny zostają w przeglądarce."
+        }
+      ]
+    },
     {
       "version": "0.38.19",
       "date": "2026-10-05",
@@ -21024,43 +21074,6 @@
           ],
           "experimental": true,
           "text": "Naprawiono przełącznik „Logi programistyczne” po zmianie kanału. Przełącznik od razu pokazuje stan dla nowego kanału, bez ponownego otwierania Ustawień."
-        }
-      ]
-    },
-    {
-      "version": "0.38.10",
-      "date": "2026-10-03",
-      "label": "new",
-      "changes": [
-        {
-          "type": "improved",
-          "area": "Tagowanie z pliku",
-          "title": "Log pokazuje się razem z przebiegiem",
-          "items": [
-            "Karta logu w Plik i AI Tag pojawia się po kliknięciu Start albo „Taguj przez AI” i pokazuje wpisy tego przebiegu.",
-            "Po zakończeniu bez uwag karta zwija się do jednego wiersza z czasem i wynikiem; „Log” otwiera pełny log.",
-            "Po zakończeniu z uwagą albo błędem karta zostaje rozwinięta, a nagłówek podaje liczbę uwag; ✕ ją zamyka."
-          ],
-          "text": "Log pokazuje się razem z przebiegiem. Karta logu w Plik i AI Tag pojawia się po kliknięciu Start albo „Taguj przez AI” i pokazuje wpisy tego przebiegu. Po zakończeniu bez uwag karta zwija się do jednego wiersza z czasem i wynikiem; „Log” otwiera pełny log. Po zakończeniu z uwagą albo błędem karta zostaje rozwinięta, a nagłówek podaje liczbę uwag; ✕ ją zamyka."
-        },
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Logi programistyczne w Ustawieniach → Aktualizacje",
-          "items": [
-            "Przełącznik pokazuje w logu wpisy techniczne: odświeżanie w tle, ponowienia zapytań i błędy przed ponowieniem.",
-            "Na kanale Experimental jest domyślnie włączony, na Stabilnym wyłączony; własny wybór zostaje przy zmianie kanału."
-          ],
-          "text": "Logi programistyczne w Ustawieniach → Aktualizacje. Przełącznik pokazuje w logu wpisy techniczne: odświeżanie w tle, ponowienia zapytań i błędy przed ponowieniem. Na kanale Experimental jest domyślnie włączony, na Stabilnym wyłączony; własny wybór zostaje przy zmianie kanału."
-        },
-        {
-          "type": "fix",
-          "area": "Panel",
-          "title": "Naprawiono pasek błędu po chwilowym błędzie Brand24, który ponowienie już naprawiło",
-          "items": [
-            "Pasek błędu pokazuje się dopiero, gdy zapytanie nie przejdzie po wszystkich ponowieniach."
-          ],
-          "text": "Naprawiono pasek błędu po chwilowym błędzie Brand24, który ponowienie już naprawiło. Pasek błędu pokazuje się dopiero, gdy zapytanie nie przejdzie po wszystkich ponowieniach."
         }
       ]
     }
@@ -21354,7 +21367,7 @@
         return '<button type="button" class="b-chip" data-area="' + _escHtml(area) + '" aria-pressed="' + (st.area === area) + '">' +
           _escHtml(label) + ' <b>' + n + '</b></button>';
       };
-      chipsEl.innerHTML = chip('', 'Wszystkie', total) + areas.map(function(a) { return chip(a, a, counts[a]); }).join('');
+      chipsEl.innerHTML = _html(chip('', 'Wszystkie', total) + areas.map(function(a) { return chip(a, a, counts[a]); }).join(''));
     }
     function renderList() {
       var fresh = seen ? st.data.filter(function(v) { return _relCmp(v.version, seen) > 0; }) : [];
@@ -21369,8 +21382,8 @@
       } else if (oh) {
         html = '<section class="b-cl-sec">' + oh + '</section>';
       }
-      listEl.innerHTML = html || '<div class="b-empty">' + _icon('search') + '<div class="b-empty__title">Brak zmian dla tego filtra</div>' +
-        '<button type="button" class="b-btn b-btn--neutral b-btn--sm" data-cl="reset">Pokaż wszystkie zmiany</button></div>';
+      listEl.innerHTML = _html(html || '<div class="b-empty">' + _icon('search') + '<div class="b-empty__title">Brak zmian dla tego filtra</div>' +
+        '<button type="button" class="b-btn b-btn--neutral b-btn--sm" data-cl="reset">Pokaż wszystkie zmiany</button></div>');
       var det = listEl.querySelector('.b-cl-older');
       if (det) det.addEventListener('toggle', function() { if (!(st.area || st.q)) st.olderOpen = det.open; });
     }
@@ -21503,15 +21516,15 @@
       var list = (notes || []).filter(function(n) { return _relCmp(n.version, VERSION) <= 0 && !(preview && n.version === preview.version); });
       if (preview) list.unshift(preview);
       if (!list.length) {
-        body.innerHTML = '<div class="b-empty">' + _icon(notes ? 'notes' : 'alertCircle') + '<div class="b-empty__title">' + (notes
+        body.innerHTML = _html('<div class="b-empty">' + _icon(notes ? 'notes' : 'alertCircle') + '<div class="b-empty__title">' + (notes
           ? 'Dziennik aktualizacji obejmuje aktualizacje od wersji 0.37.0.'
-          : 'Nie udało się pobrać dziennika aktualizacji. Sprawdź połączenie i otwórz dziennik ponownie.') + '</div></div>';
+          : 'Nie udało się pobrać dziennika aktualizacji. Sprawdź połączenie i otwórz dziennik ponownie.') + '</div></div>');
         return;
       }
-      body.innerHTML = (preview ? '<div class="b-banner b-banner--info">' + _icon('info') + '<div><div class="b-banner__title">Szkic opisu wersji ' +
+      body.innerHTML = _html((preview ? '<div class="b-banner b-banner--info">' + _icon('info') + '<div><div class="b-banner__title">Szkic opisu wersji ' +
           _escHtml(preview.version) + '</div>Użytkownicy kanału Stabilnego zobaczą go w tym oknie po wydaniu tej wersji.</div></div>' : '') +
         list.map(_relNoteHtml).join('<hr class="b-rn-sep">') +
-        '<p class="b-rn-end">Dziennik zawiera opisy aktualizacji od wersji 0.37.0.</p>';
+        '<p class="b-rn-end">Dziennik zawiera opisy aktualizacji od wersji 0.37.0.</p>');
       _figSetup(body);
     });
   }
@@ -21593,8 +21606,8 @@
         pins += '<i class="b-fig__mk b-fig__pin" style="left:' + p.x + 'px;top:' + (p.end == null ? p.y : p.end) + 'px">' + p.n + '</i>';
       });
     }
-    fig.querySelector('.b-fig__svg').innerHTML = svg;
-    fig.querySelector('.b-fig__svg').nextElementSibling.innerHTML = pins;
+    fig.querySelector('.b-fig__svg').innerHTML = _html(svg);
+    fig.querySelector('.b-fig__svg').nextElementSibling.innerHTML = _html(pins);
   }
   function _figSetup(root) {
     root.querySelectorAll('.b-fig').forEach(function(fig) {
@@ -21875,7 +21888,7 @@
     var tab = _$('b24t-panel-side-tab');
     if (!tab) return;
     var dot = tab.querySelector('.b-edge__dot'), want = !!(_upd.remote || _upd.refresh);
-    if (want && !dot) tab.insertAdjacentHTML('beforeend', '<span class="b-edge__dot" aria-hidden="true"></span>');
+    if (want && !dot) tab.insertAdjacentHTML('beforeend', _html('<span class="b-edge__dot" aria-hidden="true"></span>'));
     else if (!want && dot) dot.remove();
     tab.setAttribute('aria-label', want ? 'B24 Tagger, dostępna nowa wersja' : 'B24 Tagger');
   }
@@ -22308,15 +22321,15 @@
         (done ? after : '<p>Bez kodu: wersja stabilna ' + to + ' zastąpi wersję testową. Tampermonkey pokaże ostrzeżenie ' +
           '„Uwaga! Starsza wersja skryptu”; instalację potwierdza przycisk „Zdezaktualizuj” (w wersji angielskiej „Downgrade”).</p>');
     }
-    w.main.innerHTML = '<div class="b-stack">' + html + '</div>';
-    w.foot.innerHTML = '<span class="b-sp"></span>' + (done
+    w.main.innerHTML = _html('<div class="b-stack">' + html + '</div>');
+    w.foot.innerHTML = _html('<span class="b-sp"></span>' + (done
       ? '<button type="button" class="b-btn b-btn--quiet" data-lock="install">Zainstaluj ponownie</button>' +
         '<button type="button" class="b-btn b-btn--primary" data-lock="reload">Odśwież stronę</button>'
-      : '<button type="button" class="b-btn b-btn--primary" data-lock="install">' + (crit ? 'Zainstaluj ' + to : 'Zainstaluj wersję stabilną') + '</button>');
+      : '<button type="button" class="b-btn b-btn--primary" data-lock="install">' + (crit ? 'Zainstaluj ' + to : 'Zainstaluj wersję stabilną') + '</button>'));
     if (!crit || done) return;
     // Zmiany od zainstalowanej wersji: na Stabilnym z opisu wersji stabilnej, na Experimental z dziennika zmian.
     var box = w.main.querySelector('[data-lock-changes]'), ver = _lock.to;
-    var fill = function (html) { if (box.isConnected && _lock.to === ver) box.innerHTML = html; };
+    var fill = function (html) { if (box.isConnected && _lock.to === ver) box.innerHTML = _html(html); };
     if (_relChannel() === 'stable') {
       _relFor(_relNotes, ver, function (notes) { fill(_updNoteHtml((notes || []).filter(function (n) { return n.version === ver; })[0], true)); });
     } else {
@@ -22665,8 +22678,8 @@
       primary();
     });
     function status(msg, tone) {
-      q('#b24t-rep-st').innerHTML = msg ? '<div class="b-banner b-banner--' + tone + '">' + _icon(tone === 'ok' ? 'okCircle' : 'alertCircle') +
-        '<div>' + _escHtml(msg) + '</div></div>' : '';
+      q('#b24t-rep-st').innerHTML = _html(msg ? '<div class="b-banner b-banner--' + tone + '">' + _icon(tone === 'ok' ? 'okCircle' : 'alertCircle') +
+        '<div>' + _escHtml(msg) + '</div></div>' : '');
     }
     // Komunikat przy polu opisu: błąd walidacji albo informacja o szkicu.
     function hint(msg, err) {
@@ -22691,9 +22704,9 @@
         : 'Co dodać albo zmienić i do czego się to przyda.';
       var last = q('#b24t-rep-last'), show = st.kind === 'bug' && !!lastErr;
       last.hidden = !show;
-      last.innerHTML = show ? _icon('alertCircle') + '<div class="b-stack b-stack--xs"><span class="b-banner__title">Ostatni błąd, ' +
+      last.innerHTML = _html(show ? _icon('alertCircle') + '<div class="b-stack b-stack--xs"><span class="b-banner__title">Ostatni błąd, ' +
         _reportTime(lastErr.t).slice(0, 5) + '</span><span>' +
-        _escHtml(_diagScrub(_reportBare(lastErr.msg || lastErr.err), _diagSecrets()).slice(0, 220)) + '</span></div>' : '';
+        _escHtml(_diagScrub(_reportBare(lastErr.msg || lastErr.err), _diagSecrets()).slice(0, 220)) + '</span></div>' : '');
       q('#b24t-rep-note').textContent = st.kind === 'bug'
         ? 'Do zgłoszenia dochodzą: ostatnie zdarzenia wtyczki, wersja, przeglądarka i stan wybranej funkcji. Klucze API, tokeny i treści wzmianek zostają w przeglądarce.'
         : 'Do zgłoszenia dochodzi tylko wersja wtyczki i adres strony.';
@@ -22726,7 +22739,7 @@
       }
       st.busy = true;
       sendBtn.setAttribute('aria-busy', 'true');
-      sendBtn.innerHTML = '<span class="b-spin"></span>Wysyłanie…';
+      sendBtn.innerHTML = _html('<span class="b-spin"></span>Wysyłanie…');
       status('');
       var kind = st.kind, area = st.area;
       _reportSend(build(), function(err, num) {
@@ -22734,7 +22747,7 @@
         sendBtn.removeAttribute('aria-busy');
         var open = Win.get('feedback') === w;
         if (err) {
-          sendBtn.innerHTML = _icon('send') + 'Wyślij';
+          sendBtn.innerHTML = _html(_icon('send') + 'Wyślij');
           addLog('⚠ Zgłoszenie nie zostało wysłane: ' + err, 'warn');
           if (open) status('Nie udało się wysłać: ' + err + '. Zgłoszenie można skopiować i wysłać Maksowi na Slacku.', 'danger');
           else Toast.show('Zgłoszenie nie zostało wysłane: ' + err + '. Szkic czeka w oknie zgłoszenia.', 'error');
@@ -22745,7 +22758,7 @@
         addLog('✓ Zgłoszenie (' + REPORT_KIND[kind] + ', ' + area + ') wysłane jako nr ' + num, 'success');
         if (kind === 'bug') _errBarHide();
         if (!open) { Toast.show('Zgłoszenie wysłane jako nr ' + num + '. Dzięki!', 'ok'); return; }
-        sendBtn.innerHTML = _icon('check') + 'Zamknij';
+        sendBtn.innerHTML = _html(_icon('check') + 'Zamknij');
         sendBtn.setAttribute('data-tip', 'Zamknij (Ctrl+Enter)');
         lock();
         hint('');
@@ -22816,8 +22829,8 @@
     bar.className = 'b-errbar';
     bar.hidden = true;
     bar.setAttribute('role', 'alert');
-    bar.innerHTML = _icon('alertCircle') + '<button type="button" class="b-errbar__msg b-ell"></button><span class="b-errbar__n"></span>' +
-      '<button type="button" class="b-btn b-btn--quiet b-btn--sm" data-eb="report">Zgłoś</button>';
+    bar.innerHTML = _html(_icon('alertCircle') + '<button type="button" class="b-errbar__msg b-ell"></button><span class="b-errbar__n"></span>' +
+      '<button type="button" class="b-btn b-btn--quiet b-btn--sm" data-eb="report">Zgłoś</button>');
     var x = _ibtn('x', 'Ukryj pasek błędu', 'b-ibtn--sm');
     x.dataset.eb = 'close';
     bar.appendChild(x);
@@ -23128,7 +23141,7 @@
     btn.setAttribute('aria-pressed', String(show));
     btn.setAttribute('aria-label', show ? 'Ukryj wpisany tekst' : 'Pokaż wpisany tekst');
     btn.setAttribute('data-tip', show ? 'Ukryj' : 'Pokaż');
-    btn.innerHTML = _icon(show ? 'eyeOff' : 'eye');
+    btn.innerHTML = _html(_icon(show ? 'eyeOff' : 'eye'));
   }
 
   // Wiersz ustawienia: nazwa i opis po lewej, kontrolka po prawej. `label` i `hint` to stałe HTML wtyczki.
@@ -23157,7 +23170,7 @@
     if (!el) return;
     el.hidden = !text;
     el.className = 'b-set-msg b-small ' + (tone ? 'b-' + tone : 'b-muted') + (el.classList.contains('b-set-kv__full') ? ' b-set-kv__full' : '');
-    el.innerHTML = text ? (tone ? _icon({ ok: 'okCircle', warn: 'alert', danger: 'alertCircle' }[tone]) : '') + '<span></span>' : '';
+    el.innerHTML = _html(text ? (tone ? _icon({ ok: 'okCircle', warn: 'alert', danger: 'alertCircle' }[tone]) : '') + '<span></span>' : '');
     if (text) el.lastChild.textContent = text;
   }
 
@@ -23166,10 +23179,10 @@
     if (label) {
       btn.dataset.idle = btn.innerHTML;
       btn.setAttribute('aria-busy', 'true');
-      btn.innerHTML = '<span class="b-spin" aria-hidden="true"></span>' + label;
+      btn.innerHTML = _html('<span class="b-spin" aria-hidden="true"></span>' + label);
     } else {
       btn.removeAttribute('aria-busy');
-      btn.innerHTML = btn.dataset.idle;
+      btn.innerHTML = _html(btn.dataset.idle);
     }
   }
   function _setIsBusy(btn) { return btn.getAttribute('aria-busy') === 'true'; }
@@ -23207,7 +23220,7 @@
     var pane = function (name) { return root.querySelector('.b-set-pane[data-pane="' + name + '"]'); };
 
     function saved() {
-      savedEl.innerHTML = _icon('check') + 'Zapisano';
+      savedEl.innerHTML = _html(_icon('check') + 'Zapisano');
       savedEl.classList.add('is-on');
       clearTimeout(savedTimer);
       savedTimer = setTimeout(function () { savedEl.classList.remove('is-on'); }, 2000);
@@ -23248,7 +23261,7 @@
     _setPaneAnalytics(pane('analytics'), ctx);
     // Nagłówek kategorii równy nazwie z listy; Prompty mają własny wiersz z nazwą, licznikiem i „Nowy prompt”.
     SET_TABS.forEach(function (t) {
-      if (t[0] !== 'prompts') pane(t[0]).insertAdjacentHTML('afterbegin', '<h2 class="b-set-pane__title">' + t[1] + '</h2>');
+      if (t[0] !== 'prompts') pane(t[0]).insertAdjacentHTML('afterbegin', _html('<h2 class="b-set-pane__title">' + t[1] + '</h2>'));
     });
 
     var tablist = root.querySelector('.b-set-nav');
@@ -23277,7 +23290,7 @@
   // z wcięciem pod narzędziem i jest nieaktywna, gdy narzędzie jest wyłączone. Lista rysuje się od nowa po każdej
   // zmianie, bo przełącznik narzędzia zmienia stan jego opcji.
   function _setPaneTools(pane, ctx) {
-    pane.innerHTML = '<div class="b-set-tools"></div><p class="b-hint b-set-foot">Zmiany działają od razu w każdej karcie tej przeglądarki.</p>';
+    pane.innerHTML = _html('<div class="b-set-tools"></div><p class="b-hint b-set-foot">Zmiany działają od razu w każdej karcie tej przeglądarki.</p>');
     var box = pane.firstChild;
     // Etykieta wiersza wskazuje przełącznik przez `for`: bez tego etykietą przycisku (i) albo „Dodaj klucz”, które stoją
     // przed przełącznikiem, kliknięcie w tekst wiersza trafiało w nie.
@@ -23321,10 +23334,10 @@
     function render(focusId) {
       var f = loadFeatures(), ai = _aiGetSettings();
       visTabs = _railOrder().filter(function (tab) { return _toolOn(PANEL_TAB_TOOL[tab], f, ai); });
-      box.innerHTML = SET_TOOLS.map(function (sec) {
+      box.innerHTML = _html(SET_TOOLS.map(function (sec) {
         return '<section class="b-set-sec"><h3 class="b-set-sec__title">' + sec[0] + '</h3>' +
           ordered(sec[1]).map(function (t) { return row(t, f, ai); }).join('') + '</section>';
-      }).join('');
+      }).join(''));
       var el = focusId && box.querySelector('[data-tool="' + focusId + '"]');
       if (el) el.focus({ preventScroll: true });
     }
@@ -23360,7 +23373,7 @@
     var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     pane.innerHTML =
-      '<section class="b-set-sec">' +
+      _html('<section class="b-set-sec">' +
         _setRow('Motyw', 'Jak w systemie: według motywu systemu, teraz ' + (dark ? 'ciemny' : 'jasny') + '.',
           _setSeg('b24t-set-theme', 'Motyw', _themePref(), [['auto', 'Jak w systemie'], ['light', 'Jasny', 'sun'], ['dark', 'Ciemny', 'moon']])) +
         _setRow('Rozmiar tekstu', 'Automatyczny rośnie z szerokością okna przeglądarki.',
@@ -23368,7 +23381,7 @@
         _setRow('Animacje', 'Pełne: okna wyrastają z przycisku i przesuwają się na miejsce. Ograniczone: okna tylko się ' +
           'rozjaśniają i gasną. Jak w systemie: według ustawień systemu, teraz ' + (reduced ? 'ograniczone' : 'pełne') + '.',
           _setSeg('b24t-set-motion', 'Animacje', gmGet(PREF.UI_MOTION, 'auto'), [['auto', 'Jak w systemie'], ['full', 'Pełne'], ['lite', 'Ograniczone']])) +
-      '</section>';
+      '</section>');
     pane.addEventListener('change', function (e) {
       var t = e.target;
       if (t.name === 'b24t-set-theme') applyTheme(t.value);
@@ -23387,7 +23400,7 @@
       ['experimental', 'Eksperymentalny', 'Najnowsze zmiany przed wydaniem stabilnym; mogą zawierać błędy.']
     ];
     pane.innerHTML =
-      '<section class="b-set-sec"><h3 class="b-set-sec__title">Kanał aktualizacji</h3>' +
+      _html('<section class="b-set-sec"><h3 class="b-set-sec__title">Kanał aktualizacji</h3>' +
         '<div class="b-set-choices" role="radiogroup" aria-label="Kanał aktualizacji">' + channels.map(function (c) {
           var lock = c[0] === 'experimental' && locked;
           return '<label class="b-radio b-set-choice" data-channel="' + c[0] + '"><input type="radio" name="b24t-channel" value="' + c[0] + '"' +
@@ -23424,7 +23437,7 @@
           _setRow('Most testowy', 'Stan wtyczki do odczytu dla testów przez rozszerzenie przeglądarki: wersja, projekt, przebieg, ' +
             'wiersze News, log. Bez tokenów, kluczy i treści wzmianek. Działa tylko na stronach Brand24.',
             _setSwitch('b24t-set-bridge', loadFeatures().test_bridge === true), { label: true, cls: 'b-set-exptool' }) +
-      '</section>';
+      '</section>');
     var stEl = pane.querySelector('#b24t-set-upd-state'), checkBtn = pane.querySelector('#b24t-set-upd-check'),
       stableBtn = pane.querySelector('#b24t-set-upd-stable'), downRow = pane.querySelector('.b-set-down');
     // Wywoływane też po każdym wyniku sprawdzenia (_updApply), dopóki okno jest otwarte.
@@ -23548,13 +23561,13 @@
   // Projekty: lista projektów formularza „Dodaj wzmiankę” i jej odświeżenie (SETTINGS.md §5).
   function _setPaneProjects(pane) {
     pane.innerHTML =
-      '<section class="b-set-sec"><h3 class="b-set-sec__title">Lista projektów</h3>' +
+      _html('<section class="b-set-sec"><h3 class="b-set-sec__title">Lista projektów</h3>' +
         _setRow('Niepotwierdzone przez Brand24: <b id="b24t-pn-missing-count">…</b>',
           'Projekt otwarty w Brand24 trafia na listę formularza „Dodaj wzmiankę” sam. Odświeżenie sprawdza w Brand24 ' +
           'nazwy niepotwierdzone i projekty ukryte: poprawia nazwy, ukrywa projekty niedostępne i przywraca dostępne.',
           '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-pn-refresh">' + _icon('refresh') + 'Odśwież listę projektów</button>') +
         '<div id="b24t-pn-status" class="b-set-msg b-small b-muted" role="status" hidden></div>' +
-      '</section>';
+      '</section>');
 
     var pnCountEl = pane.querySelector('#b24t-pn-missing-count');
     var pnRefreshBtn = pane.querySelector('#b24t-pn-refresh');
@@ -23682,7 +23695,7 @@
     }).join('');
     var ntfyOn = _ntfyGetCfg().enabled;
     pane.innerHTML =
-      '<section class="b-set-sec"><h3 class="b-set-sec__title">Nowa wersja wtyczki</h3>' +
+      _html('<section class="b-set-sec"><h3 class="b-set-sec__title">Nowa wersja wtyczki</h3>' +
         _setRow('Powiadomienie poza panelem', 'Powiadomienie systemowe, telefon przez ntfy i migający tytuł karty Brand24 w tle. ' +
           'Bez własnego wyboru włączone na Stabilnym, wyłączone na Experimental. Powiadomienie systemowe wymaga zgody ' +
           'na powiadomienia dla przeglądarki w ustawieniach systemu (Windows albo macOS).',
@@ -23724,7 +23737,7 @@
           '</div>' +
           '<div class="b-hint">Krótka praca nie wysyła powiadomienia. To, co czeka na decyzję, i błędy przychodzą zawsze, niezależnie od progu.</div>' +
         '</div>' +
-      '</section>';
+      '</section>');
     pane.addEventListener('change', function (e) {
       var k = e.target.dataset.snd;
       if (!k) return;
@@ -23756,7 +23769,7 @@
         '<div id="b24t-ai-model-warn-' + id + '" class="b-set-msg b-small b-set-kv__full" hidden></div>';
     };
     pane.innerHTML =
-      '<section class="b-set-sec"><h3 class="b-set-sec__title">Klucze API</h3>' +
+      _html('<section class="b-set-sec"><h3 class="b-set-sec__title">Klucze API</h3>' +
         // Klucz na dostawcę: każda funkcja (News, tagowanie) ma własny model, więc można np. tagować Gemini,
         // a newsy oceniać Claudem. „Testuj” pobiera listę modeli: sprawdza klucz i od razu zasila selecty niżej.
         '<p class="b-hint b-set-sec__hint">Wystarczy klucz dostawcy modelu wybranego niżej. „Testuj” sprawdza klucz i pobiera listę modeli do wyboru.</p>' +
@@ -23782,7 +23795,7 @@
       '<section class="b-set-sec"><h3 class="b-set-sec__title">Przegląd sentymentu</h3>' +
         '<p class="b-hint b-set-sec__hint">Dwa modele różnych dostawców (OpenAI i Gemini); wzmianka, co do której się różnią, trafia do decyzji. Modele oceniają z włączonym myśleniem.</p>' +
         '<div class="b-set-kv">' + model('sentA', 'Model 1') + model('sentB', 'Model 2') + '</div>' +
-      '</section>';
+      '</section>');
 
     var MODELS = {
       news: [function (c) { return c.news.model; }, function (c, v) { c.news.model = v; }],
@@ -23816,7 +23829,7 @@
             '<input type="number" class="b-input b-input--sm b-set-limit" id="b24t-ai-limit-' + p + '" data-limit="' + p + '" min="0" step="1" inputmode="decimal" placeholder="brak"' +
               (limit ? ' value="' + limit + '"' : '') + '><span class="b-hint">$</span></div>';
       });
-      spendBox.innerHTML = html || '<p class="b-hint b-set-kv__full">Bez kluczy nie ma kosztu: suma pojawi się po pierwszym wywołaniu modelu.</p>';
+      spendBox.innerHTML = _html(html || '<p class="b-hint b-set-kv__full">Bez kluczy nie ma kosztu: suma pojawi się po pierwszym wywołaniu modelu.</p>');
     }
     renderSpend();
     spendBox.addEventListener('change', function (e) {
@@ -23841,7 +23854,7 @@
       var cfg = _aiGetSettings();
       Object.keys(MODELS).forEach(function (k) {
         var m = MODELS[k][0](cfg);
-        sel(k).innerHTML = _aiModelOptionsHtml(m, cfg, MODELS[k][2]);
+        sel(k).innerHTML = _html(_aiModelOptionsHtml(m, cfg, MODELS[k][2]));
         _setSay(pane.querySelector('#b24t-ai-model-warn-' + k), _aiKeyFor(m, cfg) ? '' :
           'Brak klucza ' + AI_PROVIDER_LABEL[_aiProvider(m)] + ': model nie zadziała. Wpisz klucz w sekcji Klucze API.', 'warn');
       });
@@ -23934,12 +23947,12 @@
     var ed = null;       // otwarty edytor: { id (null = nowy prompt), el, initial: [nazwa, treść, kategorie] }
     var zoomed = false;
     pane.innerHTML =
-      '<div class="b-set-prompts__head b-stack b-stack--xs">' +
+      _html('<div class="b-set-prompts__head b-stack b-stack--xs">' +
         '<div class="b-row"><h3 class="b-set-sec__title">Prompty systemowe</h3><span class="b-chip b-chip--sm" id="b24t-set-prompt-count"></span>' +
           '<span class="b-sp"></span><button type="button" class="b-btn b-btn--primary b-btn--sm" id="b24t-ai-add-prompt">' + _icon('plus') + 'Nowy prompt</button></div>' +
         '<p class="b-hint">Prompt opisuje modelowi zasady oceny. Znaczniki przy nazwie pokazują, gdzie prompt jest używany: prompt AI Tag wybiera się tutaj, prompty pozostałych modułów w ich oknach.</p>' +
       '</div>' +
-      '<div id="b24t-ai-prompt-list" class="b-set-list"></div>';
+      '<div id="b24t-ai-prompt-list" class="b-set-list"></div>');
     var list = pane.querySelector('#b24t-ai-prompt-list');
 
     function uses(s, id) {
@@ -23978,13 +23991,13 @@
       var s = _aiGetSettings(), count = pane.querySelector('#b24t-set-prompt-count');
       count.textContent = String(s.prompts.length);
       count.hidden = !s.prompts.length;
-      list.innerHTML = s.prompts.length ? s.prompts.map(function (p) { return cardHtml(p, s); }).join('') :
+      list.innerHTML = _html(s.prompts.length ? s.prompts.map(function (p) { return cardHtml(p, s); }).join('') :
         '<div class="b-empty">' + _icon('notes') + '<div class="b-empty__title">Brak promptów</div>' +
-          '<div>Prompt systemowy opisuje modelowi zasady oceny wzmianek w AI Tag, News, przeglądzie sentymentu i kampaniach.</div></div>';
+          '<div>Prompt systemowy opisuje modelowi zasady oceny wzmianek w AI Tag, News, przeglądzie sentymentu i kampaniach.</div></div>');
       if (!ed) return;
       var card = ed.id && findCard(ed.id);
       if (card) { card.replaceWith(ed.el); return; }
-      if (!s.prompts.length) list.innerHTML = '';
+      if (!s.prompts.length) list.textContent = '';
       list.prepend(ed.el);
     }
 
@@ -24010,7 +24023,7 @@
       var b = ed && ed.el.querySelector('[data-pe="zoom"]');
       if (b) {
         var l = on ? 'Zmniejsz edytor' : 'Powiększ edytor';
-        b.innerHTML = _icon(on ? 'restore' : 'maximize');
+        b.innerHTML = _html(_icon(on ? 'restore' : 'maximize'));
         b.setAttribute('aria-pressed', String(on));
         b.setAttribute('aria-label', l);
         b.setAttribute('data-tip', l);
@@ -24044,7 +24057,7 @@
       el.dataset.id = id || '';
       el.setAttribute('aria-label', p ? 'Edycja promptu ' + p.name : 'Nowy prompt');
       el.innerHTML =
-        '<div class="b-card__head"><span class="b-card__title">' + (p ? 'Edycja promptu' : 'Nowy prompt') + '</span>' +
+        _html('<div class="b-card__head"><span class="b-card__title">' + (p ? 'Edycja promptu' : 'Nowy prompt') + '</span>' +
           '<button type="button" class="b-ibtn b-ibtn--sm" data-pe="zoom" aria-pressed="false" aria-label="Powiększ edytor" data-tip="Powiększ edytor">' + _icon('maximize') + '</button></div>' +
         '<label class="b-field"><span class="b-label">Nazwa</span>' +
           '<input type="text" id="b24t-ai-prompt-name" data-f="name" class="b-input" autocomplete="off" placeholder="np. Relewancja InditexGroup TR">' +
@@ -24057,7 +24070,7 @@
           '<span class="b-hint">Wartości, które model zwraca w polu assessment, oddzielone przecinkami; AI Tag mapuje je na tagi.</span></label>' +
         '<div class="b-row b-row--wrap"><span class="b-hint"><span class="b-kbd">Ctrl</span> + <span class="b-kbd">Enter</span> zapisuje</span><span class="b-sp"></span>' +
           '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-ai-prompt-cancel" data-pe="cancel">Anuluj</button>' +
-          '<button type="button" class="b-btn b-btn--primary b-btn--sm" id="b24t-ai-prompt-save" data-pe="save">Zapisz prompt</button></div>';
+          '<button type="button" class="b-btn b-btn--primary b-btn--sm" id="b24t-ai-prompt-save" data-pe="save">Zapisz prompt</button></div>');
       ed = { id: id, el: el, initial: p ? [p.name, p.system, (Array.isArray(p.knownAssessments) ? p.knownAssessments : []).join(', ')] : ['', '', ''] };
       ['name', 'body', 'cats'].forEach(function (n, i) { field(n).value = ed.initial[i]; });
       el.addEventListener('input', function (e) { var f = e.target.dataset.f; if (f === 'name' || f === 'body') showErr(f, false); });
@@ -24165,7 +24178,7 @@
   function _setPaneAnalytics(pane, ctx) {
     var na = _naGetSettings();
     pane.innerHTML =
-      '<section class="b-set-sec"><h3 class="b-set-sec__title">Metryki skanowania News</h3>' +
+      _html('<section class="b-set-sec"><h3 class="b-set-sec__title">Metryki skanowania News</h3>' +
         _setRow('Zapisuj metryki na GitHubie', 'Anonimowe metryki skanowania News: wyniki skanera i decyzje annotatorów.',
           _setSwitch('b24t-na-enabled', na.enabled), { label: true }) +
         '<div class="b-set-kv">' +
@@ -24178,7 +24191,7 @@
           '<div id="b24t-na-test-result" class="b-set-msg b-small b-set-kv__full" role="status" hidden></div>' +
         '</div>' +
         '<p id="b24t-na-status" class="b-hint"></p>' +
-      '</section>';
+      '</section>');
 
     var patInput = pane.querySelector('#b24t-na-pat'), repoInput = pane.querySelector('#b24t-na-repo');
     var result = pane.querySelector('#b24t-na-test-result'), statusEl = pane.querySelector('#b24t-na-status');
@@ -24296,10 +24309,10 @@
   function _fillTagSelect(sel) {
     if (!sel) return;
     var current = sel.value;
-    sel.innerHTML = '<option value="">Wybierz tag</option>' +
+    sel.innerHTML = _html('<option value="">Wybierz tag</option>' +
       Object.entries(state.tags || {})
         .map(function(e) { return '<option value="' + e[1] + '">' + _escHtml(e[0]) + '</option>'; })
-        .join('');
+        .join(''));
     if (current) sel.value = current;
   }
 
@@ -24766,9 +24779,9 @@
     if (!el) return;
     if (!state.tokenHeaders || !state.projectId) {
       addLog('⚠ [zakładka Projekt] token lub projekt nie gotowy', 'warn');
-      el.innerHTML = '<div class="b-banner b-banner--warn" style="align-items:center">' + _icon('alert') +
+      el.innerHTML = _html('<div class="b-banner b-banner--warn" style="align-items:center">' + _icon('alert') +
         '<div class="b-sp">Brak tokenu Brand24 albo otwartego projektu. Otwórz wzmianki projektu w Brand24 i spróbuj ponownie.</div>' +
-        '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-ann-project-refresh">Spróbuj ponownie</button></div>';
+        '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-ann-project-refresh">Spróbuj ponownie</button></div>');
       el.querySelector('#b24t-ann-project-refresh').addEventListener('click', loadAnnotatorProject);
       return;
     }
@@ -24789,7 +24802,7 @@
       return;
     }
     addLog('→ [zakładka Projekt] ' + (state.projectName || 'projekt') + ': pobieranie danych...', 'info', { tech: true, key: 'ann.tab' });
-    el.innerHTML = _annEmpty('spin', '', 'Liczę wzmianki projektu…');
+    el.innerHTML = _html(_annEmpty('spin', '', 'Liczę wzmianki projektu…'));
     try {
       var data = await _fetchProjectStats();
       annotatorData.project = data;
@@ -24800,9 +24813,9 @@
       addLog('✕ [zakładka Projekt] błąd: ' + e.message, 'error');
       var errEl = _$('b24t-ann-project-content');
       if (!errEl) return;
-      errEl.innerHTML = '<div class="b-banner b-banner--danger" style="align-items:center">' + _icon('alertCircle') +
+      errEl.innerHTML = _html('<div class="b-banner b-banner--danger" style="align-items:center">' + _icon('alertCircle') +
         '<div class="b-sp"><div class="b-banner__title">Nie udało się policzyć wzmianek</div>' + _escHtml(e.message) + '</div>' +
-        '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-ann-project-refresh">Spróbuj ponownie</button></div>';
+        '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-ann-project-refresh">Spróbuj ponownie</button></div>');
       errEl.querySelector('#b24t-ann-project-refresh').addEventListener('click', loadAnnotatorProject);
     }
   }
@@ -24815,7 +24828,7 @@
     };
     var left = d.dates.daysLeft > 0 ? ' · ' + d.dates.daysLeft + ' ' + _relPl(d.dates.daysLeft, 'dzień', 'dni', 'dni') + ' do końca miesiąca' : '';
     el.innerHTML =
-      '<section class="b-card">' +
+      _html('<section class="b-card">' +
         '<div class="b-card__head">' +
           '<span class="b-card__title b-ell">' + _escHtml(_pnResolve(d.projectId)) + '</span>' +
           '<button type="button" class="b-ibtn b-ibtn--sm" id="b24t-ann-project-refresh" aria-label="Policz ponownie" data-tip="Policz ponownie">' + _icon('refresh') + '</button>' +
@@ -24832,7 +24845,7 @@
           kpi('Do weryfikacji', d.reqVer, d.reqVer > 0 ? 'b-warn' : '', 'Tag REQUIRES_VERIFICATION') +
           kpi('Do usunięcia', d.toDelete, d.toDelete > 0 ? 'b-danger' : '', 'Tag TO_DELETE') +
         '</div>' +
-      '</section>';
+      '</section>');
     el.querySelector('#b24t-ann-project-refresh').addEventListener('click', function() {
       annotatorData.project = null;
       bgCache.project = null;
@@ -24845,13 +24858,13 @@
     if (!el) return;
     if (!state.tokenHeaders) {
       addLog('⚠ [zakładka Tagi] token nie gotowy', 'warn');
-      el.innerHTML = _annEmpty('alert', 'Brak tokenu Brand24', 'Otwórz wzmianki projektu w Brand24; wtyczka przechwyci token przy pierwszym zapytaniu.');
+      el.innerHTML = _html(_annEmpty('alert', 'Brak tokenu Brand24', 'Otwórz wzmianki projektu w Brand24; wtyczka przechwyci token przy pierwszym zapytaniu.'));
       return;
     }
     var projects = getKnownProjects();
     if (!projects.length) {
       addLog('⚠ [zakładka Tagi] 0 projektów — odwiedź projekty z włączoną wtyczką', 'warn');
-      el.innerHTML = _annEmpty('folder', 'Brak zapamiętanych projektów', 'Otwórz wzmianki każdego projektu w Brand24; wtyczka zapamięta go automatycznie.');
+      el.innerHTML = _html(_annEmpty('folder', 'Brak zapamiętanych projektów', 'Otwórz wzmianki każdego projektu w Brand24; wtyczka zapamięta go automatycznie.'));
       return;
     }
 
@@ -24874,7 +24887,7 @@
 
     // ── Cache zimny — pokaż spinner, pobierz, renderuj ──
     var dates = getAnnotatorDates();
-    el.innerHTML = _annEmpty('spin', '', '<span id="b24t-ann-ts-counter">Liczę wzmianki: 0 z ' + projects.length + ' projektów</span>');
+    el.innerHTML = _html(_annEmpty('spin', '', '<span id="b24t-ann-ts-counter">Liczę wzmianki: 0 z ' + projects.length + ' projektów</span>'));
 
     var results = [];
     var done = 0;
@@ -24917,7 +24930,7 @@
       '<button type="button" class="b-ibtn b-ibtn--sm" id="b24t-ann-tagstats-refresh" aria-label="Policz ponownie" data-tip="Policz ponownie">' + _icon('refresh') + '</button>' +
     '</div>';
     if (!withTags.length) {
-      el.innerHTML = head + _annEmpty('okCircle', 'Bez wzmianek do sprawdzenia', 'Żaden zapamiętany projekt nie ma w tym okresie tagu REQUIRES_VERIFICATION ani TO_DELETE.');
+      el.innerHTML = _html(head + _annEmpty('okCircle', 'Bez wzmianek do sprawdzenia', 'Żaden zapamiętany projekt nie ma w tym okresie tagu REQUIRES_VERIFICATION ani TO_DELETE.'));
     } else {
       var th = function(key, label, tip, num) {
         var sorted = _annTs.key === key;
@@ -24925,13 +24938,13 @@
           '<button type="button" class="b-sortbtn" data-sort="' + key + '"' + (tip ? ' data-tip="' + tip + '"' : '') + '>' + label +
           _icon(sorted && _annTs.dir > 0 ? 'chevUp' : 'chevDown') + '</button></th>';
       };
-      el.innerHTML = head +
+      el.innerHTML = _html(head +
         '<section class="b-card b-card--table"><table class="b-table b-table--hover">' +
           '<thead><tr>' + th('name', 'Projekt') + th('reqVer', 'REQ', 'Do weryfikacji: tag REQUIRES_VERIFICATION', true) +
             th('toDelete', 'DEL', 'Do usunięcia: tag TO_DELETE', true) + '</tr></thead>' +
           '<tbody id="b24t-ann-ts-rows"></tbody>' +
         '</table></section>' +
-        '<div class="b-hint">Nazwa projektu otwiera jego wzmianki w Brand24 z tym zakresem dat.</div>';
+        '<div class="b-hint">Nazwa projektu otwiera jego wzmianki w Brand24 z tym zakresem dat.</div>');
       el.querySelector('thead').addEventListener('click', function(e) {
         var b = e.target.closest('[data-sort]');
         if (!b) return;
@@ -24978,17 +24991,17 @@
       return dir * (val(a) - val(b)) || String(a.name).localeCompare(String(b.name), 'pl');
     });
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="3" class="b-muted">Żaden projekt nie pasuje do „' + _escHtml(_annTs.q.trim()) + '”.</td></tr>';
+      tbody.innerHTML = _html('<tr><td colspan="3" class="b-muted">Żaden projekt nie pasuje do „' + _escHtml(_annTs.q.trim()) + '”.</td></tr>');
       return;
     }
     var base = _b24HostBase();
     var qs = d.dates ? '?d1=' + encodeURIComponent(d.dates.dateFrom) + '&d2=' + encodeURIComponent(d.dates.dateTo) : '';
-    tbody.innerHTML = rows.map(function(p) {
+    tbody.innerHTML = _html(rows.map(function(p) {
       var name = _escHtml(p.name);
       var link = base ? '<a class="b-ell" href="' + base + '/panel/results/' + encodeURIComponent(p.id) + '/' + qs + '">' + name + '</a>' : '<span class="b-ell">' + name + '</span>';
       var num = function(n, cls) { return '<td class="b-num' + (n > 0 ? ' b-strong ' + cls : ' b-muted') + '">' + (n || '—') + '</td>'; };
       return '<tr data-pid="' + p.id + '"><td>' + link + '</td>' + num(p.reqVer, 'b-warn') + num(p.toDelete, 'b-danger') + '</tr>';
-    }).join('');
+    }).join(''));
   }
 
   // ───────────────────────────────────────────
@@ -25076,8 +25089,8 @@
     // Lista pokazuje dokładnie tag, z którym ruszy usuwanie.
     const autoSel = _$('b24t-auto-delete-tag');
     if (autoSel) {
-      autoSel.innerHTML = '<option value="">Wybierz tag</option>' +
-        irrelevant.map(m => `<option value="${m.tagId}">${_escHtml(m.tagName)}</option>`).join('');
+      autoSel.innerHTML = _html('<option value="">Wybierz tag</option>' +
+        irrelevant.map(m => `<option value="${m.tagId}">${_escHtml(m.tagName)}</option>`).join(''));
       autoSel.value = state.autoDeleteTagId ? String(state.autoDeleteTagId) : '';
     }
     const scope = _$('b24t-auto-delete-scope');
@@ -25254,10 +25267,10 @@
     var empty = w.main.querySelector('.b-empty');
     empty.hidden = n > 0;
     if (!n) {
-      empty.innerHTML = total
+      empty.innerHTML = _html(total
         ? _icon('filter') + '<span class="b-empty__title">Żaden wpis nie pasuje do filtra</span>' +
           '<button type="button" class="b-btn b-btn--outline b-btn--sm" data-logp-reset>Pokaż wszystkie</button>'
-        : _icon('list') + '<span class="b-empty__title">Log jest pusty</span><span>Nowe wpisy pojawią się w trakcie pracy.</span>';
+        : _icon('list') + '<span class="b-empty__title">Log jest pusty</span><span>Nowe wpisy pojawią się w trakcie pracy.</span>');
     }
     w.el.querySelector('#b24t-logp-copy').disabled = !n;
     w.el.querySelector('#b24t-logp-csv').disabled = !n;
@@ -25551,12 +25564,12 @@
     totalEl.textContent = '';
     var tag = _apTag();
     if (!tag.id) {
-      list.innerHTML = _annEmpty('tag', 'Wybierz tag', 'Okno policzy wzmianki z tym tagiem w każdym zapamiętanym projekcie.');
+      list.innerHTML = _html(_annEmpty('tag', 'Wybierz tag', 'Okno policzy wzmianki z tym tagiem w każdym zapamiętanym projekcie.'));
       return;
     }
     var projects = getKnownProjects(_apGroupId);
     if (!projects.length) {
-      list.innerHTML = _annEmpty('folder', 'Brak zapamiętanych projektów', 'Otwórz wzmianki każdego projektu w Brand24; wtyczka zapamięta go automatycznie.');
+      list.innerHTML = _html(_annEmpty('folder', 'Brak zapamiętanych projektów', 'Otwórz wzmianki każdego projektu w Brand24; wtyczka zapamięta go automatycznie.'));
       return;
     }
     var cached = bgCache.allProjects[tag.id];
@@ -25564,7 +25577,7 @@
       _renderAllProjectsList(cached.results, tag.name);
       return;
     }
-    list.innerHTML = _annEmpty('spin', '', '<span id="b24t-ap-spinner-counter">Liczę wzmianki: 0 z ' + projects.length + ' projektów</span>');
+    list.innerHTML = _html(_annEmpty('spin', '', '<span id="b24t-ap-spinner-counter">Liczę wzmianki: 0 z ' + projects.length + ' projektów</span>'));
     var groupId = _apGroupId;
     var fresh = await _bgFetchAllProjects(tag.id, function(done, total) {
       var c = _$('b24t-ap-spinner-counter');
@@ -25580,7 +25593,7 @@
     var base = _b24HostBase(), html = '<div class="b-banner b-banner--' + (_cmsDeny.session === true ? 'warn' : 'info') + ' b-small" id="b24t-ap-cms">' + _icon('info') +
       '<div class="b-sp">' + _escHtml(_cmsDenyText(n, _cmsDeny.session)) + '</div>' +
       (_cmsDeny.session !== true && base ? '<a class="b-btn b-btn--neutral b-btn--sm" href="' + base + '/cms33/" target="_blank" rel="noopener">Otwórz CMS</a>' : '') + '</div>';
-    if (_cmsDeny.probing) _cmsDeny.probing.then(function () { var el = _$('b24t-ap-cms'); if (el && el.dataset.s !== String(_cmsDeny.session)) el.outerHTML = _apCmsBanner(n); });
+    if (_cmsDeny.probing) _cmsDeny.probing.then(function () { var el = _$('b24t-ap-cms'); if (el && el.dataset.s !== String(_cmsDeny.session)) el.outerHTML = _html(_apCmsBanner(n)); });
     return html.replace('id="b24t-ap-cms"', 'id="b24t-ap-cms" data-s="' + String(_cmsDeny.session) + '"');
   }
 
@@ -25598,17 +25611,17 @@
       : '';
     delBtn.hidden = !total;
     delBtn.disabled = !!_apRun;
-    if (total) delBtn.innerHTML = _icon('del') + '<span>Usuń ' + pl(total) + '</span>';
+    if (total) delBtn.innerHTML = _html(_icon('del') + '<span>Usuń ' + pl(total) + '</span>');
     // Projekty bez tagu o tej nazwie: poza liczeniem i usuwaniem, z nazwami, żeby było wiadomo, których nie sprawdzono.
     var noTagHtml = noTag.length ? '<div class="b-hint">Bez tagu ' + _escHtml(tagName) + ' w tagach zapamiętanych przez wtyczkę: ' +
       _escHtml(noTag.map(function(r) { return r.p.name; }).join(', ')) + '. Tych projektów okno nie liczy i nie usuwa z nich wzmianek; ' +
       'tagi projektu wtyczka zapamiętuje przy otwarciu jego wzmianek w Brand24.</div>' : '';
     if (!withData.length && !withErrors.length) {
-      list.innerHTML = _annEmpty('okCircle', 'Nic do usunięcia', 'Żaden sprawdzony projekt w zakresie nie ma wzmianek z tagiem ' + _escHtml(tagName) + '.') + noTagHtml;
+      list.innerHTML = _html(_annEmpty('okCircle', 'Nic do usunięcia', 'Żaden sprawdzony projekt w zakresie nie ma wzmianek z tagiem ' + _escHtml(tagName) + '.') + noTagHtml);
       return;
     }
     var denied = withErrors.filter(function(r) { return r.error === 'GRAPHQL_PERMISSION_DENIED'; }).length;
-    list.innerHTML = (denied ? _apCmsBanner(denied) : '') + noTagHtml + '<section class="b-card b-card--table"><table class="b-table">' +
+    list.innerHTML = _html((denied ? _apCmsBanner(denied) : '') + noTagHtml + '<section class="b-card b-card--table"><table class="b-table">' +
       '<thead><tr><th>Projekt</th><th class="b-num b-fit">Wzmianki</th><th class="b-fit" aria-label="Działanie"></th></tr></thead><tbody>' +
       withData.map(function(r) {
         return '<tr data-pid="' + r.p.id + '"><td><span class="b-ell">' + _escHtml(r.p.name) + '</span></td>' +
@@ -25620,7 +25633,7 @@
         return '<tr><td><span class="b-ell">' + _escHtml(r.p.name) + '</span></td>' +
           '<td colspan="2" class="b-danger">Nie udało się policzyć: ' + _escHtml(_errShort(r.error)) + '</td></tr>';
       }).join('') +
-      '</tbody></table></section>';
+      '</tbody></table></section>');
   }
 
   // Potwierdzenie i usuwanie: pid = jeden projekt z listy, null = wszystkie projekty z wzmiankami.
@@ -25629,7 +25642,7 @@
     if (_apRun) {
       if (!_apRun.stop) {
         _apRun.stop = true;
-        btn.innerHTML = _icon('stop', 'b-ico-stop') + '<span>Zatrzymuję…</span>';
+        btn.innerHTML = _html(_icon('stop', 'b-ico-stop') + '<span>Zatrzymuję…</span>');
         _apStatus('Zatrzymuję po bieżącej partii…', 'warn');
       }
       return;
@@ -25659,7 +25672,7 @@
     var run = _apRun;
     var label = btn.innerHTML, cls = btn.className;
     btn.className = 'b-btn b-btn--neutral' + (btn.classList.contains('b-btn--sm') ? ' b-btn--sm' : '');
-    btn.innerHTML = _icon('stop', 'b-ico-stop') + '<span>Zatrzymaj</span>';
+    btn.innerHTML = _html(_icon('stop', 'b-ico-stop') + '<span>Zatrzymaj</span>');
     Win.get('allprojects').el.querySelectorAll('button[data-ap-del], #b24t-ap-delete-all, [data-ap="close"], #b24t-ap-tag, #b24t-ap-group-sel').forEach(function(b) {
       if (b !== btn) b.disabled = true;
     });
@@ -25715,7 +25728,7 @@
       annotatorData.tagstats = null;
       // Okno istnieje: w trakcie usuwania onBeforeClose nie pozwala go zamknąć.
       btn.className = cls;
-      btn.innerHTML = label;
+      btn.innerHTML = _html(label);
       _$('b24t-ap-note').textContent = '';
       var dlg = Win.get('allprojects').el;
       dlg.querySelectorAll('[data-ap="close"], #b24t-ap-tag, #b24t-ap-group-sel').forEach(function(b) { b.disabled = false; });
@@ -25757,10 +25770,10 @@
     var groups = getGroups();
     var knownProjects = getKnownProjectsList();
     if (!groups.length) {
-      el.innerHTML = _annEmpty('folder', 'Brak grup projektów', 'Grupa łączy projekty do Overall, Trafności AI i usuwania ze wszystkich projektów.',
-        '<button type="button" class="b-btn b-btn--primary b-btn--sm" id="b24t-grp-add-first">' + _icon('plus') + 'Utwórz grupę</button>');
+      el.innerHTML = _html(_annEmpty('folder', 'Brak grup projektów', 'Grupa łączy projekty do Overall, Trafności AI i usuwania ze wszystkich projektów.',
+        '<button type="button" class="b-btn b-btn--primary b-btn--sm" id="b24t-grp-add-first">' + _icon('plus') + 'Utwórz grupę</button>'));
     } else {
-      el.innerHTML = '<div class="b-row">' +
+      el.innerHTML = _html('<div class="b-row">' +
           '<span class="b-small b-text2">' + groups.length + ' ' + _relPl(groups.length, 'grupa', 'grupy', 'grup') + '</span><span class="b-sp"></span>' +
           '<button type="button" class="b-btn b-btn--primary b-btn--sm" id="b24t-grp-add-btn">' + _icon('plus') + 'Nowa grupa</button>' +
         '</div>' +
@@ -25781,7 +25794,7 @@
             '</div>' +
             (chips ? '<div class="b-row b-row--wrap" style="gap:0.25em">' + chips + '</div>' : '') +
           '</article>';
-        }).join('');
+        }).join(''));
     }
     el.querySelectorAll('#b24t-grp-add-first, #b24t-grp-add-btn').forEach(function(b) {
       b.addEventListener('click', function() { showGroupEditor(null, knownProjects, b); });
@@ -26047,14 +26060,14 @@
     if (!el) return;
     var groups = getGroups();
     if (!groups.length) {
-      el.innerHTML = _annEmpty('folder', 'Brak grup projektów', 'Overall liczy wzmianki w grupie projektów; grupy tworzy się w zakładce Grupy.',
-        '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-overall-to-groups">Przejdź do Grup</button>');
+      el.innerHTML = _html(_annEmpty('folder', 'Brak grup projektów', 'Overall liczy wzmianki w grupie projektów; grupy tworzy się w zakładce Grupy.',
+        '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-overall-to-groups">Przejdź do Grup</button>'));
       el.querySelector('#b24t-overall-to-groups').addEventListener('click', function() { _annShowTab('groups'); });
       return;
     }
     var selectedGroup = _ovSelectedGroup();
     el.innerHTML =
-      '<div class="b-row">' +
+      _html('<div class="b-row">' +
         '<select class="b-select b-select--sm" id="b24t-overall-group-sel" aria-label="Grupa projektów">' +
           '<option value="">Wybierz grupę</option>' +
           groups.map(function(g) {
@@ -26067,7 +26080,7 @@
         _info('Overall sumuje wszystkie projekty wybranej grupy. Grupy powstają w widoku Grupy, a ikona obok listy ustawia tagi grupy.', 'grupa projektów') +
       '</div>' +
       (selectedGroup ? '<div id="b24t-overall-data" class="b-stack"></div>'
-        : _annEmpty('grid', 'Wybierz grupę projektów', 'Overall pokaże liczby wzmianek w jej projektach.'));
+        : _annEmpty('grid', 'Wybierz grupę projektów', 'Overall pokaże liczby wzmianek w jej projektach.')));
     var selEl = el.querySelector('#b24t-overall-group-sel');
     selEl.addEventListener('change', function() {
       var gid = selEl.value;
@@ -26144,8 +26157,8 @@
     var group = _ovSelectedGroup();
     var key = group ? group.id + '|' + _overallGetEffectiveDates(group).monthKey : '';
     var hit = _ovMonths[key];
-    s.innerHTML = on || _ovLoading[key] ? '<span class="b-spin"></span>Liczę…'
-      : hit ? 'Policzono ' + new Date(hit.ts).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }) : '';
+    s.innerHTML = _html(on || _ovLoading[key] ? '<span class="b-spin"></span>Liczę…'
+      : hit ? 'Policzono ' + new Date(hit.ts).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }) : '');
   }
 
   function _ovRender(group, results, meta) {
@@ -26193,7 +26206,7 @@
     }).join('');
     var th = function(label, tip) { return '<th class="b-num b-fit" data-tip="' + tip + '">' + label + '</th>'; };
     el.innerHTML =
-      (dateFrom && dateTo ? '<div class="b-row b-row--wrap">' + _monthNavBarHtml('b24t-mc', dataMonth, label, dateFrom, dateTo, !!getOverallActiveMonth(group.id)) +
+      _html((dateFrom && dateTo ? '<div class="b-row b-row--wrap">' + _monthNavBarHtml('b24t-mc', dataMonth, label, dateFrom, dateTo, !!getOverallActiveMonth(group.id)) +
         '<span class="b-sp"></span><span id="b24t-overall-state" class="b-hint b-row" style="gap:0.4em"></span></div>' : '') +
       (!hasRelevant ? '<div class="b-banner b-banner--warn" style="align-items:center">' + _icon('alert') +
         '<div class="b-sp">Bez tagu Relevantne Overall nie liczy postępu ani pozostałych wzmianek.</div>' +
@@ -26216,7 +26229,7 @@
           th('REQ', 'Do weryfikacji') + th('DEL', 'Do usunięcia') + '</tr></thead>' +
         '<tbody>' + rows + '</tbody>' +
       '</table></section>' +
-      '<div class="b-hint">' + _escHtml(group.name) + ' · ' + results.length + ' ' + _relPl(results.length, 'projekt', 'projekty', 'projektów') + '</div>';
+      '<div class="b-hint">' + _escHtml(group.name) + ' · ' + results.length + ' ' + _relPl(results.length, 'projekt', 'projekty', 'projektów') + '</div>');
     _ovBusy(false);
     var settingsBtn = el.querySelector('[data-ov="settings"]');
     if (settingsBtn) settingsBtn.addEventListener('click', function() { showOverallStatsSettings(group, settingsBtn); });
@@ -26408,13 +26421,13 @@
     var el = _$('b24t-ann-tab-aitag-content');
     if (!el) return;
     if (!_aiAccConfigured()) {
-      el.innerHTML = _annEmpty('ai', 'Tagowanie AI wyłączone', 'Trafność liczy się dla tagowania AI z kluczem API i aktywnym promptem: karta AI Tag w panelu.');
+      el.innerHTML = _html(_annEmpty('ai', 'Tagowanie AI wyłączone', 'Trafność liczy się dla tagowania AI z kluczem API i aktywnym promptem: karta AI Tag w panelu.'));
       return;
     }
     var groups = getGroups();
     if (!groups.length) {
-      el.innerHTML = _annEmpty('folder', 'Brak grup projektów', 'Trafność liczy się dla grupy projektów; grupy tworzy się w zakładce Grupy.',
-        '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-aiacc-to-groups">Przejdź do Grup</button>');
+      el.innerHTML = _html(_annEmpty('folder', 'Brak grup projektów', 'Trafność liczy się dla grupy projektów; grupy tworzy się w zakładce Grupy.',
+        '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-aiacc-to-groups">Przejdź do Grup</button>'));
       el.querySelector('#b24t-aiacc-to-groups').addEventListener('click', function() { _annShowTab('groups'); });
       return;
     }
@@ -26424,7 +26437,7 @@
     var curName = state.projectName || (state.projectId ? ('ID:' + state.projectId) : null);
     var hasLast = !!(selGroup && _aiAccLast && _aiAccLast.groupId === selGroup.id && _aiAccLast.scopeCurrent === scopeCurrent);
     el.innerHTML =
-      '<div class="b-row">' +
+      _html('<div class="b-row">' +
         '<select class="b-select b-select--sm" id="b24t-aiacc-group-sel" aria-label="Grupa projektów">' +
           '<option value="">Wybierz grupę</option>' +
           groups.map(function(g) {
@@ -26444,7 +26457,7 @@
             _info('Porównuje werdykty AI z oceną człowieka w projektach grupy: precyzja, recall i F1. W trakcie liczenia przycisk je zatrzymuje, a wynik obejmuje policzone projekty. „Tylko bieżący projekt” liczy projekt otwarty w Brand24.', 'trafność AI') +
           '</div>' +
           '<div id="b24t-aiacc-data" class="b-stack"></div>'
-        : _annEmpty('grid', 'Wybierz grupę projektów', 'Trafność porówna werdykty AI z oceną człowieka w jej projektach.'));
+        : _annEmpty('grid', 'Wybierz grupę projektów', 'Trafność porówna werdykty AI z oceną człowieka w jej projektach.')));
     _aiAccRunState();
 
     var selEl = el.querySelector('#b24t-aiacc-group-sel');
@@ -26476,7 +26489,7 @@
     var dataEl = el.querySelector('#b24t-aiacc-data');
     if (!dataEl || _aiAccRun) return;
     if (hasLast) renderAiAccData(dataEl, _aiAccLast.results, selGroup, _aiAccLast, scopeCurrent);
-    else dataEl.innerHTML = _annEmpty('target', '', 'Liczenie porówna tagi AI z tagiem relevancji grupy w okresie Overall.');
+    else dataEl.innerHTML = _html(_annEmpty('target', '', 'Liczenie porówna tagi AI z tagiem relevancji grupy w okresie Overall.'));
   }
 
   // Przycisk liczenia: „Policz trafność”, w trakcie „Zatrzymaj” (neutralny, czerwona ikona) jak w usuwaniu.
@@ -26487,7 +26500,7 @@
     var on = !!_aiAccRun;
     b.classList.toggle('b-btn--primary', !on);
     b.classList.toggle('b-btn--neutral', on);
-    b.innerHTML = on ? _icon('stop', 'b-ico-stop') + '<span>' + (_aiAccRun.stop ? 'Zatrzymuję…' : 'Zatrzymaj') + '</span>' : _icon('ai') + '<span>Policz trafność</span>';
+    b.innerHTML = _html(on ? _icon('stop', 'b-ico-stop') + '<span>' + (_aiAccRun.stop ? 'Zatrzymuję…' : 'Zatrzymaj') + '</span>' : _icon('ai') + '<span>Policz trafność</span>');
     var c = _$('b24t-aiacc-copy');
     if (c && on) c.disabled = true;
   }
@@ -26502,7 +26515,7 @@
     var pidList;
     if (cfg.aiScopeCurrent) {
       if (!state.projectId) {
-        dataEl.innerHTML = '<div class="b-banner b-banner--warn">' + _icon('alert') + '<div>Brak otwartego projektu. Otwórz wzmianki projektu w Brand24 albo odznacz „Tylko bieżący projekt”.</div></div>';
+        dataEl.innerHTML = _html('<div class="b-banner b-banner--warn">' + _icon('alert') + '<div>Brak otwartego projektu. Otwórz wzmianki projektu w Brand24 albo odznacz „Tylko bieżący projekt”.</div></div>');
         return;
       }
       pidList = [parseInt(state.projectId)];
@@ -26632,7 +26645,7 @@
         '<tbody>' + rows + '</tbody></table></section>';
     }
     html += '<div class="b-hint">' + _escHtml(group.name) + (scopeCurrent ? ' · bieżący projekt' : ' · ' + results.length + ' ' + _relPl(results.length, 'projekt', 'projekty', 'projektów')) + '</div>';
-    el.innerHTML = html;
+    el.innerHTML = _html(html);
 
     el.querySelectorAll('[data-aiacc="settings"]').forEach(function(b) { b.addEventListener('click', function() { showAiAccSettings(group, b); }); });
     // Nawigacja miesięczna
@@ -26702,7 +26715,7 @@
     div.id = 'b24t-delete-tab';
     div.className = 'b-tabpanel';
     div.hidden = true;
-    div.innerHTML = `
+    div.innerHTML = _html(`
       <section class="b-card">
         <div class="b-card__head"><span class="b-card__title">Usuń wzmianki z tagiem</span></div>
         <div class="b-banner b-banner--danger b-small">${_icon('alert')}<div>Wzmianki znikają z projektu w Brand24 na stałe: Brand24 nie ma kosza.</div></div>
@@ -26752,7 +26765,7 @@
         </div>
         <div class="b-hint">Domyślnie ${DEL_BATCH_DEFAULT}, najwyżej 1000.</div>
       </section>
-    `;
+    `);
     return div;
   }
 
@@ -26762,7 +26775,7 @@
     div.id = 'b24t-auto-delete-section';
     div.className = 'b-stack b-stack--sm';
     div.hidden = true;
-    div.innerHTML = `
+    div.innerHTML = _html(`
       <hr class="b-sep">
       <span class="b-label b-danger">Usuwanie po zakończeniu</span>
       <label class="b-check" id="b24t-auto-delete-row"><input type="checkbox" id="b24t-auto-delete-cb"><span>Po zakończeniu usuń wzmianki z tagiem</span></label>
@@ -26771,7 +26784,7 @@
       </select>
       <div class="b-hint" id="b24t-auto-delete-scope"></div>
       <label class="b-check b-small" id="b24t-auto-delete-save-row" hidden><input type="checkbox" id="b24t-auto-delete-save-cb"><span>Zawsze włączaj w tym projekcie dla tego tagu</span></label>
-    `;
+    `);
 
     // Wire event handlers
     const cb = div.querySelector('#b24t-auto-delete-cb');
@@ -26874,7 +26887,7 @@
     const runState = (btn, running, label) => {
       btn.classList.toggle('b-btn--danger', !running);
       btn.classList.toggle('b-btn--neutral', running);
-      btn.innerHTML = running ? _icon('stop', 'b-ico-stop') + '<span>Zatrzymaj</span>' : _icon('del') + '<span>' + label + '</span>';
+      btn.innerHTML = _html(running ? _icon('stop', 'b-ico-stop') + '<span>Zatrzymaj</span>' : _icon('del') + '<span>' + label + '</span>');
     };
     const deleteIds = async (ids, setStatus, setProgress, stopped) => {
       let deleted = 0;
@@ -27041,10 +27054,10 @@
       if (!el) return;
       if (!state.lastMentionsVars) { el.textContent = 'Filtry widoku pojawią się po pierwszym wczytaniu wzmianek w Brand24.'; return; }
       const view = getCurrentViewFilters();
-      el.innerHTML = _viewInfoHtml([
+      el.innerHTML = _html(_viewInfoHtml([
         ['Daty', view.dateFrom + ' – ' + view.dateTo],
         ['Filtr tagów', _viewTagNames(view.filters?.gr || [])],
-      ]);
+      ]));
     };
 
     delTab.addEventListener('b24t-tab-show', () => {
@@ -27194,7 +27207,7 @@
     div.id = 'b24t-quicktag-tab';
     div.className = 'b-tabpanel';
     div.hidden = true;
-    div.innerHTML = `
+    div.innerHTML = _html(`
       <section class="b-card">
         <div class="b-card__head"><span class="b-card__title">Quick Tag</span></div>
         <p class="b-small b-text2">Taguje wzmianki z aktualnego widoku Brand24: z jego filtrami, zakresem dat i stroną.</p>
@@ -27215,7 +27228,7 @@
         <div class="b-progress"><i id="b24t-qt-progress"></i></div>
         <div id="b24t-qt-status" class="b-small b-text2" role="status">Gotowy</div>
       </section>
-    `;
+    `);
     return div;
   }
 
@@ -27246,12 +27259,12 @@
       if (!el) return;
       const url = new URL(window.location.href);
       const gr = url.searchParams.get('gr') || '';
-      el.innerHTML = _viewInfoHtml([
+      el.innerHTML = _html(_viewInfoHtml([
         ['Daty', (url.searchParams.get('d1') || '?') + ' – ' + (url.searchParams.get('d2') || '?')],
         ['Filtr tagów', _viewTagNames(gr ? gr.split(',') : [])],
         ['Szukaj', url.searchParams.get('sq') || ''],
         ['Strona', url.searchParams.get('p') || '1'],
-      ]);
+      ]));
     };
 
     const pickTag = () => {
@@ -27332,7 +27345,7 @@
     div.id = 'b24t-aitag-tab';
     div.className = 'b-tabpanel';
     div.hidden = true;
-    div.innerHTML = `
+    div.innerHTML = _html(`
       <section class="b-card">
         <div class="b-card__head"><span class="b-card__title">AI Tag</span></div>
         <p class="b-small b-text2">Pobiera wzmianki z panelu, ocenia je promptem przez model AI i nadaje tagi, bez pliku CSV.</p>
@@ -27394,7 +27407,7 @@
           <button type="button" class="b-ibtn b-ibtn--sm" data-logcard-close="aitag" aria-label="Zamknij podsumowanie" data-tip="Zamknij">${_icon('x')}</button></div>
         <ol id="b24t-ait-log" class="b-log b-scroll" role="log"></ol>
       </section>
-    `;
+    `);
     return div;
   }
 
@@ -27402,7 +27415,7 @@
   function _aitRenderLogHistory() {
     const log = _$('b24t-ait-log');
     if (!log) return;
-    log.innerHTML = '';
+    log.textContent = '';
     log.__logSeq = 0;
     _appendLogRows(log, state.logs.slice(-200));
   }
@@ -27414,16 +27427,16 @@
     if (!container || !sel) return;
     const s = _aiGetSettings();
     const prompt = (s.prompts || []).find(p => p.id === sel.value);
-    if (!prompt) { container.innerHTML = ''; return; }
+    if (!prompt) { container.textContent = ''; return; }
     const cats = Array.isArray(prompt.knownAssessments) ? prompt.knownAssessments : [];
     if (!cats.length) {
-      container.innerHTML = '<div class="b-banner b-banner--warn b-small">' + _icon('alert') +
-        '<div>Ten prompt nie ma kategorii oceny. Kategorie dodaje się w Ustawieniach → Prompty.</div></div>';
+      container.innerHTML = _html('<div class="b-banner b-banner--warn b-small">' + _icon('alert') +
+        '<div>Ten prompt nie ma kategorii oceny. Kategorie dodaje się w Ustawieniach → Prompty.</div></div>');
       return;
     }
     const cfg = state.projectId ? _aiTagGetProjectCfg(state.projectId) : { tagMap: {}, deleteMap: {} };
     const tagOpts = Object.entries(state.tags || {}).map(e => ({ name: e[0], id: e[1] }));
-    container.innerHTML = '<span class="b-label">Ocena modelu → tag</span>' +
+    container.innerHTML = _html('<span class="b-label">Ocena modelu → tag</span>' +
       cats.map(label => {
         const cur = (cfg.deleteMap && cfg.deleteMap[label]) ? '__delete__'
                   : (cfg.tagMap && cfg.tagMap[label] != null ? String(cfg.tagMap[label]) : '');
@@ -27434,7 +27447,7 @@
           '<span class="b-map__label"><span class="b-map__name" title="' + _aitEsc(label) + '">' + _aitEsc(label) + '</span></span>' +
           '<select class="b-select b-select--sm b24t-ait-mapsel" data-label="' + _aitEsc(label) + '" aria-label="Tag dla oceny ' + _aitEsc(label) + '">' + opts + '</select>' +
         '</div>';
-      }).join('');
+      }).join(''));
   }
 
   // Zbiera i zapisuje konfigurację z UI do LS (per projekt)
@@ -27466,8 +27479,8 @@
       if (!sel) return;
       const cur = sel.value;
       const s = _aiGetSettings();
-      sel.innerHTML = '<option value="">Wybierz prompt</option>' +
-        (s.prompts || []).map(p => '<option value="' + _aitEsc(p.id) + '">' + _aitEsc(p.name) + '</option>').join('');
+      sel.innerHTML = _html('<option value="">Wybierz prompt</option>' +
+        (s.prompts || []).map(p => '<option value="' + _aitEsc(p.id) + '">' + _aitEsc(p.name) + '</option>').join(''));
       if (cur) sel.value = cur;
     };
 
@@ -27608,7 +27621,7 @@
 
     state._aitRunning = true; state._aitStop = false;
     _logRunStart('aitag');
-    if (runBtn) { runBtn.innerHTML = _icon('stop', 'b-ico-stop') + 'Zatrzymaj'; runBtn.classList.replace('b-btn--primary', 'b-btn--neutral'); }
+    if (runBtn) { runBtn.innerHTML = _html(_icon('stop', 'b-ico-stop') + 'Zatrzymaj'); runBtn.classList.replace('b-btn--primary', 'b-btn--neutral'); }
     setStatus('Pobieram wzmianki…', 'busy'); setBar(0);
     addLog('🤖 AI Tagowanie — start (projekt ' + _pnResolve(projectId) + ', ' + dateFrom + '→' + dateTo + ', źródło: ' + source + ')', 'info');
 
@@ -27747,7 +27760,7 @@
     } finally {
       state._aitRunning = false;
       _logRunEnd('aitag', statusEl ? statusEl.textContent : '');
-      if (runBtn) { runBtn.innerHTML = _icon('ai') + 'Taguj przez AI'; runBtn.classList.replace('b-btn--neutral', 'b-btn--primary'); }
+      if (runBtn) { runBtn.innerHTML = _html(_icon('ai') + 'Taguj przez AI'); runBtn.classList.replace('b-btn--neutral', 'b-btn--primary'); }
     }
   }
 
@@ -28654,14 +28667,14 @@
     if (q.value !== sentState.query) q.value = sentState.query;
     var names = Object.keys(sources).sort(function(x, y) { return sources[y] - sources[x] || x.localeCompare(y); });
     if (names.indexOf(sentState.source) === -1) sentState.source = '';
-    box.querySelector('#b24t-sent-src').innerHTML = '<option value="">Wszystkie źródła</option>' + names.map(function(s) {
+    box.querySelector('#b24t-sent-src').innerHTML = _html('<option value="">Wszystkie źródła</option>' + names.map(function(s) {
       return '<option value="' + _escHtml(s) + '"' + (s === sentState.source ? ' selected' : '') + '>' + _escHtml(s) + ' · ' + sources[s] + '</option>';
-    }).join('');
+    }).join(''));
   }
 
   function _sentRenderKeys() {
     var el = _sentPart('b24t-sent-keys');
-    if (el) el.innerHTML = _sentKeysHtml();
+    if (el) el.innerHTML = _html(_sentKeysHtml());
   }
 
   function _sentStateHtml(icon, title, text, action) {
@@ -28692,29 +28705,29 @@
     var list = _sentPart('b24t-sent-list');
     if (!list) return;
     var run = sentState.run;
-    if (!run) { list.innerHTML = _sentStateHtml(_icon('sent'), 'Brak przeglądu', 'Ocenę uruchamia karta Sentyment w panelu.'); return; }
+    if (!run) { list.innerHTML = _html(_sentStateHtml(_icon('sent'), 'Brak przeglądu', 'Ocenę uruchamia karta Sentyment w panelu.')); return; }
     if (run.phase === 'fetch') {
-      list.innerHTML = _sentStateHtml('<span class="b-spin" aria-hidden="true"></span>', 'Pobieram wzmianki z Brand24',
-        _escHtml(run.projectName + ', ' + run.dateFrom + ' – ' + run.dateTo));
+      list.innerHTML = _html(_sentStateHtml('<span class="b-spin" aria-hidden="true"></span>', 'Pobieram wzmianki z Brand24',
+        _escHtml(run.projectName + ', ' + run.dateFrom + ' – ' + run.dateTo)));
       return;
     }
     if (run.phase === 'error') {
-      list.innerHTML = _sentStateHtml(_icon('alertCircle', 'b-danger'), 'Ocena nie powiodła się', _escHtml(run.error),
-        run.params ? '<button type="button" class="b-btn b-btn--primary" data-sent-again>' + _icon('refresh') + 'Spróbuj ponownie</button>' : '');
+      list.innerHTML = _html(_sentStateHtml(_icon('alertCircle', 'b-danger'), 'Ocena nie powiodła się', _escHtml(run.error),
+        run.params ? '<button type="button" class="b-btn b-btn--primary" data-sent-again>' + _icon('refresh') + 'Spróbuj ponownie</button>' : ''));
       return;
     }
     if (run.phase === 'confirm') {
-      list.innerHTML = _sentStateHtml(_icon('sent'), 'Czeka na potwierdzenie', _escHtml(run.projectName + ': ' +
-        run.items.length.toLocaleString('pl-PL') + ' ' + _relPl(run.items.length, 'wzmianka', 'wzmianki', 'wzmianek') + ' z Brand24'));
+      list.innerHTML = _html(_sentStateHtml(_icon('sent'), 'Czeka na potwierdzenie', _escHtml(run.projectName + ': ' +
+        run.items.length.toLocaleString('pl-PL') + ' ' + _relPl(run.items.length, 'wzmianka', 'wzmianki', 'wzmianek') + ' z Brand24')));
       return;
     }
     if (run.phase === 'eval') {
-      list.innerHTML = '<section class="b-card b-sent-run" id="b24t-sent-run-card" aria-live="polite"></section>';
+      list.innerHTML = _html('<section class="b-card b-sent-run" id="b24t-sent-run-card" aria-live="polite"></section>');
       _sentRenderSummary();
       return;
     }
     if (!run.items.length) {
-      list.innerHTML = _sentStateHtml(_icon('search'), 'Brak wzmianek w wybranym zakresie', 'Inny zakres dat albo inne sentymenty wybiera się w karcie Sentyment.');
+      list.innerHTML = _html(_sentStateHtml(_icon('search'), 'Brak wzmianek w wybranym zakresie', 'Inny zakres dat albo inne sentymenty wybiera się w karcie Sentyment.'));
       return;
     }
     var groups = { decide: [], change: [], keep: [] }, shown = 0;
@@ -28730,7 +28743,7 @@
     });
     if (!shown) html += _sentStateHtml(_icon('filter'), 'Żaden kafelek nie pasuje do filtra', '',
       '<button type="button" class="b-btn b-btn--neutral" data-sent-reset>Pokaż wszystkie</button>');
-    list.innerHTML = html;
+    list.innerHTML = _html(html);
     _sentRenderSummary();
   }
 
@@ -28753,7 +28766,7 @@
       if (_sentIsDone(it)) c[1]++;
     });
     var sum = _sentPart('b24t-sent-sum');
-    if (sum) sum.innerHTML = _sentSumHtml(run, { saved: saved, tested: tested, busy: busy, errors: errors });
+    if (sum) sum.innerHTML = _html(_sentSumHtml(run, { saved: saved, tested: tested, busy: busy, errors: errors }));
     var list = _sentPart('b24t-sent-list');
     if (!list) return;
     list.querySelectorAll('[data-sent-count]').forEach(function(el) {
@@ -28777,36 +28790,36 @@
     run.items.forEach(function(it) { if (_sentBusy(it) && on.indexOf(_sentGroupOf(it)) !== -1 && _sentMatch(it)) busyHere++; });
     end.hidden = !total || left > busyHere;
     if (end.hidden) return;
-    end.innerHTML = _icon('okCircle') + '<div class="b-sent-end__title">Wszystkie załatwione</div>' +
+    end.innerHTML = _html(_icon('okCircle') + '<div class="b-sent-end__title">Wszystkie załatwione</div>' +
       '<div class="b-small b-text2">Decyzje: ' + decided + ' · zapisane w Brand24: ' + saved + (tested ? ' · zapisy testowe: ' + tested : '') +
         (busy ? ' · w kolejce: ' + busy : '') + '</div>' +
       (outside ? '<div class="b-small b-warn">Poza filtrem bez decyzji: ' + outside + '</div>' : '') +
       '<div class="b-row b-row--wrap">' + (outside ? '<button type="button" class="b-btn b-btn--neutral b-btn--sm" data-sent-reset>Pokaż wszystkie</button>' : '') +
-        '<button type="button" class="b-btn b-btn--outline b-btn--sm" data-sent-export>' + _icon('download') + 'Pobierz dziennik decyzji</button></div>';
+        '<button type="button" class="b-btn b-btn--outline b-btn--sm" data-sent-export>' + _icon('download') + 'Pobierz dziennik decyzji</button></div>');
   }
 
   function _sentRenderRunCard(run) {
     var card = _sentPart('b24t-sent-run-card');
     if (!card) return;
     if (!card.firstChild) {
-      card.innerHTML = '<div class="b-card__head"><span class="b-card__title">Ocena w toku</span>' +
+      card.innerHTML = _html('<div class="b-card__head"><span class="b-card__title">Ocena w toku</span>' +
         '<button type="button" class="b-btn b-btn--neutral b-btn--sm" data-sent-stop></button></div>' +
-        '<p class="b-small b-text2" data-sent-note></p><div class="b-sent-mrows" data-sent-rows></div>';
+        '<p class="b-small b-text2" data-sent-note></p><div class="b-sent-mrows" data-sent-rows></div>');
     }
     var stop = card.querySelector('[data-sent-stop]'), n = run.items.length;
     stop.disabled = sentState.stop;
-    stop.innerHTML = sentState.stop ? '<span class="b-spin" aria-hidden="true"></span>Zatrzymuję' : _icon('stop', 'b-ico-stop') + 'Zatrzymaj';
+    stop.innerHTML = _html(sentState.stop ? '<span class="b-spin" aria-hidden="true"></span>Zatrzymuję' : _icon('stop', 'b-ico-stop') + 'Zatrzymaj');
     card.querySelector('[data-sent-note]').textContent = sentState.stop
       ? 'Przerywam zapytania w toku. Wzmianki bez werdyktu trafią do grupy „Do decyzji”.'
       : n.toLocaleString('pl-PL') + ' ' + _relPl(n, 'wzmianka', 'wzmianki', 'wzmianek') + ', dwa modele. Kafelki pojawią się po ocenie; zamknięcie okna jej nie przerywa.';
-    card.querySelector('[data-sent-rows]').innerHTML = ['a', 'b'].map(function(slot) {
+    card.querySelector('[data-sent-rows]').innerHTML = _html(['a', 'b'].map(function(slot) {
       var st = run.models[slot], pct = st.total ? Math.round(st.done / st.total * 100) : 100, cost = _sentCost(st);
       var info = st.fatal ? '<span class="b-danger">' + _escHtml(st.fatal) + '</span>'
         : st.done + ' z ' + st.total + (st.cached ? ' · z pamięci ' + st.cached : '') + (cost != null ? ' · ' + _sentFmtUsd(cost) : '');
       return '<div class="b-sent-mrow"><span class="b-mono b-ell">' + _escHtml(st.model) + '</span>' +
         '<span class="b-progress b-progress--' + (st.fatal ? 'danger' : 'ai') + '"><i style="width:' + pct + '%"></i></span>' +
         '<span class="b-small b-text2">' + info + '</span></div>';
-    }).join('');
+    }).join(''));
   }
 
   function _sentChip(s, doubt) {
@@ -28879,7 +28892,7 @@
     var el = it && _sentTile(id);
     if (el) {
       var tmp = document.createElement('div'), had = el.contains(_activeEl());
-      tmp.innerHTML = _sentTileHtml(it);
+      tmp.innerHTML = _html(_sentTileHtml(it));
       el.replaceWith(tmp.firstChild);
       // Podmiana zabiera przycisk z fokusem (decyzja myszą); fokus poza oknem wyłącza J, K, N, U, P i Esc.
       if (had) { var list = _sentPart('b24t-sent-list'); if (list) list.focus({ preventScroll: true }); }
@@ -28997,14 +29010,14 @@
       V('neutral', 'tone', '', 'Relacja z podróży bez wyraźnej oceny marki.'),
       V('neutral', 'dominant', '', 'Opis wyjazdu; uwaga o spalaniu bez negatywnego tonu.'));
     var tpl = document.createElement('template');
-    tpl.innerHTML = '<div class="b-ui b-sent-fig">' +
+    tpl.innerHTML = _html('<div class="b-ui b-sent-fig">' +
       '<header class="b-head"><span class="b-head__icon">' + _icon('sent') + '</span><div class="b-head__text">' +
         '<div class="b-head__title">Przegląd sentymentu</div>' +
         '<div class="b-head__sub">Avenor PL · 2026-09-01 – 2026-09-30 · wszystkie sentymenty · 1240 wzmianek · marka w prompcie: Avenor</div></div>' +
         '<span class="b-sp"></span>' + _sentHeadExtraHtml() + '<button type="button" class="b-ibtn" aria-label="Zamknij">' + _icon('x') + '</button></header>' +
       '<div class="b-bar">' + _sentBarHtml() + '</div>' +
       '<div class="b-sent-main"><div class="b-sent-list">' + _sentGroupHtml(SENT_GROUPS[0], [decide], run) + _sentGroupHtml(SENT_GROUPS[1], [change], run) + '</div></div>' +
-      '<footer class="b-foot"><div class="b-sent-keys">' + _sentKeysHtml() + '</div></footer></div>';
+      '<footer class="b-foot"><div class="b-sent-keys">' + _sentKeysHtml() + '</div></footer></div>');
     var root = tpl.content, q = function(sel) { return root.querySelector(sel); };
     var mark = function(el, n, pt) { el.setAttribute('data-a', n); if (pt) el.setAttribute('data-pt', pt); };
     q('#b24t-sent-hidedone').removeAttribute('checked');
@@ -29012,8 +29025,8 @@
       b.setAttribute('aria-pressed', String(i < 2));
       b.querySelector('b').textContent = [96, 143, 1001][i];
     });
-    q('#b24t-sent-src').innerHTML = '<option>Wszystkie źródła</option>';
-    q('#b24t-sent-sum').innerHTML = _sentSumHtml(run, { saved: 3, tested: 0, busy: 0, errors: 0 });
+    q('#b24t-sent-src').innerHTML = _html('<option>Wszystkie źródła</option>');
+    q('#b24t-sent-sum').innerHTML = _html(_sentSumHtml(run, { saved: 3, tested: 0, busy: 0, errors: 0 }));
     q('[data-sent-count="decide"]').textContent = 'załatwione 3 z 96';
     q('[data-sent-count="change"]').textContent = 'załatwione 0 z 143';
     var bulk = q('[data-sent-bulk]'), tile = q('.b-sent-tile');
@@ -29047,7 +29060,7 @@
     div.className = 'b-tabpanel';
     div.hidden = true;
     div.innerHTML =
-      '<section class="b-card">' +
+      _html('<section class="b-card">' +
         '<div class="b-card__head"><span class="b-card__title">Przegląd sentymentu</span></div>' +
         '<p class="b-small b-text2">Dwa modele oceniają wydźwięk wzmianek promptem z biblioteki. Zmiany zatwierdza się w oknie z kafelkami; każda zapisuje się od razu w Brand24.</p>' +
         '<div class="b-opt"><span class="b-label">Wzmianki</span><div class="b-seg">' +
@@ -29072,7 +29085,7 @@
         '<label class="b-field"><span class="b-label">Prompt</span><select class="b-select" id="b24t-sent-prompt"></select></label>' +
         '<div id="b24t-sent-models" class="b-small b-text2"></div>' +
       '</section>' +
-      '<div id="b24t-sent-tabstatus" class="b-small b-text2" role="status"></div>';
+      '<div id="b24t-sent-tabstatus" class="b-small b-text2" role="status"></div>');
     return div;
   }
 
@@ -29102,16 +29115,16 @@
 
     function fillPrompts() {
       var s = _aiGetSettings(), sel = q('#b24t-sent-prompt');
-      sel.innerHTML = '<option value="">Wybierz prompt</option>' + (s.prompts || []).map(function(p) {
+      sel.innerHTML = _html('<option value="">Wybierz prompt</option>' + (s.prompts || []).map(function(p) {
         return '<option value="' + _escHtml(p.id) + '"' + (p.id === s.sentiment.promptId ? ' selected' : '') + '>' + _escHtml(p.name) + '</option>';
-      }).join('');
+      }).join(''));
     }
     function renderModels() {
       var s = _aiGetSettings(), el = q('#b24t-sent-models');
-      el.innerHTML = 'Modele: <b>' + _escHtml(s.sentiment.modelA) + '</b> i <b>' + _escHtml(s.sentiment.modelB) + '</b> (Ustawienia → AI)' +
+      el.innerHTML = _html('Modele: <b>' + _escHtml(s.sentiment.modelA) + '</b> i <b>' + _escHtml(s.sentiment.modelB) + '</b> (Ustawienia → AI)' +
         [s.sentiment.modelA, s.sentiment.modelB].filter(function(m) { return !_aiKeyFor(m, s); }).map(function(m) {
           return '<div class="b-warn">Brak klucza ' + AI_PROVIDER_LABEL[_aiProvider(m)] + ' dla ' + _escHtml(m) + '</div>';
-        }).join('');
+        }).join(''));
     }
     function syncRange() {
       var src = (q('input[name="b24t-sent-source"]:checked') || {}).value;
@@ -29394,11 +29407,11 @@
     tr.dataset.nmId = entry.id;
     tr.setAttribute('aria-expanded', open ? 'true' : 'false');
     tr.innerHTML =
-      '<td class="b-mono b-muted">' + _nmFmtTime(entry.ts) + '</td>' +
+      _html('<td class="b-mono b-muted">' + _nmFmtTime(entry.ts) + '</td>' +
       '<td class="b-mono b-text2">' + _escHtml(entry.method) + '</td>' +
       '<td class="b-nm-op">' + _escHtml(_nmFmtUrl(entry.url, entry.opName)) + '</td>' +
       '<td><span class="b-chip b-chip--sm b-chip--' + _nmStatusKind(entry.status, entry.isError) + '">' + (entry.status || 'brak') + '</span></td>' +
-      _nmDurCell(entry);
+      _nmDurCell(entry));
     var detTr = document.createElement('tr');
     detTr.className = 'b-nm-det';
     detTr.hidden = !open;
@@ -29407,10 +29420,10 @@
         '<button type="button" class="b-btn b-btn--quiet b-btn--sm" data-nm-copy="' + kind + '"' + (text ? '' : ' disabled') + '>' + _icon('copy') + 'Kopiuj ' + label.toLowerCase() + '</button></div>' +
         '<pre class="b-pre"' + (kind === 'res' ? ' data-nm-res' : '') + '>' + _escHtml(text || NM_NO_BODY) + '</pre>';
     };
-    detTr.innerHTML = '<td colspan="5"><div class="b-stack b-stack--sm">' +
+    detTr.innerHTML = _html('<td colspan="5"><div class="b-stack b-stack--sm">' +
       '<div class="b-small b-text2" style="overflow-wrap:anywhere"><span class="b-muted">Adres </span><span class="b-mono">' + _escHtml(entry.url) + '</span></div>' +
       part('Zapytanie', 'req', entry.reqSnippet) + part('Odpowiedź', 'res', entry.resSnippet) +
-    '</div></td>';
+    '</div></td>');
     tr._nmDetail = detTr;
     return { tr: tr, detTr: detTr };
   }
@@ -29430,7 +29443,7 @@
   function _nmRebuildTable() {
     var tbody = _$('b24t-nm-tbody');
     if (!tbody) return;
-    tbody.innerHTML = '';
+    tbody.textContent = '';
     var shown = 0;
     nmState.entries.forEach(function(entry) {
       if (shown >= NM_SHOWN || !_nmMatches(entry)) return;
@@ -29441,9 +29454,9 @@
     });
     if (!shown) {
       var any = nmState.entries.length > 0;
-      tbody.innerHTML = '<tr data-nm-empty><td colspan="5"><div class="b-empty">' + _icon('activity') +
+      tbody.innerHTML = _html('<tr data-nm-empty><td colspan="5"><div class="b-empty">' + _icon('activity') +
         '<div class="b-empty__title">' + (any ? 'Żadne zapytanie nie pasuje do filtra' : 'Brak zapytań') + '</div>' +
-        '<div>' + (any ? 'Zmień typ albo tekst filtra.' : 'Zapytania strony do Brand24 pojawiają się tu na bieżąco.') + '</div></div></td></tr>';
+        '<div>' + (any ? 'Zmień typ albo tekst filtra.' : 'Zapytania strony do Brand24 pojawiają się tu na bieżąco.') + '</div></div></td></tr>');
     }
     _nmUpdateCount();
   }
@@ -29465,7 +29478,7 @@
     var b = _$('b24t-nm-pause'), chip = _$('b24t-nm-paused-badge');
     if (b) {
       b.setAttribute('aria-pressed', on ? 'true' : 'false');
-      b.innerHTML = _icon(on ? 'play' : 'pause') + '<span>' + (on ? 'Wznów zapis' : 'Wstrzymaj zapis') + '</span>';
+      b.innerHTML = _html(_icon(on ? 'play' : 'pause') + '<span>' + (on ? 'Wznów zapis' : 'Wstrzymaj zapis') + '</span>');
     }
     if (chip) chip.hidden = !on;
   }
@@ -30009,7 +30022,7 @@
     if (state.tags && Object.keys(state.tags).length > 0) return; // mamy z cache
     var tagList = _$('b24t-news-tag-list');
     var _tagBase = _b24PanelBase(pid);
-    var _msg = function(kind, html) { if (tagList) tagList.innerHTML = '<p class="b-hint b-nstate"' + (kind ? ' data-state="' + kind + '"' : '') + '>' + html + '</p>'; };
+    var _msg = function(kind, html) { if (tagList) tagList.innerHTML = _html('<p class="b-hint b-nstate"' + (kind ? ' data-state="' + kind + '"' : '') + '>' + html + '</p>'); };
     if (!B24Bridge.token.isValid(_tagBase)) {
       _msg('', 'Tagi pojawią się po otwarciu <b>' + _escHtml(_baseLabel(_tagBase)) + '</b> w tej przeglądarce: wtyczka weźmie stamtąd token.');
       return;
@@ -30101,7 +30114,7 @@
   function _refillTagSettingSelect(sel, emptyOpt, fallbackId) {
     if (!sel) return;
     var cur = parseInt(sel.value) || fallbackId || null;
-    sel.innerHTML = emptyOpt + _tagOptionsWithId(cur);
+    sel.innerHTML = _html(emptyOpt + _tagOptionsWithId(cur));
   }
 
   // Domena adresu w postaci, której oczekuje filtr `do` w getMentions.
@@ -32172,12 +32185,17 @@
   }
 
   // Błąd inicjalizacji (powierzchnia nr 41, powiadomienie §1.8). Wyjątek trafia do dziennika diagnostycznego,
-  // więc „Zgłoś błąd” dołącza jego stos. Gdy nie działa nawet system wyglądu, zostaje prosty element na stronie
-  // w kolorach systemowych przeglądarki (Canvas, CanvasText): tokeny wtyczki są dostępne tylko w korzeniu cienia.
+  // więc „Zgłoś błąd” dołącza jego stos. Poza Brand24 na tym koniec: jedyną funkcją jest tam uchwyt „Dodaj wzmiankę”,
+  // a ramka na treści cudzej strony (Gmail, Dokumenty Google) przeszkadza bardziej niż brak uchwytu.
   function _initErrorShow(e) {
     var msg = String((e && e.message) || e);
     try {
       _diagPush({ k: 'err', src: 'inicjalizacja', msg: msg, stack: String((e && e.stack) || '').slice(0, 1200) });
+    } catch (err) {
+      console.error('[B24 Tagger BETA] Zapis błędu inicjalizacji w dzienniku nieudany:', err);
+    }
+    if (!_isBrand24Host) return;
+    try {
       Toast.show(msg, 'error', {
         title: 'B24 Tagger się nie uruchomił',
         body: 'Odświeżenie strony zwykle pomaga. Gdy błąd wraca, zgłoszenie przekaże autorowi wtyczki jego szczegóły.',
@@ -32190,13 +32208,59 @@
     } catch (err) {
       console.error('[B24 Tagger BETA] Powiadomienie o błędzie inicjalizacji nieudane:', err);
     }
+    _initErrorBox(msg);
+  }
+
+  // Ramka awaryjna, gdy nie działa nawet system wyglądu: element na stronie w kolorach systemowych przeglądarki
+  // (Canvas, CanvasText, ButtonFace), bo tokeny wtyczki są dostępne tylko w korzeniu cienia. Ramka powstaje właśnie
+  // wtedy, gdy interfejs wtyczki nie działa, więc składa się z createElement i textContent, bez _html, Win, Toast
+  // i okna zgłoszenia. „Wyślij zgłoszenie” wysyła tę samą treść co „Zgłoś błąd” (wyjątek ze stosem, środowisko,
+  // dziennik diagnostyczny), a wynik wysyłki pokazuje w tej samej ramce.
+  function _initErrorBox(msg) {
     var el = document.createElement('div');
     el.setAttribute('role', 'alert');
     el.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483647;max-width:24em;padding:12px 14px;border-radius:12px;' +
       'border:1px solid GrayText;background:Canvas;color:CanvasText;font:13px/1.45 system-ui,sans-serif;';
+    var text = document.createElement('p');
+    text.style.margin = '0';
     // Komunikat potrafi zawierać fragment odpowiedzi serwera, więc wchodzi jako tekst.
-    el.textContent = 'B24 Tagger się nie uruchomił: ' + msg + '. Odświeżenie strony zwykle pomaga; gdy błąd wraca, ' +
-      'trzeba przekazać Maksowi na Slacku treść błędu z konsoli przeglądarki (F12).';
+    text.textContent = 'B24 Tagger się nie uruchomił: ' + msg.replace(/\.\s*$/, '') + '. Odświeżenie strony zwykle pomaga. Gdy błąd wraca, ' +
+      'zgłoszenie przekaże autorowi wtyczki jego szczegóły.';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = 'Wyślij zgłoszenie';
+    btn.style.cssText = 'margin-top:10px;padding:5px 12px;border-radius:8px;border:1px solid ButtonBorder;background:ButtonFace;' +
+      'color:ButtonText;font:inherit;cursor:pointer;';
+    var status = document.createElement('p');
+    status.setAttribute('role', 'status');
+    status.style.margin = '8px 0 0';
+    status.hidden = true;
+    btn.addEventListener('click', function () {
+      var r;
+      try {
+        r = _reportBuild({ kind: 'bug', area: 'Panel', text: '' });
+      } catch (err) {
+        console.error('[B24 Tagger BETA] Złożenie zgłoszenia nieudane:', err);
+        status.hidden = false;
+        status.textContent = 'Nie udało się złożyć zgłoszenia: ' + ((err && err.message) || err) + '.';
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = 'Wysyłanie…';
+      status.hidden = true;
+      _reportSend(r, function (err, num) {
+        status.hidden = false;
+        if (err) {
+          btn.disabled = false;
+          btn.textContent = 'Wyślij zgłoszenie';
+          status.textContent = 'Nie udało się wysłać: ' + err + '.';
+          return;
+        }
+        btn.remove();
+        status.textContent = 'Wysłano zgłoszenie nr ' + num + '. Dzięki!';
+      });
+    });
+    el.append(text, btn, status);
     (document.body || document.documentElement).appendChild(el);
   }
 

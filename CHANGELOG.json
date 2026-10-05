@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.38.20",
+    "date": "2026-10-05",
+    "label": "new",
+    "changes": [
+      {
+        "type": "fix",
+        "area": "Dodawanie wzmianek",
+        "title": "Naprawiono błąd, przez który wtyczka nie startowała w Gmailu i Dokumentach Google",
+        "items": [
+          "Przycisk „Dodaj wzmiankę” i okno dodawania wzmianki działają na stronach Google z dodatkowym zabezpieczeniem treści: w Gmailu, Dokumentach, Kalendarzu i na stronie logowania.",
+          "Błąd startu wtyczki na stronie spoza Brand24 zapisuje się w zdarzeniach wtyczki, bez ramki w rogu strony."
+        ],
+        "text": "Naprawiono błąd, przez który wtyczka nie startowała w Gmailu i Dokumentach Google. Przycisk „Dodaj wzmiankę” i okno dodawania wzmianki działają na stronach Google z dodatkowym zabezpieczeniem treści: w Gmailu, Dokumentach, Kalendarzu i na stronie logowania. Błąd startu wtyczki na stronie spoza Brand24 zapisuje się w zdarzeniach wtyczki, bez ramki w rogu strony."
+      },
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "Przycisk „Wyślij zgłoszenie” w ramce błędu startu wtyczki",
+        "items": [
+          "Gdy wtyczka nie uruchomi się na stronie Brand24 i nie zdoła pokazać zwykłego powiadomienia, ramka w prawym dolnym rogu wysyła zgłoszenie jednym kliknięciem: z treścią błędu, wersją, przeglądarką i ostatnimi zdarzeniami wtyczki.",
+          "Numer wysłanego zgłoszenia albo przyczyna nieudanej wysyłki pokazuje się w tej samej ramce.",
+          "Klucze API i tokeny zostają w przeglądarce."
+        ],
+        "text": "Przycisk „Wyślij zgłoszenie” w ramce błędu startu wtyczki. Gdy wtyczka nie uruchomi się na stronie Brand24 i nie zdoła pokazać zwykłego powiadomienia, ramka w prawym dolnym rogu wysyła zgłoszenie jednym kliknięciem: z treścią błędu, wersją, przeglądarką i ostatnimi zdarzeniami wtyczki. Numer wysłanego zgłoszenia albo przyczyna nieudanej wysyłki pokazuje się w tej samej ramce. Klucze API i tokeny zostają w przeglądarce."
+      }
+    ]
+  },
+  {
     "version": "0.38.19",
     "date": "2026-10-05",
     "label": "new",

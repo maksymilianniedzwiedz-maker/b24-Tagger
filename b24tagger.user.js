@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.37.3
+// @version      0.37.4
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -39,6 +39,17 @@
   var _b24tScanMark = /(^|[#&])b24tscan\b/.test(location.hash);
   if (!_isB24 && window.opener && (window.name === '_b24tnews' || _b24tScanMark)) {
     (function() {
+      // Odbiorcą jest wyłącznie panel Brand24. Z `'*'` HTML i adres strony dostawało każde okno, które ją otworzyło:
+      // obca witryna wołała `window.open('https://dowolna.strona/#b24tscan')` i czytała stronę w sesji użytkownika
+      // (SECURITY_AUDIT_2026-10.md §1.1). Panel stoi na jednym z dwóch originów; wiadomość do drugiego przeglądarka
+      // odrzuca bez wyjątku.
+      var _PANEL_ORIGINS = ['https://app.brand24.com', 'https://panel.brand24.pl'];
+      function _toPanel(msg) {
+        for (var i = 0; i < _PANEL_ORIGINS.length; i++) {
+          try { window.opener.postMessage(msg, _PANEL_ORIGINS[i]); } catch(e) {}
+        }
+      }
+
       function _extractDate() {
         var patterns = [
           // JSON-LD datePublished / dateCreated
@@ -105,7 +116,7 @@
       function _trySend() {
         var date = _extractDate();
         if (date) {
-          try { window.opener.postMessage({ type: 'b24t_news_date', date: date, url: location.href }, '*'); } catch(e) {}
+          _toPanel({ type: 'b24t_news_date', date: date, url: location.href });
           return true;
         }
         return false;
@@ -128,7 +139,7 @@
       // z sesją, ciastkami i wykonanymi skryptami. Panel przepuszcza ten HTML przez ten sam
       // skaner co zawsze, więc wiersz wypełnia się bez czytania strony przez człowieka.
       // Meldunek „żyję" — patrz `NEWS_BS_START_MS` po stronie panelu.
-      try { window.opener.postMessage({ type: 'b24t_news_alive', url: location.href }, '*'); } catch(e) {}
+      _toPanel({ type: 'b24t_news_alive', url: location.href });
       var _htmlSent = 0;
       function _sendHtml() {
         if (_htmlSent >= 2) return;
@@ -142,7 +153,7 @@
           _htmlSent++;
           // Adres bez naszego znacznika — panel porównuje go z adresem wiersza.
           var cleanUrl = location.href.replace(/([#&])b24tscan\b&?/, '$1').replace(/[#&]$/, '');
-          window.opener.postMessage({ type: 'b24t_news_html', url: cleanUrl, html: html }, '*');
+          _toPanel({ type: 'b24t_news_html', url: cleanUrl, html: html });
         } catch(e) {}
       }
       // Czekanie na `load` to czekanie na reklamy, trackery i obrazki — na serwisie
@@ -173,7 +184,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.37.3';
+  const VERSION = '0.37.4';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4449,10 +4460,10 @@
   // DEBUG BRIDGE
   // ───────────────────────────────────────────
 
-  // Obiekt żyje w piaskownicy skryptu. Na stronę (konsola DevTools) wychodzi tylko w Brand24 i tylko z flagą
-  // `b24tagger_debug` = 1 w localStorage: ma token Brand24, zapytania GM z ciasteczkami do dowolnego hosta
-  // (`@connect *`) i masowe tagowanie, a skrypt działa na każdej stronie (`@match *://*/*`), więc wystawiony
-  // zawsze dawał to każdej odwiedzanej stronie.
+  // Obiekt żyje wyłącznie w piaskownicy skryptu (`window` skryptu, nie strony): ma token Brand24, zapytania GM
+  // z ciasteczkami do dowolnego hosta (`@connect *`) i masowe tagowanie, a skrypt działa na każdej stronie
+  // (`@match *://*/*`). Nie przypisuj go ani jego metod do `unsafeWindow`: flagę w localStorage, która go
+  // wystawiała na Brand24, ustawia każdy skrypt tej strony (SECURITY.md §3.9).
   window.B24Tagger = {
     state,
     version: VERSION,
@@ -4688,9 +4699,6 @@
       a.click(); URL.revokeObjectURL(url);
     },
   };
-  try {
-    if (_isBrand24Host && localStorage.getItem('b24tagger_debug') === '1') _win.B24Tagger = _win.b24tagger = window.B24Tagger;
-  } catch (e) {}
 
   // ───────────────────────────────────────────
   // UI - STYLES
@@ -18408,6 +18416,19 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.37.4",
+      "date": "2026-10-06",
+      "label": "fix",
+      "changes": [
+        {
+          "type": "fix",
+          "area": "Panel",
+          "title": "Naprawiono dwa błędy bezpieczeństwa",
+          "text": "Naprawiono dwa błędy bezpieczeństwa."
+        }
+      ]
+    },
+    {
       "version": "0.37.3",
       "date": "2026-10-05",
       "label": "improved",
@@ -18662,22 +18683,6 @@
           ],
           "action": "Jeśli klucz Gemini zniknął z ustawień, wklej go ponownie.",
           "text": "Naprawiono odrzucanie poprawnych kluczy Gemini. Klucz Gemini zaczynający się od „AQ.” był uznawany za niepoprawny. Pole klucza ostrzega, gdy wklejono klucz innego dostawcy, np. klucz Gemini w polu Claude. Jeśli klucz Gemini zniknął z ustawień, wklej go ponownie."
-        }
-      ]
-    },
-    {
-      "version": "0.36.4",
-      "date": "2026-10-01",
-      "label": "fix",
-      "changes": [
-        {
-          "type": "fix",
-          "area": "Przegląd sentymentu",
-          "title": "Naprawiono pobieranie negatywów z zakresu dat w przeglądzie sentymentu",
-          "items": [
-            "Źródło „Negatywy z zakresu dat” kończyło się błędem i ocena nie startowała. Źródło „Aktualny widok Brand24” działało poprawnie."
-          ],
-          "text": "Naprawiono pobieranie negatywów z zakresu dat w przeglądzie sentymentu. Źródło „Negatywy z zakresu dat” kończyło się błędem i ocena nie startowała. Źródło „Aktualny widok Brand24” działało poprawnie."
         }
       ]
     }

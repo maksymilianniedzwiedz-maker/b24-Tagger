@@ -1,5 +1,22 @@
 [
   {
+    "version": "0.37.4",
+    "date": "2026-10",
+    "name": "Wydanie 0.37.4",
+    "summary": "Cześć! Krótka, ale ważna aktualizacja: łatamy dwa błędy bezpieczeństwa. Tagowanie, News i reszta działają bez zmian.",
+    "features": [],
+    "changes": [],
+    "fixes": [
+      {
+        "area": "Panel",
+        "items": [
+          "Naprawiono dwa błędy bezpieczeństwa."
+        ]
+      }
+    ],
+    "outro": "Miłego tagowania!"
+  },
+  {
     "version": "0.37.3",
     "date": "2026-10",
     "name": "Wydanie 0.37.3",

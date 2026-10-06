@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.21
+// @version      0.38.22
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -40,6 +40,17 @@
   var _b24tScanMark = /(^|[#&])b24tscan\b/.test(location.hash);
   if (!_isB24 && window.opener && (window.name === '_b24tnews' || _b24tScanMark)) {
     (function() {
+      // Odbiorcą jest wyłącznie panel Brand24. Z `'*'` HTML i adres strony dostawało każde okno, które ją otworzyło:
+      // obca witryna wołała `window.open('https://dowolna.strona/#b24tscan')` i czytała stronę w sesji użytkownika
+      // (SECURITY_AUDIT_2026-10.md §1.1). Panel stoi na jednym z dwóch originów; wiadomość do drugiego przeglądarka
+      // odrzuca bez wyjątku.
+      var _PANEL_ORIGINS = ['https://app.brand24.com', 'https://panel.brand24.pl'];
+      function _toPanel(msg) {
+        for (var i = 0; i < _PANEL_ORIGINS.length; i++) {
+          try { window.opener.postMessage(msg, _PANEL_ORIGINS[i]); } catch(e) {}
+        }
+      }
+
       function _extractDate() {
         var patterns = [
           // JSON-LD datePublished / dateCreated
@@ -106,7 +117,7 @@
       function _trySend() {
         var date = _extractDate();
         if (date) {
-          try { window.opener.postMessage({ type: 'b24t_news_date', date: date, url: location.href }, '*'); } catch(e) {}
+          _toPanel({ type: 'b24t_news_date', date: date, url: location.href });
           return true;
         }
         return false;
@@ -129,7 +140,7 @@
       // z sesją, ciastkami i wykonanymi skryptami. Panel przepuszcza ten HTML przez ten sam
       // skaner co zawsze, więc wiersz wypełnia się bez czytania strony przez człowieka.
       // Meldunek „żyję" — patrz `NEWS_BS_START_MS` po stronie panelu.
-      try { window.opener.postMessage({ type: 'b24t_news_alive', url: location.href }, '*'); } catch(e) {}
+      _toPanel({ type: 'b24t_news_alive', url: location.href });
       var _htmlSent = 0;
       function _sendHtml() {
         if (_htmlSent >= 2) return;
@@ -143,7 +154,7 @@
           _htmlSent++;
           // Adres bez naszego znacznika — panel porównuje go z adresem wiersza.
           var cleanUrl = location.href.replace(/([#&])b24tscan\b&?/, '$1').replace(/[#&]$/, '');
-          window.opener.postMessage({ type: 'b24t_news_html', url: cleanUrl, html: html }, '*');
+          _toPanel({ type: 'b24t_news_html', url: cleanUrl, html: html });
         } catch(e) {}
       }
       // Czekanie na `load` to czekanie na reklamy, trackery i obrazki — na serwisie
@@ -174,7 +185,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.21';
+  const VERSION = '0.38.22';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -20868,6 +20879,19 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.22",
+      "date": "2026-10-06",
+      "label": "fix",
+      "changes": [
+        {
+          "type": "fix",
+          "area": "Dodawanie wzmianek",
+          "title": "Naprawiono błąd bezpieczeństwa",
+          "text": "Naprawiono błąd bezpieczeństwa."
+        }
+      ]
+    },
+    {
       "version": "0.38.21",
       "date": "2026-10-05",
       "label": "new",
@@ -21128,24 +21152,6 @@
             "Opis wczytanego pliku mieści się w całości zamiast kończyć się wielokropkiem."
           ],
           "text": "Karta pliku bez pustego miejsca w szerokim panelu. Gdy karta pliku stoi obok karty Postęp, pole pliku wypełnia całą kartę jako duże miejsce do upuszczenia pliku. Opis wczytanego pliku mieści się w całości zamiast kończyć się wielokropkiem."
-        }
-      ]
-    },
-    {
-      "version": "0.38.12",
-      "date": "2026-10-03",
-      "label": "new",
-      "changes": [
-        {
-          "type": "new",
-          "area": "Powiadomienia",
-          "title": "Nowa wersja wtyczki widoczna także poza panelem",
-          "items": [
-            "Gdy wyjdzie nowa wersja, wtyczka wysyła powiadomienie systemowe; kliknięcie przenosi do karty Brand24 i pokazuje okienko instalacji.",
-            "Tytuł karty Brand24 w tle miga, dopóki ktoś do niej nie zajrzy, a z włączonym ntfy powiadomienie przychodzi też na telefon.",
-            "Przełącznik „Powiadomienie poza panelem” w Ustawieniach → Powiadomienia: bez własnego wyboru włączony na Stabilnym, wyłączony na Experimental."
-          ],
-          "text": "Nowa wersja wtyczki widoczna także poza panelem. Gdy wyjdzie nowa wersja, wtyczka wysyła powiadomienie systemowe; kliknięcie przenosi do karty Brand24 i pokazuje okienko instalacji. Tytuł karty Brand24 w tle miga, dopóki ktoś do niej nie zajrzy, a z włączonym ntfy powiadomienie przychodzi też na telefon. Przełącznik „Powiadomienie poza panelem” w Ustawieniach → Powiadomienia: bez własnego wyboru włączony na Stabilnym, wyłączony na Experimental."
         }
       ]
     }

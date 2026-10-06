@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.38.22",
+    "date": "2026-10-06",
+    "label": "fix",
+    "changes": [
+      {
+        "type": "fix",
+        "area": "Dodawanie wzmianek",
+        "title": "Naprawiono błąd bezpieczeństwa",
+        "text": "Naprawiono błąd bezpieczeństwa."
+      }
+    ]
+  },
+  {
     "version": "0.38.21",
     "date": "2026-10-05",
     "label": "new",

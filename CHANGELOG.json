@@ -1,5 +1,81 @@
 [
   {
+    "version": "0.38.23",
+    "date": "2026-10-07",
+    "label": "new",
+    "changes": [
+      {
+        "type": "fix",
+        "area": "Kampanie H&M",
+        "title": "Naprawiono błąd, przez który „Dołóż z Google News” nie dodawał adresów do koszyka",
+        "items": [
+          "Pozycje z Google News rozwijają się do adresów artykułów.",
+          "Pozycja, która już jest w koszyku, nie jest pobierana drugi raz.",
+          "Gdy Google News odsyła na stronę zgody na pliki cookie, komunikat mówi, co zrobić."
+        ],
+        "text": "Naprawiono błąd, przez który „Dołóż z Google News” nie dodawał adresów do koszyka. Pozycje z Google News rozwijają się do adresów artykułów. Pozycja, która już jest w koszyku, nie jest pobierana drugi raz. Gdy Google News odsyła na stronę zgody na pliki cookie, komunikat mówi, co zrobić."
+      },
+      {
+        "type": "fix",
+        "area": "Kampanie H&M",
+        "title": "Naprawiono odsiewanie poprawnych serwisów przez czarną listę domen",
+        "items": [
+          "Wpis „x.com” odsiewa tylko x.com i jego subdomeny, a nie każdy serwis kończący się na „x.com”.",
+          "Wpis zakończony kropką, np. „olx.”, pasuje do początku domeny, a wpis bez kropki, np. „vinted”, do jednego członu adresu."
+        ],
+        "text": "Naprawiono odsiewanie poprawnych serwisów przez czarną listę domen. Wpis „x.com” odsiewa tylko x.com i jego subdomeny, a nie każdy serwis kończący się na „x.com”. Wpis zakończony kropką, np. „olx.”, pasuje do początku domeny, a wpis bez kropki, np. „vinted”, do jednego członu adresu."
+      },
+      {
+        "type": "fix",
+        "area": "Kampanie H&M",
+        "title": "Naprawiono błąd, przez który nowe wyszukiwanie mieszało się z trwającym",
+        "items": [
+          "„Uruchom wyszukiwanie” przy trwającym wyszukiwaniu pyta, czy je zatrzymać.",
+          "Karta poprzedniego wyszukiwania nie przejmuje nowego."
+        ],
+        "text": "Naprawiono błąd, przez który nowe wyszukiwanie mieszało się z trwającym. „Uruchom wyszukiwanie” przy trwającym wyszukiwaniu pyta, czy je zatrzymać. Karta poprzedniego wyszukiwania nie przejmuje nowego."
+      },
+      {
+        "type": "improved",
+        "area": "Kampanie H&M",
+        "title": "Osobny koszyk kampanii dla każdego projektu",
+        "items": [
+          "Wyszukiwanie i Google News przypisują adresy do projektu, z którego ruszyły.",
+          "„Wklej do importu” i „Przejdź do skanowania” biorą tylko adresy otwartego projektu.",
+          "Adresy innych projektów stoją w osobnej linii pod koszykiem, z przyciskiem „Wyczyść inne”."
+        ],
+        "action": "Jeśli w koszyku zostały adresy z kilku rynków, trzeba go wyczyścić przed następnym skanem: adresy zebrane przed tą wersją widać w każdym projekcie.",
+        "text": "Osobny koszyk kampanii dla każdego projektu. Wyszukiwanie i Google News przypisują adresy do projektu, z którego ruszyły. „Wklej do importu” i „Przejdź do skanowania” biorą tylko adresy otwartego projektu. Adresy innych projektów stoją w osobnej linii pod koszykiem, z przyciskiem „Wyczyść inne”. Jeśli w koszyku zostały adresy z kilku rynków, trzeba go wyczyścić przed następnym skanem: adresy zebrane przed tą wersją widać w każdym projekcie."
+      },
+      {
+        "type": "improved",
+        "area": "Kampanie H&M",
+        "title": "Wolniejsze wyszukiwanie po teście Google i zatrzymanie po drugim teście",
+        "items": [
+          "Przez godzinę po teście Google przerwy między stronami wyników są dwa razy dłuższe, także w kolejnym wyszukiwaniu.",
+          "Drugi test w ciągu godziny zatrzymuje wyszukiwanie; koszyk zostaje.",
+          "Okno wyszukiwania i panel na stronie Google pokazują liczbę zapytań do Google z ostatniej godziny."
+        ],
+        "text": "Wolniejsze wyszukiwanie po teście Google i zatrzymanie po drugim teście. Przez godzinę po teście Google przerwy między stronami wyników są dwa razy dłuższe, także w kolejnym wyszukiwaniu. Drugi test w ciągu godziny zatrzymuje wyszukiwanie; koszyk zostaje. Okno wyszukiwania i panel na stronie Google pokazują liczbę zapytań do Google z ostatniej godziny."
+      },
+      {
+        "type": "improved",
+        "area": "Kampanie H&M",
+        "title": "Wariant frazy kończy się po dwóch stronach wyników bez nowych adresów",
+        "text": "Wariant frazy kończy się po dwóch stronach wyników bez nowych adresów."
+      },
+      {
+        "type": "new",
+        "area": "Kampanie H&M",
+        "title": "Dziennik zapytań wyszukiwania i przycisk „Kopiuj dziennik”",
+        "items": [
+          "Dziennik zapisuje każdą stronę wyników i każdy test Google z liczbą zebranych adresów."
+        ],
+        "text": "Dziennik zapytań wyszukiwania i przycisk „Kopiuj dziennik”. Dziennik zapisuje każdą stronę wyników i każdy test Google z liczbą zebranych adresów."
+      }
+    ]
+  },
+  {
     "version": "0.38.22",
     "date": "2026-10-06",
     "label": "fix",

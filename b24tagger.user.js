@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.22
+// @version      0.38.23
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -185,7 +185,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.22';
+  const VERSION = '0.38.23';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -4910,6 +4910,7 @@
       gsCartUrls: () => _gsCartGet().items.map((it) => it.u),
       gsStop: () => { _gsRunStop('user'); return _gsRunGet(); },
       gsClearCart: () => { _gsCartClear(); return _gsCartGet(); },
+      gsLog: () => _gsLogGet(),
       gsBuildUrl: (o) => _gsBuildUrl(o),
       gsVariants: (phrase) => _gsVariants(phrase),
       stressTestBulk: async function(tagId, dateFrom, dateTo) {
@@ -12059,6 +12060,7 @@
 
   var GS_CART_KEY = 'b24t_gs_cart';
   var GS_RUN_KEY  = 'b24t_gs_run';
+  var GS_LOG_KEY  = 'b24t_gs_log';
 
   // Strony marki, social i marketplace'y. Lista ma DWIE role:
   //   1. wpisy wyglądające jak pełna domena idą do zapytania jako `-site:` (§1.6) — Google ich
@@ -12114,18 +12116,40 @@
   function _gsRunGet()  { return _gsGet(GS_RUN_KEY, null); }
   function _gsRunSet(r) { _gsSet(GS_RUN_KEY, r); }
 
-  // Adres usunięty z koszyka w HUD-zie (`removed`, kanoniczne adresy) nie wraca z kolejnej strony
+  // Koszyk jest wspólny dla wszystkich rynków, a każdy adres należy do projektu, z którego ruszyło wyszukiwanie
+  // (`p`, ID projektu jako tekst; `cc` rynek i `c` kampania do podpisów). Panel widzi i wkleja tylko adresy
+  // swojego projektu, a duplikat liczy się w obrębie projektu: ten sam artykuł bywa trafieniem dwóch rynków
+  // jednego języka. Bez przypisania koszyk z H&M_GR wjeżdżał w całości do skanu na H&M_TR. Adres zebrany przed
+  // przypisaniem (bez pola `p`) należy do każdego projektu, jak wcześniej cały koszyk, aż do wyczyszczenia
+  // (GOOGLE_COLLECTOR.md §2.3). `p` pusty to wyszukiwanie uruchomione bez wybranego projektu.
+  function _gsCartPid(p) { return p == null ? '' : String(p); }
+  function _gsCartKey(p, u) {
+    var k = _newsCanonicalUrl(u);
+    return k ? _gsCartPid(p) + '|' + k : '';
+  }
+  function _gsCartItems(p) {
+    var pid = _gsCartPid(p);
+    return _gsCartGet().items.filter(function(it) { return it.p === undefined || _gsCartPid(it.p) === pid; });
+  }
+  function _gsRunOwner(run) { return { p: run.originProject, cc: run.cc, c: run.campaign }; }
+
+  // Adres usunięty z koszyka w HUD-zie (`removed`, klucze projekt|adres) nie wraca z kolejnej strony
   // wyników ani z RSS-a: usuwa się go jako błędny, więc ponowne zebranie cofałoby tę decyzję.
-  // Lista żyje tyle co koszyk — _gsCartClear zaczyna od pustej.
-  function _gsCartAdd(entries) {
+  // Lista żyje tyle co adresy projektu — _gsCartClear zdejmuje ją razem z nimi.
+  // `owner` ({ p, cc, c }) przypisuje nowe adresy; bez niego wpisy niosą przypisanie same (cofnięcie wyczyszczenia).
+  function _gsCartAdd(entries, owner) {
     var cart = _gsCartGet();
-    var seen = {};
-    cart.items.forEach(function(it) { seen[_newsCanonicalUrl(it.u)] = true; });
+    var seen = {}, seenAll = {};  // seenAll: adresy bez przypisania, widoczne w każdym projekcie
+    cart.items.forEach(function(it) {
+      seen[_gsCartKey(it.p, it.u)] = true;
+      if (it.p === undefined) seenAll[_newsCanonicalUrl(it.u)] = true;
+    });
     (cart.removed || []).forEach(function(k) { seen[k] = true; });
     var added = 0;
     entries.forEach(function(e) {
-      var k = _newsCanonicalUrl(e.u);
-      if (!k || seen[k]) return;
+      if (owner) { e.p = _gsCartPid(owner.p); e.cc = owner.cc || ''; e.c = owner.c || ''; }
+      var k = _gsCartKey(e.p, e.u);
+      if (!k || seen[k] || seenAll[_newsCanonicalUrl(e.u)]) return;
       seen[k] = true;
       cart.items.push(e);
       added++;
@@ -12134,13 +12158,28 @@
     return added;
   }
 
-  function _gsCartClear() { _gsSet(GS_CART_KEY, { items: [] }); }
+  // Bez argumentu czyści cały koszyk; z listą ID projektów ich adresy i ich listę usuniętych. `unassigned` dokłada
+  // adresy bez przypisania i listę usuniętych sprzed przypisania (klucze bez „|”): projekt widzi je jako swoje,
+  // więc czyszczenie projektu zabiera i je, a czyszczenie cudzych projektów nie.
+  function _gsCartClear(pids, unassigned) {
+    if (!pids) { _gsSet(GS_CART_KEY, { items: [] }); return; }
+    var drop = {};
+    pids.forEach(function(p) { drop[_gsCartPid(p)] = true; });
+    var cart = _gsCartGet();
+    cart.items = cart.items.filter(function(it) { return it.p === undefined ? !unassigned : !drop[_gsCartPid(it.p)]; });
+    cart.removed = (cart.removed || []).filter(function(k) {
+      var i = k.indexOf('|');
+      return i < 0 ? !unassigned : !drop[k.slice(0, i)];
+    });
+    cart.updated = Date.now();
+    _gsSet(GS_CART_KEY, cart);
+  }
 
-  // Usunięcie jednego adresu; zwraca { item, index } do cofnięcia albo null.
-  function _gsCartRemove(u) {
-    var cart = _gsCartGet(), k = _newsCanonicalUrl(u);
+  // Usunięcie jednego adresu projektu; zwraca { item, index } do cofnięcia albo null.
+  function _gsCartRemove(u, p) {
+    var cart = _gsCartGet(), k = _gsCartKey(p, u);
     for (var i = 0; i < cart.items.length; i++) {
-      if (_newsCanonicalUrl(cart.items[i].u) !== k) continue;
+      if (_gsCartKey(cart.items[i].p, cart.items[i].u) !== k) continue;
       var item = cart.items.splice(i, 1)[0];
       cart.removed = (cart.removed || []).concat(k);
       cart.updated = Date.now();
@@ -12155,21 +12194,91 @@
   function _gsCartRestore(list) {
     var cart = _gsCartGet();
     for (var j = list.length - 1; j >= 0; j--) {
-      var e = list[j], k = _newsCanonicalUrl(e.item.u);
+      var e = list[j], k = _gsCartKey(e.item.p, e.item.u);
       cart.removed = (cart.removed || []).filter(function(x) { return x !== k; });
-      if (cart.items.some(function(it) { return _newsCanonicalUrl(it.u) === k; })) continue;
+      if (cart.items.some(function(it) { return _gsCartKey(it.p, it.u) === k; })) continue;
       cart.items.splice(Math.min(e.index, cart.items.length), 0, e.item);
     }
     cart.updated = Date.now();
     _gsSet(GS_CART_KEY, cart);
   }
 
+  // Wpis czarnej listy dopasowuje całe człony nazwy hosta, nie dowolny fragment: przy porównaniu podciągów
+  // `x.com` odsiewał `vox.com` i `netflix.com`, a `hm.com` każdą domenę kończącą się na „hm.com”.
+  //   `hm.com`  — ta domena i jej subdomeny (`www2.hm.com`),
+  //   `olx.`    — człon na początku dowolnej domeny (`olx.pl`, `m.olx.ro`),
+  //   `vinted`  — pojedynczy człon w dowolnym miejscu (`vinted.gr`, `www.vinted.pl`).
+  function _gsBlMatch(host, entry) {
+    var b = String(entry).trim().toLowerCase();
+    if (!b) return false;
+    if (b.charAt(b.length - 1) === '.') return ('.' + host).indexOf('.' + b) !== -1;
+    if (b.indexOf('.') !== -1) return host === b || host.slice(-(b.length + 1)) === '.' + b;
+    return host.split('.').indexOf(b) !== -1;
+  }
+
   function _gsIsBlacklisted(url, list) {
     var h;
     try { h = new URL(url).hostname.toLowerCase(); } catch(e) { return false; }
-    return (list || GS_BLACKLIST_DEFAULT).some(function(b) {
-      return h.indexOf(String(b).toLowerCase()) !== -1;
-    });
+    return (list || GS_BLACKLIST_DEFAULT).some(function(b) { return _gsBlMatch(h, b); });
+  }
+
+  // ── Dziennik zapytań (GOOGLE_COLLECTOR.md §11) ──
+  // Captcha przychodzi po jakiejś liczbie zapytań z jednej sieci w jakimś czasie, a tej granicy nikt nie zna.
+  // Dziennik zapisuje każde zapytanie przebiegu (strona wyników, test Google) z wynikiem zbierania i przerwą,
+  // a także start i koniec przebiegu. Służy do dwóch rzeczy: licznik zapytań z ostatniej godziny i tempo po
+  // teście Google liczą się z niego także między przebiegami (kolejne rynki to osobne przebiegi), a zrzut
+  // („Kopiuj dziennik” w oknie wyszukiwania) pokazuje, po ilu zapytaniach przyszedł test i ile adresów dał
+  // który tryb i wariant.
+  //   start   { run, c, cc, lang, p, tasks }
+  //   page    { run, q, mode, page, found, fresh, added, total, wait, bl: [hosty z czarnej listy], urls: [kanoniczne] }
+  //   captcha { run, why, n1h, nRun }
+  //   stop    { run, why }
+  var GS_LOG_MAX = 1500;
+  var GS_HOUR = 60 * 60 * 1000;
+
+  function _gsLogGet() {
+    var l = _gsGet(GS_LOG_KEY, null);
+    return l && Array.isArray(l.ev) ? l.ev : [];
+  }
+  function _gsLogAdd(ev) {
+    var l = _gsLogGet();
+    ev.t = Date.now();
+    l.push(ev);
+    _gsSet(GS_LOG_KEY, { ev: l.length > GS_LOG_MAX ? l.slice(-GS_LOG_MAX) : l });
+  }
+  // Zapytanie do wyszukiwarki to każda wczytana strona wyników i każda strona z testem.
+  function _gsQueries(since, run) {
+    return _gsLogGet().filter(function(e) {
+      return (e.e === 'page' || e.e === 'captcha') && e.t >= since && (run == null || e.run === run);
+    }).length;
+  }
+  function _gsLastCaptcha() {
+    var l = _gsLogGet();
+    for (var i = l.length - 1; i >= 0; i--) if (l[i].e === 'captcha') return l[i].t;
+    return 0;
+  }
+
+  // Test Google to sygnał, że sieć jest blisko granicy. Przez godzinę od niego przerwy są dwa razy dłuższe,
+  // także w kolejnym przebiegu, a drugi test w tym oknie zatrzymuje wyszukiwanie (_gsCaptcha): dalsze zapytania
+  // grożą blokadą bez testu, która dotyka całej sieci, nie tylko tej przeglądarki.
+  var GS_CAPTCHA_WINDOW = GS_HOUR;
+  var GS_SLOW_AFTER_CAPTCHA = 2;
+  function _gsSlowFactor() {
+    var last = _gsLastCaptcha();
+    return last && Date.now() - last < GS_CAPTCHA_WINDOW ? GS_SLOW_AFTER_CAPTCHA : 1;
+  }
+
+  // Stan sieci jednym zdaniem: okno wyszukiwania i HUD.
+  function _gsRiskText() {
+    var n = _gsQueries(Date.now() - GS_HOUR);
+    var txt = 'Ostatnia godzina: ' + n + ' ' + _relPl(n, 'zapytanie', 'zapytania', 'zapytań') + ' do Google.';
+    var last = _gsLastCaptcha();
+    if (last && Date.now() - last < GS_CAPTCHA_WINDOW) {
+      var hm = function(t) { var d = new Date(t); return d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0'); };
+      txt += ' Test Google o ' + hm(last) + ': do ' + hm(last + GS_CAPTCHA_WINDOW) +
+        ' przerwy są dwa razy dłuższe, a kolejny test zatrzymuje wyszukiwanie.';
+    }
+    return txt;
   }
 
   // ── Budowa adresu wyszukiwania ──
@@ -12214,10 +12323,16 @@
     // Znacznik we fragmencie adresu przechodzi przez nawigację i Google go ignoruje. Po nim
     // karta poznaje, że to ONA została otwarta do przebiegu — inaczej dowolna inna karta
     // Google odświeżona w tej samej chwili przejęłaby przebieg i poszła własną ścieżką.
-    return 'https://www.google.com/search?' + parts.join('&') + '#b24tgs';
+    // `o.run` (startedAt przebiegu) wiąże kartę z JEDNYM przebiegiem: karta poprzedniego, przeładowana po starcie
+    // nowego, nie przejmuje go.
+    return 'https://www.google.com/search?' + parts.join('&') + '#b24tgs' + (o.run ? '=' + o.run : '');
   }
 
-  function _gsIsRunTab() { return /(^|[#&])b24tgs\b/.test(location.hash); }
+  // Znacznik bez numeru przebiegu (tryb ręczny, adres z mostu testowego) pasuje do każdego przebiegu.
+  function _gsIsRunTab(run) {
+    var m = /(?:^|[#&])b24tgs(?:=(\d+))?\b/.exec(location.hash);
+    return !!m && (!m[1] || !run || m[1] === String(run.startedAt));
+  }
 
   // Warianty frazy: skracanie od końca, bo nazwa kampanii po angielsku („…AW26") często nie
   // funkcjonuje na mniejszych rynkach i pełna fraza daje zero wyników. Schodzimy do dwóch
@@ -12338,6 +12453,11 @@
     return Math.random() < 0.20 ? _gsJitter(40000, 50000) : _gsJitter(20000, 30000);
   }
 
+  // Strona bez nowego adresu to zapytanie do Google, które nic nie wnosi, a krótka przerwa przy stronie bez
+  // kandydatów (_gsPauseForPage) przyspiesza właśnie takie strony. Dwie z rzędu kończą wariant: dalsze strony
+  // szerokiej frazy to ten sam szum, a każda z nich zbliża sieć do testu Google (§4.4).
+  var GS_DRY_PAGES = 2;
+
   // ── Przebieg ──
 
   // Karta rozpoznaje własną sesję przez `sessionStorage` — jest per KARTA i przeżywa
@@ -12377,25 +12497,29 @@
       cc: cfg.cc, lang: cfg.lang, from: cfg.from, to: cfg.to,
       blacklist: cfg.blacklist || GS_BLACKLIST_DEFAULT,
       queue: _gsBuildQueue(cfg.variants, cfg.modes),
-      qi: 0, page: 0,
+      // dry: strony z rzędu bez nowego adresu (GS_DRY_PAGES); blockedAt: chwila wykrycia bieżącego testu Google.
+      qi: 0, page: 0, dry: 0, blockedAt: null,
       paused: false,
       ownerTab: null,
       // Karta panelu, do ktorej wroci robota po zakonczeniu (patrz _gsHandoffToPanel).
       originTab: cfg.originTab || null,
-      originProject: cfg.originProject || null,
+      // Projekt, do którego należą zebrane adresy (_gsCartAdd).
+      originProject: cfg.originProject ? String(cfg.originProject) : null,
       startedAt: Date.now(),
       stopped: null,
     };
     _gsRunSet(run);
+    _gsLogAdd({ e: 'start', run: run.startedAt, c: run.campaign, cc: run.cc, lang: run.lang, p: run.originProject, tasks: run.queue.length });
     return _gsBuildUrl({
       phrase: run.queue[0].phrase, mode: run.queue[0].mode,
-      cc: run.cc, lang: run.lang, from: run.from, to: run.to, blacklist: run.blacklist,
+      cc: run.cc, lang: run.lang, from: run.from, to: run.to, blacklist: run.blacklist, run: run.startedAt,
     });
   }
 
   function _gsRunStop(reason) {
     var run = _gsRunGet();
     if (!run) return;
+    if (run.active) _gsLogAdd({ e: 'stop', run: run.startedAt, why: reason });
     run.active = false;
     run.stopped = reason;
     // Pauza zdejmowana razem z zatrzymaniem — inaczej kolejny przebieg startowałby
@@ -12415,63 +12539,76 @@
     if (run.ownerTab && run.ownerTab !== _gsTabToken()) return; // przebieg należy do innej karty
     if (!run.ownerTab) {
       // Przebieg przejmuje tylko karta otwarta przez modal — poznaje się po znaczniku adresu.
-      if (!_gsIsRunTab()) return;
+      if (!_gsIsRunTab(run)) return;
       run.ownerTab = _gsTabToken();
       _gsRunSet(run);
     }
+    // Przebieg, który ta karta prowadzi. Po przerwie stan w GM może już należeć do nowego przebiegu
+    // (start z okna kampanii zatrzymuje poprzedni) i wtedy ta karta nie ma prawa go ruszać.
+    var id = run.startedAt;
 
     var _why = _gsBlockedWhy();
     if (_why) {
-      _gsAlarmStart(_why);
+      _gsCaptcha(run, _why);
       return;
     }
     _gsAlarmStop();
+    if (run.blockedAt) { run.blockedAt = null; _gsRunSet(run); }
 
     var found = _gsHarvest();
     var fresh = found.filter(function(e) { return !_gsIsBlacklisted(e.u, run.blacklist); });
-    var added = _gsCartAdd(fresh);
+    var added = _gsCartAdd(fresh, _gsRunOwner(run));
     _gsHudCount();
     _gsHudProgress(run);
 
     var task = run.queue[run.qi];
     var swapped = _gsPhraseSwapped();
     var total = _gsResultStats();
+    var dry = added ? 0 : (run.dry || 0) + 1;
+    var dried = dry >= GS_DRY_PAGES;
+    // Google podmienił frazę = wyników dla tej frazy nie ma. Dalsze strony to wyniki dla
+    // CZEGOŚ INNEGO, więc wariant kończymy tu, zamiast zbierać je jako kampanijne.
+    var exhausted = swapped || dried || !_gsHasNext() || found.length === 0 || run.page + 1 >= GS_MAX_PAGES;
+    var slow = _gsSlowFactor();
+    var wait = (exhausted ? _gsPauseBetweenVariants() : _gsPauseForPage(fresh.length)) * slow;
+    _gsLogPage(run, task, found, fresh, added, total, wait);
+
     // Fraza pochodzi z pola formularza — do `innerHTML` wchodzi wyłącznie jako tekst.
     _gsHudSay('<div class="b-gs-lead b-ell">„' + _escHtml(task.phrase) + '”</div>' +
               '<div>' + (task.mode === 'lang' ? 'Język' : 'Kraj') + ' · strona ' + (run.page + 1) +
               (total !== null ? ' · Google: ok. ' + total.toLocaleString('pl-PL') + ' ' + _relPl(total, 'wynik', 'wyniki', 'wyników') : '') + '</div>' +
               '<div>Dodane: ' + added + ' · odsiane: ' + (found.length - fresh.length) + ' z ' + found.length + '</div>' +
-              (swapped ? '<div class="b-row b-warn">' + _icon('alert') + 'Google podmienił frazę; wariant kończy się na tej stronie</div>' : ''));
+              (swapped ? '<div class="b-row b-warn">' + _icon('alert') + 'Google podmienił frazę; wariant kończy się na tej stronie</div>' : '') +
+              (dried && !swapped ? '<div>' + GS_DRY_PAGES + ' strony z rzędu bez nowych adresów; wariant kończy się na tej stronie.</div>' : '') +
+              '<div class="b-muted">' + _escHtml(_gsRiskText()) + '</div>');
 
-    // Google podmienił frazę = wyników dla tej frazy nie ma. Dalsze strony to wyniki dla
-    // CZEGOŚ INNEGO, więc wariant kończymy tu, zamiast zbierać je jako kampanijne.
-    var exhausted = swapped || !_gsHasNext() || found.length === 0 || run.page + 1 >= GS_MAX_PAGES;
-
-    var wait = exhausted ? _gsPauseBetweenVariants() : _gsPauseForPage(fresh.length);
     var ok = await _gsWait(wait, exhausted ? 'następnego zapytania' : 'następnej strony');
     if (!ok) return; // stop wciśnięty albo karta zeszła na dobre
 
     run = _gsRunGet();
-    if (!run || !run.active) return;
+    if (!run || !run.active || run.startedAt !== id) return;
 
     if (!exhausted) {
       run.page++;
+      run.dry = dry;
       _gsRunSet(run);
       location.href = _gsBuildUrl({
         phrase: task.phrase, mode: task.mode, cc: run.cc, lang: run.lang,
-        from: run.from, to: run.to, start: run.page * 10, blacklist: run.blacklist,
+        from: run.from, to: run.to, start: run.page * 10, blacklist: run.blacklist, run: id,
       });
       return;
     }
 
     run.qi++;
     run.page = 0;
+    run.dry = 0;
     if (run.qi >= run.queue.length) {
+      _gsLogAdd({ e: 'stop', run: id, why: 'done' });
       run.active = false;
       run.stopped = 'done';
       _gsRunSet(run);
       _gsHudFinish(run);
-      var _ileAdr = _gsCartGet().items.length;
+      var _ileAdr = _gsCartItems(run.originProject).length;
       var _czas = run.startedAt ? Date.now() - run.startedAt : 0;
       _ntfySend({
         ev: 'collectDone',
@@ -12491,7 +12628,59 @@
     var next = run.queue[run.qi];
     location.href = _gsBuildUrl({
       phrase: next.phrase, mode: next.mode, cc: run.cc, lang: run.lang, from: run.from, to: run.to,
-      blacklist: run.blacklist,
+      blacklist: run.blacklist, run: id,
+    });
+  }
+
+  // Wpis dziennika dla wczytanej strony wyników. Raz na wczytanie: _gsRunStep wołany ponownie na tej samej
+  // stronie (test rozwiązany bez przeładowania) nie wysyła nowego zapytania.
+  var _gsPageLogged = false;
+  function _gsLogPage(run, task, found, fresh, added, total, wait) {
+    if (_gsPageLogged) return;
+    _gsPageLogged = true;
+    var hosts = function(list) {
+      return list.map(function(e) { try { return new URL(e.u).hostname.replace(/^www\./, ''); } catch(x) { return ''; } });
+    };
+    var bl = found.filter(function(e) { return fresh.indexOf(e) === -1; });
+    _gsLogAdd({
+      e: 'page', run: run.startedAt, q: task ? task.phrase : '', mode: task ? task.mode : 'manual', page: run.page || 0,
+      found: found.length, fresh: fresh.length, added: added, total: total, wait: Math.round(wait / 1000),
+      bl: hosts(bl), urls: found.map(function(e) { return _newsCanonicalUrl(e.u); }),
+    });
+  }
+
+  // Test Google na stronie przebiegu. Liczony raz na test: strona z testem wczytuje się ponownie przy każdym
+  // „Sprawdź teraz” i każdym przeładowaniu, a to wciąż ten sam test (`blockedAt` zdejmuje dopiero strona wyników).
+  // Drugi test w ciągu GS_CAPTCHA_WINDOW zatrzymuje wyszukiwanie zamiast alarmu: przebieg nie ruszy po
+  // rozwiązaniu, bo kolejne zapytania z tej sieci grożą blokadą bez testu.
+  function _gsCaptcha(run, why) {
+    if (!run.blockedAt) {
+      var prev = _gsLastCaptcha();
+      run.blockedAt = Date.now();
+      _gsRunSet(run);
+      _gsLogAdd({ e: 'captcha', run: run.startedAt, why: why, n1h: _gsQueries(Date.now() - GS_HOUR) + 1, nRun: _gsQueries(0, run.startedAt) + 1 });
+      if (prev && Date.now() - prev < GS_CAPTCHA_WINDOW) {
+        _gsCaptchaStop(run, prev);
+        return;
+      }
+    }
+    _gsAlarmStart(why);
+  }
+
+  function _gsCaptchaStop(run, prev) {
+    _gsRunStop('blocked');
+    var d = new Date(prev), hm = d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0');
+    _gsHudSay('<div class="b-gs-lead">Wyszukiwanie zatrzymane</div>Drugi test Google w ciągu godziny (poprzedni o ' + hm + '). ' +
+              'Kolejne zapytania z tej sieci grożą blokadą bez testu. Koszyk zostaje. Wyszukiwanie najlepiej wznowić za godzinę; ' +
+              'Google News w oknie kampanii nie korzysta z wyszukiwarki.', true);
+    _ntfySend({
+      ev: 'captcha',
+      title: '⛔ Wyszukiwanie zatrzymane: drugi test Google',
+      message: (run.campaign ? run.campaign + '\n' : '') + (run.cc ? 'rynek ' + String(run.cc).toUpperCase() + '\n' : '') +
+               'Drugi test w ciągu godziny (poprzedni o ' + hm + '). W koszyku ' + _gsCartItems(run.originProject).length + ' adr.' +
+               '\n\nWyszukiwanie nie ruszy samo. Wznowić najlepiej za godzinę.',
+      tags: ['no_entry'],
+      click: location.href,
     });
   }
 
@@ -12588,7 +12777,8 @@
            '&ceid=' + encodeURIComponent((cc || 'US').toUpperCase() + ':' + (lang || 'en'));
   }
 
-  function _gsHttpGet(url, opts) {
+  // GET, a z `opts` każde inne zapytanie GM_xmlhttpRequest (POST do batchexecute w _gsRssResolve).
+  function _gsHttp(url, opts) {
     return new Promise(function(resolve, reject) {
       GM_xmlhttpRequest(Object.assign({
         method: 'GET',
@@ -12625,34 +12815,69 @@
     return out;
   }
 
-  // Adres z RSS-a to przekierowanie `news.google.com/rss/articles/…`; prawdziwy adres poznajemy
-  // dopiero podążając za nim. [ZW] W przeglądarce działa, bo leci z ciasteczkami zgody —
-  // to samo zapytanie bez nich kończy na `consent.google.com`.
+  var _gsGoogleHost = function(u) {
+    try { return /(^|\.)google\.[a-z.]+$/.test(new URL(u).hostname); } catch(e) { return true; }
+  };
+  var GS_NEWS_DECODE = 'https://news.google.com/_/DotsSplashUi/data/batchexecute';
+
+  // Adres z RSS-a `news.google.com/rss/articles/…` NIE jest przekierowaniem HTTP. [ZW 2026-10-07, curl
+  // z ciasteczkiem zgody] Odpowiedź to 200 ze stroną Google News, a do wydawcy prowadzi dopiero jej skrypt.
+  // GM_xmlhttpRequest skryptów nie wykonuje, więc samo `finalUrl` zostawało na news.google.com i kanał nie
+  // rozwijał żadnej pozycji. Prawdziwy adres zwraca `batchexecute` (wywołanie `Fbv4je`/`garturlreq`) z trzema
+  // wartościami z atrybutów `data-n-a-*` tej strony, czyli dwa zapytania na pozycję (GOOGLE_COLLECTOR.md §10.1).
+  // `finalUrl` spoza Google zostaje sprawdzany pierwszy, gdyby Google wrócił do zwykłego przekierowania.
   //
-  // Rozwijamy WYŁĄCZNIE pozycje, które przeszły filtry (§RSS.3): każde rozwinięcie to osobne
-  // zapytanie i pobranie całej strony, więc robienie tego dla wszystkiego byłoby marnotrawstwem.
+  // Rozwijamy WYŁĄCZNIE pozycje, które przeszły filtry (§10.2): każde rozwinięcie to dwa zapytania do Google.
+  // → { u: adres artykułu albo null, zgoda: true, gdy Google odesłał na stronę zgody na ciasteczka }
   async function _gsRssResolve(link) {
-    var r = await _gsHttpGet(link);
+    var r = await _gsHttp(link);
     var fin = r && r.finalUrl ? r.finalUrl : '';
-    if (!fin || /(^|\.)google\.com$/.test((function() {
-      try { return new URL(fin).hostname; } catch(e) { return 'google.com'; }
-    })())) return null;
-    return fin;
+    if (fin && !_gsGoogleHost(fin)) return { u: fin, zgoda: false };
+    if (/^https:\/\/consent\.google\./.test(fin)) return { u: null, zgoda: true };
+    var html = r && r.responseText ? r.responseText : '';
+    var attr = function(n) { var m = new RegExp('data-n-a-' + n + '="([^"]+)"').exec(html); return m ? m[1] : ''; };
+    var id = attr('id'), ts = attr('ts'), sg = attr('sg');
+    if (!id || !ts || !sg) return { u: null, zgoda: false };
+
+    var req = JSON.stringify(['garturlreq', [['X', 'X', ['X', 'X'], null, null, 1, 1, 'US:en', null, 1, null, null, null, null, null, 0, 1],
+      'X', 'X', 1, [1, 1, 1], 1, 1, null, 0, 0, null, 0], id, Number(ts), sg]);
+    var b = await _gsHttp(GS_NEWS_DECODE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      data: 'f.req=' + encodeURIComponent(JSON.stringify([[['Fbv4je', req, null, 'generic']]])),
+    });
+    // Odpowiedź: `)]}'`, pusta linia i tablica JSON, w której wpis `Fbv4je` niesie ["garturlres", adres, 1].
+    try {
+      var rows = JSON.parse(String(b.responseText || '').replace(/^\)\]\}'\s*/, ''));
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i][1] !== 'Fbv4je') continue;
+        var u = JSON.parse(rows[i][2])[1];
+        return { u: /^https?:\/\//.test(u) && !_gsGoogleHost(u) ? u : null, zgoda: false };
+      }
+    } catch(e) {}
+    return { u: null, zgoda: false };
   }
 
   // Pełny przebieg kanału RSS dla jednej frazy. `onProgress(tekst)` melduje stan do UI.
+  // cfg: { phrase, cc, lang, from, to, blacklist, p (projekt, do którego trafią adresy) }
   async function _gsRssCollect(cfg, onProgress) {
-    var wynik = { znalezione: 0, poFiltrach: 0, dodane: 0, bledy: 0, pominieteData: 0, pominieteDomena: 0 };
+    var wynik = { znalezione: 0, poFiltrach: 0, dodane: 0, bledy: 0, zgoda: 0, pominieteData: 0, pominieteDomena: 0, wKoszyku: 0 };
     var say = onProgress || function() {};
 
     say('Pobieram Google News…');
-    var r = await _gsHttpGet(_gsRssUrl(cfg.phrase, cfg.cc, cfg.lang));
+    var r = await _gsHttp(_gsRssUrl(cfg.phrase, cfg.cc, cfg.lang));
     var pozycje = _gsRssParse(r && r.responseText ? r.responseText : '');
     wynik.znalezione = pozycje.length;
     if (!pozycje.length) return wynik;
 
+    // Pozycja rozwinięta przy wcześniejszym kliknięciu leży w koszyku z linkiem RSS (`src`). Drugie rozwinięcie
+    // to dwa zbędne zapytania do Google.
+    var znane = {};
+    _gsCartItems(cfg.p).forEach(function(it) { if (it.src) znane[it.src] = true; });
+
     // Filtry PRZED rozwijaniem — to one decydują, ile zapytań w ogóle poleci.
     var kandydaci = pozycje.filter(function(p) {
+      if (znane[p.link]) { wynik.wKoszyku++; return false; }
       if (p.host && _gsIsBlacklisted('https://' + p.host, cfg.blacklist)) { wynik.pominieteDomena++; return false; }
       // RSS nie zna filtra dat (inaczej niż wyszukiwarka), więc zakres odsiewamy sami.
       // Bez tego lecą artykuły sprzed roku — zmierzone: pierwsza pozycja z marca.
@@ -12661,19 +12886,23 @@
     });
     wynik.poFiltrach = kandydaci.length;
 
+    var owner = { p: cfg.p, cc: cfg.cc, c: cfg.phrase };
     for (var i = 0; i < kandydaci.length; i++) {
       var p = kandydaci[i];
       say('Rozwijam adresy… ' + (i + 1) + '/' + kandydaci.length + ' (' + (p.host || '?') + ')');
       try {
-        var realny = await _gsRssResolve(p.link);
-        if (realny) {
-          wynik.dodane += _gsCartAdd([{ u: realny, t: p.title, q: cfg.phrase, mode: 'rss', ts: Date.now() }]);
+        var res = await _gsRssResolve(p.link);
+        if (res.u) {
+          wynik.dodane += _gsCartAdd([{ u: res.u, t: p.title, q: cfg.phrase, mode: 'rss', src: p.link, ts: Date.now() }], owner);
         } else {
           wynik.bledy++;
+          // Strona zgody odpowie tak samo na każdą kolejną pozycję; dalsze zapytania niczego nie rozwiną.
+          if (res.zgoda) { wynik.zgoda++; break; }
         }
       } catch(e) { wynik.bledy++; }
-      // Tempo: to nie wyszukiwarka, ale nadal seria zapytań pod rząd do jednego serwisu.
-      if (i < kandydaci.length - 1) await new Promise(function(res) { setTimeout(res, _gsJitter(700, 1800)); });
+      // Dwa zapytania do Google na pozycję, z sieci, z której idzie też wyszukiwanie. Przerwa jest dłuższa niż
+      // przy jednym zapytaniu na pozycję, żeby seria kilkudziesięciu pozycji nie wyglądała jak skrypt.
+      if (i < kandydaci.length - 1) await new Promise(function(dalej) { setTimeout(dalej, _gsJitter(1500, 3500)); });
     }
     return wynik;
   }
@@ -12730,11 +12959,12 @@
       if (run.campaign) szcz.push(run.campaign);
       if (run.cc) szcz.push('rynek ' + String(run.cc).toUpperCase());
       if (zad) szcz.push('zadanie ' + zad + ', strona ' + ((run.page || 0) + 1));
-      szcz.push('w koszyku ' + _gsCartGet().items.length + ' adr.');
+      szcz.push('w koszyku ' + _gsCartItems(run.originProject).length + ' adr.');
       _ntfySend({
         ev: 'captcha',
         title: '⛔ CAPTCHA — wyszukiwanie stoi',
-        message: szcz.join('\n') + '\n\nOdklikaj zagadkę — wyszukiwanie ruszy dalej samo, z tego samego miejsca.',
+        message: szcz.join('\n') + '\n\nOdklikaj zagadkę — wyszukiwanie ruszy dalej samo, z tego samego miejsca, ' +
+                 'z dwa razy dłuższymi przerwami. Kolejny test w ciągu godziny je zatrzyma.',
         tags: ['no_entry'],
         click: location.href,
       });
@@ -12783,7 +13013,7 @@
     if (!task) return;
     location.href = _gsBuildUrl({
       phrase: task.phrase, mode: task.mode, cc: run.cc, lang: run.lang,
-      from: run.from, to: run.to, start: run.page * 10, blacklist: run.blacklist,
+      from: run.from, to: run.to, start: run.page * 10, blacklist: run.blacklist, run: run.startedAt,
     });
   }
 
@@ -12832,6 +13062,13 @@
   function _gsHudPrefs() { return lsGet(GS_HUD_PREFS, null) || {}; }
   function _gsHudPref(key, val) { var p = _gsHudPrefs(); p[key] = val; lsSet(GS_HUD_PREFS, p); }
 
+  // Strona Google nie wie, który projekt jest otwarty w panelu, więc HUD pokazuje adresy projektu ostatniego
+  // przebiegu. Bez żadnego przebiegu w GM (same adresy z Google News) pokazuje cały koszyk.
+  function _gsHudItems() {
+    var run = _gsRunGet();
+    return run ? _gsCartItems(run.originProject) : _gsCartGet().items;
+  }
+
   function _gsBuildHud() {
     if (Win.get(GS_HUD)) return;
 
@@ -12852,7 +13089,8 @@
             '<div class="b-stack b-stack--sm">' +
               '<div class="b-stack b-stack--xs">' +
                 '<span class="b-banner__title">Test Google (CAPTCHA)</span>' +
-                '<span class="b-small">Test do rozwiązania na tej stronie. Wyszukiwanie ruszy samo od miejsca, w którym stanęło.</span>' +
+                '<span class="b-small">Test do rozwiązania na tej stronie. Wyszukiwanie ruszy samo od miejsca, w którym stanęło, ' +
+                  'z dwa razy dłuższymi przerwami.</span>' +
                 '<span class="b-hint" id="b24t-gs-alarm-why"></span>' +
               '</div>' +
               '<div><button type="button" class="b-btn b-btn--outline b-btn--sm" id="b24t-gs-mute"></button></div>' +
@@ -12935,7 +13173,7 @@
       if (!b || b.disabled) return;
       var del = b.getAttribute('data-gs-del');
       // detail 0: przycisk wciśnięty z klawiatury (Enter, spacja), nie myszą.
-      if (del) _gsHudRemove(del, b, e.detail === 0);
+      if (del) _gsHudRemove(del, b.getAttribute('data-gs-p'), b, e.detail === 0);
       else if (actions[b.id]) actions[b.id](b, e.detail === 0);
     });
 
@@ -13011,7 +13249,7 @@
     var w = Win.get(GS_HUD);
     if (!w) return;
     var run = _gsRunGet(), active = !!(run && run.active), alarm = _gsAlarm.on;
-    var n = _gsCartGet().items.length;
+    var n = _gsHudItems().length;
     var st = alarm ? ['error', 'Test Google']
       : active ? (run.paused ? ['paused', 'Pauza'] : _gsHud.background ? ['paused', 'Karta w tle'] : ['running', 'Szuka'])
       : (run && GS_STOPPED[run.stopped]) || null;
@@ -13051,7 +13289,7 @@
   function _gsHudCount() {
     var list = _$('b24t-gs-cart');
     if (!list) return;
-    var items = _gsCartGet().items;
+    var items = _gsHudItems();
     _$('b24t-gs-count').textContent = String(items.length);
     var top = list.scrollTop;
     list.innerHTML = _html(items.length
@@ -13071,16 +13309,17 @@
       (/^https?:\/\//.test(it.u)
         ? '<a class="b-gs-item__link" href="' + _escHtml(it.u) + '" target="_blank" rel="noopener noreferrer">' + text + '</a>'
         : '<span class="b-gs-item__link">' + text + '</span>') +
-      '<button type="button" class="b-ibtn b-ibtn--sm" data-gs-del="' + _escHtml(it.u) + '" aria-label="Usuń z koszyka: ' +
+      '<button type="button" class="b-ibtn b-ibtn--sm" data-gs-del="' + _escHtml(it.u) + '" data-gs-p="' + _escHtml(_gsCartPid(it.p)) +
+        '" aria-label="Usuń z koszyka: ' +
         _escHtml(host || it.u) + '" data-tip="Usuń z koszyka">' + _icon('x') + '</button></li>';
   }
 
   // Usunięcie działa od razu i przez 8 s daje „Cofnij” nad listą. Powiadomienie stałoby w prawym dolnym rogu,
   // czyli w domyślnym miejscu HUD-a, na liście, z której się usuwa.
-  function _gsHudRemove(u, btn, byKey) {
+  function _gsHudRemove(u, p, btn, byKey) {
     var list = _$('b24t-gs-cart');
     var at = Array.prototype.indexOf.call(list.querySelectorAll('[data-gs-del]'), btn);
-    var r = _gsCartRemove(u);
+    var r = _gsCartRemove(u, p);
     if (!r) return;
     _gsHud.undo.push(r);
     clearTimeout(_gsHud.undoTimer);
@@ -13121,7 +13360,7 @@
       btn.setAttribute('aria-label', label);
       btn.setAttribute('data-tip', label);
     };
-    var txt = _gsCartGet().items.map(function(it) { return it.u; }).join('\n');
+    var txt = _gsHudItems().map(function(it) { return it.u; }).join('\n');
     navigator.clipboard.writeText(txt).then(function() {
       look('check', 'Skopiowano');
       setTimeout(function() { look('copy', 'Kopiuj adresy z koszyka'); }, 1400);
@@ -13146,7 +13385,7 @@
   // Zakończony przebieg nie zostawia użytkownika z instrukcją „wróć i wklej" — jedno kliknięcie
   // oddaje robotę tej karcie panelu, która przebieg odpaliła, i skan startuje sam.
   function _gsHudFinish(run) {
-    var n = _gsCartGet().items.length;
+    var n = _gsHudItems().length;
     _gsHud.handoff = true;
     _gsHudSay('<div class="b-gs-lead">Wyszukiwanie zakończone</div>W koszyku: ' + n + ' ' + _relPl(n, 'adres', 'adresy', 'adresów') +
       '. „Przejdź do skanowania” uruchamia skan w karcie Brand24, z której wystartowało wyszukiwanie.', true);
@@ -13234,7 +13473,7 @@
 
     // Bez przebiegu i bez koszyka HUD się nie pokazuje — inaczej wisiałby na każdym
     // wyszukiwaniu Google, także prywatnym.
-    if (!active && !manual && !_gsCartGet().items.length) return;
+    if (!active && !manual && !_gsHudItems().length) return;
 
     _gsBuildHud();
 
@@ -13242,7 +13481,7 @@
       _gsHudProgress(run);
       // Przebieg należy do karty otwartej z okna kampanii (_gsRunStep); w innej karcie Google HUD tylko
       // pokazuje stan, a Pauza i Stop działają przez wspólny stan w GM.
-      var own = run.ownerTab ? run.ownerTab === _gsTabToken() : _gsIsRunTab();
+      var own = run.ownerTab ? run.ownerTab === _gsTabToken() : _gsIsRunTab(run);
       if (!own) _gsHudSay('Wyszukiwanie trwa w innej karcie. Pauza i Stop działają także stąd.');
       // Błąd w kroku przebiegu zostawiłby przebieg „aktywny" na zawsze i nikt by się o tym
       // nie dowiedział — karta stoi, a stan w GM mówi, że trwa. Zatrzymujemy jawnie.
@@ -13255,7 +13494,7 @@
           ev: 'collectError',
           title: '⛔ Wyszukiwanie przerwane błędem',
           message: (run.campaign ? run.campaign + '\n' : '') + _msg +
-                   '\n\nKoszyk zachowany (' + _gsCartGet().items.length + ' adr.) — trzeba uruchomić wyszukiwanie ponownie.',
+                   '\n\nKoszyk zachowany (' + _gsHudItems().length + ' adr.) — trzeba uruchomić wyszukiwanie ponownie.',
           tags: ['rotating_light'],
           click: location.href,
         });
@@ -13267,7 +13506,9 @@
       // Tryb ręczny: strony przechodzi człowiek, kolektor tylko zbiera to, co zobaczy.
       var found = _gsHarvest();
       var fresh = found.filter(function(e) { return !_gsIsBlacklisted(e.u, run.blacklist); });
-      var added = _gsCartAdd(fresh);
+      var added = _gsCartAdd(fresh, _gsRunOwner(run));
+      // Strony przechodzi człowiek, ale każda to zapytanie z tej samej sieci: liczy się do licznika godzinowego.
+      _gsLogPage(run, null, found, fresh, added, _gsResultStats(), 0);
       _gsHudCount();
       _gsHudSay('<div class="b-gs-lead">Tryb ręczny</div>Strony wyników przechodzi się ręcznie; wtyczka zbiera adresy z każdej.<br>' +
                 'Dodane: ' + added + ' · odsiane: ' + (found.length - fresh.length) + ' z ' + found.length, true);
@@ -17157,7 +17398,7 @@
   function _newsRefreshCartBtn() {
     var btn = _$('b24t-news-from-cart');
     if (!btn) return;
-    var n = newsState.campaign ? _gsCartGet().items.length : 0;
+    var n = newsState.campaign ? _campaignCartItems().length : 0;
     btn.hidden = !n;
     if (!n) return;
     btn.innerHTML = _html(_icon('cart') + 'Wklej z koszyka (' + n + ')');
@@ -17166,7 +17407,7 @@
     btn.addEventListener('click', function() {
       var ta = _$('b24t-news-paste-area');
       if (!ta) return;
-      ta.value = _gsCartGet().items.map(function(it) { return it.u; }).join('\n');
+      ta.value = _campaignCartItems().map(function(it) { return it.u; }).join('\n');
       ta.focus();
     });
   }
@@ -17206,7 +17447,7 @@
       type: 'b24t_campaign_handoff',
       campaign: run.campaign || '',
       cc: run.cc || '',
-      count: _gsCartGet().items.length,
+      count: _gsHudItems().length,
     };
     // Fallback zapisujemy ZAWSZE, także gdy opener odpowie — panel czyści znacznik po podjęciu,
     // więc podwójne wykonanie nie grozi, a utrata sygnału owszem.
@@ -17259,9 +17500,21 @@
   // Wejście w skan kampanii z gotowego koszyka: chipy, adresy, start. Brak promptu zatrzymuje
   // na modalu wyboru — skan bez oceny AI dałby listę, którą trzeba przejść ręcznie, czyli
   // dokładnie to, czego to narzędzie ma nie wymagać.
+  // Adresy koszyka należące do projektu otwartego w panelu (_gsCartItems).
+  function _campaignCartItems() { return _gsCartItems(state.projectId); }
+
   function _campaignHandoff(campaign) {
-    var cart = _gsCartGet().items;
-    if (!cart.length) return;
+    var cart = _campaignCartItems();
+    if (!cart.length) {
+      // Karta panelu przełączona w trakcie wyszukiwania na inny projekt: adresy czekają na projekt, z którego
+      // ruszyło wyszukiwanie, i nie trafiają do skanu tego.
+      var run = _gsRunGet();
+      if (run && run.originProject && _gsCartItems(run.originProject).length) {
+        Toast.show('Adresy z wyszukiwania należą do projektu ' + _pnResolve(run.originProject) + '. Na tym projekcie skan ' +
+          'uruchamia „Dodawanie” w oknie Kampanie H&M.', 'warn', { duration: 12000 });
+      }
+      return;
+    }
 
     // Pole importu istnieje od razu: openNewsPanels buduje węzły modułu synchronicznie, także przy zamkniętym imporcie.
     _campaignOpenAdding();
@@ -17332,9 +17585,10 @@
   }
 
   // ── KOSZYK KAMPANII: licznik, właściciel i stan przebiegu (hub i wyszukiwanie) ──
-  // Koszyk jest JEDEN dla wszystkich przebiegów, a prompt AI podstawia nazwę kampanii z ostatnio zapisanej
-  // konfiguracji. Nazwa przy liczniku pokazuje, czyje są te adresy: bez niej koszyk z poprzedniej kampanii
-  // wjechałby pod prompt nowej bez śladu.
+  // Karta pokazuje adresy projektu otwartego w panelu (_campaignCartItems), a prompt AI podstawia nazwę kampanii
+  // z ostatnio zapisanej konfiguracji. Nazwa kampanii przy liczniku pochodzi z samych adresów: bez niej koszyk
+  // z poprzedniej kampanii wjechałby pod prompt nowej bez śladu. Adresy innych projektów stoją w osobnej linii
+  // z nazwami projektów, a stan wyszukiwania jako znacznik tylko przy projekcie, do którego ono zbiera.
   var CAMP_RUN_STATE = {
     active:  { kind: 'info',   label: 'Wyszukiwanie w toku' },
     blocked: { kind: 'danger', label: 'Zatrzymane przez CAPTCHA' },
@@ -17345,30 +17599,62 @@
   // o: { onPaste — przycisk „Wklej do importu”, onChange — po wyczyszczeniu albo przywróceniu koszyka
   //      (bez niego karta przerysowuje sama siebie) }
   function _campaignCartRender(box, o) {
-    var n = _gsCartGet().items.length;
+    var pid = _gsCartPid(state.projectId);
+    var items = _campaignCartItems(), n = items.length;
     var run = _gsRunGet();
-    var st = run ? CAMP_RUN_STATE[run.active ? 'active' : run.stopped] : null;
+    var here = run && _gsCartPid(run.originProject) === pid;
+    var st = here ? CAMP_RUN_STATE[run.active ? 'active' : run.stopped] : null;
     var redraw = o.onChange || function() { _campaignCartRender(box, o); };
+
+    // Adresy bez przypisania nie niosą nazwy kampanii; ich nazwą jest kampania ostatniego wyszukiwania, jak wcześniej.
+    var names = [];
+    items.forEach(function(it) { if (it.c && names.indexOf(it.c) < 0) names.push(it.c); });
+    var unnamed = items.some(function(it) { return !it.c; });
+    if (unnamed && run && run.campaign && names.indexOf(run.campaign) < 0) names.push(run.campaign);
+
+    // Adresy innych projektów: liczba na projekt; „bez projektu” to wyszukiwanie uruchomione bez wybranego projektu.
+    // Adresy bez przypisania należą do każdego projektu (_gsCartItems), więc tu ich nie ma.
+    var others = {};
+    _gsCartGet().items.forEach(function(it) {
+      var p = _gsCartPid(it.p);
+      if (it.p !== undefined && p !== pid) others[p] = (others[p] || 0) + 1;
+    });
+    var otherList = Object.keys(others).map(function(p) {
+      return _escHtml(p ? _pnResolve(p) : 'bez projektu') + ': ' + others[p];
+    });
+    var elsewhere = run && run.active && !here
+      ? 'Wyszukiwanie w toku dla projektu ' + _escHtml(run.originProject ? _pnResolve(run.originProject) : 'bez projektu') + '. ' : '';
+
     box.innerHTML = _html('<div class="b-ccart">' + _icon('cart') +
         '<div class="b-ccart__text"><div><b class="b-ccart__n">' + n + '</b> ' + _relPl(n, 'adres', 'adresy', 'adresów') + ' w koszyku</div>' +
           '<div class="b-hint">' + (!n ? 'Adresy trafiają tu z wyszukiwania zaawansowanego.'
-            : run && run.campaign ? 'Kampania: ' + _escHtml(run.campaign) : 'Kampania bez nazwy') + '</div></div>' +
+            : names.length ? (names.length > 1 ? 'Kampanie: ' : 'Kampania: ') + _escHtml(names.join(', ')) : 'Kampania bez nazwy') + '</div></div>' +
         (st ? _newsTag(st.kind, _escHtml(st.label)) : '') +
       '</div>' +
       (n ? '<div class="b-row b-row--wrap">' +
         (o.onPaste ? '<button type="button" class="b-btn b-btn--neutral b-btn--sm" id="b24t-camp-paste">' + _icon('upload') + 'Wklej do importu</button>' : '') +
-        '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-camp-clear">' + _icon('del') + 'Wyczyść koszyk</button></div>' : ''));
+        '<button type="button" class="b-btn b-btn--quiet b-btn--sm" id="b24t-camp-clear">' + _icon('del') + 'Wyczyść koszyk</button></div>' : '') +
+      (elsewhere || otherList.length ? '<div class="b-row b-row--wrap"><span class="b-hint">' + elsewhere +
+        (otherList.length ? 'Adresy innych projektów, niewklejane tutaj: ' + otherList.join(', ') + '.' : '') + '</span>' +
+        (otherList.length ? '<button type="button" class="b-btn b-btn--link" id="b24t-camp-clear-other">Wyczyść inne</button>' : '') + '</div>' : ''));
     var paste = box.querySelector('#b24t-camp-paste');
     if (paste) paste.addEventListener('click', o.onPaste);
-    var clear = box.querySelector('#b24t-camp-clear');
-    if (clear) clear.addEventListener('click', function() {
-      var prev = _gsCartGet().items;
-      _gsCartClear();
+    // Przywrócenie dokłada adresy zamiast nadpisać koszyk: przebieg w drugiej karcie mógł w tym czasie dodać nowe.
+    var clearing = function(pids, unassigned, label) {
+      var prev = _gsCartGet().items.filter(function(it) {
+        return it.p === undefined ? unassigned : pids.indexOf(_gsCartPid(it.p)) >= 0;
+      });
+      _gsCartClear(pids, unassigned);
       redraw();
-      // Przywrócenie dokłada adresy zamiast nadpisać koszyk: przebieg w drugiej karcie mógł w tym czasie dodać nowe.
-      Toast.show('Wyczyszczono koszyk: ' + prev.length + ' ' + _relPl(prev.length, 'adres', 'adresy', 'adresów'), 'info', {
+      Toast.show(label + prev.length + ' ' + _relPl(prev.length, 'adres', 'adresy', 'adresów'), 'info', {
         undo: function() { _gsCartAdd(prev); if (box.isConnected) redraw(); }
       });
+    };
+    var clear = box.querySelector('#b24t-camp-clear');
+    if (clear) clear.addEventListener('click', function() { clearing([pid], true, 'Wyczyszczono koszyk: '); });
+    var clearOther = box.querySelector('#b24t-camp-clear-other');
+    if (clearOther) clearOther.addEventListener('click', function() {
+      clearing(Object.keys(others), false, 'Wyczyszczono adresy innych projektów: ');
     });
   }
 
@@ -17413,7 +17699,7 @@
     var addTile = w.el.querySelector('[data-hub-tile="add"]');
     var cartBox = w.el.querySelector('#b24t-hub-cart');
     function render() {
-      if (_gsCartGet().items.length) {
+      if (_campaignCartItems().length) {
         addTile.removeAttribute('aria-disabled');
         addTile.removeAttribute('data-tip');
       } else {
@@ -17533,6 +17819,8 @@
           '<p class="b-hint b-nstate" id="b24t-camp-rss-info" aria-live="polite" hidden></p>' +
           '<div class="b-banner b-banner--info">' + _icon('info') + '<div>Wyszukiwanie działa w nowej karcie Google i potrzebuje jej na wierzchu. ' +
             'Karta zminimalizowana albo w całości zasłonięta innym oknem jest dla Chrome ukryta i wyszukiwanie wtedy czeka. Osobny monitor wystarcza.</div></div>' +
+          '<div class="b-row b-row--wrap"><span class="b-hint" id="b24t-camp-risk" aria-live="polite"></span>' +
+            '<button type="button" class="b-btn b-btn--link" id="b24t-camp-log" data-tip="Zapytania z ostatnich przebiegów jako JSON: strony wyników, zebrane adresy, przerwy i testy Google">Kopiuj dziennik</button></div>' +
         '</div>' +
       '</div>',
       foot: '<button type="button" class="b-btn b-btn--quiet" id="b24t-camp-manual" data-tip="Pierwsze zapytanie w nowej karcie, bez automatu: strony wyników przechodzi się ręcznie, a koszyk zbiera adresy z każdej">Otwórz ręcznie</button>' +
@@ -17683,7 +17971,7 @@
       // Adresy idą do pola importu, a skan rusza dopiero przyciskiem w imporcie: przed nim można jeszcze
       // poprawić listę albo słowa kluczowe.
       onPaste: function() {
-        var urls = _gsCartGet().items.map(function(it) { return it.u; }).join('\n');
+        var urls = _campaignCartItems().map(function(it) { return it.u; }).join('\n');
         _campaignOpenAdding();
         Win.close('campaign-search');
         var ta = _$('b24t-news-paste-area');
@@ -17692,8 +17980,21 @@
         ta.focus();
       }
     };
+    // Licznik zapytań i test Google z dziennika (_gsRiskText); każda strona wyników zmienia stan przebiegu, więc
+    // nasłuch przebiegu odświeża też tę linię.
+    var riskEl = q('b24t-camp-risk');
+    var riskSync = function() { riskEl.textContent = _gsRiskText(); };
+    riskSync();
     _campaignCartRender(cartBox, cartOpts);
-    unwatch = _campaignWatch(function() { _campaignCartRender(cartBox, cartOpts); });
+    unwatch = _campaignWatch(function() { _campaignCartRender(cartBox, cartOpts); riskSync(); });
+    q('b24t-camp-log').addEventListener('click', function() {
+      var log = _gsLogGet();
+      navigator.clipboard.writeText(JSON.stringify(log)).then(function() {
+        Toast.show('Skopiowano dziennik wyszukiwań: ' + log.length + ' ' + _relPl(log.length, 'wpis', 'wpisy', 'wpisów'), 'ok');
+      }, function() {
+        Toast.show('Przeglądarka odmówiła zapisu do schowka. Kliknij w okno wyszukiwania i spróbuj ponownie.', 'error');
+      });
+    });
 
     function readCfg() {
       // Bez samej nazwy i bez powtórzeń: kolejka i tak zaczyna się od nazwy, a powtórzony wariant to drugie
@@ -17776,16 +18077,38 @@
       fn(c);
     }
 
+    // Drugi start przy trwającym wyszukiwaniu nadpisywał jego stan w GM, a karta poprzedniego po swojej przerwie
+    // szła dalej po kolejce nowego. Wyszukiwanie, którego karta została zamknięta, zostaje w toku bez końca, więc
+    // okno pozwala je zatrzymać tym samym przyciskiem. window.open po potwierdzeniu mieści się w czasie aktywacji
+    // od kliknięcia w oknie potwierdzenia, więc karta nie trafia do blokady wyskakujących okien.
+    function runFree(from) {
+      var cur = _gsRunGet();
+      if (!cur || !cur.active) return Promise.resolve(true);
+      var total = cur.queue ? cur.queue.length : 0;
+      return _dlgConfirm({
+        title: 'Wyszukiwanie już trwa', from: from,
+        body: '<p>„' + _escHtml(cur.campaign || '') + '”' + (cur.cc ? ', rynek ' + _escHtml(String(cur.cc).toUpperCase()) : '') +
+          (total ? ', zadanie ' + Math.min(cur.qi + 1, total) + ' z ' + total : '') +
+          '. Nowe wyszukiwanie je zatrzyma; zebrane adresy zostają w koszyku.</p>' +
+          '<p class="b-hint">Wyszukiwanie, którego karta została zamknięta, zostaje w toku do zatrzymania.</p>',
+        confirm: 'Zatrzymaj i uruchom nowe',
+      }).then(function(ok) { if (ok) _gsRunStop('user'); return ok; });
+    }
+
     q('b24t-camp-start').addEventListener('click', function() {
+      var btn = this;
       saveAnd(function(c) {
-        var url = _gsRunStart({
-          campaign: c.phrase, variants: [c.phrase].concat(c.variants), modes: c.modes,
-          cc: c.cc, lang: c.lang, from: c.from, to: c.to, blacklist: c.blacklist,
-          originTab: _b24TabToken(), originProject: state.projectId || null,
+        runFree(btn).then(function(ok) {
+          if (!ok) return;
+          var url = _gsRunStart({
+            campaign: c.phrase, variants: [c.phrase].concat(c.variants), modes: c.modes,
+            cc: c.cc, lang: c.lang, from: c.from, to: c.to, blacklist: c.blacklist,
+            originTab: _b24TabToken(), originProject: state.projectId || null,
+          });
+          Win.close('campaign-search');
+          var tab = window.open(url, '_blank');
+          if (tab) tab.focus();
         });
-        Win.close('campaign-search');
-        var tab = window.open(url, '_blank');
-        if (tab) tab.focus();
       });
     });
 
@@ -17805,15 +18128,22 @@
           // kampanii, bo tu szum jest i tak mały (same serwisy informacyjne).
           var r = await _gsRssCollect({
             phrase: c.phrase, cc: c.cc, lang: c.lang,
-            from: c.from, to: c.to, blacklist: c.blacklist,
+            from: c.from, to: c.to, blacklist: c.blacklist, p: state.projectId,
           }, function(txt) { rssMsg('wait', _escHtml(txt)); });
           var szczegoly = [];
+          if (r.wKoszyku) szczegoly.push(r.wKoszyku + ' już w koszyku');
           if (r.pominieteData) szczegoly.push(r.pominieteData + ' poza zakresem dat');
           if (r.pominieteDomena) szczegoly.push(r.pominieteDomena + ' z czarnej listy');
           if (r.bledy) szczegoly.push(r.bledy + ' bez adresu');
-          rssMsg(r.dodane ? 'ok' : '', 'Google News: <b>+' + r.dodane + '</b> do koszyka (' + r.znalezione + ' ' +
+          // Komunikat podaje sposób naprawy: strona zgody znika po jednej wizycie, a zero rozwiniętych pozycji bez
+          // strony zgody znaczy zmianę po stronie Google News (§10.1).
+          var porada = r.zgoda ? ' Google News odsyła na stronę zgody na pliki cookie: otwórz news.google.com w tej przeglądarce, ' +
+              'zaakceptuj i kliknij ponownie.'
+            : r.poFiltrach && r.bledy === r.poFiltrach ? ' Żadna pozycja nie dała adresu artykułu: Google News prawdopodobnie zmienił ' +
+              'przekierowanie, kanał wymaga poprawki we wtyczce.' : '';
+          rssMsg(r.dodane ? 'ok' : porada ? 'error' : '', 'Google News: <b>+' + r.dodane + '</b> do koszyka (' + r.znalezione + ' ' +
             _relPl(r.znalezione, 'pozycja', 'pozycje', 'pozycji') + ', ' + r.poFiltrach + ' po filtrach).' +
-            (szczegoly.length ? ' Pominięte: ' + szczegoly.join(', ') + '.' : ''));
+            (szczegoly.length ? ' Pominięte: ' + szczegoly.join(', ') + '.' : '') + porada);
           _campaignCartRender(cartBox, cartOpts);
         } catch(e) {
           rssMsg('error', 'Google News: ' + _escHtml(e && e.message ? e.message : 'nie udało się pobrać'));
@@ -17823,14 +18153,19 @@
     });
 
     q('b24t-camp-manual').addEventListener('click', function() {
+      var btn = this;
       saveAnd(function(c) {
-        // Tryb awaryjny: bez aktywnego przebiegu kolektor tylko zbiera to, co sam otworzysz.
-        _gsRunSet({ active: false, stopped: 'manual', blacklist: c.blacklist });
-        var tab = window.open(_gsBuildUrl({
-          phrase: c.phrase, mode: c.modes[0], cc: c.cc, lang: c.lang, from: c.from, to: c.to,
-          blacklist: c.blacklist,
-        }), '_blank');
-        if (tab) tab.focus();
+        runFree(btn).then(function(ok) {
+          if (!ok) return;
+          // Tryb awaryjny: bez aktywnego przebiegu kolektor tylko zbiera to, co sam otworzysz, do koszyka tego projektu.
+          _gsRunSet({ active: false, stopped: 'manual', blacklist: c.blacklist, campaign: c.phrase, cc: c.cc, lang: c.lang,
+                      originProject: state.projectId ? String(state.projectId) : null, startedAt: Date.now() });
+          var tab = window.open(_gsBuildUrl({
+            phrase: c.phrase, mode: c.modes[0], cc: c.cc, lang: c.lang, from: c.from, to: c.to,
+            blacklist: c.blacklist,
+          }), '_blank');
+          if (tab) tab.focus();
+        });
       });
     });
   }
@@ -20879,6 +21214,82 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.23",
+      "date": "2026-10-07",
+      "label": "new",
+      "changes": [
+        {
+          "type": "fix",
+          "area": "Kampanie H&M",
+          "title": "Naprawiono błąd, przez który „Dołóż z Google News” nie dodawał adresów do koszyka",
+          "items": [
+            "Pozycje z Google News rozwijają się do adresów artykułów.",
+            "Pozycja, która już jest w koszyku, nie jest pobierana drugi raz.",
+            "Gdy Google News odsyła na stronę zgody na pliki cookie, komunikat mówi, co zrobić."
+          ],
+          "text": "Naprawiono błąd, przez który „Dołóż z Google News” nie dodawał adresów do koszyka. Pozycje z Google News rozwijają się do adresów artykułów. Pozycja, która już jest w koszyku, nie jest pobierana drugi raz. Gdy Google News odsyła na stronę zgody na pliki cookie, komunikat mówi, co zrobić."
+        },
+        {
+          "type": "fix",
+          "area": "Kampanie H&M",
+          "title": "Naprawiono odsiewanie poprawnych serwisów przez czarną listę domen",
+          "items": [
+            "Wpis „x.com” odsiewa tylko x.com i jego subdomeny, a nie każdy serwis kończący się na „x.com”.",
+            "Wpis zakończony kropką, np. „olx.”, pasuje do początku domeny, a wpis bez kropki, np. „vinted”, do jednego członu adresu."
+          ],
+          "text": "Naprawiono odsiewanie poprawnych serwisów przez czarną listę domen. Wpis „x.com” odsiewa tylko x.com i jego subdomeny, a nie każdy serwis kończący się na „x.com”. Wpis zakończony kropką, np. „olx.”, pasuje do początku domeny, a wpis bez kropki, np. „vinted”, do jednego członu adresu."
+        },
+        {
+          "type": "fix",
+          "area": "Kampanie H&M",
+          "title": "Naprawiono błąd, przez który nowe wyszukiwanie mieszało się z trwającym",
+          "items": [
+            "„Uruchom wyszukiwanie” przy trwającym wyszukiwaniu pyta, czy je zatrzymać.",
+            "Karta poprzedniego wyszukiwania nie przejmuje nowego."
+          ],
+          "text": "Naprawiono błąd, przez który nowe wyszukiwanie mieszało się z trwającym. „Uruchom wyszukiwanie” przy trwającym wyszukiwaniu pyta, czy je zatrzymać. Karta poprzedniego wyszukiwania nie przejmuje nowego."
+        },
+        {
+          "type": "improved",
+          "area": "Kampanie H&M",
+          "title": "Osobny koszyk kampanii dla każdego projektu",
+          "items": [
+            "Wyszukiwanie i Google News przypisują adresy do projektu, z którego ruszyły.",
+            "„Wklej do importu” i „Przejdź do skanowania” biorą tylko adresy otwartego projektu.",
+            "Adresy innych projektów stoją w osobnej linii pod koszykiem, z przyciskiem „Wyczyść inne”."
+          ],
+          "action": "Jeśli w koszyku zostały adresy z kilku rynków, trzeba go wyczyścić przed następnym skanem: adresy zebrane przed tą wersją widać w każdym projekcie.",
+          "text": "Osobny koszyk kampanii dla każdego projektu. Wyszukiwanie i Google News przypisują adresy do projektu, z którego ruszyły. „Wklej do importu” i „Przejdź do skanowania” biorą tylko adresy otwartego projektu. Adresy innych projektów stoją w osobnej linii pod koszykiem, z przyciskiem „Wyczyść inne”. Jeśli w koszyku zostały adresy z kilku rynków, trzeba go wyczyścić przed następnym skanem: adresy zebrane przed tą wersją widać w każdym projekcie."
+        },
+        {
+          "type": "improved",
+          "area": "Kampanie H&M",
+          "title": "Wolniejsze wyszukiwanie po teście Google i zatrzymanie po drugim teście",
+          "items": [
+            "Przez godzinę po teście Google przerwy między stronami wyników są dwa razy dłuższe, także w kolejnym wyszukiwaniu.",
+            "Drugi test w ciągu godziny zatrzymuje wyszukiwanie; koszyk zostaje.",
+            "Okno wyszukiwania i panel na stronie Google pokazują liczbę zapytań do Google z ostatniej godziny."
+          ],
+          "text": "Wolniejsze wyszukiwanie po teście Google i zatrzymanie po drugim teście. Przez godzinę po teście Google przerwy między stronami wyników są dwa razy dłuższe, także w kolejnym wyszukiwaniu. Drugi test w ciągu godziny zatrzymuje wyszukiwanie; koszyk zostaje. Okno wyszukiwania i panel na stronie Google pokazują liczbę zapytań do Google z ostatniej godziny."
+        },
+        {
+          "type": "improved",
+          "area": "Kampanie H&M",
+          "title": "Wariant frazy kończy się po dwóch stronach wyników bez nowych adresów",
+          "text": "Wariant frazy kończy się po dwóch stronach wyników bez nowych adresów."
+        },
+        {
+          "type": "new",
+          "area": "Kampanie H&M",
+          "title": "Dziennik zapytań wyszukiwania i przycisk „Kopiuj dziennik”",
+          "items": [
+            "Dziennik zapisuje każdą stronę wyników i każdy test Google z liczbą zebranych adresów."
+          ],
+          "text": "Dziennik zapytań wyszukiwania i przycisk „Kopiuj dziennik”. Dziennik zapisuje każdą stronę wyników i każdy test Google z liczbą zebranych adresów."
+        }
+      ]
+    },
+    {
       "version": "0.38.22",
       "date": "2026-10-06",
       "label": "fix",
@@ -21125,33 +21536,6 @@
             "Log pokazuje start, wynik i uwagi operacji; resztę widać po włączeniu „Logi programistyczne” w Ustawieniach → Aktualizacje."
           ],
           "text": "Log bez wpisów technicznych przy pracy z plikiem i w Annotators. Postęp pobierania mapy wzmianek, partie tagowania, wykryte kolumny pliku, kontrole danych i odczyty zakładek Annotators trafiają do logów programistycznych. Log pokazuje start, wynik i uwagi operacji; resztę widać po włączeniu „Logi programistyczne” w Ustawieniach → Aktualizacje."
-        }
-      ]
-    },
-    {
-      "version": "0.38.13",
-      "date": "2026-10-03",
-      "label": "improved",
-      "changes": [
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Przeciąganie kart na pasku funkcji z animacją",
-          "items": [
-            "Chwycona karta unosi się i jedzie za kursorem, a pozostałe rozsuwają się płynnie na nowe miejsca.",
-            "Po puszczeniu karta osiada na swoim miejscu. Rozsuwanie i osiadanie działają przy „Animacje: Pełne” albo przy „Jak w systemie” bez ograniczenia ruchu w systemie."
-          ],
-          "text": "Przeciąganie kart na pasku funkcji z animacją. Chwycona karta unosi się i jedzie za kursorem, a pozostałe rozsuwają się płynnie na nowe miejsca. Po puszczeniu karta osiada na swoim miejscu. Rozsuwanie i osiadanie działają przy „Animacje: Pełne” albo przy „Jak w systemie” bez ograniczenia ruchu w systemie."
-        },
-        {
-          "type": "improved",
-          "area": "Tagowanie z pliku",
-          "title": "Karta pliku bez pustego miejsca w szerokim panelu",
-          "items": [
-            "Gdy karta pliku stoi obok karty Postęp, pole pliku wypełnia całą kartę jako duże miejsce do upuszczenia pliku.",
-            "Opis wczytanego pliku mieści się w całości zamiast kończyć się wielokropkiem."
-          ],
-          "text": "Karta pliku bez pustego miejsca w szerokim panelu. Gdy karta pliku stoi obok karty Postęp, pole pliku wypełnia całą kartę jako duże miejsce do upuszczenia pliku. Opis wczytanego pliku mieści się w całości zamiast kończyć się wielokropkiem."
         }
       ]
     }

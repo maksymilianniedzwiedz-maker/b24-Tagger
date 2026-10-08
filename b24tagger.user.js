@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.26
+// @version      0.38.27
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -185,7 +185,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.26';
+  const VERSION = '0.38.27';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -13519,18 +13519,32 @@
     var n = _gsHudItems().length;
     _gsHud.handoff = true;
     _gsHudSay('<div class="b-gs-lead">Wyszukiwanie zakończone</div>W koszyku: ' + n + ' ' + _relPl(n, 'adres', 'adresy', 'adresów') +
-      '. „Przejdź do skanowania” uruchamia skan w karcie Brand24, z której wystartowało wyszukiwanie.', true);
+      '. „Przejdź do skanowania” uruchamia skan w karcie Brand24, z której wystartowało wyszukiwanie, i zamyka tę kartę.', true);
     _gsHudProgress(run);
   }
 
+  // Karta zamyka się sama, gdy panel potwierdzi odbiór (§6b). Panel bez odpowiedzi (karta zamknięta albo na innej
+  // stronie Brand24) podejmie znacznik po powrocie na kartę; trzeba to powiedzieć, bo inaczej wygląda to jak
+  // zawieszenie. Karta czeka dalej i zamyka się, gdy potwierdzenie przyjdzie później.
   function _gsHudHandoff(btn) {
-    var ok = _gsHandoffToPanel();
     btn.disabled = true;
     btn.innerHTML = _html(_icon('check') + 'Przekazano');
-    // Gdy `opener` przepadł (panel przeładowany albo zamknięty), sygnał czeka w GM i karta panelu podniesie go
-    // po powrocie na nią — trzeba to powiedzieć, bo nic się nie stanie samo i wygląda to jak zawieszenie.
-    _gsHudSay(ok ? 'Adresy przekazane do karty panelu Brand24.'
-      : 'Karta panelu nie odpowiedziała. Skan ruszy po powrocie na kartę Brand24, z której wystartowało wyszukiwanie.', true);
+    var ts = _gsHandoffToPanel(), id = null;
+    _gsHudSay('Przekazuję adresy do karty panelu Brand24…', true);
+    var timer = setTimeout(function() {
+      _gsHudSay('Karta panelu nie odpowiedziała. Skan ruszy po powrocie na kartę Brand24, z której wystartowało wyszukiwanie.', true);
+    }, GS_HANDOFF_WAIT);
+    try {
+      id = GM_addValueChangeListener(GS_HANDOFF_KEY, function() {
+        var h = _gsGet(GS_HANDOFF_KEY, null);
+        if (!h || h.took !== ts) return;
+        clearTimeout(timer);
+        try { GM_removeValueChangeListener(id); } catch(e) {}
+        // Widać tylko wtedy, gdy przeglądarka nie pozwoli zamknąć karty: tak jest z kartą otwartą ręcznie.
+        _gsHudSay('Adresy przekazane do karty panelu Brand24. Tę kartę można zamknąć.', true);
+        window.close();
+      });
+    } catch(e) {}
   }
 
   // Alarm w HUD-zie: rozwija pigułkę, pokazuje opis i przyciski alarmu w tym samym rogu. `why` = null kończy.
@@ -17574,17 +17588,16 @@
   // odpaliła — użytkownik ma otwarte kilka kart z różnymi projektami i wciśnięcie skanu
   // w cudzą kartę wrzuciłoby adresy do złego projektu.
   //
-  // Droga główna: `window.opener`. Karta przebiegu jest otwierana przez `window.open` z modalu,
-  // więc `opener` JEST referencją dokładnie do tej karty — nie trzeba jej szukać ani zgadywać.
-  // Serie nawigacji po Google tego nie zrywają, bo wszystkie są w obrębie jednej witryny.
+  // Sygnałem jest znacznik w GM z tokenem karty źródłowej (`run.originTab`). Karta panelu słucha zmian klucza, więc
+  // podejmuje go od razu, także w tle, i potwierdza zapisem `took`; wtedy karta Google zamyka się sama, a Chrome
+  // wraca na kartę, która ją otworzyła (GOOGLE_COLLECTOR.md §6b). Nie przez `window.opener`: wyniki Google wysyłają
+  // `Cross-Origin-Opener-Policy: same-origin-allow-popups`, więc po wejściu na Google `opener` karty jest null
+  // i wiadomość nie miała dokąd iść. `window.close()` działa mimo to, bo kartę otworzył skrypt.
   //
-  // Fallback: znacznik w GM ze tokenem karty źródłowej. Gdy panel został w międzyczasie
-  // przeładowany (`opener` przepada), podnosi robotę przy powrocie na kartę.
-  //
-  // Adresy NIE jadą w wiadomości — panel czyta je sam z koszyka. Wiadomość jest samym
-  // sygnałem, więc nie ma tu danych z zewnątrz, którym trzeba by ufać.
+  // Adresy NIE jadą w znaczniku — panel czyta je sam z koszyka.
 
   var GS_HANDOFF_KEY = 'b24t_gs_handoff';
+  var GS_HANDOFF_WAIT = 4000;   // ms bez potwierdzenia panelu, po których HUD mówi, że panel nie odpowiada
 
   // Token karty panelu: per karta, przeżywa nawigację po SPA Brand24.
   function _b24TabToken() {
@@ -17597,61 +17610,32 @@
     return t;
   }
 
-  // Strona wyników: oddaj robotę panelowi.
+  // Strona wyników: oddaj robotę panelowi. → znacznik czasu sygnału, który panel odda w `took`.
   function _gsHandoffToPanel() {
-    var run = _gsRunGet() || {};
-    var payload = {
-      type: 'b24t_campaign_handoff',
-      campaign: run.campaign || '',
-      cc: run.cc || '',
-      count: _gsHudItems().length,
-    };
-    // Fallback zapisujemy ZAWSZE, także gdy opener odpowie — panel czyści znacznik po podjęciu,
-    // więc podwójne wykonanie nie grozi, a utrata sygnału owszem.
-    _gsSet(GS_HANDOFF_KEY, { ready: true, tab: run.originTab || null, ts: Date.now(), campaign: payload.campaign });
-
-    var przekazane = false;
-    try {
-      if (window.opener && !window.opener.closed) {
-        window.opener.postMessage(payload, 'https://panel.brand24.pl');
-        window.opener.postMessage(payload, 'https://app.brand24.com');
-        przekazane = true;
-        // Focus bywa przez Chrome ignorowany — to wygoda, nie fundament. Skanowanie startuje
-        // po stronie panelu niezależnie od tego, czy karta faktycznie wyszła na wierzch.
-        try { window.opener.focus(); } catch(e) {}
-      }
-    } catch(e) {}
-    return przekazane;
+    var run = _gsRunGet() || {}, ts = Date.now();
+    _gsSet(GS_HANDOFF_KEY, { ready: true, tab: run.originTab || null, ts: ts, campaign: run.campaign || '' });
+    return ts;
   }
 
-  // Panel: nasłuch sygnału z karty przebiegu + podjęcie zaległego znacznika po powrocie.
+  // Panel: podjęcie znacznika z karty przebiegu. Nasłuch zmian działa także w karcie w tle; sprawdzenie przy powrocie
+  // na kartę i przy starcie łapie znacznik zapisany, gdy karta była zamknięta albo na innej stronie Brand24.
   function _wireCampaignHandoff() {
     if (window.__b24tCampaignHandoffWired) return;
     window.__b24tCampaignHandoffWired = true;
 
-    window.addEventListener('message', function(e) {
-      // Nadawcą może być WYŁĄCZNIE strona wyników Google. Bez tego dowolna otwarta witryna
-      // mogłaby wymusić skan na cudzym koszyku.
-      if (!/^https:\/\/(www\.)?google\.[a-z.]+$/.test(e.origin || '')) return;
-      var d = e.data;
-      if (!d || d.type !== 'b24t_campaign_handoff') return;
-      _gsSet(GS_HANDOFF_KEY, { ready: false });
-      _campaignHandoff(d.campaign || '');
-    });
-
-    // Panel przeładowany w trakcie przebiegu → `opener` przepadł. Znacznik czeka w GM
-    // i tylko karta, która przebieg odpaliła, ma prawo go podjąć.
-    function podejmijZalegly() {
+    // Tylko karta, która przebieg odpaliła, ma prawo podjąć znacznik.
+    function podejmij() {
       var h = _gsGet(GS_HANDOFF_KEY, null);
       if (!h || !h.ready) return;
       if (h.tab && h.tab !== _b24TabToken()) return;
-      _gsSet(GS_HANDOFF_KEY, { ready: false });
+      _gsSet(GS_HANDOFF_KEY, { ready: false, took: h.ts });
       _campaignHandoff(h.campaign || '');
     }
+    try { GM_addValueChangeListener(GS_HANDOFF_KEY, function(k, o, v, remote) { if (remote) podejmij(); }); } catch(e) {}
     document.addEventListener('visibilitychange', function() {
-      if (!document.hidden) podejmijZalegly();
+      if (!document.hidden) podejmij();
     });
-    podejmijZalegly();
+    podejmij();
 
     // Dźwięk alarmu captchy, którego karta przebiegu nie może zagrać (_gsAlarmRelaySync).
     try { GM_addValueChangeListener(GS_RUN_KEY, function(k, o, v, remote) { if (remote) _gsAlarmRelaySync(); }); } catch(e) {}
@@ -21379,6 +21363,24 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.27",
+      "date": "2026-10-08",
+      "label": "fix",
+      "changes": [
+        {
+          "type": "fix",
+          "area": "Kampanie H&M",
+          "title": "Naprawiono błąd, przez który skan kampanii ruszał dopiero po powrocie na kartę Brand24",
+          "items": [
+            "„Przejdź do skanowania” przekazuje adresy od razu, także gdy karta Brand24 jest w tle.",
+            "Karta wyszukiwania Google zamyka się po przekazaniu adresów, a przeglądarka wraca na kartę Brand24.",
+            "Gdy karta Brand24 nie odpowie w ciągu 4 sekund, okienko wyszukiwania podaje, że skan ruszy po powrocie na nią."
+          ],
+          "text": "Naprawiono błąd, przez który skan kampanii ruszał dopiero po powrocie na kartę Brand24. „Przejdź do skanowania” przekazuje adresy od razu, także gdy karta Brand24 jest w tle. Karta wyszukiwania Google zamyka się po przekazaniu adresów, a przeglądarka wraca na kartę Brand24. Gdy karta Brand24 nie odpowie w ciągu 4 sekund, okienko wyszukiwania podaje, że skan ruszy po powrocie na nią."
+        }
+      ]
+    },
+    {
       "version": "0.38.26",
       "date": "2026-10-08",
       "label": "new",
@@ -21652,22 +21654,6 @@
           ],
           "experimental": true,
           "text": "Instalacja wersji stabilnej w miejsce wersji z kanału Experimental. Po wyborze kanału Stabilny w Ustawieniach → Aktualizacje przycisk „Zainstaluj” przy wersji stabilnej otwiera jej instalację w Tampermonkeyu. Tampermonkey pokazuje ostrzeżenie „Uwaga! Starsza wersja skryptu”, a instalację potwierdza przycisk „Zdezaktualizuj”."
-        }
-      ]
-    },
-    {
-      "version": "0.38.17",
-      "date": "2026-10-05",
-      "label": "fix",
-      "changes": [
-        {
-          "type": "fix",
-          "area": "Panel",
-          "title": "Naprawiono błąd, przez który ostatni wiersz Ustawień wyglądał na przekreślony",
-          "items": [
-            "W oknach bez stopki, takich jak Ustawienia, dalszą treść pod widokiem zapowiada cień przy dolnej krawędzi okna, a tekst nad nią zostaje czytelny (żadnej opcji nikt nie skreślił, była tylko zacieniona)."
-          ],
-          "text": "Naprawiono błąd, przez który ostatni wiersz Ustawień wyglądał na przekreślony. W oknach bez stopki, takich jak Ustawienia, dalszą treść pod widokiem zapowiada cień przy dolnej krawędzi okna, a tekst nad nią zostaje czytelny (żadnej opcji nikt nie skreślił, była tylko zacieniona)."
         }
       ]
     }

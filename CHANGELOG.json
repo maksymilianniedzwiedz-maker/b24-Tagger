@@ -1,5 +1,23 @@
 [
   {
+    "version": "0.38.27",
+    "date": "2026-10-08",
+    "label": "fix",
+    "changes": [
+      {
+        "type": "fix",
+        "area": "Kampanie H&M",
+        "title": "Naprawiono błąd, przez który skan kampanii ruszał dopiero po powrocie na kartę Brand24",
+        "items": [
+          "„Przejdź do skanowania” przekazuje adresy od razu, także gdy karta Brand24 jest w tle.",
+          "Karta wyszukiwania Google zamyka się po przekazaniu adresów, a przeglądarka wraca na kartę Brand24.",
+          "Gdy karta Brand24 nie odpowie w ciągu 4 sekund, okienko wyszukiwania podaje, że skan ruszy po powrocie na nią."
+        ],
+        "text": "Naprawiono błąd, przez który skan kampanii ruszał dopiero po powrocie na kartę Brand24. „Przejdź do skanowania” przekazuje adresy od razu, także gdy karta Brand24 jest w tle. Karta wyszukiwania Google zamyka się po przekazaniu adresów, a przeglądarka wraca na kartę Brand24. Gdy karta Brand24 nie odpowie w ciągu 4 sekund, okienko wyszukiwania podaje, że skan ruszy po powrocie na nią."
+      }
+    ]
+  },
+  {
     "version": "0.38.26",
     "date": "2026-10-08",
     "label": "new",

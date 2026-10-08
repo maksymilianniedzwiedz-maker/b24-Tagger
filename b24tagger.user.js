@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.24
+// @version      0.38.25
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -185,7 +185,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.24';
+  const VERSION = '0.38.25';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -11981,13 +11981,17 @@
     } catch(e) {}
   }
 
-  // Koniec: trzy rosnące tony; błąd: dwa opadające; captcha: 1,5 s alarmu z wyszukiwania kampanii (podgląd);
+  // Koniec: trzy rosnące tony; błąd: dwa opadające; captcha: jeden cykl alarmu z wyszukiwania kampanii (podgląd);
   // nowa wersja: dwa rosnące tony, gdy powiadomienie systemowe jest niedostępne (_updNotify).
   function _sndPlay(kind) {
     if (kind === 'done') _sndTones([523.25, 659.25, 783.99], 'sine', 0.13, 0.45);
     else if (kind === 'error') _sndTones([493.88, 349.23], 'triangle', 0.22, 0.5);
     // Alarm, który ruszył w trakcie podglądu, uciszył podgląd i gra dalej, więc koniec podglądu go nie ucisza.
-    else if (kind === 'captcha' && !_gsAlarm.on) { _gsAlarmSound(); setTimeout(function() { if (!_gsAlarm.on) _gsAlarmSilence(); }, 1500); }
+    // Podgląd kończy się przed początkiem drugiego cyklu pętli.
+    else if (kind === 'captcha' && !_gsAlarm.on) {
+      _gsAlarmSound();
+      setTimeout(function() { if (!_gsAlarm.on) _gsAlarmSilence(); }, GS_ALARM_CYCLE * 1000 - 100);
+    }
     else if (kind === 'update') _sndTones([659.25, 987.77], 'sine', 0.16, 0.6);
   }
 
@@ -12916,7 +12920,35 @@
   // stoją w HUD-zie, w jego rogu: pasek na środku górnej krawędzi zasłaniał test Google.
 
   // `on` w karcie przebiegu: trwa alarm; w karcie panelu: gra dźwięk oddany przez kartę przebiegu (_gsAlarmRelaySync).
-  var _gsAlarm = { on: false, osc: null, ctx: null, titleIv: null, titleWas: null, poll: null, toast: null };
+  var _gsAlarm = { on: false, src: null, ctx: null, titleIv: null, titleWas: null, poll: null, toast: null };
+
+  // Dźwięk alarmu: dwa stuknięcia w kieliszek co GS_ALARM_CYCLE s, głośność GS_ALARM_GAIN (GOOGLE_COLLECTOR.md §6.1b).
+  // Wybrany z próbek zamiast ciągłego pisku 880 Hz, który męczył. Te same liczby co w próbce „Kieliszek”: stuknięcie
+  // [start s, Hz, głośność], alikwot szkła [× Hz, głośność, wygaszenie s].
+  var GS_ALARM_CYCLE = 2, GS_ALARM_GAIN = 0.7;
+  var GS_ALARM_TAPS = [[0, 1760, 0.2], [0.2, 1760, 0.17]];
+  var GS_ALARM_GLASS = [[1, 1, 2.0], [2.32, 0.3, 1.1], [4.25, 0.15, 0.5], [6.63, 0.06, 0.25]];
+
+  // Jeden cykl liczony z góry do bufora, odtwarzany w pętli przez `loop`. Bez timerów, bo dźwięk gra zwykle w karcie
+  // panelu w tle, a tam Chrome opóźnia setTimeout i rytm by się rozjeżdżał. Obwiednia jak w Web Audio próbki: narastanie
+  // liniowe 2 ms, potem spadek wykładniczy do 0,0001 (exponentialRampToValueAtTime). Ogon drugiego stuknięcia za końcem
+  // cyklu ma już amplitudę ok. 0,0002, więc jego ucięcie nie jest słyszalne.
+  function _gsAlarmBuffer(ctx) {
+    var rate = ctx.sampleRate, n = Math.round(GS_ALARM_CYCLE * rate);
+    var buf = ctx.createBuffer(1, n, rate), d = buf.getChannelData(0), att = 0.002;
+    GS_ALARM_TAPS.forEach(function(tap) {
+      GS_ALARM_GLASS.forEach(function(p) {
+        var f = tap[1] * p[0], amp = tap[2] * p[1], dec = p[2];
+        var s0 = Math.round(tap[0] * rate), s1 = Math.min(n, s0 + Math.round(dec * rate));
+        for (var i = s0; i < s1; i++) {
+          var t = (i - s0) / rate;
+          var env = t < att ? amp * t / att : amp * Math.pow(0.0001 / amp, (t - att) / (dec - att));
+          d[i] += GS_ALARM_GAIN * env * Math.sin(2 * Math.PI * f * t);
+        }
+      });
+    });
+    return buf;
+  }
 
   function _gsAlarmSound() {
     try {
@@ -12925,23 +12957,12 @@
       // Bez kliknięcia w tej karcie Chrome trzyma kontekst w stanie `suspended` i `resume()` go nie obudzi.
       // Karta przebiegu oddaje wtedy dźwięk karcie panelu (_gsAlarmSoundOrRelay).
       if (ctx.state === 'suspended' && ctx.resume) ctx.resume();
-
-      var osc = ctx.createOscillator();
-      var gain = ctx.createGain();
-      var lfo = ctx.createOscillator();      // pulsowanie głośności — brzmi jak alarm, nie jak buczenie
-      var lfoGain = ctx.createGain();
-      osc.type = 'square';
-      osc.frequency.value = 880;
-      lfo.frequency.value = 3.2;
-      lfoGain.gain.value = 0.16;
-      gain.gain.value = 0.02;
-      lfo.connect(lfoGain);
-      lfoGain.connect(gain.gain);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      lfo.start();
-      _gsAlarm.osc = { osc: osc, lfo: lfo };
+      var src = ctx.createBufferSource();
+      src.buffer = _gsAlarmBuffer(ctx);
+      src.loop = true;
+      src.connect(ctx.destination);
+      src.start();
+      _gsAlarm.src = src;
     } catch(e) {}
   }
 
@@ -13019,9 +13040,9 @@
   }
 
   function _gsAlarmSilence() {
-    try { if (_gsAlarm.osc) { _gsAlarm.osc.osc.stop(); _gsAlarm.osc.lfo.stop(); } } catch(e) {}
+    try { if (_gsAlarm.src) _gsAlarm.src.stop(); } catch(e) {}
     try { if (_gsAlarm.ctx) _gsAlarm.ctx.close(); } catch(e) {}
-    _gsAlarm.osc = null;
+    _gsAlarm.src = null;
     _gsAlarm.ctx = null;
   }
 
@@ -21276,6 +21297,24 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.25",
+      "date": "2026-10-08",
+      "label": "improved",
+      "changes": [
+        {
+          "type": "improved",
+          "area": "Kampanie H&M",
+          "title": "Alarm CAPTCHA stuka w kieliszek co 2 sekundy",
+          "items": [
+            "Dwa stuknięcia w szkło powtarzają się do rozwiązania testu, wyciszenia albo zatrzymania wyszukiwania.",
+            "Dźwięk włącza i wyłącza się w karcie Powiadomienia, w sekcji Dźwięki."
+          ],
+          "comment": "Ciągły pisk 880 Hz skutecznie budził, ale męczył bardziej niż sama CAPTCHA. Nowy dźwięk wybrał użytkownik z piętnastu próbek.",
+          "text": "Alarm CAPTCHA stuka w kieliszek co 2 sekundy. Dwa stuknięcia w szkło powtarzają się do rozwiązania testu, wyciszenia albo zatrzymania wyszukiwania. Dźwięk włącza i wyłącza się w karcie Powiadomienia, w sekcji Dźwięki."
+        }
+      ]
+    },
+    {
       "version": "0.38.24",
       "date": "2026-10-08",
       "label": "fix",
@@ -21533,70 +21572,6 @@
         {
           "type": "fix",
           "area": "Panel",
-          "title": "Naprawiono błąd bezpieczeństwa",
-          "text": "Naprawiono błąd bezpieczeństwa."
-        }
-      ]
-    },
-    {
-      "version": "0.38.15",
-      "date": "2026-10-04",
-      "label": "improved",
-      "changes": [
-        {
-          "type": "improved",
-          "area": "Tagowanie z pliku",
-          "title": "Potwierdzenie „Usuwanie po zakończeniu” przed startem przebiegu",
-          "items": [
-            "Start z włączoną opcją pokazuje tag, projekty, zakresy dat i liczbę wzmianek, które mają już ten tag, także spoza pliku.",
-            "Usuwanie po przebiegu obejmuje tylko projekty wymienione w potwierdzeniu.",
-            "Pod listą tagów opcji stoi opis zakresu usuwania."
-          ],
-          "text": "Potwierdzenie „Usuwanie po zakończeniu” przed startem przebiegu. Start z włączoną opcją pokazuje tag, projekty, zakresy dat i liczbę wzmianek, które mają już ten tag, także spoza pliku. Usuwanie po przebiegu obejmuje tylko projekty wymienione w potwierdzeniu. Pod listą tagów opcji stoi opis zakresu usuwania."
-        },
-        {
-          "type": "fix",
-          "area": "Tagowanie z pliku",
-          "title": "Naprawiono błąd, przez który usuwanie po zakończeniu w pliku wielu projektów szło w otwartym projekcie",
-          "items": [
-            "Usuwanie działa w każdym projekcie z pliku, z tagiem o tej samej nazwie i z zakresem dat wierszy tego projektu.",
-            "Projekt bez tagu o tej nazwie jest pomijany."
-          ],
-          "text": "Naprawiono błąd, przez który usuwanie po zakończeniu w pliku wielu projektów szło w otwartym projekcie. Usuwanie działa w każdym projekcie z pliku, z tagiem o tej samej nazwie i z zakresem dat wierszy tego projektu. Projekt bez tagu o tej nazwie jest pomijany."
-        },
-        {
-          "type": "fix",
-          "area": "Tagowanie z pliku",
-          "title": "Naprawiono błąd, przez który usuwanie po zakończeniu brało tag sprzed zmiany mapowania",
-          "items": [
-            "Lista tagów opcji pokazuje tag, z którym ruszy usuwanie; tag oceny zmienionej z irrelevant na inny rodzaj przestaje być celem.",
-            "„Zawsze włączaj w tym projekcie dla tego tagu” zaznacza opcję razem z tagiem."
-          ],
-          "text": "Naprawiono błąd, przez który usuwanie po zakończeniu brało tag sprzed zmiany mapowania. Lista tagów opcji pokazuje tag, z którym ruszy usuwanie; tag oceny zmienionej z irrelevant na inny rodzaj przestaje być celem. „Zawsze włączaj w tym projekcie dla tego tagu” zaznacza opcję razem z tagiem."
-        },
-        {
-          "type": "fix",
-          "area": "Quick Delete",
-          "title": "Naprawiono błąd, przez który „Wszystkie projekty” brały ID tagu z bieżącego projektu",
-          "items": [
-            "Okno „Usuwanie ze wszystkich projektów” liczy i usuwa w każdym projekcie wzmianki z tagiem o tej samej nazwie.",
-            "Projekty, których wtyczka nie zna z tym tagiem, okno wymienia z nazwy i ich nie rusza. Tagi projektu wtyczka zapamiętuje przy otwarciu jego wzmianek w Brand24."
-          ],
-          "text": "Naprawiono błąd, przez który „Wszystkie projekty” brały ID tagu z bieżącego projektu. Okno „Usuwanie ze wszystkich projektów” liczy i usuwa w każdym projekcie wzmianki z tagiem o tej samej nazwie. Projekty, których wtyczka nie zna z tym tagiem, okno wymienia z nazwy i ich nie rusza. Tagi projektu wtyczka zapamiętuje przy otwarciu jego wzmianek w Brand24."
-        },
-        {
-          "type": "fix",
-          "area": "Tagowanie z pliku",
-          "title": "Naprawiono podsumowania Test Run, które brzmiały jak zapis w Brand24",
-          "items": [
-            "Raport sesji, licznik w karcie Plik, pigułka panelu i powiadomienie o końcu podają liczbę zapisów do wykonania z dopiskiem „Brand24 bez zmian”.",
-            "Tak samo kończą się Quick Tag, Usuwanie i AI Tag w trybie Test Run."
-          ],
-          "text": "Naprawiono podsumowania Test Run, które brzmiały jak zapis w Brand24. Raport sesji, licznik w karcie Plik, pigułka panelu i powiadomienie o końcu podają liczbę zapisów do wykonania z dopiskiem „Brand24 bez zmian”. Tak samo kończą się Quick Tag, Usuwanie i AI Tag w trybie Test Run."
-        },
-        {
-          "type": "fix",
-          "area": "Dodawanie wzmianek",
           "title": "Naprawiono błąd bezpieczeństwa",
           "text": "Naprawiono błąd bezpieczeństwa."
         }
@@ -24202,7 +24177,7 @@
   var SND_ROWS = [
     ['done', 'Koniec tagowania z pliku', 'Trzy rosnące tony po zakończeniu przebiegu Start.'],
     ['error', 'Błąd przerywający tagowanie', 'Dwa opadające tony, gdy przebieg Start staje z błędem.'],
-    ['captcha', 'Captcha w wyszukiwaniu kampanii', 'Pulsujący alarm w karcie Google, dopóki Google czeka na weryfikację. Obrys strony i tytuł karty działają także bez dźwięku.']
+    ['captcha', 'Captcha w wyszukiwaniu kampanii', 'Dwa stuknięcia w kieliszek co 2 s, dopóki Google czeka na weryfikację. Gra karta Google albo karta Brand24, z której ruszyło wyszukiwanie. Obrys strony i tytuł karty działają także bez dźwięku.']
   ];
   function _setPaneNotify(pane, ctx) {
     var grupy = NTFY_GRUPY.map(function (g) {

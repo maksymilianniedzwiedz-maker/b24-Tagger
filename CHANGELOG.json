@@ -1,5 +1,23 @@
 [
   {
+    "version": "0.38.25",
+    "date": "2026-10-08",
+    "label": "improved",
+    "changes": [
+      {
+        "type": "improved",
+        "area": "Kampanie H&M",
+        "title": "Alarm CAPTCHA stuka w kieliszek co 2 sekundy",
+        "items": [
+          "Dwa stuknięcia w szkło powtarzają się do rozwiązania testu, wyciszenia albo zatrzymania wyszukiwania.",
+          "Dźwięk włącza i wyłącza się w karcie Powiadomienia, w sekcji Dźwięki."
+        ],
+        "comment": "Ciągły pisk 880 Hz skutecznie budził, ale męczył bardziej niż sama CAPTCHA. Nowy dźwięk wybrał użytkownik z piętnastu próbek.",
+        "text": "Alarm CAPTCHA stuka w kieliszek co 2 sekundy. Dwa stuknięcia w szkło powtarzają się do rozwiązania testu, wyciszenia albo zatrzymania wyszukiwania. Dźwięk włącza i wyłącza się w karcie Powiadomienia, w sekcji Dźwięki."
+      }
+    ]
+  },
+  {
     "version": "0.38.24",
     "date": "2026-10-08",
     "label": "fix",

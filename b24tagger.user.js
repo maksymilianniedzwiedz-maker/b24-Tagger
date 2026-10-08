@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.27
+// @version      0.38.28
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -185,7 +185,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.27';
+  const VERSION = '0.38.28';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -12289,6 +12289,7 @@
   //   start   { run, c, cc, lang, p, tasks }
   //   page    { run, q, mode, page, found, fresh, added, total, wait, bl: [hosty z czarnej listy], urls: [kanoniczne] }
   //   captcha { run, why, n1h, nRun }
+  //   block   { run, code, n1h, nRun } — strona błędu Google zamiast wyników, np. 403 (§6.1c)
   //   stop    { run, why }
   var GS_LOG_MAX = 1500;
   var GS_HOUR = 60 * 60 * 1000;
@@ -12306,12 +12307,14 @@
   // Zapytanie do wyszukiwarki to każda wczytana strona wyników i każda strona z testem.
   function _gsQueries(since, run) {
     return _gsLogGet().filter(function(e) {
-      return (e.e === 'page' || e.e === 'captcha') && e.t >= since && (run == null || e.run === run);
+      return (e.e === 'page' || e.e === 'captcha' || e.e === 'block') && e.t >= since && (run == null || e.run === run);
     }).length;
   }
-  function _gsLastCaptcha() {
+  function _gsLastCaptcha() { return _gsLastLog('captcha'); }
+  function _gsLastBlock() { return _gsLastLog('block'); }
+  function _gsLastLog(kind) {
     var l = _gsLogGet();
-    for (var i = l.length - 1; i >= 0; i--) if (l[i].e === 'captcha') return l[i].t;
+    for (var i = l.length - 1; i >= 0; i--) if (l[i].e === kind) return l[i].t;
     return 0;
   }
 
@@ -12320,19 +12323,28 @@
   // grożą blokadą bez testu, która dotyka całej sieci, nie tylko tej przeglądarki.
   var GS_CAPTCHA_WINDOW = GS_HOUR;
   var GS_SLOW_AFTER_CAPTCHA = 2;
+  // Po odmowie bez testu (403) start wyszukiwania pyta o potwierdzenie, a przerwy są dwa razy dłuższe. Czasu trwania
+  // blokady Google nie podaje; 12 h to założenie, nie pomiar (GOOGLE_COLLECTOR.md §6.1c).
+  var GS_BLOCK_WINDOW = 12 * GS_HOUR;
   function _gsSlowFactor() {
-    var last = _gsLastCaptcha();
-    return last && Date.now() - last < GS_CAPTCHA_WINDOW ? GS_SLOW_AFTER_CAPTCHA : 1;
+    var last = _gsLastCaptcha(), block = _gsLastBlock();
+    return (last && Date.now() - last < GS_CAPTCHA_WINDOW) || (block && Date.now() - block < GS_BLOCK_WINDOW) ? GS_SLOW_AFTER_CAPTCHA : 1;
+  }
+  function _gsHm(t) {
+    var d = new Date(t);
+    return d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0');
   }
 
   // Stan sieci jednym zdaniem: okno wyszukiwania i HUD.
   function _gsRiskText() {
     var n = _gsQueries(Date.now() - GS_HOUR);
     var txt = 'Ostatnia godzina: ' + n + ' ' + _relPl(n, 'zapytanie', 'zapytania', 'zapytań') + ' do Google.';
-    var last = _gsLastCaptcha();
-    if (last && Date.now() - last < GS_CAPTCHA_WINDOW) {
-      var hm = function(t) { var d = new Date(t); return d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0'); };
-      txt += ' Test Google o ' + hm(last) + ': do ' + hm(last + GS_CAPTCHA_WINDOW) +
+    var last = _gsLastCaptcha(), block = _gsLastBlock();
+    if (block && Date.now() - block < GS_BLOCK_WINDOW) {
+      txt += ' Google odmówił zapytania o ' + _gsHm(block) + ': do ' + _gsHm(block + GS_BLOCK_WINDOW) +
+        ' start wyszukiwania pyta o potwierdzenie, a przerwy są dwa razy dłuższe.';
+    } else if (last && Date.now() - last < GS_CAPTCHA_WINDOW) {
+      txt += ' Test Google o ' + _gsHm(last) + ': do ' + _gsHm(last + GS_CAPTCHA_WINDOW) +
         ' przerwy są dwa razy dłuższe, a kolejny test zatrzymuje wyszukiwanie.';
     }
     return txt;
@@ -12604,6 +12616,11 @@
     // (start z okna kampanii zatrzymuje poprzedni) i wtedy ta karta nie ma prawa go ruszać.
     var id = run.startedAt;
 
+    var _code = _gsHttpError();
+    if (_code) {
+      _gsHardStop(run, _code);
+      return;
+    }
     var _why = _gsBlockedWhy();
     if (_why) {
       _gsCaptcha(run, _why);
@@ -12722,6 +12739,41 @@
       }
     }
     _gsAlarmStart(why);
+  }
+
+  // Strona błędu frontu Google zamiast wyników: tytuł „Error 403 (Forbidden)!!1”, treść „403. That’s an error. Your
+  // client does not have permission to get URL…”. → kod HTTP albo null. Bez tego sprawdzenia strona trafiała do
+  // wykrywania testu (brak `#search` i `#result-stats`) i włączała alarm „test do rozwiązania”, choć testu nie ma.
+  function _gsHttpError() {
+    var m = /^Error (\d{3})\b/.exec(document.title || '');
+    return m ? +m[1] : null;
+  }
+
+  function _gsLogBlock(run, code) {
+    _gsLogAdd({ e: 'block', run: run.startedAt, code: code, n1h: _gsQueries(Date.now() - GS_HOUR) + 1, nRun: _gsQueries(0, run.startedAt) + 1 });
+  }
+
+  // Odmowa bez testu (403, 429) albo inny błąd Google: przebieg staje od razu i bez alarmu. Przy komputerze nie ma
+  // nic do zrobienia, a „Sprawdź teraz” byłoby kolejnym zapytaniem z sieci, której Google już odmawia (§6.1c).
+  function _gsHardStop(run, code) {
+    _gsLogBlock(run, code);
+    _gsRunStop('blocked');
+    var refusal = code === 403 || code === 429;
+    var cart = _gsCartItems(run.originProject).length;
+    _gsHudSay('<div class="b-gs-lead">Wyszukiwanie zatrzymane</div>' + (refusal
+      ? 'Google odmówił zapytania z tej sieci (błąd ' + code + ') i nie pokazał testu do rozwiązania. Odmowa dotyczy adresu sieci, ' +
+        'więc także innych osób w niej. Koszyk zostaje. Wyszukiwanie najlepiej wznowić za kilka godzin, a tę kartę zamknąć bez ' +
+        'odświeżania; Google News w oknie kampanii nie korzysta z wyszukiwarki.'
+      : 'Google odpowiedział błędem ' + code + '. Koszyk zostaje; wyszukiwanie można uruchomić ponownie z okna kampanii.'), true);
+    _ntfySend({
+      ev: 'captcha',
+      title: '⛔ Wyszukiwanie zatrzymane: błąd Google ' + code,
+      message: (run.campaign ? run.campaign + '\n' : '') + (run.cc ? 'rynek ' + String(run.cc).toUpperCase() + '\n' : '') +
+               (refusal ? 'Google odmówił zapytania z tej sieci, bez testu.' : 'Google odpowiedział błędem.') +
+               ' W koszyku ' + cart + ' adr.\n\nWyszukiwanie nie ruszy samo.' + (refusal ? ' Wznowić najlepiej za kilka godzin.' : ''),
+      tags: ['no_entry'],
+      click: location.href,
+    });
   }
 
   function _gsCaptchaStop(run, prev) {
@@ -13649,6 +13701,13 @@
 
     if (manual) {
       // Tryb ręczny: strony przechodzi człowiek, kolektor tylko zbiera to, co zobaczy.
+      var code = _gsHttpError();
+      if (code) {
+        _gsLogBlock(run, code);
+        _gsHudSay('<div class="b-gs-lead">Błąd Google ' + code + '</div>Google odmówił zapytania z tej sieci. Koszyk zostaje; ' +
+                  'kolejne zapytania najlepiej wstrzymać na kilka godzin.', true);
+        return;
+      }
       var found = _gsHarvest();
       var fresh = found.filter(function(e) { return !_gsIsBlacklisted(e.u, run.blacklist); });
       var added = _gsCartAdd(fresh, _gsRunOwner(run));
@@ -18228,6 +18287,19 @@
     // szła dalej po kolejce nowego. Wyszukiwanie, którego karta została zamknięta, zostaje w toku bez końca, więc
     // okno pozwala je zatrzymać tym samym przyciskiem. window.open po potwierdzeniu mieści się w czasie aktywacji
     // od kliknięcia w oknie potwierdzenia, więc karta nie trafia do blokady wyskakujących okien.
+    // Po odmowie Google (§6.1c) kolejne zapytania z tej sieci mogą przedłużyć blokadę, która dotyczy też innych osób.
+    function blockFree(from) {
+      var t = _gsLastBlock();
+      if (!t || Date.now() - t >= GS_BLOCK_WINDOW) return Promise.resolve(true);
+      return _dlgConfirm({
+        title: 'Google odmówił wyszukiwania', from: from,
+        body: '<p>O ' + _gsHm(t) + ' Google odmówił zapytania z tej sieci i nie pokazał testu do rozwiązania. Kolejne zapytania ' +
+          'mogą przedłużyć odmowę, a dotyczy ona adresu sieci, więc także innych osób w niej.</p>' +
+          '<p class="b-hint">Google News w tym oknie nie korzysta z wyszukiwarki. Wyszukiwanie po potwierdzeniu idzie z dwa razy dłuższymi przerwami.</p>',
+        confirm: 'Uruchom mimo to',
+      });
+    }
+
     function runFree(from) {
       var cur = _gsRunGet();
       if (!cur || !cur.active) return Promise.resolve(true);
@@ -18245,7 +18317,7 @@
     q('b24t-camp-start').addEventListener('click', function() {
       var btn = this;
       saveAnd(function(c) {
-        runFree(btn).then(function(ok) {
+        blockFree(btn).then(function(ok) { return ok && runFree(btn); }).then(function(ok) {
           if (!ok) return;
           var url = _gsRunStart({
             campaign: c.phrase, variants: [c.phrase].concat(c.variants), modes: c.modes,
@@ -18302,7 +18374,7 @@
     q('b24t-camp-manual').addEventListener('click', function() {
       var btn = this;
       saveAnd(function(c) {
-        runFree(btn).then(function(ok) {
+        blockFree(btn).then(function(ok) { return ok && runFree(btn); }).then(function(ok) {
           if (!ok) return;
           // Tryb awaryjny: bez aktywnego przebiegu kolektor tylko zbiera to, co sam otworzysz, do koszyka tego projektu.
           _gsRunSet({ active: false, stopped: 'manual', blacklist: c.blacklist, campaign: c.phrase, cc: c.cc, lang: c.lang,
@@ -21363,6 +21435,24 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.28",
+      "date": "2026-10-08",
+      "label": "fix",
+      "changes": [
+        {
+          "type": "fix",
+          "area": "Kampanie H&M",
+          "title": "Naprawiono alarm CAPTCHA na stronie błędu 403 bez testu do rozwiązania",
+          "items": [
+            "Strona „403. That’s an error.” zatrzymuje wyszukiwanie od razu, bez alarmu i bez ponownych zapytań do Google.",
+            "Okienko wyszukiwania i powiadomienie ntfy podają, że Google odmówił zapytań z tej sieci i że koszyk zostaje.",
+            "Przez 12 godzin od odmowy „Uruchom wyszukiwanie” i „Otwórz ręcznie” pytają o potwierdzenie, a przerwy między zapytaniami są dwa razy dłuższe."
+          ],
+          "text": "Naprawiono alarm CAPTCHA na stronie błędu 403 bez testu do rozwiązania. Strona „403. That’s an error.” zatrzymuje wyszukiwanie od razu, bez alarmu i bez ponownych zapytań do Google. Okienko wyszukiwania i powiadomienie ntfy podają, że Google odmówił zapytań z tej sieci i że koszyk zostaje. Przez 12 godzin od odmowy „Uruchom wyszukiwanie” i „Otwórz ręcznie” pytają o potwierdzenie, a przerwy między zapytaniami są dwa razy dłuższe."
+        }
+      ]
+    },
+    {
       "version": "0.38.27",
       "date": "2026-10-08",
       "label": "fix",
@@ -21613,47 +21703,6 @@
           ],
           "comment": "Przed wydaniem 1.0 chcemy wiedzieć, która wersja działa u kogo, bez dopytywania każdego z osobna.",
           "text": "Raport wersji wtyczki dla autora. Raz na dobę i po każdej aktualizacji wtyczka wysyła autorowi numer wersji, kanał aktualizacji, nazwę przeglądarki i losowy identyfikator tej przeglądarki. Raport nie zawiera danych konta Brand24, projektów ani treści pracy. Opis raportu i identyfikator przeglądarki są w Ustawieniach → Aktualizacje."
-        }
-      ]
-    },
-    {
-      "version": "0.38.18",
-      "date": "2026-10-05",
-      "label": "new",
-      "changes": [
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Blokada wtyczki do czasu instalacji wymaganej aktualizacji",
-          "items": [
-            "Gdy na kanale jest wersja oznaczona jako wymagana, okno na środku strony prowadzi do jej instalacji, a funkcje wtyczki są wyłączone do odświeżenia strony z nową wersją.",
-            "Trwające tagowanie z pliku, przegląd sentymentu i AI Tag zatrzymują się; postęp tagowania z pliku zostaje zapisany.",
-            "Po zamknięciu okna zostaje uchwyt „B24 Tagger”, który otwiera je ponownie."
-          ],
-          "text": "Blokada wtyczki do czasu instalacji wymaganej aktualizacji. Gdy na kanale jest wersja oznaczona jako wymagana, okno na środku strony prowadzi do jej instalacji, a funkcje wtyczki są wyłączone do odświeżenia strony z nową wersją. Trwające tagowanie z pliku, przegląd sentymentu i AI Tag zatrzymują się; postęp tagowania z pliku zostaje zapisany. Po zamknięciu okna zostaje uchwyt „B24 Tagger”, który otwiera je ponownie."
-        },
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Kanał Experimental tylko z kodem dostępu",
-          "items": [
-            "Wersja z kanału Experimental bez kodu dostępu jest zablokowana: okno prosi o kod albo prowadzi do instalacji wersji stabilnej.",
-            "Poprzedni kod nie działa, a dostęp przyznany przed tą wersją wygasł.",
-            "Kod wpisany w oknie blokady odblokowuje wtyczkę i przełącza aktualizacje na kanał Experimental."
-          ],
-          "experimental": true,
-          "text": "Kanał Experimental tylko z kodem dostępu. Wersja z kanału Experimental bez kodu dostępu jest zablokowana: okno prosi o kod albo prowadzi do instalacji wersji stabilnej. Poprzedni kod nie działa, a dostęp przyznany przed tą wersją wygasł. Kod wpisany w oknie blokady odblokowuje wtyczkę i przełącza aktualizacje na kanał Experimental."
-        },
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Instalacja wersji stabilnej w miejsce wersji z kanału Experimental",
-          "items": [
-            "Po wyborze kanału Stabilny w Ustawieniach → Aktualizacje przycisk „Zainstaluj” przy wersji stabilnej otwiera jej instalację w Tampermonkeyu.",
-            "Tampermonkey pokazuje ostrzeżenie „Uwaga! Starsza wersja skryptu”, a instalację potwierdza przycisk „Zdezaktualizuj”."
-          ],
-          "experimental": true,
-          "text": "Instalacja wersji stabilnej w miejsce wersji z kanału Experimental. Po wyborze kanału Stabilny w Ustawieniach → Aktualizacje przycisk „Zainstaluj” przy wersji stabilnej otwiera jej instalację w Tampermonkeyu. Tampermonkey pokazuje ostrzeżenie „Uwaga! Starsza wersja skryptu”, a instalację potwierdza przycisk „Zdezaktualizuj”."
         }
       ]
     }

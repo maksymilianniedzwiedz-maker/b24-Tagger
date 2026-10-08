@@ -1,5 +1,23 @@
 [
   {
+    "version": "0.38.28",
+    "date": "2026-10-08",
+    "label": "fix",
+    "changes": [
+      {
+        "type": "fix",
+        "area": "Kampanie H&M",
+        "title": "Naprawiono alarm CAPTCHA na stronie błędu 403 bez testu do rozwiązania",
+        "items": [
+          "Strona „403. That’s an error.” zatrzymuje wyszukiwanie od razu, bez alarmu i bez ponownych zapytań do Google.",
+          "Okienko wyszukiwania i powiadomienie ntfy podają, że Google odmówił zapytań z tej sieci i że koszyk zostaje.",
+          "Przez 12 godzin od odmowy „Uruchom wyszukiwanie” i „Otwórz ręcznie” pytają o potwierdzenie, a przerwy między zapytaniami są dwa razy dłuższe."
+        ],
+        "text": "Naprawiono alarm CAPTCHA na stronie błędu 403 bez testu do rozwiązania. Strona „403. That’s an error.” zatrzymuje wyszukiwanie od razu, bez alarmu i bez ponownych zapytań do Google. Okienko wyszukiwania i powiadomienie ntfy podają, że Google odmówił zapytań z tej sieci i że koszyk zostaje. Przez 12 godzin od odmowy „Uruchom wyszukiwanie” i „Otwórz ręcznie” pytają o potwierdzenie, a przerwy między zapytaniami są dwa razy dłuższe."
+      }
+    ]
+  },
+  {
     "version": "0.38.27",
     "date": "2026-10-08",
     "label": "fix",

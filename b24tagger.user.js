@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.25
+// @version      0.38.26
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -185,7 +185,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.25';
+  const VERSION = '0.38.26';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -995,8 +995,13 @@
     'gemini-3.8-flash': [0.75, 0.075, 0.75, 3.75],
     'gemini-3.5-flash-lite': [0.30, 0.03, 0.30, 2.50]
   };
-  var AI_SPEND_GM = 'b24t_ai_spend';   // { odcisk klucza: { p: dostawca, m: { 'RRRR-MM': { usd, n, nf, tok } } } }
+  // { odcisk klucza: { p: dostawca, m: { 'RRRR-MM': { usd, n, nf, tok, f: { funkcja: { usd, n } } } } } };
+  // `f` od 0.38.26, więc wcześniejsza część miesiąca nie ma podziału na funkcje.
+  var AI_SPEND_GM = 'b24t_ai_spend';
   var AI_SPEND_WARN = 0.8;             // od tej części limitu kropka stanu w nagłówku panelu zmienia kolor
+  // Funkcje wtyczki, które wołają API (`feat` w _aiCall i _aiSpendAdd); kolejność = kolejność w rozpisce.
+  var AI_FEAT_LABEL = { news: 'Ocena AI w News', campaign: 'Ocena AI w kampaniach', translate: 'Tłumaczenie w News',
+    sentiment: 'Przegląd sentymentu', aitag: 'AI Tag' };
 
   // ID z datą (`claude-haiku-4-5-20251001`) albo z `-latest` ma cenę modelu bazowego.
   function _aiPrice(model) {
@@ -1021,17 +1026,38 @@
   }
 
   // Wywołania zbierane w pamięci karty i dopisywane raz na sekundę. → koszt wywołania w $ albo null bez cennika.
+  // `acc`: licznik kosztu sesji, np. bieżącej listy News (_newsAiCostReset): { usd, n, f, onChange }. Wywołanie trafia
+  // do niego obok sumy miesiąca; bez licznika liczy się tylko miesiąc.
   var _aiSpendQ = {}, _aiSpendT = 0;
-  function _aiSpendAdd(model, key, usage) {
+  function _aiSpendAdd(model, key, usage, feat, acc) {
     if (!usage || !key) return null;
     var usd = _aiCostUsd(model, usage), id = _aiKeyId(key), mon = _aiMonth();
     var q = _aiSpendQ[id] || (_aiSpendQ[id] = { p: _aiProvider(model), m: {} });
-    var e = q.m[mon] || (q.m[mon] = { usd: 0, n: 0, nf: 0, tok: 0 });
+    var e = q.m[mon] || (q.m[mon] = { usd: 0, n: 0, nf: 0, tok: 0, f: {} });
     e.n++;
     e.tok += (usage.input_tokens || 0) + (usage.output_tokens || 0) + (usage.cache_read_input_tokens || 0) + (usage.cache_creation_input_tokens || 0);
     if (usd == null) e.nf++; else e.usd += usd;
+    _aiFeatCount(e.f, feat, usd);
+    if (acc) {
+      acc.n++;
+      if (usd != null) acc.usd += usd;
+      _aiFeatCount(acc.f, feat, usd);
+      if (acc.onChange) acc.onChange();
+    }
     if (!_aiSpendT) _aiSpendT = setTimeout(_aiSpendFlush, 1000);
     return usd;
+  }
+  function _aiFeatCount(f, feat, usd) {
+    var e = f[feat || 'other'] || (f[feat || 'other'] = { usd: 0, n: 0, nf: 0 });
+    e.n++;
+    if (usd == null) e.nf++; else e.usd += usd;
+  }
+  function _aiFeatAdd(dst, src) {
+    Object.keys(src || {}).forEach(function(k) {
+      var d = dst[k] || (dst[k] = { usd: 0, n: 0, nf: 0 });
+      d.usd += src[k].usd; d.n += src[k].n; d.nf += src[k].nf || 0;
+    });
+    return dst;
   }
   // Zostaw odczyt przed zapisem: druga karta (panel .com i .pl, News) dopisuje do tych samych sum, a zapis
   // obiektu trzymanego w pamięci tej karty skasowałby jej wywołania.
@@ -1043,6 +1069,7 @@
       Object.keys(q.m).forEach(function(mon) {
         var a = q.m[mon], b = rec.m[mon] || (rec.m[mon] = { usd: 0, n: 0, nf: 0, tok: 0 });
         b.usd += a.usd; b.n += a.n; b.nf += a.nf; b.tok += a.tok;
+        b.f = _aiFeatAdd(b.f || {}, a.f);
       });
     });
     _aiSpendQ = {};
@@ -1054,28 +1081,46 @@
   function _aiSpendOf(provider, mon, s) {
     var key = String((s || _aiGetSettings())[AI_KEY_FIELD[provider]] || '').trim();
     if (!key) return null;
-    var id = _aiKeyId(key), out = { usd: 0, n: 0, nf: 0, tok: 0 };
+    var id = _aiKeyId(key), out = { usd: 0, n: 0, nf: 0, tok: 0, f: {} };
     mon = mon || _aiMonth();
     [((gmGet(AI_SPEND_GM, {}) || {})[id] || { m: {} }).m[mon], (_aiSpendQ[id] || { m: {} }).m[mon]].forEach(function(e) {
-      if (e) { out.usd += e.usd; out.n += e.n; out.nf += e.nf; out.tok += e.tok; }
+      if (e) { out.usd += e.usd; out.n += e.n; out.nf += e.nf; out.tok += e.tok; _aiFeatAdd(out.f, e.f); }
     });
     return out;
   }
   function _aiFmtUsd(x) {
     return x.toFixed(x > 0 && x < 0.1 ? 3 : 2).replace('.', ',') + ' $';
   }
-  // Najgorszy stan limitów: { state: 'ok' | 'warn' | 'danger' | 'none', usd (suma kluczy), rows: [{ p, usd, limit, ratio }] }.
+  // Najgorszy stan limitów: { state: 'ok' | 'warn' | 'danger' | 'none', usd (suma kluczy), f (suma funkcji),
+  // rows: [{ p, usd, limit, ratio }] }.
   function _aiSpendState() {
-    var s = _aiGetSettings(), lim = s.spendLimit || {}, rows = [], usd = 0, rank = 0;
+    var s = _aiGetSettings(), lim = s.spendLimit || {}, rows = [], usd = 0, f = {}, rank = 0;
     ['anthropic', 'openai', 'google'].forEach(function(p) {
       var sp = _aiSpendOf(p, null, s);
       if (!sp) return;
       var limit = +lim[p] > 0 ? +lim[p] : 0, ratio = limit ? sp.usd / limit : 0;
       usd += sp.usd;
+      _aiFeatAdd(f, sp.f);
       rank = Math.max(rank, !limit ? 0 : ratio >= 1 ? 3 : ratio >= AI_SPEND_WARN ? 2 : 1);
       rows.push({ p: p, usd: sp.usd, n: sp.n, nf: sp.nf, limit: limit, ratio: ratio });
     });
-    return { state: ['none', 'ok', 'warn', 'danger'][rank], usd: usd, rows: rows };
+    return { state: ['none', 'ok', 'warn', 'danger'][rank], usd: usd, f: f, rows: rows };
+  }
+
+  // Rozpiska kosztu na funkcje, od największego, jako wiersze dymka. `rest`: część sumy bez podziału, czyli
+  // wywołania sprzed zapisu funkcji. Wywołanie modelu spoza cennika (`nf`) nie ma kwoty, więc nie udaje 0 $.
+  function _aiFeatLines(f, rest) {
+    var calls = function(n) { return n + ' ' + _relPl(n, 'wywołanie', 'wywołania', 'wywołań'); };
+    var anyNf = false;
+    var lines = Object.keys(f).sort(function(a, b) { return f[b].usd - f[a].usd; }).map(function(k) {
+      var e = f[k], nf = e.nf || 0;
+      if (nf) anyNf = true;
+      return (AI_FEAT_LABEL[k] || 'Inne') + ': ' + (nf === e.n ? 'bez kwoty' : _aiFmtUsd(e.usd)) + ' (' + calls(e.n) +
+        (nf && nf < e.n ? ', ' + nf + ' bez kwoty' : '') + ')';
+    });
+    if (rest >= 0.0005) lines.push('Sprzed wersji 0.38.26, bez podziału: ' + _aiFmtUsd(rest));
+    if (anyNf) lines.push('Bez kwoty: modelu nie ma w cenniku wtyczki.');
+    return lines;
   }
 
   // Dlaczego odpowiedź jest niepełna — ucięta limitem, odmowa, blokada filtra. Bez tego
@@ -1166,6 +1211,7 @@
   // sentymentu — ograniczone myślenie zmienia tam 11–15% werdyktów (SENTIMENT.md §4.2).
   // `signal` (AbortSignal) przerywa zapytanie w locie: Reject z `.aborted`. Bez tego „Zatrzymaj” w ocenie
   // sentymentu czekał na wszystkie wysłane partie, do 2 min płatnej pracy modeli.
+  // `feat` (klucz AI_FEAT_LABEL) przypisuje koszt funkcji w rozpisce miesiąca, `acc` dopisuje go do licznika sesji.
   function _aiCall(opts) {
     var provider = _aiProvider(opts.model);
     var key = _aiKeyFor(opts.model);
@@ -1207,7 +1253,7 @@
               var data = JSON.parse(resp.responseText);
               var out = _aiReadResponse(provider, data, opts.schema && opts.schema.name);
               out.usage = _aiUsage(provider, data);
-              out.usd = _aiSpendAdd(opts.model, key, out.usage);
+              out.usd = _aiSpendAdd(opts.model, key, out.usage, opts.feat, opts.acc);
               diag(status, null, out.usage);
               // Ucięta odpowiedź nie jest błędem sama w sobie — parser News wyciąga werdykt
               // z uciętego JSON-a. Przyczyna idzie obok, wołający decyduje.
@@ -2506,7 +2552,7 @@
   // Claude dostaje wymuszone narzędzie, OpenAI/Gemini — schemat JSON odpowiedzi (_aiBuildRequest).
   function _aiTagAnalyzeBatch(items, systemPrompt, model, assessments) {
     return _aiCall({
-      model: model,
+      model: model, feat: 'aitag',
       system: systemPrompt,
       user: _aiTagBuildBatchPrompt(items),
       maxTokens: 1024,
@@ -6559,6 +6605,8 @@
       .b-nwork::before, .b-nwork::after, .b-nfloat::before, .b-nfloat::after { display: none; }
       .b-nwork-in { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
       .b-nhead { flex-wrap: nowrap; gap: 0.25em; }
+      .b-cost { font-variant-numeric: tabular-nums; cursor: help; }
+      .b-nhead__cost { white-space: nowrap; margin-inline: 0.25em; }
       .b-nhead > .b-btn { margin: 0 0.25em; }
       .b-ntabs { flex-shrink: 0; padding: 0.5em 0.875em; background: var(--c-frame); border-bottom: 1px solid var(--c-border); }
       .b-ncols { flex: 1 1 auto; min-height: 0; display: flex; }
@@ -8473,6 +8521,7 @@
           sr.innerHTML = _html('<span class="b-menu__state-label"></span>' + (it.hint ? '<span class="b-menu__state-hint"></span>' : ''));
           sr.firstChild.textContent = it.label;
           if (it.hint) sr.lastChild.textContent = it.hint;
+          if (it.tip) sr.setAttribute('data-tip', it.tip);
           el.appendChild(sr);
           return;
         }
@@ -9929,9 +9978,12 @@
     var ai = _connAi();
     if (ai.rows.length) {
       var top = ai.rows.filter(function(r) { return r.limit; }).sort(function(a, b) { return b.ratio - a.ratio; })[0];
+      var featUsd = Object.keys(ai.f).reduce(function(sum, k) { return sum + ai.f[k].usd; }, 0);
+      var lines = _aiFeatLines(ai.f, ai.usd - featUsd);
       rows.push({ state: ai.state === 'none' ? 'wait' : ai.state, label: 'AI w tym miesiącu: ' + _aiFmtUsd(ai.usd),
         hint: top ? AI_PROVIDER_LABEL[top.p] + ': ' + Math.round(top.ratio * 100) + '% limitu ' + _aiFmtUsd(top.limit)
-          : 'Bez limitu; liczone z wywołań w tej przeglądarce' });
+          : 'Bez limitu; liczone z wywołań w tej przeglądarce',
+        tip: lines.length ? ['Na co poszło w tym miesiącu:'].concat(lines).join('\n') : '' });
     }
     return rows;
   }
@@ -16090,6 +16142,32 @@
   // („{"verdict": "miss", "reason": "To jest ogłoszenie o pracę na portalu dla"), czyli werdykt
   // jest poprawny i użyteczny, a annotator widział „błąd parsowania" i musiał oceniać sam.
   // Zwraca { verdict, reason } albo null.
+  // Koszt AI bieżącej listy News (ocena i tłumaczenie) od jej importu. Każdy wpis listy niesie
+  // licznik swojej listy (`entry.cost`), więc odpowiedź dla listy sprzed nowego importu nie trafia do nowej. `campaign`
+  // to ostatnia lista z trybu kampanii: okno wyszukiwania Google pokazuje ją także po wczytaniu w News zwykłej listy.
+  var _newsAiCost = { list: null, campaign: null };
+  function _newsAiCostReset() {
+    var c = { usd: 0, n: 0, f: {}, onChange: _newsAiCostRender };
+    _newsAiCost.list = c;
+    if (newsState.campaign) _newsAiCost.campaign = c;
+    _newsAiCostRender();
+    return c;
+  }
+  function _newsAiCostRender() {
+    var show = function(el, c, text) {
+      if (!el) return;
+      el.hidden = !(c && c.n);
+      if (el.hidden) return;
+      el.textContent = text;
+      el.setAttribute('data-tip', ['Koszt AI listy, z tokenów i cennika modeli:'].concat(_aiFeatLines(c.f, 0),
+        ['Suma miesiąca: okienko Stan w nagłówku panelu.']).join('\n'));
+    };
+    var c = _newsAiCost.list, k = _newsAiCost.campaign;
+    show(_$('b24t-news-ai-cost'), c, c && 'Koszt listy: ' + _aiFmtUsd(c.usd));
+    show(_$('b24t-camp-ai-cost'), k, k && 'Koszt AI ostatniej listy kampanii: ' + _aiFmtUsd(k.usd) + ' (' + k.n + ' ' +
+      _relPl(k.n, 'wywołanie', 'wywołania', 'wywołań') + ').');
+  }
+
   function _newsAiParseVerdict(text) {
     var raw = String(text || '').replace(/```json|```/g, '').trim();
     if (!raw) return null;
@@ -16149,7 +16227,7 @@
       ].filter(Boolean).join('\n');
       var _render = function() { if (_newsRowRenderer) _newsRowRenderer(entry); };
       _aiCall({
-        model: model,
+        model: model, feat: newsState.campaign ? 'campaign' : 'news', acc: entry.cost,
         // Sonnet 5 ma adaptive thinking WŁĄCZONE domyślnie, a tokeny myślenia liczą się do
         // max_tokens — zmierzone: 125 tokenów wyjścia zamiast 48, i co jakiś czas ucięty JSON.
         // Przy klasyfikacji na cztery wartości nie ma nad czym myśleć. Haiku 4.5 też to przyjmuje.
@@ -16339,7 +16417,7 @@
 
     // Koszt liczy się raz na tłumaczenie, także nieudane: tokeny strumienia są już zapłacone.
     function _spend() {
-      if (streamUsage) _aiSpendAdd(model, key, streamUsage);
+      if (streamUsage) _aiSpendAdd(model, key, streamUsage, 'translate', entry.cost);
       streamUsage = null;
     }
 
@@ -17898,7 +17976,8 @@
           '<section class="b-card" id="b24t-camp-cart" aria-label="Koszyk"></section>' +
           '<div class="b-field"><label class="b-label" for="b24t-camp-prompt">Prompt AI kampanii</label><select class="b-select" id="b24t-camp-prompt"></select>' +
             '<span class="b-hint">Do kampanii służy <code>prompts/news_ai_campaign.txt</code>: zna werdykt „poza kampanią” i podstawia nazwę kampanii pod ' +
-              '<code>{CAMPAIGN}</code>. Bez wybranego promptu wtyczka pyta o niego przed skanem.</span></div>' +
+              '<code>{CAMPAIGN}</code>. Bez wybranego promptu wtyczka pyta o niego przed skanem.</span>' +
+            '<span class="b-hint b-cost" id="b24t-camp-ai-cost" tabindex="0" hidden></span></div>' +
           '<p class="b-hint b-nstate" id="b24t-camp-rss-info" aria-live="polite" hidden></p>' +
           '<div class="b-banner b-banner--info">' + _icon('info') + '<div>Wyszukiwanie działa w nowej karcie Google i potrzebuje jej na wierzchu. ' +
             'Karta zminimalizowana albo w całości zasłonięta innym oknem jest dla Chrome ukryta i wyszukiwanie wtedy czeka. Osobny monitor wystarcza.</div></div>' +
@@ -18048,6 +18127,7 @@
       s.campaign.activePromptId = promptEl.value;
       _aiSaveSettings(s);
     });
+    _newsAiCostRender();
 
     var cartBox = q('b24t-camp-cart');
     var cartOpts = {
@@ -18275,6 +18355,7 @@
     // ─── Nagłówek okna News: działania okna, wstawiane jako headExtra ───
     var head = mk('div', 'b-row b-nhead', [
       '<button type="button" class="b-chip" id="b24t-news-ai-chip" aria-pressed="false">' + _icon('ai') + 'Ocena AI</button>',
+      '<span class="b-small b-text2 b-cost b-nhead__cost" id="b24t-news-ai-cost" tabindex="0" hidden></span>',
       '<button type="button" class="b-btn b-btn--primary b-btn--sm" id="b24t-news-modal-open-btn">' + _icon('plus') + 'Importuj adresy</button>',
       '<button type="button" class="b-ibtn" id="b24t-news-legend-btn" aria-haspopup="dialog" aria-label="Legenda oznaczeń" data-tip="Legenda oznaczeń">' + _icon('help') + '</button>',
       '<button type="button" class="b-ibtn" id="b24t-news-stats-btn" aria-label="Statystyki skanu" data-tip="Statystyki skanu">' + _icon('chart') + '</button>',
@@ -20621,6 +20702,7 @@
       Win.close('news-import');
       newsState.activeIdx = -1;
       newsState.listGen++;
+      var listCost = _newsAiCostReset();
 
       // Detekcja kraju
       var tempEntries = deduped.map(function(u) { return { url: u }; });
@@ -20670,7 +20752,7 @@
             matchedChips: urlChips,
           };
         });
-        newsState.urls.forEach(function(e, i) { e._ord = i; });
+        newsState.urls.forEach(function(e, i) { e._ord = i; e.cost = listCost; });
 
         renderChips();
         renderUrlList();
@@ -20686,7 +20768,7 @@
       newsState.urls = deduped.map(function(u) {
         return { url: u, status: 'scanning', opened: false, score: 0, snippet: '', matchedChips: [] };
       });
-      newsState.urls.forEach(function(e, i) { e._ord = i; });
+      newsState.urls.forEach(function(e, i) { e._ord = i; e.cost = listCost; });
 
       renderChips();
       renderUrlList();
@@ -21297,6 +21379,42 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.26",
+      "date": "2026-10-08",
+      "label": "new",
+      "changes": [
+        {
+          "type": "new",
+          "area": "Dodawanie wzmianek",
+          "title": "Koszt AI bieżącej listy w nagłówku okna News",
+          "items": [
+            "Licznik obejmuje ocenę AI i tłumaczenia adresów wczytanych ostatnim importem; nowy import zaczyna go od zera.",
+            "Dymek po najechaniu rozpisuje koszt na funkcje i liczbę wywołań."
+          ],
+          "text": "Koszt AI bieżącej listy w nagłówku okna News. Licznik obejmuje ocenę AI i tłumaczenia adresów wczytanych ostatnim importem; nowy import zaczyna go od zera. Dymek po najechaniu rozpisuje koszt na funkcje i liczbę wywołań."
+        },
+        {
+          "type": "new",
+          "area": "Kampanie H&M",
+          "title": "Koszt AI ostatniej listy kampanii w oknie wyszukiwania",
+          "items": [
+            "Linia pod promptem kampanii podaje koszt oceny AI i tłumaczeń ostatniej listy z wyszukiwania, także po wczytaniu w News zwykłej listy."
+          ],
+          "text": "Koszt AI ostatniej listy kampanii w oknie wyszukiwania. Linia pod promptem kampanii podaje koszt oceny AI i tłumaczeń ostatniej listy z wyszukiwania, także po wczytaniu w News zwykłej listy."
+        },
+        {
+          "type": "new",
+          "area": "Panel",
+          "title": "Rozpiska kosztu AI w tym miesiącu na funkcje",
+          "items": [
+            "Najechanie na wiersz „AI w tym miesiącu” w okienku Stan pokazuje koszt oceny AI w News i w kampaniach, tłumaczeń, przeglądu sentymentu i AI Tag.",
+            "Koszt sprzed wersji 0.38.26 stoi w jednym wierszu bez podziału."
+          ],
+          "text": "Rozpiska kosztu AI w tym miesiącu na funkcje. Najechanie na wiersz „AI w tym miesiącu” w okienku Stan pokazuje koszt oceny AI w News i w kampaniach, tłumaczeń, przeglądu sentymentu i AI Tag. Koszt sprzed wersji 0.38.26 stoi w jednym wierszu bez podziału."
+        }
+      ]
+    },
+    {
       "version": "0.38.25",
       "date": "2026-10-08",
       "label": "improved",
@@ -21550,30 +21668,6 @@
             "W oknach bez stopki, takich jak Ustawienia, dalszą treść pod widokiem zapowiada cień przy dolnej krawędzi okna, a tekst nad nią zostaje czytelny (żadnej opcji nikt nie skreślił, była tylko zacieniona)."
           ],
           "text": "Naprawiono błąd, przez który ostatni wiersz Ustawień wyglądał na przekreślony. W oknach bez stopki, takich jak Ustawienia, dalszą treść pod widokiem zapowiada cień przy dolnej krawędzi okna, a tekst nad nią zostaje czytelny (żadnej opcji nikt nie skreślił, była tylko zacieniona)."
-        }
-      ]
-    },
-    {
-      "version": "0.38.16",
-      "date": "2026-10-04",
-      "label": "new",
-      "changes": [
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Most testowy w Ustawieniach → Aktualizacje",
-          "items": [
-            "Przełącznik „Most testowy” w sekcji Testowanie udostępnia stan wtyczki do odczytu testom prowadzonym przez rozszerzenie przeglądarki.",
-            "Działa tylko na stronach Brand24 i tylko na kanale Experimental; bez tokenów, kluczy i treści wzmianek."
-          ],
-          "experimental": true,
-          "text": "Most testowy w Ustawieniach → Aktualizacje. Przełącznik „Most testowy” w sekcji Testowanie udostępnia stan wtyczki do odczytu testom prowadzonym przez rozszerzenie przeglądarki. Działa tylko na stronach Brand24 i tylko na kanale Experimental; bez tokenów, kluczy i treści wzmianek."
-        },
-        {
-          "type": "fix",
-          "area": "Panel",
-          "title": "Naprawiono błąd bezpieczeństwa",
-          "text": "Naprawiono błąd bezpieczeństwa."
         }
       ]
     }
@@ -28444,7 +28538,7 @@
     for (var attempt = 0; ; attempt++) {
       try {
         return await _aiCall({
-          model: model, system: system, user: _sentPayload(brand, items),
+          model: model, feat: 'sentiment', system: system, user: _sentPayload(brand, items),
           maxTokens: SENT_MAX_TOKENS[_aiProvider(model)], reasoning: 'default', timeout: SENT_TIMEOUT, signal: sentState.abort.signal,
           schema: { name: 'submit_sentiment', description: 'Sentiment verdict for every mention key.', schema: SENT_SCHEMA },
         });

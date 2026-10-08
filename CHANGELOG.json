@@ -1,5 +1,41 @@
 [
   {
+    "version": "0.38.26",
+    "date": "2026-10-08",
+    "label": "new",
+    "changes": [
+      {
+        "type": "new",
+        "area": "Dodawanie wzmianek",
+        "title": "Koszt AI bieżącej listy w nagłówku okna News",
+        "items": [
+          "Licznik obejmuje ocenę AI i tłumaczenia adresów wczytanych ostatnim importem; nowy import zaczyna go od zera.",
+          "Dymek po najechaniu rozpisuje koszt na funkcje i liczbę wywołań."
+        ],
+        "text": "Koszt AI bieżącej listy w nagłówku okna News. Licznik obejmuje ocenę AI i tłumaczenia adresów wczytanych ostatnim importem; nowy import zaczyna go od zera. Dymek po najechaniu rozpisuje koszt na funkcje i liczbę wywołań."
+      },
+      {
+        "type": "new",
+        "area": "Kampanie H&M",
+        "title": "Koszt AI ostatniej listy kampanii w oknie wyszukiwania",
+        "items": [
+          "Linia pod promptem kampanii podaje koszt oceny AI i tłumaczeń ostatniej listy z wyszukiwania, także po wczytaniu w News zwykłej listy."
+        ],
+        "text": "Koszt AI ostatniej listy kampanii w oknie wyszukiwania. Linia pod promptem kampanii podaje koszt oceny AI i tłumaczeń ostatniej listy z wyszukiwania, także po wczytaniu w News zwykłej listy."
+      },
+      {
+        "type": "new",
+        "area": "Panel",
+        "title": "Rozpiska kosztu AI w tym miesiącu na funkcje",
+        "items": [
+          "Najechanie na wiersz „AI w tym miesiącu” w okienku Stan pokazuje koszt oceny AI w News i w kampaniach, tłumaczeń, przeglądu sentymentu i AI Tag.",
+          "Koszt sprzed wersji 0.38.26 stoi w jednym wierszu bez podziału."
+        ],
+        "text": "Rozpiska kosztu AI w tym miesiącu na funkcje. Najechanie na wiersz „AI w tym miesiącu” w okienku Stan pokazuje koszt oceny AI w News i w kampaniach, tłumaczeń, przeglądu sentymentu i AI Tag. Koszt sprzed wersji 0.38.26 stoi w jednym wierszu bez podziału."
+      }
+    ]
+  },
+  {
     "version": "0.38.25",
     "date": "2026-10-08",
     "label": "improved",

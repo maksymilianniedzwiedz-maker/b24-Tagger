@@ -1,5 +1,23 @@
 [
   {
+    "version": "0.38.24",
+    "date": "2026-10-08",
+    "label": "fix",
+    "changes": [
+      {
+        "type": "fix",
+        "area": "Kampanie H&M",
+        "title": "Naprawiono błąd, przez który alarm CAPTCHA nie grał dźwięku",
+        "items": [
+          "Gdy Chrome nie pozwala na dźwięk w karcie wyszukiwania, alarm gra w karcie Brand24, z której ruszyło wyszukiwanie.",
+          "Karta Brand24 pokazuje wtedy powiadomienie „Test Google (CAPTCHA)” z przyciskiem „Wycisz dźwięk”.",
+          "Dźwięk milknie po rozwiązaniu testu, po wyciszeniu w dowolnej z obu kart i po zatrzymaniu wyszukiwania."
+        ],
+        "text": "Naprawiono błąd, przez który alarm CAPTCHA nie grał dźwięku. Gdy Chrome nie pozwala na dźwięk w karcie wyszukiwania, alarm gra w karcie Brand24, z której ruszyło wyszukiwanie. Karta Brand24 pokazuje wtedy powiadomienie „Test Google (CAPTCHA)” z przyciskiem „Wycisz dźwięk”. Dźwięk milknie po rozwiązaniu testu, po wyciszeniu w dowolnej z obu kart i po zatrzymaniu wyszukiwania."
+      }
+    ]
+  },
+  {
     "version": "0.38.23",
     "date": "2026-10-07",
     "label": "new",

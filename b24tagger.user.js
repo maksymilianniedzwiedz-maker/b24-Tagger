@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.23
+// @version      0.38.24
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -185,7 +185,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.23';
+  const VERSION = '0.38.24';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -11986,7 +11986,8 @@
   function _sndPlay(kind) {
     if (kind === 'done') _sndTones([523.25, 659.25, 783.99], 'sine', 0.13, 0.45);
     else if (kind === 'error') _sndTones([493.88, 349.23], 'triangle', 0.22, 0.5);
-    else if (kind === 'captcha' && !_gsAlarm.on) { _gsAlarmSound(); setTimeout(_gsAlarmSilence, 1500); }
+    // Alarm, który ruszył w trakcie podglądu, uciszył podgląd i gra dalej, więc koniec podglądu go nie ucisza.
+    else if (kind === 'captcha' && !_gsAlarm.on) { _gsAlarmSound(); setTimeout(function() { if (!_gsAlarm.on) _gsAlarmSilence(); }, 1500); }
     else if (kind === 'update') _sndTones([659.25, 987.77], 'sine', 0.16, 0.6);
   }
 
@@ -12914,15 +12915,15 @@
   // z drugiego pokoju) i tytuł karty (widać na pasku, gdy okno jest w tle). Opis i przyciski
   // stoją w HUD-zie, w jego rogu: pasek na środku górnej krawędzi zasłaniał test Google.
 
-  var _gsAlarm = { on: false, osc: null, ctx: null, titleIv: null, titleWas: null, poll: null };
+  // `on` w karcie przebiegu: trwa alarm; w karcie panelu: gra dźwięk oddany przez kartę przebiegu (_gsAlarmRelaySync).
+  var _gsAlarm = { on: false, osc: null, ctx: null, titleIv: null, titleWas: null, poll: null, toast: null };
 
   function _gsAlarmSound() {
     try {
       var ctx = new (window.AudioContext || window.webkitAudioContext)();
       _gsAlarm.ctx = ctx;
-      // Karta wyników nigdy nie dostała kliknięcia (przebieg startuje z karty panelu), więc
-      // Chrome trzyma kontekst w stanie `suspended`. Próbujemy go obudzić; gdy się nie da,
-      // zostają dwa pozostałe kanały — dlatego dźwięk nie jest jedynym sygnałem.
+      // Bez kliknięcia w tej karcie Chrome trzyma kontekst w stanie `suspended` i `resume()` go nie obudzi.
+      // Karta przebiegu oddaje wtedy dźwięk karcie panelu (_gsAlarmSoundOrRelay).
       if (ctx.state === 'suspended' && ctx.resume) ctx.resume();
 
       var osc = ctx.createOscillator();
@@ -12985,7 +12986,7 @@
       document.title = alt ? '⛔ CAPTCHA — kliknij tutaj' : '⚠ wyszukiwanie wstrzymane';
     }, 900);
 
-    if (_sndOn('captcha')) _gsAlarmSound();
+    if (_sndOn('captcha')) _gsAlarmSoundOrRelay();
     _gsHudAlarm(powod || '?');
 
     // Captcha rozwiązana bez przeładowania strony — wtedy nic nas nie obudzi poza sprawdzaniem.
@@ -13035,6 +13036,62 @@
     var frame = _$('b24t-gs-frame');
     if (frame) frame.remove();
     _gsHudAlarm(null);
+  }
+
+  // Chrome gra dźwięk tylko w karcie, która dostała kliknięcie (autoplay policy), a w karcie przebiegu nikt nie klika:
+  // otwiera ją okno kampanii, a strony wyników przechodzi sama (GOOGLE_COLLECTOR.md §6.1b). Kontekst, który w ciągu
+  // sekundy nie ruszył, oddaje dźwięk karcie panelu i zostaje zamknięty: ruszyłby przy pierwszym kliknięciu w test
+  // i grał na dwa głosy z kartą panelu.
+  function _gsAlarmSoundOrRelay() {
+    _gsAlarmSound();
+    var ctx = _gsAlarm.ctx;
+    setTimeout(function() {
+      // Wyciszenie albo koniec alarmu w tej sekundzie zmienia kontekst; wtedy nie ma czego oddawać.
+      if (!_gsAlarm.on || _gsAlarm.ctx !== ctx || (ctx && ctx.state === 'running')) return;
+      _gsAlarmSilence();
+      var run = _gsRunGet();
+      if (!run || !run.active || !run.blockedAt) return;
+      run.soundAt = run.blockedAt;
+      _gsRunSet(run);
+    }, 1000);
+  }
+
+  // Wyciszenie z HUD-u albo z powiadomienia w karcie panelu. Ponowne wczytanie strony z testem oddaje dźwięk od nowa,
+  // tak jak alarm w karcie przebiegu gra od nowa po każdym wczytaniu.
+  function _gsAlarmRelayOff() {
+    var run = _gsRunGet();
+    if (!run || !run.soundAt) return;
+    run.soundAt = null;
+    _gsRunSet(run);
+  }
+
+  // Karta panelu gra dźwięk oddany przez kartę przebiegu. Gra tylko karta, z której przebieg ruszył: ma za sobą
+  // kliknięcie „Uruchom wyszukiwanie”, a dwie karty Brand24 grałyby na dwa głosy. Milknie, gdy strona wyników zdejmie
+  // `blockedAt` (test rozwiązany), po wyciszeniu i po zatrzymaniu przebiegu.
+  function _gsAlarmRelaySync() {
+    var run = _gsRunGet();
+    var on = !!(run && run.active && run.blockedAt && run.soundAt === run.blockedAt &&
+      run.originTab === _b24TabToken() && _sndOn('captcha'));
+    if (on === _gsAlarm.on) return;
+    _gsAlarm.on = on;
+    _gsAlarmSilence();
+    if (!on) {
+      if (_gsAlarm.toast) _gsAlarm.toast.close();
+      _gsAlarm.toast = null;
+      return;
+    }
+    _gsAlarmSound();
+    _gsAlarm.toast = Toast.show('Wyszukiwanie stoi do rozwiązania testu w karcie Google. Dźwięk gra w tej karcie, bo Chrome ' +
+      'nie pozwala na niego w karcie wyszukiwania.', 'warn', {
+      title: 'Test Google (CAPTCHA)', sticky: true,
+      actions: [{ label: 'Wycisz dźwięk', onClick: function() {} }],
+      // Zamknięcie powiadomienia to także wyciszenie; zamknięcie z kodu (`api`) robi sam koniec alarmu.
+      onClose: function(reason) {
+        if (reason !== 'close' && reason !== 'action') return;
+        _gsAlarmRelayOff();
+        _gsAlarmRelaySync();
+      },
+    });
   }
 
   // ── HUD (design/SURFACES.md §1.5) ──
@@ -13157,6 +13214,7 @@
       },
       'b24t-gs-mute': function(b) {
         _gsAlarmSilence();
+        _gsAlarmRelayOff();
         b.disabled = true;
         b.innerHTML = _html(_icon('mute') + 'Dźwięk wyciszony');
       },
@@ -17495,6 +17553,10 @@
       if (!document.hidden) podejmijZalegly();
     });
     podejmijZalegly();
+
+    // Dźwięk alarmu captchy, którego karta przebiegu nie może zagrać (_gsAlarmRelaySync).
+    try { GM_addValueChangeListener(GS_RUN_KEY, function(k, o, v, remote) { if (remote) _gsAlarmRelaySync(); }); } catch(e) {}
+    _gsAlarmRelaySync();
   }
 
   // Wejście w skan kampanii z gotowego koszyka: chipy, adresy, start. Brak promptu zatrzymuje
@@ -21214,6 +21276,24 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.24",
+      "date": "2026-10-08",
+      "label": "fix",
+      "changes": [
+        {
+          "type": "fix",
+          "area": "Kampanie H&M",
+          "title": "Naprawiono błąd, przez który alarm CAPTCHA nie grał dźwięku",
+          "items": [
+            "Gdy Chrome nie pozwala na dźwięk w karcie wyszukiwania, alarm gra w karcie Brand24, z której ruszyło wyszukiwanie.",
+            "Karta Brand24 pokazuje wtedy powiadomienie „Test Google (CAPTCHA)” z przyciskiem „Wycisz dźwięk”.",
+            "Dźwięk milknie po rozwiązaniu testu, po wyciszeniu w dowolnej z obu kart i po zatrzymaniu wyszukiwania."
+          ],
+          "text": "Naprawiono błąd, przez który alarm CAPTCHA nie grał dźwięku. Gdy Chrome nie pozwala na dźwięk w karcie wyszukiwania, alarm gra w karcie Brand24, z której ruszyło wyszukiwanie. Karta Brand24 pokazuje wtedy powiadomienie „Test Google (CAPTCHA)” z przyciskiem „Wycisz dźwięk”. Dźwięk milknie po rozwiązaniu testu, po wyciszeniu w dowolnej z obu kart i po zatrzymaniu wyszukiwania."
+        }
+      ]
+    },
+    {
       "version": "0.38.23",
       "date": "2026-10-07",
       "label": "new",
@@ -21519,23 +21599,6 @@
           "area": "Dodawanie wzmianek",
           "title": "Naprawiono błąd bezpieczeństwa",
           "text": "Naprawiono błąd bezpieczeństwa."
-        }
-      ]
-    },
-    {
-      "version": "0.38.14",
-      "date": "2026-10-03",
-      "label": "improved",
-      "changes": [
-        {
-          "type": "improved",
-          "area": "Panel",
-          "title": "Log bez wpisów technicznych przy pracy z plikiem i w Annotators",
-          "items": [
-            "Postęp pobierania mapy wzmianek, partie tagowania, wykryte kolumny pliku, kontrole danych i odczyty zakładek Annotators trafiają do logów programistycznych.",
-            "Log pokazuje start, wynik i uwagi operacji; resztę widać po włączeniu „Logi programistyczne” w Ustawieniach → Aktualizacje."
-          ],
-          "text": "Log bez wpisów technicznych przy pracy z plikiem i w Annotators. Postęp pobierania mapy wzmianek, partie tagowania, wykryte kolumny pliku, kontrole danych i odczyty zakładek Annotators trafiają do logów programistycznych. Log pokazuje start, wynik i uwagi operacji; resztę widać po włączeniu „Logi programistyczne” w Ustawieniach → Aktualizacje."
         }
       ]
     }

@@ -1,5 +1,22 @@
 [
   {
+    "version": "0.38.31",
+    "date": "2026-10-09",
+    "label": "fix",
+    "changes": [
+      {
+        "type": "fix",
+        "area": "Panel",
+        "title": "Naprawiono błąd, przez który pasek błędu proponował zgłoszenie przy błędach pliku i logowania",
+        "items": [
+          "Przycisk „Zgłoś” na pasku błędu pojawia się tylko przy błędzie wtyczki albo nieoczekiwanej odpowiedzi Brand24, której wtyczka nie umie obsłużyć.",
+          "Błędy pliku, brak mapowania, wygasła sesja, brak uprawnień, brak połączenia i chwilowe przeciążenie Brand24 pokazują pasek z treścią i wskazówką, bez przycisku zgłoszenia."
+        ],
+        "text": "Naprawiono błąd, przez który pasek błędu proponował zgłoszenie przy błędach pliku i logowania. Przycisk „Zgłoś” na pasku błędu pojawia się tylko przy błędzie wtyczki albo nieoczekiwanej odpowiedzi Brand24, której wtyczka nie umie obsłużyć. Błędy pliku, brak mapowania, wygasła sesja, brak uprawnień, brak połączenia i chwilowe przeciążenie Brand24 pokazują pasek z treścią i wskazówką, bez przycisku zgłoszenia."
+      }
+    ]
+  },
+  {
     "version": "0.38.30",
     "date": "2026-10-09",
     "label": "improved",

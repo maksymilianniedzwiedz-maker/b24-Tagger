@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.30
+// @version      0.38.31
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -185,7 +185,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.30';
+  const VERSION = '0.38.31';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -2114,42 +2114,47 @@
     const m = String(msg || '');
     const ml = m.toLowerCase();
     if (m === 'TOKEN_NOT_READY')
-      return { src: 'AUTORYZACJA', hint: 'Token autoryzacji nie jest gotowy — odśwież stronę Brand24 i poczekaj na załadowanie, potem wznów.' };
+      return { user: true, src: 'AUTORYZACJA', hint: 'Token autoryzacji nie jest gotowy — odśwież stronę Brand24 i poczekaj na załadowanie, potem wznów.' };
     if (m === 'GRAPHQL_AUTH_ERROR' || m.includes('GRAPHQL_HTTP_ERROR_401'))
-      return { src: 'AUTORYZACJA', hint: 'Sesja Brand24 wygasła — zaloguj się ponownie i kliknij Wznów.' };
+      return { user: true, src: 'AUTORYZACJA', hint: 'Sesja Brand24 wygasła — zaloguj się ponownie i kliknij Wznów.' };
     if (m === 'GRAPHQL_PERMISSION_DENIED' || m.includes('GRAPHQL_HTTP_ERROR_403'))
-      return { src: 'AUTORYZACJA', hint: 'Brak uprawnień do tagowania w tym projekcie — sprawdź rolę konta w Brand24.' };
+      return { user: true, src: 'AUTORYZACJA', hint: 'Brak uprawnień do tagowania w tym projekcie — sprawdź rolę konta w Brand24.' };
     if (m.includes('GRAPHQL_HTTP_ERROR_400'))
       return { src: 'PLUGIN', hint: 'Brand24 odrzucił zapytanie jako nieprawidłowe (400) — prawdopodobny błąd formatu. Wyślij Bug Report przez Feedback.' };
     if (m.includes('GRAPHQL_HTTP_ERROR_404'))
       return { src: 'BRAND24', hint: 'Endpoint API nie istnieje (404) — Brand24 mógł zmienić API. Sprawdź aktualizacje wtyczki.' };
     if (m.includes('GRAPHQL_HTTP_ERROR_429'))
-      return { src: 'BRAND24', hint: 'Zbyt wiele zapytań — Brand24 zablokował ruch (rate limit). Poczekaj ok. minutę i wznów.' };
+      return { user: true, src: 'BRAND24', hint: 'Zbyt wiele zapytań — Brand24 zablokował ruch (rate limit). Poczekaj ok. minutę i wznów.' };
     if (m.includes('GRAPHQL_HTTP_ERROR_500'))
-      return { src: 'BRAND24', hint: 'Wewnętrzny błąd serwera Brand24 (500) — spróbuj ponownie za chwilę.' };
+      return { user: true, src: 'BRAND24', hint: 'Wewnętrzny błąd serwera Brand24 (500) — spróbuj ponownie za chwilę.' };
     if (m.includes('GRAPHQL_HTTP_ERROR_502') || m.includes('GRAPHQL_HTTP_ERROR_503') || m.includes('GRAPHQL_HTTP_ERROR_504'))
-      return { src: 'BRAND24', hint: 'Brand24 tymczasowo niedostępny — spróbuj za kilka minut.' };
+      return { user: true, src: 'BRAND24', hint: 'Brand24 tymczasowo niedostępny — spróbuj za kilka minut.' };
     if (m.includes('GRAPHQL_HTTP_ERROR_'))
       return { src: 'BRAND24', hint: `Nieoczekiwany błąd HTTP Brand24 (${m}) — sprawdź logi powyżej.` };
     if (m === 'GRAPHQL_ERROR')
       return { src: 'BRAND24', hint: 'Brand24 API zwróciło błąd GQL — sprawdź logi [BRAND24/GQL] powyżej.' };
     if (ml.includes('failed to fetch') || ml.includes('networkerror') || ml.includes('network error') || ml.includes('net::'))
-      return { src: 'SIEĆ', hint: 'Brak połączenia z Brand24 — sprawdź internet i wznów sesję.' };
+      return { user: true, src: 'SIEĆ', hint: 'Brak połączenia z Brand24 — sprawdź internet i wznów sesję.' };
     if (ml.includes('timeout') || ml.includes('timed out'))
-      return { src: 'SIEĆ', hint: 'Zapytanie przekroczyło limit czasu — sprawdź połączenie i wznów.' };
+      return { user: true, src: 'SIEĆ', hint: 'Zapytanie przekroczyło limit czasu — sprawdź połączenie i wznów.' };
     // UserError messages z Brand24 bulkTagMentions / bulkUntagMentions
     if (ml.includes('not found') || ml.includes('nie znalezion') || ml.includes('does not exist'))
-      return { src: 'BRAND24', hint: 'Wzmianka nie istnieje lub została usunięta z Brand24. Możliwe że pochodzi z innego projektu lub okresu.' };
+      return { user: true, src: 'BRAND24', hint: 'Wzmianka nie istnieje lub została usunięta z Brand24. Możliwe że pochodzi z innego projektu lub okresu.' };
     if ((ml.includes('invalid') || ml.includes('nieprawidłow')) && (ml.includes('id') || ml.includes('mention')))
-      return { src: 'PLIK', hint: 'ID wzmianki jest nieprawidłowe — sprawdź czy plik pochodzi z tego samego projektu Brand24.' };
+      return { user: true, src: 'PLIK', hint: 'ID wzmianki jest nieprawidłowe — sprawdź czy plik pochodzi z tego samego projektu Brand24.' };
     if (ml.includes('tag') && (ml.includes('not found') || ml.includes('invalid') || ml.includes('nie znalezion')))
-      return { src: 'BRAND24', hint: 'Tag nie istnieje lub został usunięty w Brand24 — sprawdź mapowanie tagów.' };
+      return { user: true, src: 'BRAND24', hint: 'Tag nie istnieje lub został usunięty w Brand24 — sprawdź mapowanie tagów.' };
     if (ml.includes('permission') || ml.includes('access denied') || ml.includes('forbidden') || ml.includes('unauthorized'))
-      return { src: 'AUTORYZACJA', hint: 'Brak uprawnień do tej wzmianki lub projektu — sprawdź rolę konta.' };
+      return { user: true, src: 'AUTORYZACJA', hint: 'Brak uprawnień do tej wzmianki lub projektu — sprawdź rolę konta.' };
     if (ml.includes('quota') || ml.includes('limit exceeded') || ml.includes('too many'))
-      return { src: 'BRAND24', hint: 'Przekroczono limit Brand24 — poczekaj chwilę i wznów.' };
+      return { user: true, src: 'BRAND24', hint: 'Przekroczono limit Brand24 — poczekaj chwilę i wznów.' };
     return { src: 'BRAND24', hint: 'Nieoczekiwana odpowiedź Brand24 — możliwy tymczasowy błąd lub zmiana API. Spróbuj ponownie.' };
   }
+  // Opcje wpisu logu dla błędu: przyczyna po stronie użytkownika albo chwilowa (sesja, uprawnienia, sieć, plik, limit
+  // i przeciążenie Brand24, usunięte dane) pokazuje pasek błędu bez przycisku „Zgłoś”. Zgłoszenie ma sens tylko przy awarii wtyczki
+  // albo zmianie po stronie Brand24, przez którą wtyczka nie może wykonać operacji (decyzja właściciela 2026-10-09).
+  function _errOpts(msg) { return _errContext(msg).user ? { user: true } : null; }
+
 
   // Każde zapytanie do Brand24 idzie do dziennika diagnostycznego: nazwa, czas, wynik, a przy błędzie
   // parametry (bez długich tekstów) i komunikat serwera, np. „Enum "Sentiment" cannot represent…”.
@@ -2180,7 +2185,7 @@
 
   async function _gqlCall(operationName, variables, query, opts) {
     if (!state.tokenHeaders) {
-      addLog(`✕ [AUTORYZACJA] ${operationName} — token autoryzacji nie gotowy. Odśwież stronę Brand24.`, 'error');
+      addLog(`✕ [AUTORYZACJA] ${operationName} — token autoryzacji nie gotowy. Odśwież stronę Brand24.`, 'error', { user: true });
       throw new Error('TOKEN_NOT_READY');
     }
     const res = await origFetch('/api/graphql', {
@@ -2190,7 +2195,7 @@
       body: JSON.stringify({ operationName, variables, query }),
     });
     if (res.status === 401) {
-      addLog(`✕ [AUTORYZACJA] ${operationName} — sesja wygasła (HTTP 401). Zaloguj się ponownie i kliknij Wznów.`, 'error');
+      addLog(`✕ [AUTORYZACJA] ${operationName} — sesja wygasła (HTTP 401). Zaloguj się ponownie i kliknij Wznów.`, 'error', { user: true });
       throw new Error('GRAPHQL_AUTH_ERROR');
     }
     if (!res.ok) {
@@ -2222,11 +2227,11 @@
         // zbiera je _cmsDenied w jeden wpis i jedno powiadomienie (zgłoszenie nr 5).
         const _pid = variables && variables.projectId;
         if (_pid && String(_pid) !== String(state.projectId)) _cmsDenied(_pid);
-        else if (!opts?.silent) addLog(`✕ [AUTORYZACJA] ${operationName} — brak uprawnień (PERMISSION_DENIED). Sprawdź rolę konta w Brand24.`, 'error');
+        else if (!opts?.silent) addLog(`✕ [AUTORYZACJA] ${operationName} — brak uprawnień (PERMISSION_DENIED). Sprawdź rolę konta w Brand24.`, 'error', { user: true });
         throw new Error('GRAPHQL_PERMISSION_DENIED');
       }
       if (_errCode === 'UNAUTHENTICATED' || _errMsg.toLowerCase().includes('unauthenticated')) {
-        addLog(`✕ [AUTORYZACJA] ${operationName} — token nieważny (${_errCode || _errMsg}). Zaloguj się ponownie.`, 'error');
+        addLog(`✕ [AUTORYZACJA] ${operationName} — token nieważny (${_errCode || _errMsg}). Zaloguj się ponownie.`, 'error', { user: true });
         throw new Error('GRAPHQL_AUTH_ERROR');
       }
       addLog(`✕ [BRAND24/GQL] ${operationName} — błąd API: "${_errMsg}" (code: ${_errCode || 'brak'})`, 'error');
@@ -2309,7 +2314,7 @@
           await sleep(RETRY_DELAYS[i]);
         } else {
           const ctx = _errContext(e.message);
-          addLog(`✕ [${ctx.src}] ${operationName} — wszystkie retries wyczerpane (${retries}×): ${e.message}\n  → ${ctx.hint}`, 'error');
+          addLog(`✕ [${ctx.src}] ${operationName} — wszystkie retries wyczerpane (${retries}×): ${e.message}\n  → ${ctx.hint}`, 'error', _errOpts(e.message));
           throw e;
         }
       }
@@ -2399,7 +2404,7 @@
     if (data.bulkTagMentions?.message) {
       const brandMsg = data.bulkTagMentions.message;
       const ctx = _errContext(brandMsg);
-      addLog(`✕ [${ctx.src}] bulkTagMentions UserError (${mentionsIds.length} IDs, tagId=${tagId}): "${brandMsg}"\n  → ${ctx.hint}`, 'error');
+      addLog(`✕ [${ctx.src}] bulkTagMentions UserError (${mentionsIds.length} IDs, tagId=${tagId}): "${brandMsg}"\n  → ${ctx.hint}`, 'error', _errOpts(brandMsg));
       throw new Error(brandMsg);
     }
     return { success: true };
@@ -2420,7 +2425,7 @@
     if (data.bulkUntagMentions?.message) {
       const brandMsg = data.bulkUntagMentions.message;
       const ctx = _errContext(brandMsg);
-      addLog(`✕ [${ctx.src}] bulkUntagMentions UserError (${mentionsIds.length} IDs, tagId=${tagId}): "${brandMsg}"\n  → ${ctx.hint}`, 'error');
+      addLog(`✕ [${ctx.src}] bulkUntagMentions UserError (${mentionsIds.length} IDs, tagId=${tagId}): "${brandMsg}"\n  → ${ctx.hint}`, 'error', _errOpts(brandMsg));
       throw new Error(brandMsg);
     }
     return { success: true };
@@ -2848,7 +2853,7 @@
       diag.dateFrom = dateFrom; diag.dateTo = dateTo;
     }
     if (new Date(dateFrom) > new Date(dateTo)) {
-      log(`✕ [DIAG/DATY] dateFrom (${dateFrom}) > dateTo (${dateTo}) — zakres odwrócony! Sprawdź plik.`, 'error');
+      log(`✕ [DIAG/DATY] dateFrom (${dateFrom}) > dateTo (${dateTo}) — zakres odwrócony! Sprawdź plik.`, 'error', { user: true });
     }
 
     // ── KROK 2: walidacja untaggedId ────────────────────────────────────
@@ -2870,7 +2875,7 @@
     try {
       first = await getMentions(state.projectId, dateFrom, dateTo, gr, 1, mentionOpts);
     } catch(e) {
-      log(`✕ [DIAG/API] getMentions strona 1 FAILED: ${e.message}`, 'error');
+      log(`✕ [DIAG/API] getMentions strona 1 FAILED: ${e.message}`, 'error', _errOpts(e.message));
       opts.failed = e.message;
       return map;
     }
@@ -3124,7 +3129,7 @@
       try {
         await runTagging({ dateFrom: projectDateFrom, dateTo: projectDateTo, rows: projectRows }, true);
       } catch (e) {
-        addLog('✕ Błąd tagowania projektu ' + projectName + ': ' + e.message, 'error');
+        addLog('✕ Błąd tagowania projektu ' + projectName + ': ' + e.message, 'error', _errOpts(e.message));
       }
       overallStats[projectId] = {
         name: projectName,
@@ -3156,7 +3161,7 @@
     if (!colMap.assessment) issues.push('BRAK kolumny assessment — tagowanie niemożliwe');
 
     if (issues.length) {
-      issues.forEach(i => addLog('[SCHEMA ERROR] ' + i, 'error'));
+      issues.forEach(i => addLog('[SCHEMA ERROR] ' + i, 'error', { user: true }));
       return false;
     }
 
@@ -3173,7 +3178,7 @@
     });
 
     if (emptyUrls) addLog(`[SCHEMA WARN] ${emptyUrls} pustych URL-i w pliku`, 'warn', { tech: true, key: 'schema' });
-    if (sciUrls) addLog(`[SCHEMA ERROR] ${sciUrls} URL-i wygląda jak sci notation — prawdopodobnie uszkodzone ID!`, 'error');
+    if (sciUrls) addLog(`[SCHEMA ERROR] ${sciUrls} URL-i wygląda jak sci notation — prawdopodobnie uszkodzone ID!`, 'error', { user: true });
     if (dupUrls) addLog(`[SCHEMA WARN] ${dupUrls} zduplikowanych URL-i w pliku (możliwe duplikaty wzmianek)`, 'warn', { tech: true, key: 'schema' });
 
     addLog(`[SCHEMA OK] ${rows.length} rekordów, ${urlsSeen.size} unikalnych URL-i`, 'info', { tech: true, key: 'schema' });
@@ -3202,7 +3207,7 @@
     // Walidacja schematu pliku — blokuje tagowanie przy sci notation URL
     const schemaOk = validateInputSchema(rows, state.file.colMap);
     if (!schemaOk) {
-      addLog('[TAGGING ABORTED] Schemat pliku wejściowego nie przeszedł walidacji. Napraw plik i spróbuj ponownie.', 'error');
+      addLog('[TAGGING ABORTED] Schemat pliku wejściowego nie przeszedł walidacji. Napraw plik i spróbuj ponownie.', 'error', { user: true });
       return;
     }
 
@@ -3530,7 +3535,7 @@
           if (!batches[batch.newTagId]) batches[batch.newTagId] = [];
           batches[batch.newTagId].push(...slice);
         } catch (untagErr) {
-          addLog(`⚠ [FALLBACK] bulkUntag batch FAILED (${slice.length} IDs, tag ${batch.oldTagId}): ${untagErr.message} — pomijam batch, wzmianki nie zostaną przepisane`, 'error');
+          addLog(`⚠ [FALLBACK] bulkUntag batch FAILED (${slice.length} IDs, tag ${batch.oldTagId}): ${untagErr.message} — pomijam batch, wzmianki nie zostaną przepisane`, 'error', _errOpts(untagErr.message));
         }
         await sleep(200);
       }
@@ -3587,7 +3592,7 @@
                   const ctx = _errContext(singleErr.message);
                   addLog(
                     `✕ [FALLBACK/${ctx.src}] ID ${singleId} → "${tagName}": ${singleErr.message}\n  → ${ctx.hint}`,
-                    'error'
+                    'error', _errOpts(singleErr.message)
                   );
                   state.failedMentions.push({
                     id: singleId,
@@ -3631,7 +3636,7 @@
         var _dRes = await Promise.allSettled(_dChunk.map(function(_id) { return deleteMention(_id); }));
         _dRes.forEach(function(_r, _ci) {
           if (_r.status === 'fulfilled') { _delOk++; }
-          else { _delFail++; addLog('✕ [DEL] ID ' + _dChunk[_ci] + ': ' + (_r.reason && _r.reason.message || _r.reason), 'error'); }
+          else { _delFail++; addLog('✕ [DEL] ID ' + _dChunk[_ci] + ': ' + (_r.reason && _r.reason.message || _r.reason), 'error', _errOpts(_r.reason && _r.reason.message || String(_r.reason))); }
         });
         await sleep(50);
       }
@@ -3654,7 +3659,7 @@
           _sentFail++;
           const msg = (r.reason && r.reason.message) || String(r.reason);
           const ctx = _errContext(msg);
-          addLog(`✕ [SENTYMENT/${ctx.src}] ID ${_sChunk[ci].id} → ${_sChunk[ci].sentiment}: ${msg}\n  → ${ctx.hint}`, 'error');
+          addLog(`✕ [SENTYMENT/${ctx.src}] ID ${_sChunk[ci].id} → ${_sChunk[ci].sentiment}: ${msg}\n  → ${ctx.hint}`, 'error', _errOpts(msg));
         });
         updateProgress('sentiment', Math.min(_si + SENTIMENT_CONCURRENCY, _sentJobs.length), _sentJobs.length);
       }
@@ -4074,7 +4079,7 @@
     state.status = 'error';
     updateStatusUI();
     if (_sndOn('error')) _sndPlay('error');
-    addLog(`✕ [${ctx.src}] Błąd w: ${context} — ${error.message}\n  → ${ctx.hint}`, 'error');
+    addLog(`✕ [${ctx.src}] Błąd w: ${context} — ${error.message}\n  → ${ctx.hint}`, 'error', _errOpts(error.message));
     showCrashBanner(crash);
     // Centralny handler błędów tagowania — jedno podpięcie zamiast osobnego przy każdej
     // operacji. `ctx.hint` niesie już podpowiedź, co z tym zrobić, więc powiadomienie mówi
@@ -4206,11 +4211,10 @@
       _diag.ev.push(e);
       if (_diag.ev.length > DIAG_MAX) _diag.ev.splice(0, _diag.ev.length - DIAG_MAX);
     }
-    var bad = e.k === 'err' || e.ok === false || (e.k === 'log' && e.type === 'error' && !e.tech);
-    if (bad) {
-      _diag.errors++;
-      _errBarShow(e);
-    }
+    var userErr = e.k === 'log' && e.type === 'error' && !e.tech;
+    var bad = e.k === 'err' || e.ok === false || (userErr && !e.user);
+    if (bad) _diag.errors++;
+    if (bad || userErr) _errBarShow(e);
     _diagSaveSoon(bad ? 2000 : 15000);
   }
 
@@ -4306,7 +4310,7 @@
   var LOG_MAX = 500;   // na warstwę: wpisy tła nie wypychają historii pracy
   function addLog(message, type = 'info', extra = null) {
     const x = extra || {}, tech = !!x.tech || type === 'diag';
-    _diagPush({ k: 'log', type: type, tech: tech || undefined, msg: String(message).slice(0, 2000) });
+    _diagPush({ k: 'log', type: type, tech: tech || undefined, user: x.user || undefined, msg: String(message).slice(0, 2000) });
     if (type === 'debug') return;
     const now = new Date();
     const time = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
@@ -4654,8 +4658,10 @@
   }
 
   // Błąd w powiadomieniu zostaje do zamknięcia i ma „Szczegóły” z logiem; alert() zatrzymywał stronę i skrypt.
-  function showError(msg) {
-    addLog(`✕ ${msg}`, 'error');
+  // Domyślnie przyczyna po stronie użytkownika (brak pliku, mapowania, błędy pliku), więc bez przycisku „Zgłoś”;
+  // błąd operacji w Brand24 podaje `extra` z _errOpts.
+  function showError(msg, extra) {
+    addLog(`✕ ${msg}`, 'error', extra === undefined ? { user: true } : extra);
     Toast.show(msg, 'error');
   }
 
@@ -10528,7 +10534,7 @@
         } catch (err) {
           busy = false;
           check();
-          showError(`Nie udało się utworzyć tagu: ${err.message}`);
+          showError(`Nie udało się utworzyć tagu: ${err.message}`, _errOpts(err.message));
         }
       };
       input.addEventListener('input', check);
@@ -10660,12 +10666,12 @@
       const fileWarnings = validateFile(rows, colMap);
       renderFileValidation(fileWarnings);
       if (fileWarnings.some(w => w.type === 'error')) {
-        addLog('⛔ Plik ma błędy krytyczne — Start zablokowany. Sprawdź ostrzeżenia nad mapowaniem.', 'error');
+        addLog('⛔ Plik ma błędy krytyczne — Start zablokowany. Sprawdź ostrzeżenia nad mapowaniem.', 'error', { user: true });
       }
       _matchSchedule(true);
 
     } catch (e) {
-      addLog(`✕ Błąd pliku: ${e.message}`, 'error');
+      addLog(`✕ Błąd pliku: ${e.message}`, 'error', { user: true });
       Toast.show(`Nie udało się wczytać pliku: ${e.message}`, 'error');
     }
   }
@@ -21561,6 +21567,23 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.31",
+      "date": "2026-10-09",
+      "label": "fix",
+      "changes": [
+        {
+          "type": "fix",
+          "area": "Panel",
+          "title": "Naprawiono błąd, przez który pasek błędu proponował zgłoszenie przy błędach pliku i logowania",
+          "items": [
+            "Przycisk „Zgłoś” na pasku błędu pojawia się tylko przy błędzie wtyczki albo nieoczekiwanej odpowiedzi Brand24, której wtyczka nie umie obsłużyć.",
+            "Błędy pliku, brak mapowania, wygasła sesja, brak uprawnień, brak połączenia i chwilowe przeciążenie Brand24 pokazują pasek z treścią i wskazówką, bez przycisku zgłoszenia."
+          ],
+          "text": "Naprawiono błąd, przez który pasek błędu proponował zgłoszenie przy błędach pliku i logowania. Przycisk „Zgłoś” na pasku błędu pojawia się tylko przy błędzie wtyczki albo nieoczekiwanej odpowiedzi Brand24, której wtyczka nie umie obsłużyć. Błędy pliku, brak mapowania, wygasła sesja, brak uprawnień, brak połączenia i chwilowe przeciążenie Brand24 pokazują pasek z treścią i wskazówką, bez przycisku zgłoszenia."
+        }
+      ]
+    },
+    {
       "version": "0.38.30",
       "date": "2026-10-09",
       "label": "improved",
@@ -21791,34 +21814,6 @@
           "area": "Dodawanie wzmianek",
           "title": "Naprawiono błąd bezpieczeństwa",
           "text": "Naprawiono błąd bezpieczeństwa."
-        }
-      ]
-    },
-    {
-      "version": "0.38.21",
-      "date": "2026-10-05",
-      "label": "new",
-      "changes": [
-        {
-          "type": "new",
-          "area": "Dodawanie wzmianek",
-          "title": "Nazwa projektu w nagłówku okna i nad przyciskiem „Dodaj wzmiankę”",
-          "items": [
-            "Okna News i Niestandardowe pokazują pod tytułem projekt, do którego trafiają wzmianki.",
-            "Ten sam projekt stoi nad przyciskiem „Dodaj wzmiankę”, a dymek na nim podaje ID projektu."
-          ],
-          "comment": "Okno News zasłania panel Brand24 razem z nazwą projektu, więc dodawanie do innego projektu niż zamierzony nie dawało żadnego sygnału.",
-          "text": "Nazwa projektu w nagłówku okna i nad przyciskiem „Dodaj wzmiankę”. Okna News i Niestandardowe pokazują pod tytułem projekt, do którego trafiają wzmianki. Ten sam projekt stoi nad przyciskiem „Dodaj wzmiankę”, a dymek na nim podaje ID projektu."
-        },
-        {
-          "type": "fix",
-          "area": "Dodawanie wzmianek",
-          "title": "Naprawiono błąd, przez który News dodawał wzmianki do innego projektu niż otwarty w Brand24",
-          "items": [
-            "Po pracy w Niestandardowym na innym projekcie News dodaje do projektu otwartego w Brand24.",
-            "Po przełączeniu projektu w Brand24 bez odświeżenia strony przycisk „Dodaj wzmiankę” czeka na odświeżenie, a wiersz projektu nad nim podaje, który projekt jest otwarty."
-          ],
-          "text": "Naprawiono błąd, przez który News dodawał wzmianki do innego projektu niż otwarty w Brand24. Po pracy w Niestandardowym na innym projekcie News dodaje do projektu otwartego w Brand24. Po przełączeniu projektu w Brand24 bez odświeżenia strony przycisk „Dodaj wzmiankę” czeka na odświeżenie, a wiersz projektu nad nim podaje, który projekt jest otwarty."
         }
       ]
     }
@@ -23231,10 +23226,11 @@
     return null;
   }
 
-  function _reportIsError(e) { return e.k === 'err' || e.ok === false || (e.k === 'log' && e.type === 'error'); }
+  function _reportIsError(e) { return e.k === 'err' || e.ok === false || (e.k === 'log' && e.type === 'error' && !e.user); }
   // Błąd w słowach użytkownika: wpis logu albo wyjątek. Nieudane zapytanie niesie sam kod (np. TOKEN_NOT_READY),
-  // a jego opis i tak ląduje w logu tuż obok.
-  function _reportIsUserError(e) { return e.k === 'err' || (e.k === 'log' && e.type === 'error' && !e.tech); }
+  // a jego opis i tak ląduje w logu tuż obok. Błąd z przyczyną po stronie użytkownika (`user`, _errOpts) nie jest
+  // błędem wtyczki: pasek pokazuje go bez przycisku „Zgłoś”, a zgłoszenie ma go tylko w dzienniku zdarzeń.
+  function _reportIsUserError(e) { return e.k === 'err' || (e.k === 'log' && e.type === 'error' && !e.tech && !e.user); }
   // Wpisy logu zaczynają się od własnego znaku stanu (✕, ⚠, ✓…), a pasek i dziennik dokładają swój.
   function _reportBare(msg) { return String(msg || '').replace(/^\s*[✕✓⚠ℹ→⏹◐]\s*/, ''); }
 
@@ -23545,12 +23541,17 @@
   // Przy ukrytym logu to jedyny ślad błędu w panelu, dlatego pokazuje się niezależnie od ustawienia logu.
   // Tylko wpisy logu z błędem i nieobsłużone wyjątki: nieudane zapytanie z ponowieniem (np. 429 w ocenie
   // sentymentu) nie jest jeszcze błędem dla użytkownika, a jego wynik i tak trafia do logu.
-  var _errBar = { n: 0 };
+  // „Zgłoś” tylko wtedy, gdy od ostatniego ukrycia paska był błąd wtyczki albo zmiana po stronie Brand24;
+  // błąd z przyczyną po stronie użytkownika (`user`) ma w treści wskazówkę, co zrobić, i zgłaszać go nie ma czego.
+  var _errBar = { n: 0, report: false };
   function _errBarShow(e) {
-    if (!_reportIsUserError(e)) return;
+    var userSide = e.k === 'log' && e.type === 'error' && !e.tech && e.user;
+    if (!userSide && !_reportIsUserError(e)) return;
     var bar = _$('b24t-errbar');
     if (!bar) return;
     _errBar.n++;
+    if (!userSide) _errBar.report = true;
+    bar.querySelector('[data-eb="report"]').hidden = !_errBar.report;
     var full = _reportBare(e.msg);
     var msg = bar.querySelector('.b-errbar__msg');
     msg.textContent = full.split('\n')[0].slice(0, 160);
@@ -23563,6 +23564,7 @@
     var bar = _$('b24t-errbar');
     if (bar) bar.hidden = true;
     _errBar.n = 0;
+    _errBar.report = false;
   }
   // Pasek błędu (powierzchnia nr 3, baner §1.9) między treścią a stopką panelu, widoczny w każdej karcie.
   // Pełna treść w dymku, kliknięcie ją kopiuje.
@@ -25555,7 +25557,7 @@
       var cur = _$('b24t-ann-project-content');
       if (cur) renderAnnotatorProject(cur, annotatorData.project);
     } catch(e) {
-      addLog('✕ [zakładka Projekt] błąd: ' + e.message, 'error');
+      addLog('✕ [zakładka Projekt] błąd: ' + e.message, 'error', _errOpts(e.message));
       var errEl = _$('b24t-ann-project-content');
       if (!errEl) return;
       errEl.innerHTML = _html('<div class="b-banner b-banner--danger" style="align-items:center">' + _icon('alertCircle') +
@@ -25974,7 +25976,7 @@
         }
         total += deleted;
       } catch (e) {
-        addLog(`✕ Auto-Delete błąd${multi ? ' w projekcie ' + t.name : ''}: ${e.message}`, 'error');
+        addLog(`✕ Auto-Delete błąd${multi ? ' w projekcie ' + t.name : ''}: ${e.message}`, 'error', _errOpts(e.message));
         setStatus(`✕ ${at}błąd: ${e.message}`);
         return;
       }
@@ -26464,7 +26466,7 @@
       Toast.show(msg, run.stop ? 'warn' : 'ok');
     } catch (e) {
       _apStatus('Błąd: ' + e.message + '. Usunięto ' + deleted + ' ' + _relPl(deleted, 'wzmiankę', 'wzmianki', 'wzmianek') + '; liczby na liście są po odświeżeniu.', 'error');
-      addLog('✕ Usuwanie ze wszystkich projektów — błąd: ' + e.message, 'error');
+      addLog('✕ Usuwanie ze wszystkich projektów — błąd: ' + e.message, 'error', _errOpts(e.message));
     } finally {
       _apRun = null;
       // Liczby się zmieniły: listy z pamięci podręcznej trzeba policzyć od nowa.
@@ -26887,7 +26889,7 @@
       _ovMonths[key] = entry;
       if (current()) { bgCache.overallStats = entry; _ovRender(group, entry.results, entry); }
     } catch (e) {
-      addLog('✕ [Overall] błąd: ' + e.message, 'error');
+      addLog('✕ [Overall] błąd: ' + e.message, 'error', _errOpts(e.message));
       if (current()) Toast.show('Overall: nie udało się policzyć wzmianek (' + e.message + '). Spróbuj ponownie przyciskiem obok wyboru grupy.', 'error');
     } finally {
       delete _ovLoading[key];
@@ -27716,7 +27718,7 @@
         }
       } catch (err) {
         setStatus(`Błąd: ${err.message}`, 'error');
-        addLog(`✕ Quick Delete błąd: ${err.message}`, 'error');
+        addLog(`✕ Quick Delete błąd: ${err.message}`, 'error', _errOpts(err.message));
       } finally {
         delTimer.stop();
         tagRun = null;
@@ -27784,7 +27786,7 @@
         }
       } catch (err) {
         setStatus(`Błąd: ${err.message}`, 'error');
-        addLog(`✕ Delete view błąd: ${err.message}`, 'error');
+        addLog(`✕ Delete view błąd: ${err.message}`, 'error', _errOpts(err.message));
       } finally {
         delviewTimer.stop();
         viewRun = null;
@@ -27939,7 +27941,7 @@
 
     } catch (e) {
       _qtStatus(`Błąd: ${e.message}`, 'error');
-      addLog(`✕ Quick Tag błąd: ${e.message}`, 'error');
+      addLog(`✕ Quick Tag błąd: ${e.message}`, 'error', _errOpts(e.message));
     } finally {
       qtTimer.stop();
       if (qtBtn) qtBtn.disabled = false;
@@ -28420,7 +28422,7 @@
           res = await _aiTagAnalyzeBatch(batch.map(_aiTagMentionToItem), prompt.system, model, cats);
         } catch(e) {
           errors += batch.length;
-          addLog('✕ AI batch ' + num + ' błąd: ' + e.message, 'error');
+          addLog('✕ AI batch ' + num + ' błąd: ' + e.message, 'error', _errOpts(e.message));
           // Po statusie, nie po treści: komunikat niesie tekst dostawcy („prompt is too long:
           // 204291 tokens" pasowałoby do /429/ i przerwało cały przebieg jako limit).
           if (e.status === 401) fatal = e.message;
@@ -28463,7 +28465,7 @@
         for (let i = 0; i < ids.length && !state._aitStop; i += MAX_BATCH_SIZE) {
           const chunk = ids.slice(i, i + MAX_BATCH_SIZE);
           try { await bulkTagMentions(chunk, parseInt(tid)); applied += chunk.length; chunk.forEach(id => tagged.add(id)); }
-          catch(e) { errors += chunk.length; addLog('✕ bulkTag (tagId ' + tid + ') błąd: ' + e.message, 'error'); }
+          catch(e) { errors += chunk.length; addLog('✕ bulkTag (tagId ' + tid + ') błąd: ' + e.message, 'error', _errOpts(e.message)); }
           await sleep(50);
         }
       }
@@ -28474,7 +28476,7 @@
         for (let i = 0; i < ids.length; i += MAX_BATCH_SIZE) {
           const chunk = ids.slice(i, i + MAX_BATCH_SIZE);
           try { await bulkUntagMentions(chunk, parseInt(tid)); }
-          catch(e) { addLog('✕ bulkUntag (tagId ' + tid + ') błąd: ' + e.message, 'error'); }
+          catch(e) { addLog('✕ bulkUntag (tagId ' + tid + ') błąd: ' + e.message, 'error', _errOpts(e.message)); }
           await sleep(50);
         }
       }
@@ -28501,7 +28503,7 @@
       addLog('🤖 AI Tagowanie — koniec. ' + summary + ' | tokeny in=' + usageIn + ' out=' + usageOut + ' cache_read=' + cacheRead, 'success');
     } catch(e) {
       setStatus('Błąd: ' + (e && e.message || e), 'danger');
-      addLog('✕ AI Tagowanie błąd: ' + (e && e.message || e), 'error');
+      addLog('✕ AI Tagowanie błąd: ' + (e && e.message || e), 'error', _errOpts(e && e.message || String(e)));
     } finally {
       state._aitRunning = false;
       _logRunEnd('aitag', statusEl ? statusEl.textContent : '');
@@ -28773,7 +28775,7 @@
           _sentSaveCacheSoon(cache);
         } catch(e) {
           st.fatal = e.message;
-          addLog('✕ Przegląd sentymentu — ' + st.model + ': ' + e.message, 'error');
+          addLog('✕ Przegląd sentymentu — ' + st.model + ': ' + e.message, 'error', _errOpts(e.message));
         }
         _sentRenderSummary();
       }
@@ -28899,7 +28901,7 @@
       addLog('◐ Przegląd sentymentu — ocenione ' + run.items.length + ' wzmianek; koszt: ' + cost, 'success');
     } catch(e) {
       run.phase = 'error'; run.error = _sentErrText(e);
-      addLog('✕ Przegląd sentymentu: ' + run.error, 'error');
+      addLog('✕ Przegląd sentymentu: ' + run.error, 'error', _errOpts(run.error));
     } finally {
       sentState.running = false;
       if (run.phase === 'cancelled') {
@@ -29022,7 +29024,7 @@
       if (!test) _sentPersist(it);
     }, function(e) {
       var msg = _sentErrText(e);
-      addLog('✕ Przegląd sentymentu — wzmianka ' + it.id + (job.revert ? ', cofnięcie do ' : ' → ') + job.to + ': ' + msg, 'error');
+      addLog('✕ Przegląd sentymentu — wzmianka ' + it.id + (job.revert ? ', cofnięcie do ' : ' → ') + job.to + ': ' + msg, 'error', _errOpts(msg));
       it.dec = job.revert
         ? { to: it.now, status: 'error', err: msg, revertFailed: true }
         : { to: job.to, status: 'error', err: msg };

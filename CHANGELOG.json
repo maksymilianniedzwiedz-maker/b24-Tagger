@@ -1,5 +1,24 @@
 [
   {
+    "version": "0.38.30",
+    "date": "2026-10-09",
+    "label": "improved",
+    "changes": [
+      {
+        "type": "improved",
+        "area": "Tagowanie z pliku",
+        "title": "Sekcja „Projekty w pliku” pokazuje dostęp, konto i wiersze do pominięcia",
+        "items": [
+          "Przy każdym projekcie z pliku widać, czy jego tagi udało się pobrać, a projekt innego konta ma znacznik „inne konto · CMS”.",
+          "Projekt bez dostępu ma powód i liczbę wierszy, a przycisk „Sprawdź ponownie” powtarza sprawdzenie po zalogowaniu do CMS.",
+          "Pokrycie tagów oznacza krzyżykiem tylko brakujący tag, którego plik w danym projekcie potrzebuje, z liczbą wierszy w podpowiedzi.",
+          "Przed startem okno „Przebieg pominie …” wylicza pominięte wiersze z powodem dla każdego projektu; start blokuje się tylko wtedy, gdy żaden projekt nie ma pobranych tagów."
+        ],
+        "text": "Sekcja „Projekty w pliku” pokazuje dostęp, konto i wiersze do pominięcia. Przy każdym projekcie z pliku widać, czy jego tagi udało się pobrać, a projekt innego konta ma znacznik „inne konto · CMS”. Projekt bez dostępu ma powód i liczbę wierszy, a przycisk „Sprawdź ponownie” powtarza sprawdzenie po zalogowaniu do CMS. Pokrycie tagów oznacza krzyżykiem tylko brakujący tag, którego plik w danym projekcie potrzebuje, z liczbą wierszy w podpowiedzi. Przed startem okno „Przebieg pominie …” wylicza pominięte wiersze z powodem dla każdego projektu; start blokuje się tylko wtedy, gdy żaden projekt nie ma pobranych tagów."
+      }
+    ]
+  },
+  {
     "version": "0.38.29",
     "date": "2026-10-09",
     "label": "fix",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.29
+// @version      0.38.30
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -185,7 +185,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.29';
+  const VERSION = '0.38.30';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3060,13 +3060,13 @@
       if (state.status !== 'running') break;
       var projectId = projectIds[_pIdx];
       var projectData = savedProjects[projectId];
-      if (!projectData) {
-        addLog('⚠ Projekt ' + projectId + ' nieznany lokalnie — pomijam. Odwiedź projekt w Brand24 i spróbuj ponownie.', 'warn');
-        continue;
-      }
-
       var projectName = _pnResolve(projectId);
       var projectRows = projectGroups[projectId];
+      if (!projectData) {
+        addLog('⚠ ' + projectName + ': przy wczytaniu pliku nie udało się pobrać jego tagów (brak dostępu) — pomijam. Projekty innych kont wymagają zalogowania do CMS; potem „Sprawdź ponownie” w sekcji „Projekty w pliku”.', 'warn');
+        overallStats[projectId] = { name: projectName, tagged: 0, skipped: projectRows.length };
+        continue;
+      }
       addLog('\n══ Projekt: ' + projectName + ' (' + projectId + ') — ' + projectRows.length + ' wierszy ══', 'info');
 
       // Resolve mapping for this project by tag name — najpierw świeże tagi z Brand24
@@ -3076,7 +3076,7 @@
       // nie wolno wysłać na wzmianki tego projektu.
       var _freshTags = await _tagsFetchFreshAsync(projectId);
       if (!_freshTags) {
-        addLog('⚠ Projekt ' + projectName + ': nie udało się pobrać jego tagów z Brand24 — pomijam. Sprawdź dostęp (projekt innego konta wymaga sesji CMS) i uruchom ponownie.', 'warn');
+        addLog('⚠ ' + projectName + ': nie udało się pobrać tagów projektu z Brand24 — pomijam. Sprawdź dostęp (projekt innego konta wymaga sesji CMS) i uruchom ponownie.', 'warn');
         overallStats[projectId] = { name: projectName, tagged: 0, skipped: projectRows.length };
         continue;
       }
@@ -10717,16 +10717,35 @@
     addLog('🗑 Plik usunięty. Wgraj nowy plik.', 'info', { tech: true, key: 'file' });
   }
 
-  async function _autoResolveUnknownProjects(unknownPids) {
-    var resolved = [];
-    for (var i = 0; i < unknownPids.length; i++) {
-      var pid = unknownPids[i];
+  // Stan projektów z pliku po sprawdzeniu przy wczytaniu: pid → { st, other }. Widok projektów, pokrycie tagów
+  // i potwierdzenie startu liczą się z tego samego sprawdzenia, więc mówią to samo co przebieg, który projekt bez
+  // świeżych tagów pomija (runMultiProjectTagging).
+  //   st: 'ok' — tagi pobrane przy tym wczytaniu z listy `#tag` strony projektu; 'denied' — strona projektu się nie
+  //       otworzyła (projekt innego konta bez sesji CMS albo bez uprawnień); 'form' — strona bez listy tagów;
+  //       'net' — błąd sieci.
+  //   other: ID tagów projektu są rozłączne z ID tagów konta zalogowanego, czyli projekt należy do innego konta
+  //       (tagi należą do konta, a `getTags` zwraca tagi konta zalogowanego: BRAND24_NETWORK.md §6).
+  var _fileProj = {};
+  var FILE_PROJ_WHY = { denied: 'brak dostępu', form: 'strona projektu bez listy tagów', net: 'błąd sieci' };
+
+  async function _autoResolveUnknownProjects(pids) {
+    var loggedIds = null;
+    if (state.tokenHeaders) {
+      try { loggedIds = new Set((await getTags()).filter(function(t) { return !t.isProtected; }).map(function(t) { return t.id; })); } catch(e) {}
+    }
+    var status = {};
+    for (var i = 0; i < pids.length; i++) {
+      var pid = pids[i];
       try {
         var res = await origFetch('/searches/add-new-mention/?sid=' + pid, { credentials: 'same-origin' });
-        if (res.redirected || !res.ok) continue;
+        if (res.redirected || !res.ok) { status[pid] = { st: 'denied' }; continue; }
         var html = await res.text();
+        // Bez dostępu Brand24 oddaje zaślepkę bez tokenu CSRF (PANEL_STATE.md §4.5).
+        if (!/name="tknB24"/.test(html)) { status[pid] = { st: 'denied' }; continue; }
         var formTags = _formTagsFromHtml(html);
-        if (!formTags) continue;
+        if (!formTags) { status[pid] = { st: 'form' }; continue; }
+        status[pid] = { st: 'ok', other: !!(loggedIds && loggedIds.size && formTags.length &&
+          !formTags.some(function(t) { return loggedIds.has(t.id); })) };
         // Tytuł strony Django ma łamanie wiersza przed „Brand24” (zmierzone:
         // „Zalando_GR -\n\t\tBrand24 - Dashboard”), więc `split(' - ')[0]` NIE odcinało sufiksu
         // i jako nazwę projektu zapisywało „Zalando_GR -\n\t\tBrand24”. `_pnTitleFromCmsHtml`
@@ -10746,21 +10765,18 @@
         var label = saved[pid].name || ('Projekt ' + pid);
         // Nazwa ze strony projektu jest potwierdzona przez Brand24, nie zgadnięta z tytułu karty.
         if (!_isFallbackProjectName(projName)) _pnSetVerified(pid, projName, PN_SRC_CMS, _b24HostBase());
-        resolved.push(label);
         addLog('✓ Auto-załadowano: ' + label + ' (' + Object.keys(tagIds).length + ' tagów)', 'success', { tech: true, key: 'file' });
       } catch(e) {
+        status[pid] = { st: 'net' };
         addLog('⚠ Auto-resolve ' + pid + ': ' + (e && e.message || e), 'warn', { tech: true, key: 'file' });
       }
     }
-    if (resolved.length === 0 && unknownPids.length > 0) {
-      addLog('⚠ Nie udało się auto-załadować projektów — mogą być cross-account. Odwiedź projekt w Brand24 ręcznie.', 'warn');
-    }
+    _fileProj = status;
   }
 
   async function renderMultiProjectWidget(rows, colMap) {
     var el = _$('b24t-multiproject-section');
     if (!el) return;
-    var savedProjects = lsGet(LS.PROJECTS, {});
     var projectCounts = {};
     rows.forEach(function(row) {
       var pid = (row[colMap.projectId] || '').toString().trim();
@@ -10768,41 +10784,106 @@
       projectCounts[pid] = (projectCounts[pid] || 0) + 1;
     });
     var projectIds = Object.keys(projectCounts);
-    var unknownPids = projectIds.filter(function(pid) { return !savedProjects[pid]; });
     el.hidden = false;
+    var session = null;
     if (projectIds.length) {
-      if (unknownPids.length) el.dataset.blocked = '1';
+      el.dataset.blocked = '1';
       el.innerHTML = _html('<section class="b-card"><div class="b-row b-small b-text2"><span class="b-spin" aria-hidden="true"></span>' +
-        'Odświeżam tagi ' + projectIds.length + ' ' + _relPl(projectIds.length, 'projektu', 'projektów', 'projektów') + '…</div></section>');
+        'Sprawdzam dostęp i tagi ' + projectIds.length + ' ' + _relPl(projectIds.length, 'projektu', 'projektów', 'projektów') + '…</div></section>');
       _updateStartBtnBlock();
       await _autoResolveUnknownProjects(projectIds);
-      savedProjects = lsGet(LS.PROJECTS, {});
+      if (projectIds.some(function(pid) { return (_fileProj[pid] || {}).st === 'denied'; })) session = await _cmsProbe();
     }
-    var hasUnknown = projectIds.some(function(pid) { return !savedProjects[pid]; });
-    el.dataset.blocked = hasUnknown ? '1' : '';
+    var bad = projectIds.filter(function(pid) { return (_fileProj[pid] || {}).st !== 'ok'; });
+    var all = projectIds.length > 0 && bad.length === projectIds.length;
+    el.dataset.blocked = all ? '1' : '';
+    // Wiersz w dwóch liniach: nazwa projektu, pod nią ID i stan. Panel ma ok. 300 px, a w jednej linii powód albo
+    // znacznik konta wypychały nazwę projektu.
     var rows_html = projectIds.map(function(pid) {
-      var known = !!savedProjects[pid];
-      var name = known ? _pnResolve(pid) : null;
+      var s = _fileProj[pid] || { st: 'net' }, ok = s.st === 'ok';
+      var name = (ok ? _pnResolve(pid) : _pnGet(pid)) || ('Projekt ' + pid);
+      var detail = ok ? (s.other ? '<span data-tip="Projekt innego konta Brand24: tagi i zapis przez sesję CMS">inne konto · CMS</span>' : '')
+        : '<span class="b-danger">' + FILE_PROJ_WHY[s.st] + '</span>';
       // pid pochodzi z pliku, name z odpowiedzi API/LS — escape przed wstawieniem do innerHTML
-      return '<div class="b-list__row">' + _icon(known ? 'check' : 'x', known ? 'b-ok' : 'b-danger') +
-        '<span class="b-mono">' + _escHtml(pid) + '</span>' +
-        (name ? '<span class="b-ell b-text2">' + _escHtml(name) + '</span>' : '') +
-        '<span class="b-sp"></span>' +
-        (known ? '<span class="b-muted">' + projectCounts[pid] + ' ' + _relPl(projectCounts[pid], 'wiersz', 'wiersze', 'wierszy') + '</span>'
-          : '<span class="b-danger">otwórz projekt w Brand24</span>') +
+      return '<div class="b-list__row">' + _icon(ok ? 'check' : 'x', ok ? 'b-ok' : 'b-danger') +
+        '<span class="b-stack" style="gap:0;flex:1 1 auto;min-width:0"><span class="b-ell">' + _escHtml(name) + '</span>' +
+        '<span class="b-small b-muted"><span class="b-mono">' + _escHtml(pid) + '</span>' + (detail ? ' · ' + detail : '') + '</span></span>' +
+        '<span class="b-muted" style="white-space:nowrap">' + projectCounts[pid] + ' ' + _relPl(projectCounts[pid], 'wiersz', 'wiersze', 'wierszy') + '</span>' +
         '</div>';
     }).join('');
+    var banner = '';
+    if (bad.length) {
+      var denied = bad.some(function(pid) { return (_fileProj[pid] || {}).st === 'denied'; });
+      var badRows = bad.reduce(function(n, pid) { return n + projectCounts[pid]; }, 0);
+      var base = _b24HostBase();
+      var hint = !denied ? 'Sprawdzenie da się powtórzyć.' : session === true
+        ? 'Mimo zalogowania do CMS ich strony się nie otworzyły: konto nie ma do nich dostępu albo projekty nie istnieją.'
+        : 'Projekty innych kont Brand24 wymagają zalogowania do CMS na tym panelu; po zalogowaniu wystarczy „Sprawdź ponownie”.';
+      banner = '<div class="b-banner b-banner--' + (all ? 'danger' : 'warn') + '">' + _icon('alertCircle') + '<div class="b-sp">' +
+        '<div class="b-banner__title">' + (all ? 'Start zablokowany' : _plPl(bad.length, 'projekt', 'projekty', 'projektów') + ' bez tagów') + '</div>' +
+        (all ? 'Żaden projekt z pliku nie ma pobranych tagów. ' : 'Przebieg pominie ' + _plPl(badRows, 'wiersz', 'wiersze', 'wierszy') + ' z tych projektów. ') +
+        _escHtml(hint) +
+        '<div class="b-row" style="gap:0.5em;margin-top:0.5em;flex-wrap:wrap"><button class="b-btn b-btn--neutral b-btn--sm" type="button" data-mp-recheck>' + _icon('refresh') + 'Sprawdź ponownie</button>' +
+        (denied && session !== true && base ? '<a class="b-btn b-btn--neutral b-btn--sm" href="' + base + '/cms33/" target="_blank" rel="noopener">Otwórz CMS</a>' : '') +
+        '</div></div></div>';
+    }
     el.innerHTML = _html('<section class="b-card">' +
       '<div class="b-card__head"><span class="b-card__title">Projekty w pliku</span><span class="b-chip b-chip--sm">' + projectIds.length + '</span></div>' +
-      '<div class="b-list">' + rows_html + '</div>' +
-      (hasUnknown ? '<div class="b-banner b-banner--danger">' + _icon('alertCircle') + '<div><div class="b-banner__title">Start zablokowany</div>' +
-        'Otwórz nieznane projekty w Brand24, żeby wtyczka pobrała ich tagi.</div></div>' : '') +
+      '<div class="b-list">' + rows_html + '</div>' + banner +
       '<div id="b24t-tag-coverage"></div>' +
       '</section>');
+    var recheck = el.querySelector('[data-mp-recheck]');
+    // Logowanie do CMS w innej karcie zmienia odpowiedź od razu, więc ponowne sprawdzenie nie bierze sesji z pamięci.
+    if (recheck) recheck.addEventListener('click', function() { _cmsDeny.probedAt = 0; renderMultiProjectWidget(rows, colMap); });
     _updateStartBtnBlock();
     _updateTagCoverage();
   }
 
+  // Wiersze pliku według projektu i tagu docelowego: pid → { nazwa tagu → liczba wierszy }. Ocena wiersza to etykiety
+  // rozdzielone „|”, jak przy budowie partii przebiegu; usuwanie i sentyment nie potrzebują tagu w projekcie.
+  function _fileTagRows() {
+    var colMap = state.file.colMap, out = {};
+    (state.file.rows || []).forEach(function(row) {
+      var pid = (row[colMap.projectId] || '').toString().trim();
+      if (!pid) return;
+      ((row[colMap.assessment] || '') + '').trim().toUpperCase().split('|').forEach(function(label) {
+        var m = state.mapping[label.trim()];
+        if (!m || !m.tagName || m.tagName === '__DELETE__' || m.type === 'delete' || m.type === 'sentiment') return;
+        var p = out[pid] = out[pid] || {};
+        p[m.tagName] = (p[m.tagName] || 0) + 1;
+      });
+    });
+    return out;
+  }
+
+  // Co przebieg pominie: wiersze projektów bez tagów i wiersze z tagiem, którego projekt nie ma.
+  // → [{ name, why, n }] w kolejności projektów z pliku. Projekt bez wyniku sprawdzenia (np. plik z zapisanej sesji)
+  // nie trafia na listę: o nim nic nie wiadomo, a przebieg i tak pobiera tagi od nowa.
+  function _fileSkipPlan() {
+    var colMap = state.file && state.file.colMap;
+    if (!colMap || !colMap.projectId) return [];
+    var saved = lsGet(LS.PROJECTS, {}), byTag = _fileTagRows(), counts = {}, order = [], out = [];
+    (state.file.rows || []).forEach(function(row) {
+      var pid = (row[colMap.projectId] || '').toString().trim();
+      if (!pid) return;
+      if (!counts[pid]) { counts[pid] = 0; order.push(pid); }
+      counts[pid]++;
+    });
+    order.forEach(function(pid) {
+      var s = _fileProj[pid];
+      if (!s) return;
+      var name = _pnResolve(pid);
+      if (s.st !== 'ok') { out.push({ name: name, why: FILE_PROJ_WHY[s.st], n: counts[pid] }); return; }
+      var tagIds = (saved[pid] || {}).tagIds || {};
+      Object.keys(byTag[pid] || {}).forEach(function(tag) {
+        if (!tagIds[tag]) out.push({ name: name, why: 'brak tagu „' + tag + '”', n: byTag[pid][tag] });
+      });
+    });
+    return out;
+  }
+
+  // Pokrycie tagów w projektach z dostępem: ✓ tag jest w projekcie; ✕ brak tagu, a plik ma dla tego projektu wiersze
+  // z tym tagiem (przebieg je pominie); kreska: brak tagu, ale w tym projekcie nie jest potrzebny.
   function _updateTagCoverage() {
     var coverageEl = _$('b24t-tag-coverage');
     if (!coverageEl) return;
@@ -10821,6 +10902,7 @@
     });
 
     var savedProjects = lsGet(LS.PROJECTS, {});
+    var byTag = _fileTagRows();
 
     // Unique project IDs from file rows, in order of appearance
     var projectIds = [];
@@ -10829,19 +10911,24 @@
       var pid = (row[colMap.projectId] || '').toString().trim();
       if (pid && !seenPids[pid]) { seenPids[pid] = true; projectIds.push(pid); }
     });
+    projectIds = projectIds.filter(function(pid) { return (_fileProj[pid] || {}).st === 'ok' && savedProjects[pid]; });
     if (!projectIds.length) { coverageEl.textContent = ''; return; }
 
     var singleTag = tagNames.length === 1;
+    var missing = [];
     var html = '<hr class="b-sep" style="margin:0.25em 0 0.75em"><div class="b-stack b-stack--sm">' +
       '<div class="b-label">Pokrycie tagów' + (singleTag ? ': ' + _escHtml(tagNames[0]) : '') + '</div><div class="b-list">';
     projectIds.forEach(function(pid) {
-      var projData = savedProjects[pid];
-      if (!projData) return;
-      var tagIds = projData.tagIds || {};
+      var tagIds = savedProjects[pid].tagIds || {};
+      var need = byTag[pid] || {};
       var checks = tagNames.map(function(name, i) {
-        var has = !!tagIds[name];
-        return '<span class="b-row" style="gap:0.15em" data-tip="' + _escHtml(name) + (has ? '' : ': brak w projekcie') + '">' +
-          _icon(has ? 'check' : 'x', has ? 'b-ok' : 'b-danger') + (singleTag ? '' : '<span class="b-muted">' + (i + 1) + '</span>') + '</span>';
+        var has = !!tagIds[name], n = need[name] || 0;
+        if (!has && n) missing.push(_pnResolve(pid) + ': „' + name + '” (' + _plPl(n, 'wiersz', 'wiersze', 'wierszy') + ')');
+        var tip = name + (has ? '' : n ? ': brak w projekcie, przebieg pominie ' + _plPl(n, 'wiersz', 'wiersze', 'wierszy')
+          : ': brak w projekcie, plik nie ma tu wierszy z tym tagiem');
+        var mark = has ? _icon('check', 'b-ok') : n ? _icon('x', 'b-danger') : '<span class="b-muted" aria-hidden="true">–</span>';
+        return '<span class="b-row" style="gap:0.15em" data-tip="' + _escHtml(tip) + '">' + mark +
+          (singleTag ? '' : '<span class="b-muted">' + (i + 1) + '</span>') + '</span>';
       }).join('');
       html += '<div class="b-list__row"><span class="b-ell b-text2" style="flex:1 1 auto">' + _escHtml(_pnResolve(pid)) + '</span>' +
         '<span class="b-row" style="gap:0.5em">' + checks + '</span></div>';
@@ -10849,6 +10936,9 @@
     html += '</div>';
     if (!singleTag) {
       html += '<div class="b-hint">' + tagNames.map(function(name, i) { return (i + 1) + ': ' + _escHtml(name); }).join(' · ') + '</div>';
+    }
+    if (missing.length) {
+      html += '<div class="b-hint b-danger">Brak tagu w projekcie, wiersze do pominięcia: ' + _escHtml(missing.join('; ')) + '.</div>';
     }
     coverageEl.innerHTML = _html(html + '</div>');
   }
@@ -11208,6 +11298,19 @@
   let _autoDeleteConfirmedPids = [];
   function _runConfirmKey() { return JSON.stringify([state.mapping, state.testRunMode, state.autoDeleteEnabled && state.autoDeleteTagId]); }
   async function _runConfirm() {
+    // Plik z wielu projektów: co przebieg pominie, zanim ruszy. Te same dane co sekcja „Projekty w pliku” i pokrycie
+    // tagów (_fileSkipPlan), także w Test Run, bo pominięte wiersze nie pojawią się w jego raporcie jako zmiany.
+    const _skip = _fileSkipPlan();
+    if (_skip.length) {
+      const _skipRows = _skip.reduce(function(n, s) { return n + s.n; }, 0);
+      if (!(await _dlgConfirm({
+        title: 'Przebieg pominie ' + _plPl(_skipRows, 'wiersz', 'wiersze', 'wierszy'), confirm: 'Kontynuuj', from: _$('b24t-btn-start'),
+        body: '<div class="b-list">' + _skip.map(function(s) {
+          return '<div class="b-list__row"><span class="b-strong b-ell">' + _escHtml(s.name) + '</span><span class="b-sp"></span>' +
+            _escHtml(s.why) + '<span class="b-muted">' + _plPl(s.n, 'wiersz', 'wiersze', 'wierszy') + '</span></div>';
+        }).join('') + '</div><p class="b-text2">Pozostałe wiersze pliku przebieg otaguje normalnie.</p>'
+      }))) return false;
+    }
     // Potwierdzenie przy dużej liczbie wzmianek (200+) — tylko w trybie właściwym
     if (!state.testRunMode && state.file && state.file.rows && state.file.rows.length >= 200) {
       const count = state.file.rows.length;
@@ -12022,7 +12125,7 @@
     var startBtn = _$('b24t-btn-start');
     if (startBtn) startBtn.disabled = blocked;
     if (startBtn) {
-      if (blocked) startBtn.setAttribute('data-tip', 'Start zablokowany: plik ma błędy krytyczne albo nieznane projekty');
+      if (blocked) startBtn.setAttribute('data-tip', 'Start zablokowany: plik ma błędy krytyczne albo żaden projekt z pliku nie ma pobranych tagów');
       else startBtn.removeAttribute('data-tip');
     }
   }
@@ -21458,6 +21561,25 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.30",
+      "date": "2026-10-09",
+      "label": "improved",
+      "changes": [
+        {
+          "type": "improved",
+          "area": "Tagowanie z pliku",
+          "title": "Sekcja „Projekty w pliku” pokazuje dostęp, konto i wiersze do pominięcia",
+          "items": [
+            "Przy każdym projekcie z pliku widać, czy jego tagi udało się pobrać, a projekt innego konta ma znacznik „inne konto · CMS”.",
+            "Projekt bez dostępu ma powód i liczbę wierszy, a przycisk „Sprawdź ponownie” powtarza sprawdzenie po zalogowaniu do CMS.",
+            "Pokrycie tagów oznacza krzyżykiem tylko brakujący tag, którego plik w danym projekcie potrzebuje, z liczbą wierszy w podpowiedzi.",
+            "Przed startem okno „Przebieg pominie …” wylicza pominięte wiersze z powodem dla każdego projektu; start blokuje się tylko wtedy, gdy żaden projekt nie ma pobranych tagów."
+          ],
+          "text": "Sekcja „Projekty w pliku” pokazuje dostęp, konto i wiersze do pominięcia. Przy każdym projekcie z pliku widać, czy jego tagi udało się pobrać, a projekt innego konta ma znacznik „inne konto · CMS”. Projekt bez dostępu ma powód i liczbę wierszy, a przycisk „Sprawdź ponownie” powtarza sprawdzenie po zalogowaniu do CMS. Pokrycie tagów oznacza krzyżykiem tylko brakujący tag, którego plik w danym projekcie potrzebuje, z liczbą wierszy w podpowiedzi. Przed startem okno „Przebieg pominie …” wylicza pominięte wiersze z powodem dla każdego projektu; start blokuje się tylko wtedy, gdy żaden projekt nie ma pobranych tagów."
+        }
+      ]
+    },
+    {
       "version": "0.38.29",
       "date": "2026-10-09",
       "label": "fix",
@@ -21697,34 +21819,6 @@
             "Po przełączeniu projektu w Brand24 bez odświeżenia strony przycisk „Dodaj wzmiankę” czeka na odświeżenie, a wiersz projektu nad nim podaje, który projekt jest otwarty."
           ],
           "text": "Naprawiono błąd, przez który News dodawał wzmianki do innego projektu niż otwarty w Brand24. Po pracy w Niestandardowym na innym projekcie News dodaje do projektu otwartego w Brand24. Po przełączeniu projektu w Brand24 bez odświeżenia strony przycisk „Dodaj wzmiankę” czeka na odświeżenie, a wiersz projektu nad nim podaje, który projekt jest otwarty."
-        }
-      ]
-    },
-    {
-      "version": "0.38.20",
-      "date": "2026-10-05",
-      "label": "new",
-      "changes": [
-        {
-          "type": "fix",
-          "area": "Dodawanie wzmianek",
-          "title": "Naprawiono błąd, przez który wtyczka nie startowała w Gmailu i Dokumentach Google",
-          "items": [
-            "Przycisk „Dodaj wzmiankę” i okno dodawania wzmianki działają na stronach Google z dodatkowym zabezpieczeniem treści: w Gmailu, Dokumentach, Kalendarzu i na stronie logowania.",
-            "Błąd startu wtyczki na stronie spoza Brand24 zapisuje się w zdarzeniach wtyczki, bez ramki w rogu strony."
-          ],
-          "text": "Naprawiono błąd, przez który wtyczka nie startowała w Gmailu i Dokumentach Google. Przycisk „Dodaj wzmiankę” i okno dodawania wzmianki działają na stronach Google z dodatkowym zabezpieczeniem treści: w Gmailu, Dokumentach, Kalendarzu i na stronie logowania. Błąd startu wtyczki na stronie spoza Brand24 zapisuje się w zdarzeniach wtyczki, bez ramki w rogu strony."
-        },
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Przycisk „Wyślij zgłoszenie” w ramce błędu startu wtyczki",
-          "items": [
-            "Gdy wtyczka nie uruchomi się na stronie Brand24 i nie zdoła pokazać zwykłego powiadomienia, ramka w prawym dolnym rogu wysyła zgłoszenie jednym kliknięciem: z treścią błędu, wersją, przeglądarką i ostatnimi zdarzeniami wtyczki.",
-            "Numer wysłanego zgłoszenia albo przyczyna nieudanej wysyłki pokazuje się w tej samej ramce.",
-            "Klucze API i tokeny zostają w przeglądarce."
-          ],
-          "text": "Przycisk „Wyślij zgłoszenie” w ramce błędu startu wtyczki. Gdy wtyczka nie uruchomi się na stronie Brand24 i nie zdoła pokazać zwykłego powiadomienia, ramka w prawym dolnym rogu wysyła zgłoszenie jednym kliknięciem: z treścią błędu, wersją, przeglądarką i ostatnimi zdarzeniami wtyczki. Numer wysłanego zgłoszenia albo przyczyna nieudanej wysyłki pokazuje się w tej samej ramce. Klucze API i tokeny zostają w przeglądarce."
         }
       ]
     }

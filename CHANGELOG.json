@@ -1,5 +1,23 @@
 [
   {
+    "version": "0.38.29",
+    "date": "2026-10-09",
+    "label": "fix",
+    "changes": [
+      {
+        "type": "fix",
+        "area": "Tagowanie z pliku",
+        "title": "Naprawiono tagowanie z pliku w projektach innych kont otwieranych przez CMS",
+        "items": [
+          "Tagi każdego projektu z pliku pochodzą z konta, do którego ten projekt należy, także gdy jest to projekt innego konta otwierany przez CMS.",
+          "Projekt, którego tagów nie udało się pobrać, jest pomijany z ostrzeżeniem w dzienniku i w raporcie przebiegu. Wtyczka nie używa dla niego zapamiętanych tagów, bo mogły należeć do innego konta.",
+          "Panel otwarty na projekcie innego konta pokazuje tagi tego projektu, a nie tagi konta zalogowanego."
+        ],
+        "text": "Naprawiono tagowanie z pliku w projektach innych kont otwieranych przez CMS. Tagi każdego projektu z pliku pochodzą z konta, do którego ten projekt należy, także gdy jest to projekt innego konta otwierany przez CMS. Projekt, którego tagów nie udało się pobrać, jest pomijany z ostrzeżeniem w dzienniku i w raporcie przebiegu. Wtyczka nie używa dla niego zapamiętanych tagów, bo mogły należeć do innego konta. Panel otwarty na projekcie innego konta pokazuje tagi tego projektu, a nie tagi konta zalogowanego."
+      }
+    ]
+  },
+  {
     "version": "0.38.28",
     "date": "2026-10-08",
     "label": "fix",

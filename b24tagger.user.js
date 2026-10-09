@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.28
+// @version      0.38.29
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -185,7 +185,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.28';
+  const VERSION = '0.38.29';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -1531,6 +1531,21 @@
   // Cross-domain przez GM_xmlhttpRequest (ciasteczka lecą z requestem), więc z panelu `.com`
   // można zapytać `.pl` i odwrotnie. `canAdd` — obecność tokenu CSRF — jest jedynym rzetelnym
   // dowodem „mam sesję i wolno mi dodawać do tego projektu na tym panelu".
+  // Tagi konta, do którego należy projekt, z listy `#tag` na stronie dodawania wzmianki → [{id, title}],
+  // null gdy listy nie ma. To jedyne źródło tagów projektu z innego konta: `getTags` oddaje tagi konta
+  // ZALOGOWANEGO, także na cudzym projekcie otwartym przez CMS (BRAND24_NETWORK.md §8, PANEL_STATE.md §4.6).
+  // Tagów chronionych („Untagged”) na liście nie ma.
+  function _formTagsFromHtml(html) {
+    try {
+      var sel = new DOMParser().parseFromString(_html(html), 'text/html').getElementById('tag');
+      if (!sel) return null;
+      return Array.from(sel.querySelectorAll('option')).filter(function(o) { return o.value; })
+        .map(function(o) { return { id: parseInt(o.value, 10), title: o.textContent.trim() }; });
+    } catch (e) {
+      return null;
+    }
+  }
+
   function _pnFetchNameCms(pid, base) {
     return new Promise(function(resolve) {
       GM_xmlhttpRequest({
@@ -1547,6 +1562,7 @@
             name:   _pnTitleFromCmsHtml(html),
             csrf:   mT ? mT[1] : null,
             canAdd: !!mT,
+            tags:   mT ? _formTagsFromHtml(html) : null,
             base:   base
           });
         },
@@ -3055,13 +3071,17 @@
 
       // Resolve mapping for this project by tag name — najpierw świeże tagi z Brand24
       // (krytyczne: bez tego nowo dodane tagi w nieodwiedzonych projektach są po cichu pomijane)
+      // Bez świeżych tagów projekt odpada: zapisane w pamięci mogą być tagami innego konta, bo `getTags`
+      // oddawał tagi konta zalogowanego (PANEL_STATE.md §4.6, korekta), a ID tagu z innego konta
+      // nie wolno wysłać na wzmianki tego projektu.
       var _freshTags = await _tagsFetchFreshAsync(projectId);
-      if (_freshTags) {
-        projectData.tagIds = _freshTags;
-        addLog('↻ Tagi projektu odświeżone z Brand24 (' + Object.keys(_freshTags).length + ')', 'info', { tech: true, key: 'multi' });
-      } else {
-        addLog('⚠ Nie udało się odświeżyć tagów projektu ' + projectName + ' — używam zapisanych z pamięci', 'warn', { tech: true, key: 'multi' });
+      if (!_freshTags) {
+        addLog('⚠ Projekt ' + projectName + ': nie udało się pobrać jego tagów z Brand24 — pomijam. Sprawdź dostęp (projekt innego konta wymaga sesji CMS) i uruchom ponownie.', 'warn');
+        overallStats[projectId] = { name: projectName, tagged: 0, skipped: projectRows.length };
+        continue;
       }
+      projectData.tagIds = _freshTags;
+      addLog('↻ Tagi projektu odświeżone z Brand24 (' + Object.keys(_freshTags).length + ')', 'info', { tech: true, key: 'multi' });
       var projectTags = projectData.tagIds || {};
       var projectMapping = {};
       Object.entries(savedMapping).forEach(function(_entry) {
@@ -10705,20 +10725,15 @@
         var res = await origFetch('/searches/add-new-mention/?sid=' + pid, { credentials: 'same-origin' });
         if (res.redirected || !res.ok) continue;
         var html = await res.text();
-        var parser = new DOMParser();
-        var doc = parser.parseFromString(_html(html), 'text/html');
-        var tagSel = doc.getElementById('tag');
-        if (!tagSel) continue;
+        var formTags = _formTagsFromHtml(html);
+        if (!formTags) continue;
         // Tytuł strony Django ma łamanie wiersza przed „Brand24” (zmierzone:
         // „Zalando_GR -\n\t\tBrand24 - Dashboard”), więc `split(' - ')[0]` NIE odcinało sufiksu
         // i jako nazwę projektu zapisywało „Zalando_GR -\n\t\tBrand24”. `_pnTitleFromCmsHtml`
         // normalizuje białe znaki i tnie na „- Brand24”, więc działa na obu panelach.
         var projName = _pnTitleFromCmsHtml(html);
         var tagIds = {};
-        Array.from(tagSel.querySelectorAll('option')).forEach(function(o) {
-          if (!o.value) return;
-          tagIds[o.textContent.trim()] = parseInt(o.value, 10);
-        });
+        formTags.forEach(function(t) { tagIds[t.title] = t.id; });
         var saved = lsGet(LS.PROJECTS, {});
         var prevName = (saved[pid] || {}).name;
         saved[pid] = { tagIds: tagIds, untaggedId: 1, updatedAt: new Date().toISOString() };
@@ -11471,11 +11486,19 @@
 
     // Load tags
     try {
-      const tags = await getTags();
+      // Tagi z listy `#tag` strony dodawania wzmianki, nie z `getTags`: ten oddaje tagi konta zalogowanego, więc na
+      // projekcie innego konta otwartym przez CMS dawał cudze ID (PANEL_STATE.md §4.6, korekta). `getTags` zostaje
+      // dla ID „Untagged”, którego na liście nie ma, i gdy strona dodawania się nie otworzy (konto bez prawa dodawania,
+      // błąd sieci): wtedy jego tagi są poprawne dla projektu własnego konta.
+      const [tags, formTags] = await Promise.all([
+        getTags(),
+        origFetch('/searches/add-new-mention/?sid=' + projectId, { credentials: 'same-origin' })
+          .then(r => (r.ok && !r.redirected) ? r.text() : null)
+          .then(html => html && _formTagsFromHtml(html))
+          .catch(() => null),
+      ]);
       state.tags = {};
-      tags.forEach(t => {
-        if (!t.isProtected) state.tags[t.title] = t.id;
-      });
+      (formTags || tags.filter(t => !t.isProtected)).forEach(t => { state.tags[t.title] = t.id; });
       state.untaggedId = tags.find(t => t.isProtected && t.title === 'Untagged')?.id || 1;
 
       // Save project config
@@ -21435,6 +21458,24 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.29",
+      "date": "2026-10-09",
+      "label": "fix",
+      "changes": [
+        {
+          "type": "fix",
+          "area": "Tagowanie z pliku",
+          "title": "Naprawiono tagowanie z pliku w projektach innych kont otwieranych przez CMS",
+          "items": [
+            "Tagi każdego projektu z pliku pochodzą z konta, do którego ten projekt należy, także gdy jest to projekt innego konta otwierany przez CMS.",
+            "Projekt, którego tagów nie udało się pobrać, jest pomijany z ostrzeżeniem w dzienniku i w raporcie przebiegu. Wtyczka nie używa dla niego zapamiętanych tagów, bo mogły należeć do innego konta.",
+            "Panel otwarty na projekcie innego konta pokazuje tagi tego projektu, a nie tagi konta zalogowanego."
+          ],
+          "text": "Naprawiono tagowanie z pliku w projektach innych kont otwieranych przez CMS. Tagi każdego projektu z pliku pochodzą z konta, do którego ten projekt należy, także gdy jest to projekt innego konta otwierany przez CMS. Projekt, którego tagów nie udało się pobrać, jest pomijany z ostrzeżeniem w dzienniku i w raporcie przebiegu. Wtyczka nie używa dla niego zapamiętanych tagów, bo mogły należeć do innego konta. Panel otwarty na projekcie innego konta pokazuje tagi tego projektu, a nie tagi konta zalogowanego."
+        }
+      ]
+    },
+    {
       "version": "0.38.28",
       "date": "2026-10-08",
       "label": "fix",
@@ -21684,25 +21725,6 @@
             "Klucze API i tokeny zostają w przeglądarce."
           ],
           "text": "Przycisk „Wyślij zgłoszenie” w ramce błędu startu wtyczki. Gdy wtyczka nie uruchomi się na stronie Brand24 i nie zdoła pokazać zwykłego powiadomienia, ramka w prawym dolnym rogu wysyła zgłoszenie jednym kliknięciem: z treścią błędu, wersją, przeglądarką i ostatnimi zdarzeniami wtyczki. Numer wysłanego zgłoszenia albo przyczyna nieudanej wysyłki pokazuje się w tej samej ramce. Klucze API i tokeny zostają w przeglądarce."
-        }
-      ]
-    },
-    {
-      "version": "0.38.19",
-      "date": "2026-10-05",
-      "label": "new",
-      "changes": [
-        {
-          "type": "new",
-          "area": "Panel",
-          "title": "Raport wersji wtyczki dla autora",
-          "items": [
-            "Raz na dobę i po każdej aktualizacji wtyczka wysyła autorowi numer wersji, kanał aktualizacji, nazwę przeglądarki i losowy identyfikator tej przeglądarki.",
-            "Raport nie zawiera danych konta Brand24, projektów ani treści pracy.",
-            "Opis raportu i identyfikator przeglądarki są w Ustawieniach → Aktualizacje."
-          ],
-          "comment": "Przed wydaniem 1.0 chcemy wiedzieć, która wersja działa u kogo, bez dopytywania każdego z osobna.",
-          "text": "Raport wersji wtyczki dla autora. Raz na dobę i po każdej aktualizacji wtyczka wysyła autorowi numer wersji, kanał aktualizacji, nazwę przeglądarki i losowy identyfikator tej przeglądarki. Raport nie zawiera danych konta Brand24, projektów ani treści pracy. Opis raportu i identyfikator przeglądarki są w Ustawieniach → Aktualizacje."
         }
       ]
     }
@@ -30594,44 +30616,19 @@
     return 'Brand24 (' + lbl + ') odrzucił zapytanie' + (msg ? ': ' + msg.substring(0, 90) : (code ? ': ' + code : ''));
   }
 
-  // Cross-domain pobranie listy tagów wybranego projektu (gdy brak w cache). getTags nie przyjmuje
-  // projectId — bierze projekt z sesji — więc najpierw "rozgrzewamy" sesję na właściwy projekt przez
-  // GET add-new-mention?sid=pid (endpoint przypisany do projektu), dopiero potem getTags.
-  // ⚠ `getTags` NIE przyjmuje projectId — zwraca tagi projektu, na którym stoi **sesja Django**.
-  // Dlatego przed pytaniem trzeba sesję „rozgrzać", wchodząc na stronę tego projektu.
-  //
-  // Rozgrzewka BYŁA best-effort („wynik ignorujemy, idziemy dalej") i to był poważny błąd.
-  // Zmierzone na żywo 2026-09-11 na panel.brand24.pl:
-  //   rozgrzewka do H&M_PL (brak dostępu na .pl) → zaślepka 1832 B, czyli nieudana
-  //   `getTags` mimo to → 11 tagów TRZECIEGO projektu (allegro_owned, …)
-  //   H&M_PL ma 90 tagów, projekt na którym stała karta ma 2 — to nie były tagi żadnego z nich
-  // Wynik trafiałby przez `_extApplyFetchedTags(pid, …)` do pamięci jako tagi H&M_PL, nadpisując
-  // poprawne. A ponieważ `_tagsFetchFreshAsync` woła tę funkcję przed autotagowaniem multi-projekt,
-  // wzmianki mogłyby dostać tagi o CUDZYCH identyfikatorach — po cichu, bez żadnego błędu.
-  //
-  // Teraz rozgrzewka jest warunkiem: `_accessCheck` czyta tę samą odpowiedź i mówi wprost, czy
-  // strona projektu się otworzyła (jest token CSRF) czy przyszła zaślepka. Bez potwierdzenia
-  // NIE pytamy o tagi w ogóle. Patrz PANEL_STATE.md §4.5.
+  // Cross-domain pobranie listy tagów wybranego projektu (gdy brak w cache), z listy `#tag` na stronie
+  // dodawania wzmianki — tej samej, na której `_accessCheck` sprawdza dostęp.
+  // NIE z `getTags`: ten zwraca tagi konta ZALOGOWANEGO, nie konta projektu (zmierzone 2026-10-09,
+  // PANEL_STATE.md §4.6, korekta). Na projekcie innego konta otwartym przez CMS `getTags` dawał
+  // tagi własnego konta, a przebieg multi-projekt dobierał po nazwie ich ID i wysyłał je na cudze
+  // wzmianki albo, gdy nazwy nie było, po cichu pomijał oceny. Nie wracać do `getTags` z „rozgrzewką”.
   function _extFetchTags(pid, cb) {
     var base = _b24PanelBase(pid);
-    if (!B24Bridge.token.isValid(base)) { cb(null, 'no-token'); return; }
-    var headers = B24Bridge.token.headers(base);
-    var _gqlBody = JSON.stringify({ operationName: 'getTags', variables: {}, query: 'query getTags{getTags{id title isProtected}}' });
     _accessCheck(pid, base, function(rec) {
-      if (!rec)          { cb(null, 'net');       return; }  // nie wiadomo — nie zgadujemy
-      if (!rec.canAdd)   { cb(null, 'no-access'); return; }  // sesja nie stoi na tym projekcie
-      GM_xmlhttpRequest({
-        method: 'POST', url: base + '/api/graphql', headers: headers, data: _gqlBody, timeout: 10000,
-        onload: function(resp) {
-          try {
-            var d = JSON.parse(resp.responseText);
-            var t = d && d.data && d.data.getTags;
-            if (t) cb(t, null); else cb(null, 'gql');
-          } catch(e) { cb(null, 'parse'); }
-        },
-        onerror: function() { cb(null, 'net'); },
-        ontimeout: function() { cb(null, 'timeout'); }
-      });
+      if (!rec)        { cb(null, 'net');       return; }  // nie wiadomo — nie zgadujemy
+      if (!rec.canAdd) { cb(null, 'no-access'); return; }  // strona projektu się nie otworzyła
+      if (!rec.tags)   { cb(null, 'form');      return; }  // strona bez listy tagów: zmiana po stronie Brand24
+      cb(rec.tags.map(function(t) { return { id: t.id, title: t.title, isProtected: false }; }), null);
     });
   }
 
@@ -31175,7 +31172,7 @@
   function _accessCheck(pid, base, cb) {
     _pnFetchNameCms(pid, base).then(function(r) {
       if (!r) { cb(null); return; }
-      var rec = { canAdd: !!r.canAdd, name: r.name || null, csrf: r.csrf || null, at: Date.now() };
+      var rec = { canAdd: !!r.canAdd, name: r.name || null, csrf: r.csrf || null, tags: r.tags || null, at: Date.now() };
       _accessCache[String(pid) + '|' + base] = rec;
       if (rec.csrf) { state.tknB24 = rec.csrf; state.tknB24Base = base; }
       if (rec.name) _pnSetVerified(pid, rec.name, PN_SRC_CMS, base);

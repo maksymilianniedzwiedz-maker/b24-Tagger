@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.38.34",
+    "date": "2026-10-09",
+    "label": "fix",
+    "changes": [
+      {
+        "type": "fix",
+        "area": "Panel",
+        "title": "Naprawiono pięć błędów bezpieczeństwa",
+        "text": "Naprawiono pięć błędów bezpieczeństwa."
+      }
+    ]
+  },
+  {
     "version": "0.38.33",
     "date": "2026-10-09",
     "label": "new",

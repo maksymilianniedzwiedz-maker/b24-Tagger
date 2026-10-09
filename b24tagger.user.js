@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.33
+// @version      0.38.34
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -28,27 +28,39 @@
   'use strict';
 
   // ── NEWS DATE RELAY: gdy skrypt odpala się na stronie artykułu (nie Brand24) ──
-  // Czyta datę z DOM i odsyła przez postMessage do Brand24 (window.opener)
-  var _isB24 = /brand24\.com|panel\.brand24\.pl/.test(location.hostname);
-  // Okno rozpoznaje siebie DWOMA niezależnymi sygnałami. `window.name` działa, ale Chrome kasuje
-  // go przy nawigacji na inną witrynę (od Chrome 88, ochrona przed śledzeniem między serwisami),
-  // a okno skanu przechodzi kolejno przez kilka serwisów — więc opieranie się wyłącznie na nazwie
-  // jest zakładem o zachowanie, które różni się między przeglądarkami i ich ustawieniami.
-  // Fragment adresu doklejamy sami i przeżywa każdą nawigację.
+  // Czyta datę i treść strony w oknie skanu otwartym przez panel i oddaje je przez pamięć Tampermonkeya (GM).
+  // Dokładna nazwa hosta, jak w _isBrand24Host. Wzorzec podciągu przepuszczał `brand24.com.dowolna.domena`, a flaga
+  // decyduje o zaufaniu do localStorage strony i o pozycji Ustawień w menu (SECURITY.md §3.18).
+  var _isB24 = location.hostname === 'app.brand24.com' || location.hostname === 'panel.brand24.pl';
+  // Kanał okna skanu w pamięci GM: tokeny zleconych skanów i trzy skrzynki odpowiedzi. Strony nie mają dostępu do GM,
+  // więc ani obca witryna, ani skrypt na stronie Brand24 nie odbiorą treści skanowanej strony (SECURITY.md §3.19).
+  var NS_TOK = 'b24t_ns_tok';   // { token: termin ważności w ms }; pisze panel przy otwarciu okna (_newsScanTokNew)
+  var NS_OUT = { alive: 'b24t_ns_alive', date: 'b24t_ns_date', html: 'b24t_ns_html' };
+  function _newsScanTokValid(tok) {
+    try { return (JSON.parse(GM_getValue(NS_TOK, '{}')) || {})[tok] > Date.now(); } catch(e) { return false; }
+  }
+  // Okno skanu rozpoznaje się po znaczniku `b24tscan=<token>` we fragmencie adresu. Fragment doklejamy sami i przeżywa
+  // każdą nawigację; window.name Chrome kasuje przy przejściu na inną witrynę (od Chrome 88).
+  // Przekaźnik startuje tylko z tokenem, który panel zapisał w GM i który nie wygasł. Do 0.38.32 startował przy każdym
+  // `window.opener` po samym `#b24tscan` i wysyłał postMessage: obca strona otwierała cudzy adres ze znacznikiem
+  // i czytała treść, a strona w oknie skanu mogła przestawić kartę panelu przez `opener.location` (SECURITY.md §3.13,
+  // §3.19). Okno nie ma już `opener` (_newsOpenUrl), więc postMessage do panelu nie ma dokąd iść; nie przywracaj go.
   // ⚠ Nie przypisywać temu znacznikowi naprawy przestojów — te miały inną przyczynę
   // (czekanie na `load` i brak krótkiego limitu na stronę, która w ogóle nie wstała).
-  var _b24tScanMark = /(^|[#&])b24tscan\b/.test(location.hash);
-  if (!_isB24 && window.opener && (window.name === '_b24tnews' || _b24tScanMark)) {
+  var _b24tScanTok = (/(?:^|[#&])b24tscan=([0-9a-f]{32})(?![0-9a-z])/.exec(location.hash) || [])[1] || null;
+  if (!_isB24 && _b24tScanTok && _newsScanTokValid(_b24tScanTok)) {
     (function() {
-      // Odbiorcą jest wyłącznie panel Brand24. Z `'*'` HTML i adres strony dostawało każde okno, które ją otworzyło:
-      // obca witryna wołała `window.open('https://dowolna.strona/#b24tscan')` i czytała stronę w sesji użytkownika
-      // (SECURITY_AUDIT_2026-10.md §1.1). Panel stoi na jednym z dwóch originów; wiadomość do drugiego przeglądarka
-      // odrzuca bez wyjątku.
-      var _PANEL_ORIGINS = ['https://app.brand24.com', 'https://panel.brand24.pl'];
-      function _toPanel(msg) {
-        for (var i = 0; i < _PANEL_ORIGINS.length; i++) {
-          try { window.opener.postMessage(msg, _PANEL_ORIGINS[i]); } catch(e) {}
-        }
+      // Licznik `n` odróżnia dwa zapisy o tej samej treści: Tampermonkey nie zgłasza zmiany na tę samą wartość.
+      var _sent = 0;
+      function _toPanel(type, msg) {
+        msg.tok = _b24tScanTok;
+        msg.n = ++_sent;
+        try { GM_setValue(NS_OUT[type], JSON.stringify(msg)); } catch(e) {}
+      }
+      // Adres bez naszego znacznika: panel porównuje go z adresem wiersza.
+      function _cleanHref() {
+        var cleanUrl = location.href.replace(/([#&])b24tscan=[0-9a-f]{32}&?/, '$1').replace(/[#&]$/, '');
+        return cleanUrl;
       }
 
       function _extractDate() {
@@ -117,7 +129,7 @@
       function _trySend() {
         var date = _extractDate();
         if (date) {
-          _toPanel({ type: 'b24t_news_date', date: date, url: location.href });
+          _toPanel('date', { date: date, url: _cleanHref() });
           return true;
         }
         return false;
@@ -140,21 +152,28 @@
       // z sesją, ciastkami i wykonanymi skryptami. Panel przepuszcza ten HTML przez ten sam
       // skaner co zawsze, więc wiersz wypełnia się bez czytania strony przez człowieka.
       // Meldunek „żyję" — patrz `NEWS_BS_START_MS` po stronie panelu.
-      _toPanel({ type: 'b24t_news_alive', url: location.href });
+      _toPanel('alive', { url: _cleanHref() });
       var _htmlSent = 0;
+      // Do panelu idzie kopia dokumentu bez skryptów wykonywalnych, stylów, SVG i <noscript>. Zostają skrypty z JSON-em
+      // (JSON-LD z datą, dane Next.js), bo czyta je wykrywanie daty. Zapis do GM Tampermonkey rozsyła do wszystkich
+      // instancji wtyczki, czyli do każdej karty i ramki, więc ładunek ma być mały (SECURITY.md §3.19).
+      var NEWS_RELAY_HTML_MAX = 1500000;
       function _sendHtml() {
         if (_htmlSent >= 2) return;
         try {
           var el = document.documentElement;
-          var html = el ? el.outerHTML : '';
+          if (!el) return;
+          var copy = el.cloneNode(true);
+          var drop = copy.querySelectorAll('script, style, svg, noscript, template, iframe, link[rel="stylesheet"]');
+          for (var i = 0; i < drop.length; i++) {
+            var t = drop[i].tagName === 'SCRIPT' ? (drop[i].getAttribute('type') || '').toLowerCase() : '';
+            if (t.indexOf('json') === -1) drop[i].remove();
+          }
+          var html = copy.outerHTML;
           if (!html) return;
-          // Zdarzają się strony po kilkanaście MB (galerie z base64). postMessage to udźwignie,
-          // ale skaner i tak czyta tylko tekst — obcinamy, żeby nie zamrozić panelu.
-          if (html.length > 3000000) html = html.slice(0, 3000000);
+          if (html.length > NEWS_RELAY_HTML_MAX) html = html.slice(0, NEWS_RELAY_HTML_MAX);
           _htmlSent++;
-          // Adres bez naszego znacznika — panel porównuje go z adresem wiersza.
-          var cleanUrl = location.href.replace(/([#&])b24tscan\b&?/, '$1').replace(/[#&]$/, '');
-          _toPanel({ type: 'b24t_news_html', url: cleanUrl, html: html });
+          _toPanel('html', { url: _cleanHref(), html: html });
         } catch(e) {}
       }
       // Czekanie na `load` to czekanie na reklamy, trackery i obrazki — na serwisie
@@ -185,7 +204,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.33';
+  const VERSION = '0.38.34';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -439,11 +458,21 @@
            /^(Project|Projekt)\s+\d+$/.test(name);
   }
 
+  // ID projektu Brand24 to same cyfry (`sid` w adresach panelu). localStorage panelu zapisuje każdy skrypt strony,
+  // a klucz z niego szedł do B24Bridge i bez escapowania do HTML na wszystkich stronach (SECURITY.md §3.17).
+  function _isPid(v) { return /^\d{1,12}$/.test(String(v)); }
+  function _pidKeys(map) {
+    if (!map || typeof map !== 'object') return null;
+    var out = {};
+    Object.keys(map).forEach(function(pid) { if (_isPid(pid)) out[pid] = map[pid]; });
+    return out;
+  }
+
   // GM storage — cross-domain mirror dla kluczowych danych (GM_getValue działa na każdej stronie)
   // Pamięć projektów w localStorage czytamy tylko w Brand24. Na innej stronie localStorage należy do niej, a wpis
   // o tej samej nazwie klucza trafiał do B24Bridge (pamięć wspólna dla wszystkich stron) jako projekt z nazwą.
   function _gmGetProjects() {
-    var fromLS = _b24HostBase() ? lsGet(LS.PROJECTS, null) : null;
+    var fromLS = _b24HostBase() ? _pidKeys(lsGet(LS.PROJECTS, null)) : null;
     if (fromLS && Object.keys(fromLS).length > 0) return fromLS;
     var bridgeProjs = B24Bridge.projects.all();
     if (Object.keys(bridgeProjs).length > 0) return bridgeProjs;
@@ -455,8 +484,8 @@
   var _gmPNSynced = false;
   function _gmGetProjectNames() {
     var own = !!_b24HostBase();
-    var fromLS = own ? lsGet(LS.PROJECT_NAMES, null) : null;
-    var lsProj = own ? lsGet(LS.PROJECTS, null) : null;
+    var fromLS = own ? _pidKeys(lsGet(LS.PROJECT_NAMES, null)) : null;
+    var lsProj = own ? _pidKeys(lsGet(LS.PROJECTS, null)) : null;
     var lsHasData = (lsProj && Object.keys(lsProj).length > 0) || (fromLS && Object.keys(fromLS).length > 0);
     if (lsHasData) {
       var merged = {};
@@ -698,29 +727,41 @@
   // Przeniesienie z localStorage, raz na panel (każdy panel ma własny localStorage). Tylko na
   // panelach Brand24 — localStorage obcej strony może zawierać pod tym kluczem cokolwiek.
   // Kopia w localStorage jest kasowana dopiero po udanym zapisie w Tampermonkeyu.
+  // Raz, czyli ze znacznikiem w GM jak w _prefsMoveFromLs. Bez niego wpis podłożony w localStorage przez dowolny skrypt
+  // panelu po każdym przeładowaniu dopisywał prompty i wypełniał puste pola, także aktywny prompt AI Tag (SECURITY.md §3.18).
+  var AI_MOVED_GM = 'b24t_ai_moved'; // { host panelu: kiedy przeniesiono ustawienia albo zastano pusty localStorage }
   var _aiLsChecked = false;
   function _aiMoveFromLs() {
     _aiLsChecked = true;
     if (!_isB24) return;
-    var old = lsGet(LS.AI_SETTINGS, null);
-    if (!old || typeof old !== 'object') return;
-    // Hasło z autouzupełniania zapisane jako klucz nie przechodzi.
-    Object.keys(AI_KEY_FIELD).forEach(function(p) {
-      if (_aiKeyProblem(p, old[AI_KEY_FIELD[p]])) delete old[AI_KEY_FIELD[p]];
-    });
-    var cur = _aiReadStored();
-    var idMap = cur ? _aiMergeSettings(cur, old) : {};
-    if (!_aiWriteStored(cur || old)) return;
-    try { localStorage.removeItem(LS.AI_SETTINGS); } catch(e) {}
-    // Konfiguracja AI tagowania projektów tego panelu wskazuje prompty po ID.
-    if (Object.keys(idMap).length) {
-      var projCfg = lsGet(LS.AI_TAG_PROJECT_CFG, {}) || {};
-      Object.keys(projCfg).forEach(function(pid) {
-        var c = projCfg[pid];
-        if (c && idMap[c.promptId]) c.promptId = idMap[c.promptId];
-      });
-      lsSet(LS.AI_TAG_PROJECT_CFG, projCfg);
+    var moved = {};
+    try { moved = JSON.parse(GM_getValue(AI_MOVED_GM, '{}')) || {}; } catch(e) {}
+    if (moved[location.hostname]) {
+      try { localStorage.removeItem(LS.AI_SETTINGS); } catch(e) {}
+      return;
     }
+    var old = lsGet(LS.AI_SETTINGS, null);
+    if (old && typeof old === 'object') {
+      // Hasło z autouzupełniania zapisane jako klucz nie przechodzi.
+      Object.keys(AI_KEY_FIELD).forEach(function(p) {
+        if (_aiKeyProblem(p, old[AI_KEY_FIELD[p]])) delete old[AI_KEY_FIELD[p]];
+      });
+      var cur = _aiReadStored();
+      var idMap = cur ? _aiMergeSettings(cur, old) : {};
+      if (!_aiWriteStored(cur || old)) return;
+      try { localStorage.removeItem(LS.AI_SETTINGS); } catch(e) {}
+      // Konfiguracja AI tagowania projektów tego panelu wskazuje prompty po ID.
+      if (Object.keys(idMap).length) {
+        var projCfg = lsGet(LS.AI_TAG_PROJECT_CFG, {}) || {};
+        Object.keys(projCfg).forEach(function(pid) {
+          var c = projCfg[pid];
+          if (c && idMap[c.promptId]) c.promptId = idMap[c.promptId];
+        });
+        lsSet(LS.AI_TAG_PROJECT_CFG, projCfg);
+      }
+    }
+    moved[location.hostname] = Date.now();
+    try { GM_setValue(AI_MOVED_GM, JSON.stringify(moved)); } catch(e) {}
   }
 
   function _aiGetSettings() {
@@ -1749,12 +1790,15 @@
       }
     };
 
+    // Klucz spoza `_isPid` nie wchodzi ani nie wychodzi: most czytają wszystkie strony, a klucz trafia do HTML
+    // i adresów (SECURITY.md §3.17).
     var _projects = {
       setAll: function(map) {
         var d = _read();
         // Zachowaj wszystkie istniejące rekordy — NIE gub tagów tylko dlatego, że nazwa jest słaba
         var merged = Object.assign({}, d.projects || {});
         Object.keys(map || {}).forEach(function(pid) {
+          if (!_isPid(pid)) return;
           var p = map[pid] || {};
           var prev = merged[String(pid)] || {};
           var rec = Object.assign({}, prev, p, { updatedAt: Date.now() });
@@ -1769,13 +1813,18 @@
         _write({ projects: merged });
       },
       update: function(pid, data) {
+        if (!_isPid(pid)) return;
         var d = _read();
         var projs = Object.assign({}, d.projects || {});
         projs[String(pid)] = Object.assign({}, projs[String(pid)] || {}, data, { updatedAt: Date.now() });
         _write({ projects: projs });
       },
       get: function(pid) { return (_read().projects || {})[String(pid)] || null; },
-      all: function() { return _read().projects || {}; },
+      all: function() {
+        var all = _read().projects || {}, out = {};
+        Object.keys(all).forEach(function(pid) { if (_isPid(pid)) out[pid] = all[pid]; });
+        return out;
+      },
       names: function() {
         // Filtr fallbacków jak w gałęzi LS-owej `_gmGetProjectNames` — wcześniej ta metoda
         // oddawała wszystko jak leci, więc „Project 322348389" wychodziło do dropdownu na
@@ -5251,9 +5300,15 @@
   // Całe UI wtyczki stoi w jednym korzeniu cienia na hoście <b24t-ui> (Tagger/design/IMPLEMENTATION.md §2):
   // arkusze Brand24 i stron artykułów go nie dotykają, a arkusze wtyczki nie wyciekają na stronę.
   // ⚠ Zdarzenie z korzenia dochodzi do nasłuchu na document albo window z celem równym hostowi, a
-  // document.activeElement to wtedy host. Nasłuch na document, który sprawdza cel albo fokus, bierze je
-  // z _evTarget / _activeEl; bez tego skróty działają w trakcie pisania w polach wtyczki, a kliknięcie
-  // w menu liczy się jako kliknięcie obok.
+  // document.activeElement to wtedy host. Korzeń jest zamknięty, więc i `composedPath()` w takim nasłuchu
+  // kończy się na hoście. Fokus daje _activeEl, a cel kliknięcia tylko nasłuch na _ui.root (_inUi odsiewa
+  // w nasłuchu na document zdarzenia z wnętrza); bez tego skróty działają w trakcie pisania w polach wtyczki,
+  // a kliknięcie w menu liczy się jako kliknięcie obok.
+  // Korzeń zamknięty, bo z otwartego skrypt strony czytał pola wtyczki, w tym klucze API, i klikał jej przyciski
+  // (SECURITY.md §3.16). Nie przełączaj na 'open' dla wygody testów: harness czyta korzeń przez __inv('_ui.root').
+  // attachShadow wzięte z prototypu przy starcie skryptu, przed skryptami strony, które mogłyby je podmienić
+  // i przechwycić korzeń, gdyby Tampermonkey uruchamiał wtyczkę w świecie strony.
+  var _attachShadow = Element.prototype.attachShadow;
 
   var _ui = null; // { host, root, app }
 
@@ -5265,7 +5320,7 @@
       // filter ani contain (każde z nich zrobiłoby z hosta blok odniesienia).
       host.style.cssText = 'all:initial!important;position:fixed!important;left:0!important;top:0!important;' +
         'width:0!important;height:0!important;display:block!important;z-index:2147483647!important;';
-      var root = host.attachShadow({ mode: 'open' });
+      var root = _attachShadow.call(host, { mode: 'closed' });
       var app = document.createElement('div');
       app.className = 'b24t-app';
       app.setAttribute('data-b24t-theme', _themeGet());
@@ -5382,8 +5437,16 @@
 
   function _activeEl() {
     var a = document.activeElement;
+    // `host.shadowRoot` zamkniętego korzenia to null; do fokusu w nim prowadzi tylko _ui.root.
+    if (_ui && a === _ui.host && _ui.root.activeElement) a = _ui.root.activeElement;
     while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
     return a;
+  }
+
+  // Zdarzenie z wnętrza interfejsu wtyczki, w nasłuchu na document albo window. Jego prawdziwy cel widzi tylko
+  // nasłuch na _ui.root.
+  function _inUi(e) {
+    return !!_ui && !!e.composedPath && e.composedPath().indexOf(_ui.host) >= 0;
   }
 
   // ───────────────────────────────────────────
@@ -8698,6 +8761,7 @@
         : [{ opacity: 0 }, { opacity: 1 }], { duration: _uiFull() ? 150 : 120, easing: WIN_EASE_IN });
       anchor.setAttribute('aria-expanded', 'true');
       var outside = function (e) {
+        if (e.currentTarget === document && _inUi(e)) return; // kliknięcie we wtyczce ocenia nasłuch na korzeniu
         var p = e.composedPath ? e.composedPath() : [];
         if (p.indexOf(el) < 0 && p.indexOf(anchor) < 0) close(false);
       };
@@ -9193,7 +9257,8 @@
   // Ctrl+K i „?” w całej stronie. Nasłuch w fazie bąbelkowania: skrót, który Brand24 już obsłużył
   // (defaultPrevented), zostaje jego. KeyK zamiast e.key działa też przy układzie klawiatury bez łacinki.
   function _keysGlobal(e) {
-    if (e.defaultPrevented || e.altKey || _lock.on) return;
+    // Nasłuch na window: zdarzenie od skryptu strony nie otwiera palety poleceń (SECURITY.md §3.16).
+    if (!e.isTrusted || e.defaultPrevented || e.altKey || _lock.on) return;
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.code === 'KeyK') { e.preventDefault(); Palette.toggle(); return; }
     if (e.key === '?' && !e.ctrlKey && !e.metaKey && !Palette.isOpen() && !_keysTyping() &&
         !Win.list().some(function (id) { return WIN_MODAL[Win.get(id).kind]; })) {
@@ -10873,6 +10938,8 @@
     var status = {};
     for (var i = 0; i < pids.length; i++) {
       var pid = pids[i];
+      // Bez tego `123#…` przechodził sprawdzenie (fragment nie idzie na serwer) i trafiał do pamięci projektów (SECURITY.md §3.17).
+      if (!_isPid(pid)) { status[pid] = { st: 'denied' }; continue; }
       try {
         var res = await origFetch('/searches/add-new-mention/?sid=' + pid, { credentials: 'same-origin' });
         if (res.redirected || !res.ok) { status[pid] = { st: 'denied' }; continue; }
@@ -10910,7 +10977,7 @@
     }
     // Równolegle: strona projektu waży ok. 220 kB i wraca po ok. 1 s (PANEL_STATE.md §4.5), więc kolejno każdy projekt
     // bez dostępu wydłużałby wczytanie pliku o kolejną sekundę.
-    var denied = pids.filter(function(pid) { return status[pid].st === 'denied'; });
+    var denied = pids.filter(function(pid) { return status[pid].st === 'denied' && _isPid(pid); });
     var panels = await Promise.all(denied.map(_fileOtherPanel));
     denied.forEach(function(pid, i) { if (panels[i]) status[pid] = { st: 'panel', base: panels[i] }; });
     _fileProj = status;
@@ -14351,6 +14418,7 @@
       : [{ opacity: 0 }, { opacity: 1 }], { duration: _uiFull() ? 150 : 120, easing: WIN_EASE_IN });
     anchor.setAttribute('aria-expanded', 'true');
     var outside = function(e) {
+      if (e.currentTarget === document && _inUi(e)) return; // kliknięcie we wtyczce ocenia nasłuch na korzeniu
       var path = e.composedPath ? e.composedPath() : [];
       if (path.indexOf(el) < 0 && path.indexOf(anchor) < 0) _newsPopClose(false);
     };
@@ -17440,6 +17508,27 @@
   }
 
   // ── NEWS URL OPENER (sized window) ──
+  // Token okna skanu: losowy, w GM z terminem ważności, a w adresie okna jako `#b24tscan=<token>`. Przekaźnik w oknie
+  // startuje tylko z tokenem z GM, a odpowiedź oddaje przez GM ze znanym panelowi tokenem (SECURITY.md §3.19).
+  var NS_TOK_TTL_MS = 5 * 60 * 1000;
+  var _newsMyToks = Object.create(null);   // tokeny okien otwartych przez tę kartę
+  var _newsScanWinTok = null;              // token ostatniego otwarcia (_bsPump wiąże go ze skanem wiersza)
+  function _newsScanTokNew() {
+    var b = new Uint8Array(16);
+    crypto.getRandomValues(b);
+    var tok = Array.prototype.map.call(b, function(x) { return ('0' + x.toString(16)).slice(-2); }).join('');
+    var all = {}, now = Date.now();
+    try { all = JSON.parse(GM_getValue(NS_TOK, '{}')) || {}; } catch(e) {}
+    Object.keys(all).forEach(function(t) { if (!(all[t] > now)) delete all[t]; });
+    all[tok] = now + NS_TOK_TTL_MS;
+    try { GM_setValue(NS_TOK, JSON.stringify(all)); } catch(e) {}
+    _newsMyToks[tok] = true;
+    return tok;
+  }
+  function _newsScanMark(url, tok) {
+    return url + (url.indexOf('#') === -1 ? '#' : '&') + 'b24tscan=' + tok;
+  }
+
   // `quiet` — przestaw okno na inny adres, ale NIE zabieraj mu fokusu. Używa tego kolejka
   // skanu przez przeglądarkę: inaczej przy pierwszej stronie panel traci klawiaturę
   // i J/K przestaje działać do czasu alt-taba.
@@ -17452,29 +17541,38 @@
     var top  = rect ? Math.round(window.screenY + rect.top)  : Math.round((window.screen.availHeight - h) / 2);
     var features = 'width=' + w + ',height=' + h + ',left=' + left + ',top=' + top +
                    ',resizable=yes,scrollbars=yes,toolbar=no,menubar=no,location=yes,status=no';
+    _newsScanWinTok = _newsScanTokNew();
+    var marked = _newsScanMark(url, _newsScanWinTok);
     var existingWin = window._b24tnewsWin;
     if (existingWin && !existingWin.closed) {
-      existingWin.location.href = url;
+      existingWin.location.href = marked;
       if (!quiet) existingWin.focus();
     } else {
-      window._b24tnewsWin = window.open(url, '_b24tnews', features);
+      // Najpierw pusta strona (ten sam origin), zerwanie `opener`, dopiero potem adres. Panel zachowuje uchwyt okna
+      // (ponowne użycie, fokus, zamknięcie), a strona w oknie nie dostaje uchwytu do karty panelu i nie przestawi jej
+      // na podrobione logowanie (`opener.location`, SECURITY.md §3.19). `noopener` nie wchodzi w grę: window.open
+      // zwraca wtedy null i kolejka nie mogłaby prowadzić jednego okna.
+      var win = window.open('', '_b24tnews', features);
+      if (win) {
+        try { win.opener = null; } catch(e) {}
+        win.location.href = marked;
+      }
+      window._b24tnewsWin = win;
     }
     return window._b24tnewsWin;
   }
 
-  // Wiadomość z okna otwartego przez `_newsOpenUrl`. Adres w `ev.data.url` podaje nadawca, a `ev.origin` to domena
-  // dowolnej skanowanej strony, więc o pochodzeniu świadczy tylko `ev.source`. Test odcina inne karty i ramki,
-  // także reklamy osadzone w skanowanej stronie (SECURITY.md §3.3). Pierwsza odrzucona wiadomość wtyczki trafia do logu
-  // diagnostycznego: gdyby piaskownica Tampermonkeya podawała inny obiekt okna niż `window.open`, skan przez przeglądarkę
-  // przestałby działać i bez tego wpisu wyglądałby jak strony, które nie odpowiadają.
-  var _newsForeignMsgLogged = false;
-  function _newsFromScanWin(ev) {
-    if (window._b24tnewsWin && ev.source === window._b24tnewsWin) return true;
-    if (!_newsForeignMsgLogged && ev.data && /^b24t_news_/.test(ev.data.type)) {
-      _newsForeignMsgLogged = true;
-      addLog('[DIAG] Odrzucona wiadomość ' + ev.data.type + ' spoza okna skanu News (' + (ev.origin || '?') + ', okno skanu: ' + (window._b24tnewsWin ? 'otwarte' : 'brak') + ')', 'diag');
-    }
-    return false;
+  // Odpowiedź okna skanu z GM. Przyjmowana tylko z tokenem okna otwartego przez tę kartę; zapisy z innych kart panelu
+  // i podrobione tokeny odpadają.
+  function _newsScanListen(type, fn) {
+    try {
+      GM_addValueChangeListener(NS_OUT[type], function(name, oldV, newV) {
+        if (!newV) return;
+        var msg = null;
+        try { msg = JSON.parse(newV); } catch(e) {}
+        if (msg && _newsMyToks[msg.tok]) fn(msg);
+      });
+    } catch(e) {}
   }
 
   // ── CSRF TOKEN RESOLUTION ──
@@ -17515,33 +17613,37 @@
   // Try to detect article publish date from fetched HTML
   function _newsDetectDateFromHtml(html) {
     if (!html) return null;
+    // Klasy znaków mają górną granicę: atrybuty jednego znacznika (500) albo jedna wartość (200). Bez niej strona
+    // z tysiącami otwartych `<time pubdate` bez `>` zmuszała każdy wzorzec do skanu do końca dokumentu od każdego
+    // wystąpienia i wieszała kartę panelu (SECURITY.md §3.20). Nie zdejmuj granic dla „pełniejszego” dopasowania.
     var patterns = [
       // JSON-LD datePublished
       /"datePublished"\s*:\s*"(\d{4}-\d{2}-\d{2})/,
       // meta property=article:published_time
-      /published_time[^"]*"\s+content="(\d{4}-\d{2}-\d{2})/,
+      /published_time[^"]{0,200}"\s+content="(\d{4}-\d{2}-\d{2})/,
       // meta name=date
-      /name="date"[^>]+content="(\d{4}-\d{2}-\d{2})/i,
+      /name="date"[^>]{1,500}content="(\d{4}-\d{2}-\d{2})/i,
       // itemprop=datePublished
-      /datePublished[^"]*"[^>]*content="(\d{4}-\d{2}-\d{2})/i,
+      /datePublished[^"]{0,200}"[^>]{0,500}content="(\d{4}-\d{2}-\d{2})/i,
       // og:article:published_time jako meta
-      /property=["']article:published_time["'][^>]+content=["'](\d{4}-\d{2}-\d{2})/i,
-      /content=["'](\d{4}-\d{2}-\d{2})[^"']*["'][^>]+property=["']article:published_time["']/i,
+      /property=["']article:published_time["'][^>]{1,500}content=["'](\d{4}-\d{2}-\d{2})/i,
+      /content=["'](\d{4}-\d{2}-\d{2})[^"']{0,200}["'][^>]{1,500}property=["']article:published_time["']/i,
       // dateCreated (schema.org)
       /"dateCreated"\s*:\s*"(\d{4}-\d{2}-\d{2})/,
-      // pubdate attribute on time
-      /<time[^>]+pubdate[^>]*datetime=["'](\d{4}-\d{2}-\d{2})/i,
+      // pubdate attribute on time. Lookahead zamiast `[^>]+pubdate[^>]*`: dwie klasy przedzielone słowem, które
+      // może się powtarzać, dawały próby mnożone przez liczbę powtórzeń w znaczniku.
+      /<time\b(?=[^>]{0,500}pubdate)[^>]{0,500}datetime=["'](\d{4}-\d{2}-\d{2})/i,
       // data-date attributes (rozszerzone)
       /data-(?:publish|pub|created|article|date)-?(?:date|time|at)?=["'](\d{4}-\d{2}-\d{2})/i,
       // itemprop="datePublished" z content= (kolejność atrybutów odwrócona)
-      /content=["'](\d{4}-\d{2}-\d{2})[^"']*["'][^>]+itemprop=["']datePublished["']/i,
+      /content=["'](\d{4}-\d{2}-\d{2})[^"']{0,200}["'][^>]{1,500}itemprop=["']datePublished["']/i,
       // meta name="publishdate" / "publish-date" / "article.published"
-      /name=["'](?:publishdate|publish[-_]date|article\.published|cXenseParse:recs:publishtime)["'][^>]+content=["'](\d{4}-\d{2}-\d{2})/i,
-      /content=["'](\d{4}-\d{2}-\d{2})[^"']*["'][^>]+name=["'](?:publishdate|publish[-_]date|article\.published)["']/i,
+      /name=["'](?:publishdate|publish[-_]date|article\.published|cXenseParse:recs:publishtime)["'][^>]{1,500}content=["'](\d{4}-\d{2}-\d{2})/i,
+      /content=["'](\d{4}-\d{2}-\d{2})[^"']{0,200}["'][^>]{1,500}name=["'](?:publishdate|publish[-_]date|article\.published)["']/i,
       // Dublin Core
-      /name=["']DC\.date[^"']*["'][^>]+content=["'](\d{4}-\d{2}-\d{2})/i,
+      /name=["']DC\.date[^"']{0,200}["'][^>]{1,500}content=["'](\d{4}-\d{2}-\d{2})/i,
       // <time datetime="YYYY-MM-DD (z cudzysłowem pojedynczym też)
-      /<time[^>]+datetime=["'](\d{4}-\d{2}-\d{2})/i,
+      /<time[^>]{1,500}datetime=["'](\d{4}-\d{2}-\d{2})/i,
       // JSON-LD dateModified jako ostatnia deska ratunku
       /"dateModified"\s*:\s*"(\d{4}-\d{2}-\d{2})/,
     ];
@@ -17573,10 +17675,11 @@
     return null;
   }
 
+  // Granice klas jak w _newsDetectDateFromHtml (SECURITY.md §3.20).
   function _newsDetectLangFromResponse(html, url) {
-    var m = html && html.match(/<html[^>]+lang=["']([a-z]{2})/i);
+    var m = html && html.match(/<html[^>]{1,500}lang=["']([a-z]{2})/i);
     if (m) return m[1].toLowerCase();
-    var m2 = html && html.match(/content-language[^>]+content=["']([a-z]{2})/i);
+    var m2 = html && html.match(/content-language[^>]{1,500}content=["']([a-z]{2})/i);
     if (m2) return m2[1].toLowerCase();
     try {
       var h = new URL(url).hostname.toLowerCase().split('.');
@@ -17739,7 +17842,7 @@
     list.innerHTML = _html(shown.length
       ? shown.map(function(r) {
           var on = String(state.projectId) === String(r.pid);
-          return '<div class="b24t-proj-item' + (on ? ' b24t-proj-item-on' : '') + '" data-pid="' + r.pid + '">' +
+          return '<div class="b24t-proj-item' + (on ? ' b24t-proj-item-on' : '') + '" data-pid="' + _escHtml(String(r.pid)) + '">' +
                  _escHtml(r.name) + '</div>';
         }).join('')
       : '<div class="b24t-proj-empty">brak projektu pasującego do „' + _escHtml(combo.value) + '”</div>');
@@ -19803,8 +19906,8 @@
       entry.bsStatus = 'pending';
       // `quiet` — nawigujemy oknem bez zabierania mu fokusu. Fokus zabiera tylko pierwsze
       // otwarcie, bo przeglądarka inaczej nie umie; kolejne strony wchodzą po cichu.
-      // Znacznik `#b24tscan` włącza relay w oknie — patrz komentarz przy `_b24tScanMark`.
-      var win = _newsOpenUrl(entry.url + (entry.url.indexOf('#') === -1 ? '#b24tscan' : '&b24tscan'), true);
+      // Znacznik z tokenem włącza przekaźnik w oknie — patrz komentarz przy `_b24tScanTok`.
+      var win = _newsOpenUrl(entry.url, true);
       if (!win) {
         // Przeglądarka zdusiła okno. Czekanie 20 s na treść, która nigdy nie przyjdzie,
         // dałoby annotatorowi fałszywą diagnozę „strona nie odpowiada".
@@ -19819,6 +19922,7 @@
       }
       _bsPending = {
         entry: entry,
+        tok: _newsScanWinTok,
         alive: false,
         timer: setTimeout(function() { _bsFinish(entry, null); }, NEWS_BS_TIMEOUT_MS),
         startTimer: setTimeout(function() {
@@ -19905,26 +20009,25 @@
       _bsPump();
     }
 
-    // Treść z okna skanu: tylko z tego okna i tylko wtedy, gdy sami czekamy na stronę.
+    // Treść z okna skanu: tylko z tokenem okna, które otworzył ten skan, i tylko wtedy, gdy sami czekamy na stronę.
     // Adres porównujemy luźno: serwisy przekierowują (www, kraj, AMP), więc `location.href`
     // w oknie bywa inny niż ten, o który prosiliśmy.
-    window.addEventListener('message', function(ev) {
-      if (!_newsFromScanWin(ev)) return;
-      // Meldunek startu: strona wstała, więc przestajemy odliczać krótki limit i dajemy jej
-      // dociągnąć treść.
-      if (ev.data && ev.data.type === 'b24t_news_alive' && _bsPending) {
-        _bsPending.alive = true;
-        if (_bsPending.startTimer) { clearTimeout(_bsPending.startTimer); _bsPending.startTimer = null; }
-        return;
-      }
-      if (!ev.data || ev.data.type !== 'b24t_news_html') return;
-      if (!_bsPending) return;
+    // Meldunek startu: strona wstała, więc przestajemy odliczać krótki limit i dajemy jej dociągnąć treść.
+    _newsScanListen('alive', function(msg) {
+      if (!_bsPending || msg.tok !== _bsPending.tok) return;
+      _bsPending.alive = true;
+      if (_bsPending.startTimer) { clearTimeout(_bsPending.startTimer); _bsPending.startTimer = null; }
+    });
+    _newsScanListen('html', function(msg) {
+      // Skrzynka czyszczona po odczycie: inaczej megabajty strony zostają w pamięci GM do następnego skanu.
+      try { GM_setValue(NS_OUT.html, ''); } catch(e) {}
+      if (!_bsPending || msg.tok !== _bsPending.tok) return;
       var entry = _bsPending.entry;
       var sameHost = false;
-      try { sameHost = new URL(ev.data.url).hostname === new URL(entry.url).hostname; } catch(e) {}
-      if (!sameHost && !_bsSameUrl(ev.data.url, entry.url)) return;
-      _bsFinish(entry, ev.data.html || '', ev.data.url);
-    }, false);
+      try { sameHost = new URL(msg.url).hostname === new URL(entry.url).hostname; } catch(e) {}
+      if (!sameHost && !_bsSameUrl(msg.url, entry.url)) return;
+      _bsFinish(entry, msg.html || '', msg.url);
+    });
 
     // ─── PONOWIENIE NIEPRZESKANOWANYCH ───
     // Świadomie osobna, wolna pętla, a nie ponowny import: przy ponawianiu liczy się
@@ -20712,7 +20815,8 @@
     }
 
     document.addEventListener('keydown', function(e) {
-      if (e.altKey) return;
+      // Klawisz od skryptu strony nie wysyła wzmianki ani nie przełącza wierszy (SECURITY.md §3.16).
+      if (!e.isTrusted || e.altKey) return;
       var nw = Win.get('news');
       if (!nw) return;                                  // okno News zamknięte (Niestandardowe nie ma listy)
       // Fokus w dialogu, dymku albo panelu nad oknem: tam klawisze należą do nich (import ma własne Ctrl+Enter).
@@ -21134,7 +21238,7 @@
       }
 
       // GM fetch jako fallback dla stron bez bot-protection (Cloudflare itp. zablokuje)
-      // Główna metoda to postMessage relay z @match *://*/*
+      // Główna metoda to przekaźnik w oknie skanu z @match *://*/* (kanał GM)
       // Trailing slash tylko gdy URL nie ma rozszerzenia w ścieżce i nie ma już slash-a
       var fetchUrl = (function(u) {
         try {
@@ -21164,11 +21268,10 @@
       });
     }
 
-    // ── postMessage listener: data z okna artykułu (relay z @match *://*/*) ──
-    window.addEventListener('message', function(ev) {
-      if (!ev.data || ev.data.type !== 'b24t_news_date' || !_newsFromScanWin(ev)) return;
-      var date = ev.data.date;
-      var url  = ev.data.url;
+    // ── Data z okna artykułu (przekaźnik z @match *://*/*, kanał GM: _newsScanListen) ──
+    _newsScanListen('date', function(msg) {
+      var date = msg.date;
+      var url  = msg.url;
       if (!date || !RX_ISO_DATE.test(date)) return;
       // Sprawdź czy aktywny URL pasuje do nadawcy
       var activeEntry = newsState.activeIdx >= 0 ? newsState.urls[newsState.activeIdx] : null;
@@ -21184,7 +21287,7 @@
         dateIcon.hidden = false;
         dateIcon.setAttribute('data-tip', 'Data wykryta na stronie (' + date + '); pole można poprawić');
       }
-    }, false);
+    });
 
     // Force open button
     var forceOpenBtn = _$('b24t-news-lang-force-open');
@@ -21934,6 +22037,19 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.34",
+      "date": "2026-10-09",
+      "label": "fix",
+      "changes": [
+        {
+          "type": "fix",
+          "area": "Panel",
+          "title": "Naprawiono pięć błędów bezpieczeństwa",
+          "text": "Naprawiono pięć błędów bezpieczeństwa."
+        }
+      ]
+    },
+    {
       "version": "0.38.33",
       "date": "2026-10-09",
       "label": "new",
@@ -22133,24 +22249,6 @@
           ],
           "comment": "Ciągły pisk 880 Hz skutecznie budził, ale męczył bardziej niż sama CAPTCHA. Nowy dźwięk wybrał użytkownik z piętnastu próbek.",
           "text": "Alarm CAPTCHA stuka w kieliszek co 2 sekundy. Dwa stuknięcia w szkło powtarzają się do rozwiązania testu, wyciszenia albo zatrzymania wyszukiwania. Dźwięk włącza i wyłącza się w karcie Powiadomienia, w sekcji Dźwięki."
-        }
-      ]
-    },
-    {
-      "version": "0.38.24",
-      "date": "2026-10-08",
-      "label": "fix",
-      "changes": [
-        {
-          "type": "fix",
-          "area": "Kampanie H&M",
-          "title": "Naprawiono błąd, przez który alarm CAPTCHA nie grał dźwięku",
-          "items": [
-            "Gdy Chrome nie pozwala na dźwięk w karcie wyszukiwania, alarm gra w karcie Brand24, z której ruszyło wyszukiwanie.",
-            "Karta Brand24 pokazuje wtedy powiadomienie „Test Google (CAPTCHA)” z przyciskiem „Wycisz dźwięk”.",
-            "Dźwięk milknie po rozwiązaniu testu, po wyciszeniu w dowolnej z obu kart i po zatrzymaniu wyszukiwania."
-          ],
-          "text": "Naprawiono błąd, przez który alarm CAPTCHA nie grał dźwięku. Gdy Chrome nie pozwala na dźwięk w karcie wyszukiwania, alarm gra w karcie Brand24, z której ruszyło wyszukiwanie. Karta Brand24 pokazuje wtedy powiadomienie „Test Google (CAPTCHA)” z przyciskiem „Wycisz dźwięk”. Dźwięk milknie po rozwiązaniu testu, po wyciszeniu w dowolnej z obu kart i po zatrzymaniu wyszukiwania."
         }
       ]
     }
@@ -27285,10 +27383,10 @@
     var colCount = hasRelevant ? 4 : 3;
     var rows = results.map(function(r) {
       var name = _escHtml(r.name);
-      if (r.loading) return '<tr data-pid="' + r.pid + '" data-loading="1"><td><span class="b-ell">' + name + '</span></td><td colspan="' + colCount + '" class="b-num b-muted">liczę…</td></tr>';
-      if (r.error) return '<tr data-pid="' + r.pid + '" data-error="1"><td><span class="b-ell">' + name + '</span></td><td colspan="' + colCount + '" class="b-danger">Błąd: ' + _escHtml(_errShort(r.error)) + '</td></tr>';
+      if (r.loading) return '<tr data-pid="' + _escHtml(String(r.pid)) + '" data-loading="1"><td><span class="b-ell">' + name + '</span></td><td colspan="' + colCount + '" class="b-num b-muted">liczę…</td></tr>';
+      if (r.error) return '<tr data-pid="' + _escHtml(String(r.pid)) + '" data-error="1"><td><span class="b-ell">' + name + '</span></td><td colspan="' + colCount + '" class="b-danger">Błąd: ' + _escHtml(_errShort(r.error)) + '</td></tr>';
       var done = isMonthClosing && completedPids.includes(r.pid);
-      return '<tr data-pid="' + r.pid + '"' + (done ? ' class="is-done"' : '') + '>' +
+      return '<tr data-pid="' + _escHtml(String(r.pid)) + '"' + (done ? ' class="is-done"' : '') + '>' +
         '<td' + (done ? ' data-tip="Projekt domknięty w tym miesiącu"' : '') + '><span class="b-ell">' + (done ? _icon('check') : '') + name + '</span></td>' +
         cell(r.total) + (hasRelevant ? cell(r.relevant, done ? '' : 'b-ok') : '') + cell(r.reqVer, done || !r.reqVer ? '' : 'b-warn') + cell(r.toDelete, done || !r.toDelete ? '' : 'b-danger') +
       '</tr>';

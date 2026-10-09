@@ -1,5 +1,24 @@
 [
   {
+    "version": "0.38.32",
+    "date": "2026-10-09",
+    "label": "improved",
+    "changes": [
+      {
+        "type": "improved",
+        "area": "Tagowanie z pliku",
+        "title": "Ostrzeżenie o projektach z drugiego panelu Brand24 w pliku wielu projektów",
+        "items": [
+          "Projekt z drugiego panelu (Brand24 .com albo .pl) ma w sekcji „Projekty w pliku” dopisek z nazwą swojego panelu, a nad listą stoi osobny baner z przyciskiem otwierającym tamten panel.",
+          "Okno „Przebieg pominie …” przed startem wylicza takie projekty i przypomina, że ich wiersze trzeba wgrać osobnym plikiem na ich panelu.",
+          "Gdy wszystkie projekty z pliku należą do drugiego panelu, start jest zablokowany."
+        ],
+        "comment": "Brand24 .com i .pl to dwa osobne światy, a przebieg widzi tylko ten, w którym go uruchomiono. Wtyczka mówi o tym od razu, zamiast odsyłać do CMS, który w tej sprawie nic nie pomoże.",
+        "text": "Ostrzeżenie o projektach z drugiego panelu Brand24 w pliku wielu projektów. Projekt z drugiego panelu (Brand24 .com albo .pl) ma w sekcji „Projekty w pliku” dopisek z nazwą swojego panelu, a nad listą stoi osobny baner z przyciskiem otwierającym tamten panel. Okno „Przebieg pominie …” przed startem wylicza takie projekty i przypomina, że ich wiersze trzeba wgrać osobnym plikiem na ich panelu. Gdy wszystkie projekty z pliku należą do drugiego panelu, start jest zablokowany."
+      }
+    ]
+  },
+  {
     "version": "0.38.31",
     "date": "2026-10-09",
     "label": "fix",

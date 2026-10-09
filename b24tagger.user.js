@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.31
+// @version      0.38.32
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -185,7 +185,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.31';
+  const VERSION = '0.38.32';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -3067,6 +3067,14 @@
       var projectData = savedProjects[projectId];
       var projectName = _pnResolve(projectId);
       var projectRows = projectGroups[projectId];
+      // Projekt drugiego panelu (_fileOtherPanel): GraphQL przebiegu idzie na bieżący panel, który tego projektu nie zna.
+      var fileState = _fileProj[projectId];
+      if (fileState && fileState.st === 'panel') {
+        addLog('⚠ ' + projectName + ': projekt panelu ' + _baseLabel(fileState.base) + ' — przebieg na ' + _baseLabel(_b24HostBase()) +
+          ' go pomija. Jego wiersze trzeba wgrać osobnym plikiem na ' + _baseLabel(fileState.base) + '.', 'warn');
+        overallStats[projectId] = { name: projectName, tagged: 0, skipped: projectRows.length };
+        continue;
+      }
       if (!projectData) {
         addLog('⚠ ' + projectName + ': przy wczytaniu pliku nie udało się pobrać jego tagów (brak dostępu) — pomijam. Projekty innych kont wymagają zalogowania do CMS; potem „Sprawdź ponownie” w sekcji „Projekty w pliku”.', 'warn');
         overallStats[projectId] = { name: projectName, tagged: 0, skipped: projectRows.length };
@@ -10727,12 +10735,35 @@
   // i potwierdzenie startu liczą się z tego samego sprawdzenia, więc mówią to samo co przebieg, który projekt bez
   // świeżych tagów pomija (runMultiProjectTagging).
   //   st: 'ok' — tagi pobrane przy tym wczytaniu z listy `#tag` strony projektu; 'denied' — strona projektu się nie
-  //       otworzyła (projekt innego konta bez sesji CMS albo bez uprawnień); 'form' — strona bez listy tagów;
+  //       otworzyła (projekt innego konta bez sesji CMS albo bez uprawnień); 'panel' — projekt drugiego panelu Brand24
+  //       (`base` = jego panel), którego przebieg na tym panelu nie otaguje; 'form' — strona bez listy tagów;
   //       'net' — błąd sieci.
   //   other: ID tagów projektu są rozłączne z ID tagów konta zalogowanego, czyli projekt należy do innego konta
   //       (tagi należą do konta, a `getTags` zwraca tagi konta zalogowanego: BRAND24_NETWORK.md §6).
   var _fileProj = {};
   var FILE_PROJ_WHY = { denied: 'brak dostępu', form: 'strona projektu bez listy tagów', net: 'błąd sieci' };
+
+  function _fileProjWhy(s) {
+    return s.st === 'panel' ? 'na panelu ' + _baseLabel(s.base) : FILE_PROJ_WHY[s.st];
+  }
+
+  // Projekt drugiego panelu Brand24. Panele .com i .pl to osobne serwisy: bieżący panel oddaje dla takiego projektu
+  // tę samą zaślepkę co dla projektu bez dostępu (PANEL_STATE.md §4.5), a przebieg wysyła GraphQL tylko na bieżący
+  // panel, więc wierszy takiego projektu nie otaguje. Dowodem jest znacznik panelu w pamięci, stawiany wyłącznie na
+  // panelu projektu (§4.4), albo strona projektu, która otwiera się na drugim panelu. → baza drugiego panelu albo null.
+  async function _fileOtherPanel(pid) {
+    var here = _b24HostBase();
+    if (!here) return null;
+    var other = here === 'https://app.brand24.com' ? 'https://panel.brand24.pl' : 'https://app.brand24.com';
+    try {
+      var rec = B24Bridge.projects.get(pid);
+      if (rec && rec.base && B24Bridge.normBase(rec.base) === other) return other;
+    } catch(e) {}
+    var r = await _pnFetchNameCms(pid, other);
+    if (!r || !r.canAdd) return null;
+    if (r.name) _pnSetVerified(pid, r.name, PN_SRC_CMS, other);
+    return other;
+  }
 
   async function _autoResolveUnknownProjects(pids) {
     var loggedIds = null;
@@ -10777,6 +10808,11 @@
         addLog('⚠ Auto-resolve ' + pid + ': ' + (e && e.message || e), 'warn', { tech: true, key: 'file' });
       }
     }
+    // Równolegle: strona projektu waży ok. 220 kB i wraca po ok. 1 s (PANEL_STATE.md §4.5), więc kolejno każdy projekt
+    // bez dostępu wydłużałby wczytanie pliku o kolejną sekundę.
+    var denied = pids.filter(function(pid) { return status[pid].st === 'denied'; });
+    var panels = await Promise.all(denied.map(_fileOtherPanel));
+    denied.forEach(function(pid, i) { if (panels[i]) status[pid] = { st: 'panel', base: panels[i] }; });
     _fileProj = status;
   }
 
@@ -10809,7 +10845,7 @@
       var s = _fileProj[pid] || { st: 'net' }, ok = s.st === 'ok';
       var name = (ok ? _pnResolve(pid) : _pnGet(pid)) || ('Projekt ' + pid);
       var detail = ok ? (s.other ? '<span data-tip="Projekt innego konta Brand24: tagi i zapis przez sesję CMS">inne konto · CMS</span>' : '')
-        : '<span class="b-danger">' + FILE_PROJ_WHY[s.st] + '</span>';
+        : '<span class="b-danger">' + _escHtml(_fileProjWhy(s)) + '</span>';
       // pid pochodzi z pliku, name z odpowiedzi API/LS — escape przed wstawieniem do innerHTML
       return '<div class="b-list__row">' + _icon(ok ? 'check' : 'x', ok ? 'b-ok' : 'b-danger') +
         '<span class="b-stack" style="gap:0;flex:1 1 auto;min-width:0"><span class="b-ell">' + _escHtml(name) + '</span>' +
@@ -10818,16 +10854,32 @@
         '</div>';
     }).join('');
     var banner = '';
-    if (bad.length) {
-      var denied = bad.some(function(pid) { return (_fileProj[pid] || {}).st === 'denied'; });
-      var badRows = bad.reduce(function(n, pid) { return n + projectCounts[pid]; }, 0);
+    var rowsIn = function(list) { return list.reduce(function(n, pid) { return n + projectCounts[pid]; }, 0); };
+    // Projekty drugiego panelu mają osobny baner: ani logowanie do CMS, ani „Sprawdź ponownie” ich nie odblokują.
+    var onOther = bad.filter(function(pid) { return (_fileProj[pid] || {}).st === 'panel'; });
+    var rest = bad.filter(function(pid) { return (_fileProj[pid] || {}).st !== 'panel'; });
+    if (onOther.length) {
+      var otherBase = _fileProj[onOther[0]].base, here = _baseLabel(_b24HostBase()), there = _baseLabel(otherBase);
+      var allOther = all && !rest.length;
+      banner += '<div class="b-banner b-banner--' + (all ? 'danger' : 'warn') + '">' + _icon('alertCircle') + '<div class="b-sp">' +
+        '<div class="b-banner__title">' + (allOther ? 'Start zablokowany' : _plPl(onOther.length, 'projekt', 'projekty', 'projektów') + ' z panelu ' + there) + '</div>' +
+        (allOther
+          ? 'Wszystkie projekty z pliku są na panelu ' + there + ', a przebieg na ' + here + ' taguje tylko projekty tego panelu. Plik trzeba wgrać na ' + there + '.'
+          : 'Przebieg na ' + here + ' taguje tylko projekty tego panelu, więc pominie ' + _plPl(rowsIn(onOther), 'wiersz', 'wiersze', 'wierszy') +
+            (onOther.length === 1 ? ' tego projektu' : ' tych projektów') + '. Te wiersze trzeba wgrać osobnym plikiem na ' + there + '.') +
+        '<div class="b-row" style="gap:0.5em;margin-top:0.5em;flex-wrap:wrap"><a class="b-btn b-btn--neutral b-btn--sm" href="' + otherBase +
+        '/panel/results/' + encodeURIComponent(onOther[0]) + '" target="_blank" rel="noopener">' + _icon('external') + 'Otwórz ' + there + '</a></div>' +
+        '</div></div>';
+    }
+    if (rest.length) {
+      var denied = rest.some(function(pid) { return (_fileProj[pid] || {}).st === 'denied'; });
       var base = _b24HostBase();
       var hint = !denied ? 'Sprawdzenie da się powtórzyć.' : session === true
         ? 'Mimo zalogowania do CMS ich strony się nie otworzyły: konto nie ma do nich dostępu albo projekty nie istnieją.'
         : 'Projekty innych kont Brand24 wymagają zalogowania do CMS na tym panelu; po zalogowaniu wystarczy „Sprawdź ponownie”.';
-      banner = '<div class="b-banner b-banner--' + (all ? 'danger' : 'warn') + '">' + _icon('alertCircle') + '<div class="b-sp">' +
-        '<div class="b-banner__title">' + (all ? 'Start zablokowany' : _plPl(bad.length, 'projekt', 'projekty', 'projektów') + ' bez tagów') + '</div>' +
-        (all ? 'Żaden projekt z pliku nie ma pobranych tagów. ' : 'Przebieg pominie ' + _plPl(badRows, 'wiersz', 'wiersze', 'wierszy') + ' z tych projektów. ') +
+      banner += '<div class="b-banner b-banner--' + (all ? 'danger' : 'warn') + '">' + _icon('alertCircle') + '<div class="b-sp">' +
+        '<div class="b-banner__title">' + (all ? 'Start zablokowany' : _plPl(rest.length, 'projekt', 'projekty', 'projektów') + ' bez tagów') + '</div>' +
+        (all ? 'Żaden projekt z pliku nie ma pobranych tagów. ' : 'Przebieg pominie ' + _plPl(rowsIn(rest), 'wiersz', 'wiersze', 'wierszy') + ' z tych projektów. ') +
         _escHtml(hint) +
         '<div class="b-row" style="gap:0.5em;margin-top:0.5em;flex-wrap:wrap"><button class="b-btn b-btn--neutral b-btn--sm" type="button" data-mp-recheck>' + _icon('refresh') + 'Sprawdź ponownie</button>' +
         (denied && session !== true && base ? '<a class="b-btn b-btn--neutral b-btn--sm" href="' + base + '/cms33/" target="_blank" rel="noopener">Otwórz CMS</a>' : '') +
@@ -10863,8 +10915,9 @@
   }
 
   // Co przebieg pominie: wiersze projektów bez tagów i wiersze z tagiem, którego projekt nie ma.
-  // → [{ name, why, n }] w kolejności projektów z pliku. Projekt bez wyniku sprawdzenia (np. plik z zapisanej sesji)
-  // nie trafia na listę: o nim nic nie wiadomo, a przebieg i tak pobiera tagi od nowa.
+  // → [{ name, why, n, panel }] w kolejności projektów z pliku; `panel` to baza drugiego panelu albo null. Projekt bez
+  // wyniku sprawdzenia (np. plik z zapisanej sesji) nie trafia na listę: o nim nic nie wiadomo, a przebieg i tak pobiera
+  // tagi od nowa.
   function _fileSkipPlan() {
     var colMap = state.file && state.file.colMap;
     if (!colMap || !colMap.projectId) return [];
@@ -10879,7 +10932,7 @@
       var s = _fileProj[pid];
       if (!s) return;
       var name = _pnResolve(pid);
-      if (s.st !== 'ok') { out.push({ name: name, why: FILE_PROJ_WHY[s.st], n: counts[pid] }); return; }
+      if (s.st !== 'ok') { out.push({ name: name, why: _fileProjWhy(s), n: counts[pid], panel: s.st === 'panel' ? s.base : null }); return; }
       var tagIds = (saved[pid] || {}).tagIds || {};
       Object.keys(byTag[pid] || {}).forEach(function(tag) {
         if (!tagIds[tag]) out.push({ name: name, why: 'brak tagu „' + tag + '”', n: byTag[pid][tag] });
@@ -11309,12 +11362,16 @@
     const _skip = _fileSkipPlan();
     if (_skip.length) {
       const _skipRows = _skip.reduce(function(n, s) { return n + s.n; }, 0);
+      const _skipPanel = _skip.find(function(s) { return s.panel; });
       if (!(await _dlgConfirm({
         title: 'Przebieg pominie ' + _plPl(_skipRows, 'wiersz', 'wiersze', 'wierszy'), confirm: 'Kontynuuj', from: _$('b24t-btn-start'),
         body: '<div class="b-list">' + _skip.map(function(s) {
           return '<div class="b-list__row"><span class="b-strong b-ell">' + _escHtml(s.name) + '</span><span class="b-sp"></span>' +
             _escHtml(s.why) + '<span class="b-muted">' + _plPl(s.n, 'wiersz', 'wiersze', 'wierszy') + '</span></div>';
-        }).join('') + '</div><p class="b-text2">Pozostałe wiersze pliku przebieg otaguje normalnie.</p>'
+        }).join('') + '</div>' +
+          (_skipPanel ? '<p class="b-text2">Przebieg na ' + _baseLabel(_b24HostBase()) + ' taguje tylko projekty tego panelu. Wiersze projektów z ' +
+            _baseLabel(_skipPanel.panel) + ' trzeba wgrać osobnym plikiem na tamtym panelu.</p>' : '') +
+          '<p class="b-text2">Pozostałe wiersze pliku przebieg otaguje normalnie.</p>'
       }))) return false;
     }
     // Potwierdzenie przy dużej liczbie wzmianek (200+) — tylko w trybie właściwym
@@ -21567,6 +21624,25 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.32",
+      "date": "2026-10-09",
+      "label": "improved",
+      "changes": [
+        {
+          "type": "improved",
+          "area": "Tagowanie z pliku",
+          "title": "Ostrzeżenie o projektach z drugiego panelu Brand24 w pliku wielu projektów",
+          "items": [
+            "Projekt z drugiego panelu (Brand24 .com albo .pl) ma w sekcji „Projekty w pliku” dopisek z nazwą swojego panelu, a nad listą stoi osobny baner z przyciskiem otwierającym tamten panel.",
+            "Okno „Przebieg pominie …” przed startem wylicza takie projekty i przypomina, że ich wiersze trzeba wgrać osobnym plikiem na ich panelu.",
+            "Gdy wszystkie projekty z pliku należą do drugiego panelu, start jest zablokowany."
+          ],
+          "comment": "Brand24 .com i .pl to dwa osobne światy, a przebieg widzi tylko ten, w którym go uruchomiono. Wtyczka mówi o tym od razu, zamiast odsyłać do CMS, który w tej sprawie nic nie pomoże.",
+          "text": "Ostrzeżenie o projektach z drugiego panelu Brand24 w pliku wielu projektów. Projekt z drugiego panelu (Brand24 .com albo .pl) ma w sekcji „Projekty w pliku” dopisek z nazwą swojego panelu, a nad listą stoi osobny baner z przyciskiem otwierającym tamten panel. Okno „Przebieg pominie …” przed startem wylicza takie projekty i przypomina, że ich wiersze trzeba wgrać osobnym plikiem na ich panelu. Gdy wszystkie projekty z pliku należą do drugiego panelu, start jest zablokowany."
+        }
+      ]
+    },
+    {
       "version": "0.38.31",
       "date": "2026-10-09",
       "label": "fix",
@@ -21801,19 +21877,6 @@
             "Dziennik zapisuje każdą stronę wyników i każdy test Google z liczbą zebranych adresów."
           ],
           "text": "Dziennik zapytań wyszukiwania i przycisk „Kopiuj dziennik”. Dziennik zapisuje każdą stronę wyników i każdy test Google z liczbą zebranych adresów."
-        }
-      ]
-    },
-    {
-      "version": "0.38.22",
-      "date": "2026-10-06",
-      "label": "fix",
-      "changes": [
-        {
-          "type": "fix",
-          "area": "Dodawanie wzmianek",
-          "title": "Naprawiono błąd bezpieczeństwa",
-          "text": "Naprawiono błąd bezpieczeństwa."
         }
       ]
     }

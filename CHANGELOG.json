@@ -1,5 +1,45 @@
 [
   {
+    "version": "0.38.33",
+    "date": "2026-10-09",
+    "label": "new",
+    "changes": [
+      {
+        "type": "fix",
+        "area": "Tagowanie z pliku",
+        "title": "Naprawiono błąd, przez który lista tagów przy ocenie pomijała tagi projektów innych kont",
+        "items": [
+          "W pliku z wieloma projektami lista tagów przy ocenie zbiera tagi wszystkich projektów z pliku, a przy każdym tagu widać, w ilu z nich występuje.",
+          "Lista odświeża się po „Sprawdź ponownie” w sekcji „Projekty w pliku”, więc tag dodany w Brand24 pojawia się bez przeładowania strony."
+        ],
+        "text": "Naprawiono błąd, przez który lista tagów przy ocenie pomijała tagi projektów innych kont. W pliku z wieloma projektami lista tagów przy ocenie zbiera tagi wszystkich projektów z pliku, a przy każdym tagu widać, w ilu z nich występuje. Lista odświeża się po „Sprawdź ponownie” w sekcji „Projekty w pliku”, więc tag dodany w Brand24 pojawia się bez przeładowania strony."
+      },
+      {
+        "type": "new",
+        "area": "Tagowanie z pliku",
+        "title": "Wyszukiwanie tagów i tagi zastępcze w mapowaniu ocen",
+        "items": [
+          "Pole tagu przy ocenie zawęża listę do tagów z wpisanym fragmentem nazwy, tak jak wybór projektu w panelu Niestandardowe.",
+          "W pliku z wieloma projektami przycisk „Tag zastępczy” przy ocenie dodaje drugi tag dla projektów bez pierwszego. Każdy projekt dostaje pierwszy z wybranych tagów, który ma, więc literówka w nazwie tagu w części kont nie kosztuje pominiętych wierszy.",
+          "„Usuwanie po zakończeniu” usuwa w każdym projekcie wzmianki z tym tagiem oceny, który projekt dostał w przebiegu.",
+          "Pokrycie tagów ma kolumnę dla każdej oceny z tagiem, a przy tagach zastępczych litera wskazuje tag, który dostanie projekt."
+        ],
+        "text": "Wyszukiwanie tagów i tagi zastępcze w mapowaniu ocen. Pole tagu przy ocenie zawęża listę do tagów z wpisanym fragmentem nazwy, tak jak wybór projektu w panelu Niestandardowe. W pliku z wieloma projektami przycisk „Tag zastępczy” przy ocenie dodaje drugi tag dla projektów bez pierwszego. Każdy projekt dostaje pierwszy z wybranych tagów, który ma, więc literówka w nazwie tagu w części kont nie kosztuje pominiętych wierszy. „Usuwanie po zakończeniu” usuwa w każdym projekcie wzmianki z tym tagiem oceny, który projekt dostał w przebiegu. Pokrycie tagów ma kolumnę dla każdej oceny z tagiem, a przy tagach zastępczych litera wskazuje tag, który dostanie projekt."
+      },
+      {
+        "type": "improved",
+        "area": "Tagowanie z pliku",
+        "title": "Raport sesji rozbija pominięte wiersze według powodu",
+        "items": [
+          "Wiersze, których wzmianka miała już ten tag, raport liczy osobno jako „Bez zmian”, a nie jako pominięte.",
+          "Pominięte wiersze mają powód: brak tagu w projekcie, brak dopasowania w Brand24, projekt pominięty w całości i inne, a przy powodach dotyczących projektu raport wymienia projekty.",
+          "Licznik „Pominięte” w karcie postępu liczy wiersze bez dopasowania jeden raz."
+        ],
+        "text": "Raport sesji rozbija pominięte wiersze według powodu. Wiersze, których wzmianka miała już ten tag, raport liczy osobno jako „Bez zmian”, a nie jako pominięte. Pominięte wiersze mają powód: brak tagu w projekcie, brak dopasowania w Brand24, projekt pominięty w całości i inne, a przy powodach dotyczących projektu raport wymienia projekty. Licznik „Pominięte” w karcie postępu liczy wiersze bez dopasowania jeden raz."
+      }
+    ]
+  },
+  {
     "version": "0.38.32",
     "date": "2026-10-09",
     "label": "improved",

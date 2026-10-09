@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B24 Tagger BETA
 // @namespace    https://brand24.com
-// @version      0.38.32
+// @version      0.38.33
 // @description  Wtyczka do ułatwiania pracy w panelu Brand24
 // @author       B24 Tagger
 // @match        https://app.brand24.com/*
@@ -185,7 +185,7 @@
   // CONSTANTS & CONFIG
   // ───────────────────────────────────────────
 
-  const VERSION = '0.38.32';
+  const VERSION = '0.38.33';
   const LS = {
     SETUP_DONE:  'b24tagger_setup_done',
     PROJECTS:    'b24tagger_projects',
@@ -297,7 +297,7 @@
     pageSize: 60,
     stats: { tagged: 0, skipped: 0, noMatch: 0, conflicts: 0 },
     failedMentions: [],   // wzmianki które nie mogły być otagowane przez fallback
-    skippedRows: [],      // wiersze z pliku pominięte (NO_MATCH, TRUNCATED_URL, NO_MAPPING, NO_ASSESSMENT)
+    skippedRows: [],      // wiersze z pliku pominięte, z powodem z SKIP_WHY (CSV pominiętych)
     logs: [],
     sessionStart: null,
     lastActionTime: null,
@@ -3039,6 +3039,42 @@
   // MAIN TAGGING FLOW
   // ───────────────────────────────────────────
 
+  // Powody, z których wiersz pliku nie dostał zmiany: etykieta w raporcie końcowym (showFinalReport) i w CSV pominiętych.
+  // `done` — wiersz nie wymagał zmiany (wzmianka ma już ten tag albo sentyment), reszta to pominięcia.
+  const SKIP_WHY = {
+    PROJECT_SKIPPED:    { label: 'Projekt pominięty w całości' },
+    NO_TAG_IN_PROJECT:  { label: 'Brak tagu w projekcie' },
+    NO_MATCH:           { label: 'Brak dopasowania w Brand24' },
+    FUZZY_LONG_SKIPPED: { label: 'Adres tylko podobny do wzmianki w Brand24' },
+    TRUNCATED_URL:      { label: 'Adres obcięty w pliku' },
+    NO_MAPPING:         { label: 'Ocena bez tagu w mapowaniu' },
+    NO_ASSESSMENT:      { label: 'Wiersz bez oceny' },
+    CONFLICT_IGNORED:   { label: 'Wzmianka z innym tagiem (konflikt pominięty)' },
+    SENT_CONFLICT:      { label: 'Sprzeczny sentyment w pliku' },
+    SENT_FAILED:        { label: 'Błąd zmiany sentymentu' },
+    ALREADY_TAGGED:     { label: 'Wzmianka miała już ten tag', done: true },
+    SENT_UNCHANGED:     { label: 'Sentyment już zgodny', done: true },
+  };
+
+  // Liczy powód z SKIP_WHY do raportu końcowego; `project` — projekt, którego dotyczy powód (projekt pominięty, brak tagu).
+  // W `state.stats`, bo zapis przerwanej sesji przechowuje stats, więc wznowiony przebieg kończy się pełnym raportem.
+  function _statWhy(reason, n, project) {
+    if (!n) return;
+    var why = state.stats.why || (state.stats.why = {});
+    var w = why[reason] || (why[reason] = { n: 0, projects: {} });
+    w.n += n;
+    if (project) w.projects[project] = (w.projects[project] || 0) + n;
+  }
+  function _statN(reason) { var w = (state.stats.why || {})[reason]; return w ? w.n : 0; }
+
+  // Projekt z pliku pominięty w całości: jego wiersze liczą się w statystykach, w raporcie końcowym i w CSV pominiętych.
+  function _multiSkipProject(name, rows, why) {
+    state.stats.skipped += rows.length;
+    _statWhy('PROJECT_SKIPPED', rows.length, name + ' (' + why + ')');
+    rows.forEach(function(row) { state.skippedRows.push({ row: row, reason: 'PROJECT_SKIPPED', hint: name + ': ' + why }); });
+    updateStatsUI();
+  }
+
   async function runMultiProjectTagging(partition) {
     var colMap = state.file.colMap;
     var savedProjectId = state.projectId;
@@ -3072,12 +3108,14 @@
       if (fileState && fileState.st === 'panel') {
         addLog('⚠ ' + projectName + ': projekt panelu ' + _baseLabel(fileState.base) + ' — przebieg na ' + _baseLabel(_b24HostBase()) +
           ' go pomija. Jego wiersze trzeba wgrać osobnym plikiem na ' + _baseLabel(fileState.base) + '.', 'warn');
-        overallStats[projectId] = { name: projectName, tagged: 0, skipped: projectRows.length };
+        _multiSkipProject(projectName, projectRows, 'na panelu ' + _baseLabel(fileState.base));
+        overallStats[projectId] = { name: projectName, tagged: 0, skipped: projectRows.length, same: 0 };
         continue;
       }
       if (!projectData) {
         addLog('⚠ ' + projectName + ': przy wczytaniu pliku nie udało się pobrać jego tagów (brak dostępu) — pomijam. Projekty innych kont wymagają zalogowania do CMS; potem „Sprawdź ponownie” w sekcji „Projekty w pliku”.', 'warn');
-        overallStats[projectId] = { name: projectName, tagged: 0, skipped: projectRows.length };
+        _multiSkipProject(projectName, projectRows, 'brak dostępu');
+        overallStats[projectId] = { name: projectName, tagged: 0, skipped: projectRows.length, same: 0 };
         continue;
       }
       addLog('\n══ Projekt: ' + projectName + ' (' + projectId + ') — ' + projectRows.length + ' wierszy ══', 'info');
@@ -3090,25 +3128,27 @@
       var _freshTags = await _tagsFetchFreshAsync(projectId);
       if (!_freshTags) {
         addLog('⚠ ' + projectName + ': nie udało się pobrać tagów projektu z Brand24 — pomijam. Sprawdź dostęp (projekt innego konta wymaga sesji CMS) i uruchom ponownie.', 'warn');
-        overallStats[projectId] = { name: projectName, tagged: 0, skipped: projectRows.length };
+        _multiSkipProject(projectName, projectRows, 'nie udało się pobrać tagów');
+        overallStats[projectId] = { name: projectName, tagged: 0, skipped: projectRows.length, same: 0 };
         continue;
       }
       projectData.tagIds = _freshTags;
       addLog('↻ Tagi projektu odświeżone z Brand24 (' + Object.keys(_freshTags).length + ')', 'info', { tech: true, key: 'multi' });
       var projectTags = projectData.tagIds || {};
-      var projectMapping = {};
+      // Tag oceny w tym projekcie: główny albo pierwszy zastępczy, który projekt ma (_mapPick). Ocena bez żadnego trafia
+      // do `missingTags`, żeby runTagging pominął jej wiersze z powodem „brak tagu w projekcie”, nie „ocena bez tagu”.
+      var projectMapping = {}, missingTags = {};
       Object.entries(savedMapping).forEach(function(_entry) {
         var label = _entry[0], m = _entry[1];
-        if (m.type === 'delete' || m.type === 'sentiment') {
-          projectMapping[label] = m;
+        if (!_mapIsTag(m)) { projectMapping[label] = m; return; }
+        var pick = _mapPick(m, projectTags);
+        if (!pick) {
+          missingTags[label] = _mapNames(m);
+          addLog('⚠ ' + projectName + ': brak ' + _tagsMissingPl(missingTags[label]) + ' — wiersze z oceną „' + label + '” zostaną pominięte', 'warn');
           return;
         }
-        var tagId = projectTags[m.tagName];
-        if (tagId) {
-          projectMapping[label] = { tagId: tagId, tagName: m.tagName, type: m.type };
-        } else {
-          addLog('⚠ Tag "' + m.tagName + '" nieznany w projekcie ' + projectName + ' — ocena "' + label + '" zostanie pominięta', 'warn');
-        }
+        projectMapping[label] = { tagId: projectTags[pick], tagName: pick, type: m.type };
+        if (pick !== m.tagName) addLog('↳ ' + projectName + ': ocena „' + label + '” dostaje tag zastępczy „' + pick + '”', 'info');
       });
 
       // Swap state for this project
@@ -3133,16 +3173,21 @@
         : partition.dateTo;
       addLog('ℹ Zakres dat projektu ' + projectName + ': ' + projectDateFrom + ' → ' + projectDateTo, 'info', { tech: true, key: 'multi' });
 
-      var statsBefore = { tagged: state.stats.tagged, skipped: state.stats.skipped };
+      // „Bez zmian” (wzmianka miała już tag albo sentyment) stats.skipped liczy razem z pominięciami; raport projektu podaje
+      // je osobno, bo nie wymagają przejrzenia.
+      var sameNow = function() { return _statN('ALREADY_TAGGED') + _statN('SENT_UNCHANGED'); };
+      var statsBefore = { tagged: state.stats.tagged, skipped: state.stats.skipped, same: sameNow() };
       try {
-        await runTagging({ dateFrom: projectDateFrom, dateTo: projectDateTo, rows: projectRows }, true);
+        await runTagging({ dateFrom: projectDateFrom, dateTo: projectDateTo, rows: projectRows, missingTags: missingTags }, true);
       } catch (e) {
         addLog('✕ Błąd tagowania projektu ' + projectName + ': ' + e.message, 'error', _errOpts(e.message));
       }
+      var same = sameNow() - statsBefore.same;
       overallStats[projectId] = {
         name: projectName,
         tagged: state.stats.tagged - statsBefore.tagged,
-        skipped: state.stats.skipped - statsBefore.skipped,
+        skipped: state.stats.skipped - statsBefore.skipped - same,
+        same: same,
       };
     }
 
@@ -3156,7 +3201,8 @@
     var lines = ['\n═══ RAPORT MULTI-PROJEKT ═══'];
     Object.entries(overallStats).forEach(function(_e) {
       var pid = _e[0], s = _e[1];
-      lines.push((s.tagged > 0 ? '✓' : '○') + ' ' + s.name + ' (' + pid + '): ' + s.tagged + ' otagowano, ' + s.skipped + ' pominięto');
+      lines.push((s.tagged > 0 || !s.skipped ? '✓' : '○') + ' ' + s.name + ' (' + pid + '): ' + s.tagged + ' otagowano, ' + s.skipped + ' pominięto' +
+        (s.same ? ', ' + s.same + ' bez zmian' : ''));
     });
     lines.push('════════════════════════════');
     addLog(lines.join('\n'), 'info');
@@ -3199,6 +3245,8 @@
     }
 
     const { dateFrom, dateTo, rows } = partition;
+    // Plik wielu projektów: oceny, których tagów ten projekt nie ma (runMultiProjectTagging) → nazwy tych tagów.
+    const missingTags = partition.missingTags || {};
 
     // Build URL map — overwrite/multitag/delete wymaga pełnej mapy (nie tylko Untagged)
     const _hasDeleteMappings = Object.values(state.mapping).some(function(m) { return m.type === 'delete'; });
@@ -3351,7 +3399,10 @@
       assessments.forEach(assessment => {
         const mapping = state.mapping[assessment];
         if (!mapping) {
-          skipped.push({ row, reason: 'NO_MAPPING', assessment });
+          const noTag = missingTags[assessment];
+          skipped.push(noTag
+            ? { row, reason: 'NO_TAG_IN_PROJECT', assessment, hint: _pnResolve(state.projectId) + ': brak ' + _tagsMissingPl(noTag) }
+            : { row, reason: 'NO_MAPPING', assessment });
           matchDiag.noMapping++;
           return;
         }
@@ -3493,8 +3544,10 @@
         }
         if (!batches[conflict.mapping.tagId]) batches[conflict.mapping.tagId] = [];
         batches[conflict.mapping.tagId].push(conflict.entry.id);
+      } else {
+        // „Zachowaj” w oknie konfliktu: wiersz liczy się jak konflikt pominięty w trybie „pomijaj” (raport końcowy, CSV).
+        skipped.push({ row: conflict.row, reason: 'CONFLICT_IGNORED', existingTags: conflict.entry.existingTags });
       }
-      // 'skip' - do nothing
     }
 
     // Log skipped
@@ -3674,9 +3727,15 @@
       addLog(`${_sentFail === 0 ? '✓' : '⚠'} Zmieniono sentyment: ${_sentOk}/${_sentJobs.length}${_sentFail > 0 ? ` (${_sentFail} błędów)` : ''}`, _sentFail === 0 ? 'success' : 'warn');
     }
 
-    // Persystuj pominięte wiersze do state (NO_MATCH, TRUNCATED_URL, NO_MAPPING, NO_ASSESSMENT)
-    const _exportableReasons = new Set(['NO_MATCH', 'TRUNCATED_URL', 'NO_MAPPING', 'NO_ASSESSMENT', 'FUZZY_LONG_SKIPPED']);
+    // Wiersze do CSV pominiętych: te, które wymagają przejrzenia (bez „już otagowane”).
+    const _exportableReasons = new Set(['NO_MATCH', 'TRUNCATED_URL', 'NO_MAPPING', 'NO_ASSESSMENT', 'FUZZY_LONG_SKIPPED', 'NO_TAG_IN_PROJECT', 'CONFLICT_IGNORED']);
     state.skippedRows.push(...skipped.filter(s => _exportableReasons.has(s.reason)));
+    // Rozbicie do raportu końcowego. Brak tagu dotyczy projektu, więc w pliku wielu projektów raport podaje jego nazwę.
+    const _projName = _isSubCall ? _pnResolve(state.projectId) : null;
+    skipped.forEach(s => _statWhy(s.reason, 1, s.reason === 'NO_TAG_IN_PROJECT' ? _projName : null));
+    _statWhy('SENT_UNCHANGED', matchDiag.sentimentUnchanged);
+    _statWhy('SENT_CONFLICT', sentimentConflicts.size);
+    _statWhy('SENT_FAILED', _sentFail);
 
     state.stats.skipped += skipped.length + totalTagFailed + _sentFail + matchDiag.sentimentUnchanged + sentimentConflicts.size;
 
@@ -4603,11 +4662,12 @@
       els.tagged.textContent = state.stats.tagged;
       els.tagged.previousElementSibling.textContent = state.testRunMode ? 'Do otagowania' : 'Otagowano';
     }
-    if (els.skipped) els.skipped.textContent = state.stats.skipped + state.stats.noMatch;
+    // stats.skipped obejmuje już wiersze bez dopasowania (runTagging liczy je też w stats.noMatch), więc bez dodawania noMatch.
+    if (els.skipped) els.skipped.textContent = state.stats.skipped;
 
     // Remaining = total file rows - tagged - skipped
     const total = state.file?.rows?.length || 0;
-    const done = state.stats.tagged + state.stats.skipped + state.stats.noMatch;
+    const done = state.stats.tagged + state.stats.skipped;
     if (els.remaining) els.remaining.textContent = Math.max(0, total - done);
     _panelPill();
   }
@@ -4744,24 +4804,30 @@
     const skippedRows = state.skippedRows || [];
     const kpi = (label, val, cls) => `<div class="b-kpi"><span class="b-kpi__label">${label}</span><span class="b-kpi__val${cls ? ' ' + cls : ''}">${val}</span></div>`;
 
+    // Rozbicie według powodów z SKIP_WHY (_statWhy w przebiegu): pominięcia do przejrzenia i osobno wiersze bez zmian.
+    // Przy powodach dotyczących projektu (projekt pominięty, brak tagu w projekcie) lista projektów. KPI „Pominięto”
+    // i „Bez zmian” to sumy tych list, więc liczby w oknie się zgadzają.
+    const why = state.stats.why || {};
+    const whyRows = (done) => Object.keys(SKIP_WHY).filter(r => !!SKIP_WHY[r].done === done && why[r] && why[r].n).map(r => {
+      const projects = Object.keys(why[r].projects).map(p => p + (Object.keys(why[r].projects).length > 1 ? ' · ' + why[r].projects[p] : ''));
+      return { n: why[r].n, html: `<div class="b-rep-why__row"><span>${_escHtml(SKIP_WHY[r].label)}</span><b>${why[r].n}</b>` +
+        (projects.length ? `<span class="b-rep-why__proj">${_escHtml(projects.join(', '))}</span>` : '') + '</div>' };
+    });
+    const skipList = whyRows(false), sameList = whyRows(true);
+    const sameTotal = sameList.reduce((n, r) => n + r.n, 0);
+    // Statystyki bez `why` (sesja zapisana przez wersję sprzed rozbicia powodów i wznowiona po aktualizacji): sam licznik.
+    const skippedTotal = state.stats.why ? skipList.reduce((n, r) => n + r.n, 0) : state.stats.skipped;
     let skippedHtml = '';
-    if (skippedRows.length > 0) {
-      const byReason = {};
-      skippedRows.forEach(s => { byReason[s.reason] = (byReason[s.reason] || 0) + 1; });
-      const reasonLabels = {
-        'NO_MATCH':      'brak adresu w Brand24',
-        'TRUNCATED_URL': 'adres obcięty',
-        'NO_MAPPING':    'ocena bez tagu',
-        'NO_ASSESSMENT': 'brak oceny',
-      };
+    if (skipList.length || sameList.length) {
       skippedHtml = `
         <section class="b-inset b-stack b-stack--sm">
-          <div class="b-row b-row--wrap">
-            <span class="b-strong">Pominięte wiersze z pliku</span><span class="b-sp"></span>
-            <button type="button" class="b-btn b-btn--quiet b-btn--sm" data-rep="skipped">${_icon('download')}CSV z powodami</button>
+          ${skipList.length ? `<div class="b-row b-row--wrap">
+            <span class="b-strong">Pominięte</span><span class="b-sp"></span>
+            ${skippedRows.length ? `<button type="button" class="b-btn b-btn--quiet b-btn--sm" data-rep="skipped">${_icon('download')}CSV z powodami</button>` : ''}
           </div>
-          <div class="b-row b-row--wrap">${Object.entries(byReason).map(([r, n]) => `<span class="b-chip b-chip--sm">${_escHtml(reasonLabels[r] || r)} <b>${n}</b></span>`).join('')}</div>
-          <div class="b-hint">Plik CSV zawiera oryginalne wiersze i kolumny: powód pominięcia, szczegóły, adres po normalizacji.</div>
+          <div class="b-rep-why">${skipList.map(r => r.html).join('')}</div>
+          ${skippedRows.length ? '<div class="b-hint">Plik CSV zawiera oryginalne wiersze i kolumny: powód pominięcia, szczegóły, adres po normalizacji.</div>' : ''}` : ''}
+          ${sameList.length ? `<span class="b-strong">Bez zmian</span><div class="b-rep-why">${sameList.map(r => r.html).join('')}</div>` : ''}
         </section>`;
     }
 
@@ -4799,9 +4865,8 @@
         ${state.testRunMode ? `<div class="b-banner b-banner--info">${_icon('info')}<div>Test Run: tagi, usunięcia i sentyment nie trafiły do Brand24. Liczby pokazują, co zapisałby przebieg właściwy.</div></div>` : ''}
         <div class="b-kpis">
           ${kpi(state.testRunMode ? 'Do otagowania' : 'Otagowano', state.stats.tagged, 'b-ok')}
-          ${kpi('Pominięto', state.stats.skipped, state.stats.skipped ? 'b-warn' : '')}
-          ${kpi('Brak dopasowania', state.stats.noMatch, '')}
-          ${kpi('Konflikty', state.stats.conflicts, '')}
+          ${sameTotal ? kpi('Bez zmian', sameTotal, '') : ''}
+          ${kpi('Pominięto', skippedTotal, skippedTotal ? 'b-warn' : '')}
           ${failed.length ? kpi('Błędy', failed.length, 'b-danger') : ''}
           ${kpi('Czas', Math.floor(elapsed / 60) + ' min ' + (elapsed % 60) + ' s', '')}
         </div>
@@ -4909,21 +4974,15 @@
     skipped.forEach(s => { if (s.row) Object.keys(s.row).forEach(k => allCols.add(k)); });
     const origCols = [...allCols];
 
-    const reasonLabels = {
-      'NO_MATCH':      'Brak dopasowania URL w Brand24',
-      'TRUNCATED_URL': 'URL obcięty (Excel/XLSX)',
-      'NO_MAPPING':    'Ocena bez przypisanego tagu',
-      'NO_ASSESSMENT': 'Brak oceny w wierszu',
-    };
-
     const headers = [...origCols, 'powód_pominięcia', 'szczegóły', 'url_znormalizowany'];
     const rows = skipped.map(s => {
       const rowData = origCols.map(c => s.row ? (s.row[c] != null ? s.row[c] : '') : '');
-      const reason = reasonLabels[s.reason] || s.reason;
+      const reason = (SKIP_WHY[s.reason] || {}).label || s.reason;
       let detail = s.hint || '';
       if (!detail) {
         if (s.reason === 'NO_MAPPING')    detail = `Ocena "${s.assessment}" nie ma przypisanego tagu — sprawdź mapowanie w wtyczce`;
         if (s.reason === 'NO_ASSESSMENT') detail = 'Wiersz nie ma wartości w kolumnie oceny — uzupełnij lub usuń wiersz';
+        if (s.reason === 'CONFLICT_IGNORED') detail = 'Wzmianka ma tag: ' + (s.existingTags || []).map(t => t.title).join(', ');
       }
       const normUrl = s.normUrl || (s.url ? normalizeUrl(s.url) : '');
       return [...rowData, reason, detail, normUrl];
@@ -5620,6 +5679,11 @@
       }
       .b-kpi__label { font-size: max(12px, 0.923em); color: var(--c-text2); white-space: nowrap; }
       .b-kpi__val { font-size: 1.231em; font-weight: 600; white-space: nowrap; }
+      /* Powody w raporcie końcowym: opis i liczba w jednej linii, pod nimi projekty, których powód dotyczy. */
+      .b-rep-why { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 1em; row-gap: 0.35em; }
+      .b-rep-why__row { display: contents; }
+      .b-rep-why__row > b { text-align: right; }
+      .b-rep-why__proj { grid-column: 1 / -1; margin-top: -0.2em; font-size: max(12px, 0.923em); color: var(--c-text3); }
       button.b-kpi { border: 0; text-align: left; cursor: pointer; font: inherit; color: inherit; }
       button.b-kpi:hover { background-image: linear-gradient(var(--c-hover), var(--c-hover)); }
       button.b-kpi:focus-visible { outline: 2px solid var(--c-focus); outline-offset: 2px; }
@@ -5949,20 +6013,51 @@
         .b-file:not(.is-empty) > .b-file__text > .b-ell { white-space: normal; }
       }
 
-      /* Mapowanie ocen: ocena z liczbą nad polami tagu i rodzaju; od 30em szerokości listy w jednym wierszu. */
+      /* Mapowanie ocen pliku (.b-maps): w wąskiej liście ocena z liczbą i rodzaj w jednej linii, a pole tagu na całą
+         szerokość pod nimi, bo nazwy tagów bywają długie i różnią się końcówką (literówka w części kont). Od 30em szerokości
+         listy ocena, tag i rodzaj w jednym wierszu. .b-map--pair to wiersz mapowania AI Tag poza .b-maps. */
       .b-maps { container: b-maps / inline-size; }
       .b-map { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 0.25em 0.5em; align-items: center; }
-      .b-map > .b-map__label { grid-column: 1 / -1; }
-      .b-map:has(> select[hidden]) > .b24t-tag-select { grid-column: span 2; }
       .b-map--pair { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
-      .b-map--pair > .b-map__label { grid-column: auto; }
+      .b-maps > .b-map { grid-template-columns: minmax(0, 1fr) auto; }
+      .b-maps > .b-map > .b-map__label { grid-area: 1 / 1; }
+      .b-maps > .b-map > select { grid-area: 1 / 2; }
       .b-map__label { display: flex; align-items: baseline; gap: 0.4em; min-width: 0; }
       .b-map__name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
       .b-map__count { font-size: max(12px, 0.923em); color: var(--c-text3); flex-shrink: 0; }
+      .b-map__tag { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: flex-start; gap: 0.25em; min-width: 0; }
+      .b-map__tag > .b-tcombo, .b-map__alt { align-self: stretch; }
+      .b-map__alt { display: flex; align-items: flex-start; gap: 0.25em; min-width: 0; }
+      .b-map__alt > .b-tcombo { flex: 1 1 auto; }
+      .b-map__or { flex-shrink: 0; line-height: 2em; font-size: max(12px, 0.923em); color: var(--c-text3); }
+      /* Ocena z działaniem (usunięcie, sentyment) nie nadaje tagu, więc tagi zastępcze nie mają znaczenia. */
+      .b-map:has(> select[hidden]) :is(.b-map__alt, [data-alt-add]) { display: none; }
       @container b-maps (width >= 30em) {
-        .b-map { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr); }
-        .b-map > .b-map__label { grid-column: auto; }
+        .b-maps > .b-map { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr); align-items: start; }
+        .b-maps > .b-map > .b-map__label { min-height: 2em; align-items: center; }
+        .b-maps > .b-map > .b-map__tag { grid-area: 1 / 2; }
+        .b-maps > .b-map > select { grid-area: 1 / 3; }
+        .b-maps > .b-map:has(> select[hidden]) > .b-map__tag { grid-column: 2 / -1; }
       }
+      /* Pole tagu z wyszukiwaniem nad ukrytym <select> (_tagCombo); lista pod polem jak wybór projektu w Niestandardowe. */
+      .b-tcombo { position: relative; display: flex; flex-direction: column; gap: 0.25em; min-width: 0; }
+      .b-tcombo > input { width: 100%; }
+      .b-tcombo:has(> .b-tcombo__n:not([hidden])) > input { padding-right: 5.5em; }
+      .b-tcombo__n { position: absolute; top: 0; right: 0.6em; height: 2em; display: flex; align-items: center; pointer-events: none;
+        font-size: max(12px, 0.923em); color: var(--c-text3); }
+      .b-tcombo__opt { display: flex; gap: 0.5em; }
+      .b-tcombo__opt > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+      .b-tcombo__of { margin-left: auto; flex-shrink: 0; color: var(--c-text3); font-weight: 400; }
+      .b-tcombo__grp { padding: 0.4em 0.6em 0.15em; font-size: max(12px, 0.923em); color: var(--c-text3); }
+      /* Pokrycie tagów w pliku wielu projektów: projekt w wierszu, grupa tagów oceny w kolumnie o stałej szerokości. */
+      .b-cov { display: grid; column-gap: 0.75em; row-gap: 0.35em; align-items: center; min-width: 0; }
+      .b-cov__p { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .b-cov__h { font-size: max(12px, 0.923em); color: var(--c-text3); text-align: center; }
+      .b-cov__c { display: flex; align-items: center; justify-content: center; gap: 0.1em; }
+      .b-cov__c > svg { width: 1.1em; height: 1.1em; }
+      .b-cov__v { font-size: max(12px, 0.923em); color: var(--c-text2); }
+      .b-cov__key { display: flex; gap: 0.5em; font-size: max(12px, 0.923em); color: var(--c-text2); min-width: 0; }
+      .b-cov__key > b { flex-shrink: 0; min-width: 1em; color: var(--c-text); }
 
       /* Karta zwijana: nagłówek to przycisk z chevronem obróconym przy zwiniętej treści. */
       .b-fold {
@@ -10535,6 +10630,9 @@
           if (tag?.id) {
             state.tags[tag.title] = tag.id;
             renderMappingRows();
+            // Plik wielu projektów: lista tagów to tagi projektów z pliku, więc nowy tag pojawi się po ich ponownym
+            // sprawdzeniu, i tylko w tych, które go mają (tagi należą do konta).
+            if (state.file && state.file.colMap && state.file.colMap.projectId) renderMultiProjectWidget(state.file.rows, state.file.colMap);
             addLog(`✓ Utworzono tag: ${tag.title} (ID: ${tag.id})`, 'success');
             Toast.show('Utworzono tag ' + tag.title, 'ok');
           }
@@ -10655,6 +10753,8 @@
         addLog(`💡 Znaleziono pasujący schemat z ${savedSchema.usedAt}. Sprawdź mapowanie!`, 'warn');
       }
 
+      // Nowy plik: lista tagów do czasu sprawdzenia jego projektów bierze tagi projektu panelu, nie projektów poprzedniego pliku.
+      _fileProj = {};
       renderMappingRows(meta.assessments, savedSchema);
       renderAssessmentColBar(rows, colMap);
       updateStatsUI();
@@ -10828,6 +10928,8 @@
     var projectIds = Object.keys(projectCounts);
     el.hidden = false;
     var session = null;
+    // Stan z poprzedniego sprawdzenia (albo poprzedniego pliku) nie może zasilać listy tagów ani pokrycia w trakcie nowego.
+    _fileProj = {};
     if (projectIds.length) {
       el.dataset.blocked = '1';
       el.innerHTML = _html('<section class="b-card"><div class="b-row b-small b-text2"><span class="b-spin" aria-hidden="true"></span>' +
@@ -10894,112 +10996,174 @@
     // Logowanie do CMS w innej karcie zmienia odpowiedź od razu, więc ponowne sprawdzenie nie bierze sesji z pamięci.
     if (recheck) recheck.addEventListener('click', function() { _cmsDeny.probedAt = 0; renderMultiProjectWidget(rows, colMap); });
     _updateStartBtnBlock();
-    _updateTagCoverage();
+    // Lista tagów w mapowaniu bierze się z tagów projektów z pliku, więc rysuje się od nowa po każdym sprawdzeniu (z
+    // zachowaniem wyboru); pokrycie tagów liczy się przy tym w updateMappingState.
+    renderMappingRows();
   }
 
-  // Wiersze pliku według projektu i tagu docelowego: pid → { nazwa tagu → liczba wierszy }. Ocena wiersza to etykiety
-  // rozdzielone „|”, jak przy budowie partii przebiegu; usuwanie i sentyment nie potrzebują tagu w projekcie.
-  function _fileTagRows() {
-    var colMap = state.file.colMap, out = {};
+  // Tagi docelowe oceny w kolejności pierwszeństwa: główny, potem zastępcze. Zastępcze są tylko w pliku wielu projektów:
+  // tagi należą do konta, a ta sama rzecz bywa w kontach zapisana różnie (np. literówka w nazwie tagu w części kont).
+  function _mapNames(m) { return [m.tagName].concat(m.alts || []); }
+
+  // Pierwsza z nazw `names`, którą ma projekt o tagach `tagIds` (nazwa → ID), albo null. Projekt z kilkoma dostaje jedną,
+  // bo tagi zastępcze to inne nazwy tej samej rzeczy, nie osobne tagi.
+  function _tagPick(names, tagIds) {
+    for (var i = 0; i < names.length; i++) if (tagIds[names[i]]) return names[i];
+    return null;
+  }
+  function _mapPick(m, tagIds) { return _tagPick(_mapNames(m), tagIds); }
+
+  // Ocena nadaje tag (nie usuwa wzmianki i nie zmienia sentymentu).
+  function _mapIsTag(m) { return !!m && !!m.tagName && m.type !== 'delete' && m.type !== 'sentiment'; }
+
+  // „tagu „A”” albo „tagów „A” ani „B””: brakujące tagi oceny w komunikatach o projekcie.
+  function _tagsMissingPl(names) {
+    var q = names.map(function(n) { return '„' + n + '”'; });
+    return q.length === 1 ? 'tagu ' + q[0] : 'tagów ' + q.slice(0, -1).join(', ') + ' ani ' + q[q.length - 1];
+  }
+
+  // Wiersze pliku według projektu: `order` — projekty w kolejności z pliku, `rows` — pid → liczba wierszy, `by` — pid →
+  // { OCENA → liczba wierszy }. Ocena wiersza to etykiety rozdzielone „|”, jak przy budowie partii przebiegu.
+  function _fileLabelRows() {
+    var colMap = state.file.colMap, out = { order: [], rows: {}, by: {} };
     (state.file.rows || []).forEach(function(row) {
       var pid = (row[colMap.projectId] || '').toString().trim();
       if (!pid) return;
+      if (!out.by[pid]) { out.by[pid] = {}; out.rows[pid] = 0; out.order.push(pid); }
+      out.rows[pid]++;
       ((row[colMap.assessment] || '') + '').trim().toUpperCase().split('|').forEach(function(label) {
-        var m = state.mapping[label.trim()];
-        if (!m || !m.tagName || m.tagName === '__DELETE__' || m.type === 'delete' || m.type === 'sentiment') return;
-        var p = out[pid] = out[pid] || {};
-        p[m.tagName] = (p[m.tagName] || 0) + 1;
+        label = label.trim();
+        if (label) out.by[pid][label] = (out.by[pid][label] || 0) + 1;
       });
     });
     return out;
   }
 
-  // Co przebieg pominie: wiersze projektów bez tagów i wiersze z tagiem, którego projekt nie ma.
+  // Tagi projektu z pliku pobrane przy jego sprawdzeniu (nazwa → ID) albo null, gdy sprawdzenie nie dało tagów.
+  function _fileProjTags(saved, pid) {
+    return (_fileProj[pid] || {}).st === 'ok' && saved[pid] ? saved[pid].tagIds || {} : null;
+  }
+
+  // Nazwy tagów projektów z pliku z pobranymi tagami: { counts: nazwa → w ilu projektach, total: ile projektów }. null
+  // w pliku jednego projektu, przed sprawdzeniem projektów i gdy żaden projekt nie ma pobranych tagów.
+  function _fileTagNames() {
+    if (!state.file || !state.file.colMap || !state.file.colMap.projectId) return null;
+    var saved = lsGet(LS.PROJECTS, {}), counts = {}, total = 0;
+    _fileLabelRows().order.forEach(function(pid) {
+      var tags = _fileProjTags(saved, pid);
+      if (!tags) return;
+      total++;
+      Object.keys(tags).forEach(function(name) { counts[name] = (counts[name] || 0) + 1; });
+    });
+    return total ? { counts: counts, total: total } : null;
+  }
+
+  // Oceny z tagiem, które przebieg pominie w części projektów: OCENA → nazwy projektów z pobranymi tagami, z wierszami
+  // tej oceny i bez żadnego z jej tagów.
+  function _fileLabelGaps() {
+    var out = {};
+    if (!state.file || !state.file.colMap || !state.file.colMap.projectId) return out;
+    var saved = lsGet(LS.PROJECTS, {}), lr = _fileLabelRows();
+    Object.keys(state.mapping).forEach(function(label) {
+      var m = state.mapping[label];
+      if (!_mapIsTag(m)) return;
+      lr.order.forEach(function(pid) {
+        var tags = _fileProjTags(saved, pid);
+        if (tags && lr.by[pid][label] && !_mapPick(m, tags)) (out[label] = out[label] || []).push(_pnResolve(pid));
+      });
+    });
+    return out;
+  }
+
+  // Grupy tagów z mapowania: oceny z tymi samymi tagami (główny i zastępcze) to jedna grupa, czyli jedna kolumna pokrycia.
+  // → { groups: [{ key, names }], need: pid → { key → liczba wierszy }, lr: _fileLabelRows() }.
+  function _fileTagGroups() {
+    var lr = _fileLabelRows(), groups = [], seen = {}, need = {};
+    Object.keys(state.mapping).forEach(function(label) {
+      var m = state.mapping[label];
+      if (!_mapIsTag(m)) return;
+      var names = _mapNames(m), key = names.join('\n');
+      if (!seen[key]) { seen[key] = true; groups.push({ key: key, names: names }); }
+      lr.order.forEach(function(pid) {
+        var n = lr.by[pid][label];
+        if (!n) return;
+        var p = need[pid] = need[pid] || {};
+        p[key] = (p[key] || 0) + n;
+      });
+    });
+    return { groups: groups, need: need, lr: lr };
+  }
+
+  // Co przebieg pominie: wiersze projektów bez tagów i wiersze z tagami, których projekt nie ma.
   // → [{ name, why, n, panel }] w kolejności projektów z pliku; `panel` to baza drugiego panelu albo null. Projekt bez
   // wyniku sprawdzenia (np. plik z zapisanej sesji) nie trafia na listę: o nim nic nie wiadomo, a przebieg i tak pobiera
   // tagi od nowa.
   function _fileSkipPlan() {
     var colMap = state.file && state.file.colMap;
     if (!colMap || !colMap.projectId) return [];
-    var saved = lsGet(LS.PROJECTS, {}), byTag = _fileTagRows(), counts = {}, order = [], out = [];
-    (state.file.rows || []).forEach(function(row) {
-      var pid = (row[colMap.projectId] || '').toString().trim();
-      if (!pid) return;
-      if (!counts[pid]) { counts[pid] = 0; order.push(pid); }
-      counts[pid]++;
-    });
-    order.forEach(function(pid) {
+    var saved = lsGet(LS.PROJECTS, {}), tg = _fileTagGroups(), out = [];
+    tg.lr.order.forEach(function(pid) {
       var s = _fileProj[pid];
       if (!s) return;
       var name = _pnResolve(pid);
-      if (s.st !== 'ok') { out.push({ name: name, why: _fileProjWhy(s), n: counts[pid], panel: s.st === 'panel' ? s.base : null }); return; }
-      var tagIds = (saved[pid] || {}).tagIds || {};
-      Object.keys(byTag[pid] || {}).forEach(function(tag) {
-        if (!tagIds[tag]) out.push({ name: name, why: 'brak tagu „' + tag + '”', n: byTag[pid][tag] });
+      if (s.st !== 'ok') { out.push({ name: name, why: _fileProjWhy(s), n: tg.lr.rows[pid], panel: s.st === 'panel' ? s.base : null }); return; }
+      var tags = _fileProjTags(saved, pid) || {};
+      tg.groups.forEach(function(g) {
+        var n = (tg.need[pid] || {})[g.key];
+        if (n && !_tagPick(g.names, tags)) out.push({ name: name, why: 'brak ' + _tagsMissingPl(g.names), n: n });
       });
     });
     return out;
   }
 
-  // Pokrycie tagów w projektach z dostępem: ✓ tag jest w projekcie; ✕ brak tagu, a plik ma dla tego projektu wiersze
-  // z tym tagiem (przebieg je pominie); kreska: brak tagu, ale w tym projekcie nie jest potrzebny.
+  // Pokrycie tagów w projektach z pobranymi tagami: wiersz to projekt, kolumna to grupa tagów oceny. ✓ projekt ma tag
+  // grupy; przy grupie z tagami zastępczymi litera mówi, który dostanie (a — główny, b, c… — zastępcze w kolejności
+  // pierwszeństwa). ✕ nie ma żadnego, a plik ma dla niego wiersze tej grupy (przebieg je pominie). Kreska: nie ma, ale
+  // w tym projekcie nie jest potrzebny.
   function _updateTagCoverage() {
-    var coverageEl = _$('b24t-tag-coverage');
-    if (!coverageEl) return;
+    var el = _$('b24t-tag-coverage');
+    if (!el) return;
     var colMap = state.file && state.file.colMap;
-    if (!colMap || !colMap.projectId) { coverageEl.textContent = ''; return; }
+    if (!colMap || !colMap.projectId) { el.textContent = ''; return; }
+    var tg = _fileTagGroups(), saved = lsGet(LS.PROJECTS, {});
+    var pids = tg.lr.order.filter(function(pid) { return _fileProjTags(saved, pid); });
+    if (!tg.groups.length || !pids.length) { el.textContent = ''; return; }
 
-    var mapping = state.mapping || {};
-    var tagEntries = Object.values(mapping).filter(function(m) { return m.tagName && m.tagName !== '__DELETE__' && m.type !== 'sentiment'; });
-    if (!tagEntries.length) { coverageEl.textContent = ''; return; }
-
-    // Deduplicate tag names
-    var tagNames = [];
-    var seenTags = {};
-    tagEntries.forEach(function(m) {
-      if (!seenTags[m.tagName]) { seenTags[m.tagName] = true; tagNames.push(m.tagName); }
-    });
-
-    var savedProjects = lsGet(LS.PROJECTS, {});
-    var byTag = _fileTagRows();
-
-    // Unique project IDs from file rows, in order of appearance
-    var projectIds = [];
-    var seenPids = {};
-    (state.file.rows || []).forEach(function(row) {
-      var pid = (row[colMap.projectId] || '').toString().trim();
-      if (pid && !seenPids[pid]) { seenPids[pid] = true; projectIds.push(pid); }
-    });
-    projectIds = projectIds.filter(function(pid) { return (_fileProj[pid] || {}).st === 'ok' && savedProjects[pid]; });
-    if (!projectIds.length) { coverageEl.textContent = ''; return; }
-
-    var singleTag = tagNames.length === 1;
-    var missing = [];
+    var single = tg.groups.length === 1, missing = [];
+    var letter = function(j) { return String.fromCharCode(97 + j); };
+    var rowsPl = function(n) { return _plPl(n, 'wiersz', 'wiersze', 'wierszy'); };
     var html = '<hr class="b-sep" style="margin:0.25em 0 0.75em"><div class="b-stack b-stack--sm">' +
-      '<div class="b-label">Pokrycie tagów' + (singleTag ? ': ' + _escHtml(tagNames[0]) : '') + '</div><div class="b-list">';
-    projectIds.forEach(function(pid) {
-      var tagIds = savedProjects[pid].tagIds || {};
-      var need = byTag[pid] || {};
-      var checks = tagNames.map(function(name, i) {
-        var has = !!tagIds[name], n = need[name] || 0;
-        if (!has && n) missing.push(_pnResolve(pid) + ': „' + name + '” (' + _plPl(n, 'wiersz', 'wiersze', 'wierszy') + ')');
-        var tip = name + (has ? '' : n ? ': brak w projekcie, przebieg pominie ' + _plPl(n, 'wiersz', 'wiersze', 'wierszy')
-          : ': brak w projekcie, plik nie ma tu wierszy z tym tagiem');
-        var mark = has ? _icon('check', 'b-ok') : n ? _icon('x', 'b-danger') : '<span class="b-muted" aria-hidden="true">–</span>';
-        return '<span class="b-row" style="gap:0.15em" data-tip="' + _escHtml(tip) + '">' + mark +
-          (singleTag ? '' : '<span class="b-muted">' + (i + 1) + '</span>') + '</span>';
-      }).join('');
-      html += '<div class="b-list__row"><span class="b-ell b-text2" style="flex:1 1 auto">' + _escHtml(_pnResolve(pid)) + '</span>' +
-        '<span class="b-row" style="gap:0.5em">' + checks + '</span></div>';
+      '<div class="b-label">Pokrycie tagów' + (single && tg.groups[0].names.length === 1 ? ': ' + _escHtml(tg.groups[0].names[0]) : '') + '</div>' +
+      '<div class="b-cov" style="grid-template-columns:minmax(0, 1fr) repeat(' + tg.groups.length + ', minmax(2em, max-content))">';
+    if (!single) html += '<span></span>' + tg.groups.map(function(g, i) { return '<span class="b-cov__h">' + (i + 1) + '</span>'; }).join('');
+    pids.forEach(function(pid) {
+      var tags = _fileProjTags(saved, pid), need = tg.need[pid] || {}, pname = _pnResolve(pid);
+      html += '<span class="b-cov__p">' + _escHtml(pname) + '</span>';
+      tg.groups.forEach(function(g) {
+        var pick = _tagPick(g.names, tags), n = need[g.key] || 0, j = g.names.indexOf(pick), tip, mark;
+        if (pick) {
+          tip = pick + (j > 0 ? ' (tag zastępczy)' : '');
+          mark = _icon('check', 'b-ok') + (g.names.length > 1 ? '<span class="b-cov__v">' + letter(j) + '</span>' : '');
+        } else if (n) {
+          missing.push(pname + ': brak ' + _tagsMissingPl(g.names) + ' (' + rowsPl(n) + ')');
+          tip = 'Brak ' + _tagsMissingPl(g.names) + ', przebieg pominie ' + rowsPl(n);
+          mark = _icon('x', 'b-danger');
+        } else {
+          tip = 'Brak ' + _tagsMissingPl(g.names) + ', plik nie ma tu wierszy z tym tagiem';
+          mark = '<span class="b-muted" aria-hidden="true">–</span>';
+        }
+        html += '<span class="b-cov__c" data-tip="' + _escHtml(tip) + '">' + mark + '</span>';
+      });
     });
     html += '</div>';
-    if (!singleTag) {
-      html += '<div class="b-hint">' + tagNames.map(function(name, i) { return (i + 1) + ': ' + _escHtml(name); }).join(' · ') + '</div>';
-    }
-    if (missing.length) {
-      html += '<div class="b-hint b-danger">Brak tagu w projekcie, wiersze do pominięcia: ' + _escHtml(missing.join('; ')) + '.</div>';
-    }
-    coverageEl.innerHTML = _html(html + '</div>');
+    // Legenda: numer kolumny i tagi grupy, a przy grupie z zastępczymi litera przed każdą nazwą.
+    var names = function(g) {
+      return g.names.length === 1 ? _escHtml(g.names[0]) : g.names.map(function(n, j) { return letter(j) + ' ' + _escHtml(n); }).join(' · ');
+    };
+    if (!single) html += tg.groups.map(function(g, i) { return '<div class="b-cov__key"><b>' + (i + 1) + '</b><span>' + names(g) + '</span></div>'; }).join('');
+    else if (tg.groups[0].names.length > 1) html += '<div class="b-cov__key"><span>' + names(tg.groups[0]) + '</span></div>';
+    if (missing.length) html += '<div class="b-hint b-danger">Wiersze do pominięcia: ' + _escHtml(missing.join('; ')) + '.</div>';
+    el.innerHTML = _html(html + '</div>');
   }
 
   // Parser XLSX z CDN wykonuje się w zasięgu wtyczki (new Function), więc podmieniony plik dostałby jej uprawnienia,
@@ -11134,12 +11298,126 @@
   // ───────────────────────────────────────────
 
   // Akcje „zmień sentyment” w mapowaniu ocen. Wartość w selekcie to znacznik (jak __DELETE__),
-  // nie ID tagu, więc updateMappingState rozpoznaje go przed parseInt.
+  // nie nazwa tagu, więc updateMappingState rozpoznaje go przed tagiem.
   const SENTIMENT_ACTIONS = [
     { value: '__SENTIMENT_NEGATIVE__', sentiment: 'negative', name: 'negatywny' },
     { value: '__SENTIMENT_NEUTRAL__',  sentiment: 'neutral',  name: 'neutralny' },
     { value: '__SENTIMENT_POSITIVE__', sentiment: 'positive', name: 'pozytywny' },
   ];
+
+  // Pole z wyszukiwaniem nad ukrytym <select> mapowania, jak wybór projektu w Niestandardowe (_wireProjectCombo).
+  // <select> zostaje źródłem prawdy: czyta go updateMappingState, a scenariusze harnessa ustawiają jego wartość i wysyłają
+  // `change`. Pole tylko ustawia <select>. Opcja z `data-n` pokazuje, w ilu z `data-of` projektów z pliku jest tag;
+  // opcje w <optgroup> dostają nagłówek grupy.
+  let _tagComboSeq = 0;
+  function _tagCombo(sel, placeholder) {
+    const box = document.createElement('div');
+    const listId = 'b24t-tcombo-' + (++_tagComboSeq);
+    box.className = 'b-tcombo';
+    box.innerHTML = _html('<input type="text" class="b-input b-input--sm" role="combobox" aria-expanded="false" aria-autocomplete="list" ' +
+      'aria-controls="' + listId + '" autocomplete="off" spellcheck="false" placeholder="' + _escHtml(placeholder) + '" aria-label="' +
+      _escHtml(sel.getAttribute('aria-label') || placeholder) + '"><span class="b-tcombo__n" hidden></span>' +
+      '<div class="b24t-proj-list b-scroll" id="' + listId + '" role="listbox" hidden></div>');
+    const input = box.querySelector('input'), list = box.querySelector('[role="listbox"]');
+    let typing = false;
+    const shown = () => { const o = sel.selectedOptions[0]; return o && o.value ? o.textContent : ''; };
+    const render = () => {
+      const q = typing ? input.value : '';
+      let html = '', group = null;
+      Array.from(sel.options).forEach(o => {
+        if (!o.value || !_projMatches(o.textContent, q)) return;
+        const g = o.parentNode.tagName === 'OPTGROUP' ? o.parentNode.label : null;
+        if (g !== group) { group = g; if (g) html += '<div class="b-tcombo__grp">' + _escHtml(g) + '</div>'; }
+        html += '<div class="b24t-proj-item b-tcombo__opt' + (o.selected ? ' b24t-proj-item-on' : '') + '" role="option" aria-selected="' +
+          o.selected + '" data-v="' + _escHtml(o.value) + '"><span>' + _escHtml(o.textContent) + '</span>' +
+          (o.dataset.n != null ? '<span class="b-tcombo__of" data-tip="W ' + o.dataset.n + ' z ' + o.dataset.of + ' projektów z pliku">' +
+            o.dataset.n + '/' + o.dataset.of + '</span>' : '') + '</div>';
+      });
+      list.innerHTML = _html(html || '<div class="b24t-proj-empty">brak tagu pasującego do „' + _escHtml(input.value) + '”</div>');
+    };
+    const open = (on) => {
+      list.hidden = !on;
+      input.setAttribute('aria-expanded', on ? 'true' : 'false');
+      if (on) render();
+    };
+    // Podświetlenie klawiaturą na klasie, nie w zmiennej: lista bywa przerysowana między naciśnięciami klawiszy.
+    const move = (d) => {
+      const items = Array.from(list.querySelectorAll('.b24t-proj-item'));
+      if (!items.length) return;
+      const cur = items.findIndex(el => el.classList.contains('b24t-proj-item-hot'));
+      const next = cur < 0 ? (d > 0 ? 0 : items.length - 1) : (cur + d + items.length) % items.length;
+      items.forEach(el => el.classList.remove('b24t-proj-item-hot'));
+      items[next].classList.add('b24t-proj-item-hot');
+      items[next].scrollIntoView({ block: 'nearest' });
+    };
+    // Pole pokazuje nazwę od początku (po pisaniu zostaje przewinięte do końca), a pełną nazwę w podpowiedzi, bo długie
+    // nazwy tagów nie mieszczą się w polu.
+    const showChosen = () => { input.value = shown(); input.title = input.value; input.scrollLeft = 0; };
+    const pick = (v) => {
+      typing = false;
+      if (sel.value !== v) { sel.value = v; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+      showChosen();
+      open(false);
+    };
+    showChosen();
+    sel.addEventListener('change', () => { if (!typing) showChosen(); });
+    // Kliknięcie w pole pokazuje całą listę, a zaznaczony tekst sprawia, że pisanie zastępuje nazwę wybranego tagu.
+    input.addEventListener('focus', () => { typing = false; input.select(); open(true); });
+    input.addEventListener('input', () => { typing = true; open(true); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (list.hidden) open(true); move(e.key === 'ArrowDown' ? 1 : -1); return; }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const h = list.querySelector('.b24t-proj-item-hot') || list.querySelector('.b24t-proj-item');
+        if (h && !list.hidden) pick(h.dataset.v);
+        return;
+      }
+      if (e.key === 'Escape' && !list.hidden) { e.preventDefault(); e.stopPropagation(); typing = false; showChosen(); open(false); }
+    });
+    // `mousedown`, nie `click`: `blur` pola przychodzi przed `click` i zamknąłby listę przed wyborem.
+    list.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const it = e.target.closest('.b24t-proj-item');
+      if (it) pick(it.dataset.v);
+    });
+    input.addEventListener('blur', () => setTimeout(() => { typing = false; showChosen(); open(false); }, 120));
+    return box;
+  }
+
+  // Tagi do wyboru w mapowaniu. Plik wielu projektów po sprawdzeniu projektów z pliku: nazwy tagów tych projektów, bo tagi
+  // należą do konta (BRAND24_NETWORK.md §6), a projekt otwarty w panelu nie ma tagów projektów innych kont; `n` — w ilu
+  // z `of` projektów z pobranymi tagami jest tag. Do czasu sprawdzenia i w pliku jednego projektu: tagi projektu panelu.
+  function _mapTagChoices() {
+    const fileTags = _fileTagNames();
+    const names = fileTags ? Object.keys(fileTags.counts) : Object.keys(state.tags);
+    names.sort((a, b) => a.localeCompare(b, 'pl'));
+    return { names, n: fileTags && fileTags.counts, of: fileTags && fileTags.total };
+  }
+
+  // Opcje tagów <select> mapowania; `extra` — wybrane nazwy spoza listy (żaden projekt z pobranymi tagami ich nie ma).
+  function _mapTagOptions(choices, extra) {
+    return choices.names.concat(extra).map(name => '<option value="' + _escHtml(name) + '"' +
+      (choices.n ? ' data-n="' + (choices.n[name] || 0) + '" data-of="' + choices.of + '"' : '') + '>' + _escHtml(name) + '</option>').join('');
+  }
+
+  // Tag zastępczy oceny w pliku wielu projektów: pole z wyszukiwaniem i „×” pod tagiem oceny. Projekt dostaje pierwszy
+  // tag oceny, który ma (_mapPick), więc zastępczy obejmuje projekty bez tagu głównego.
+  function _mapAltRow(row, choices, name, onChange) {
+    const label = row.dataset.label;
+    const alt = document.createElement('div');
+    alt.className = 'b-map__alt';
+    alt.innerHTML = _html('<select class="b24t-alt-select" data-label="' + _escHtml(label) + '" aria-label="Tag zastępczy dla oceny ' +
+      _escHtml(label) + '" hidden><option value=""></option>' + _mapTagOptions(choices, name && choices.names.indexOf(name) < 0 ? [name] : []) +
+      '</select><button type="button" class="b-ibtn b-ibtn--sm" data-alt-del aria-label="Usuń tag zastępczy" data-tip="Usuń tag zastępczy">' +
+      _icon('x') + '</button>');
+    const sel = alt.querySelector('select');
+    sel.value = name || '';
+    sel.addEventListener('change', onChange);
+    alt.insertBefore(_tagCombo(sel, 'Tag zastępczy'), alt.firstChild);
+    alt.insertAdjacentHTML('afterbegin', _html('<span class="b-map__or" aria-hidden="true">lub</span>'));
+    row.querySelector('.b-map__tag').insertBefore(alt, row.querySelector('[data-alt-add]'));
+    return alt;
+  }
 
   function renderMappingRows(assessments, savedSchema) {
     const container = _$('b24t-mapping-rows');
@@ -11148,45 +11426,66 @@
     if (!meta) return;
 
     const source = assessments || meta.assessments;
+    // Wybór na start. `savedSchema` niepodany: bieżące mapowanie, bo lista rysuje się od nowa po sprawdzeniu projektów
+    // z pliku i po „Nowy tag w Brand24”; `null`: bez wyboru (nowe oceny po zmianie kolumny); schemat: zapisane mapowanie.
+    const chosen = savedSchema === undefined ? state.mapping : (savedSchema && savedSchema.mapping) || {};
+    const multi = !!(state.file.colMap && state.file.colMap.projectId);
+    const choices = _mapTagChoices();
+    const idName = {};
+    Object.keys(state.tags).forEach(name => { idName[state.tags[name]] = name; });
+    const onChange = () => updateMappingState(container);
     container.textContent = '';
 
     const deleteEnabled = loadFeatures().delete_by_assessment;
     const sentimentEnabled = loadFeatures().sentiment_by_assessment;
+    // Akcje zamiast tagu: usunięcie wzmianki i zmiana sentymentu (włączane w Ustawieniach).
+    const actionOptions = (deleteEnabled ? '<option value="__DELETE__">Usuń wzmiankę</option>' : '') +
+      (sentimentEnabled ? SENTIMENT_ACTIONS.map(a => `<option value="${a.value}">Sentyment: ${a.name}</option>`).join('') : '');
+    const types = ['relevant', 'irrelevant', 'other'];
 
     Object.entries(source).forEach(([label, count]) => {
+      const saved = chosen[label.toUpperCase()];
+      const isAction = !!saved && (saved.type === 'delete' || saved.type === 'sentiment');
+      // Tag najpierw po ID w projekcie panelu (tag przemianowany w Brand24 ma to samo ID), potem po nazwie.
+      const savedName = !saved || isAction ? '' : idName[saved.tagId] || saved.tagName || '';
+      const alts = multi && saved && !isAction ? saved.alts || [] : [];
+      // Plik wielu projektów: wybrana nazwa spoza listy zostaje opcją, żeby lista rysowana przed sprawdzeniem projektów
+      // nie gubiła wyboru ze schematu. W pliku jednego projektu odpada, bo przebieg potrzebuje ID tagu w projekcie.
+      const extra = multi ? [savedName].concat(alts).filter((n, i, a) => n && a.indexOf(n) === i && choices.names.indexOf(n) < 0) : [];
+      const tagOptions = _mapTagOptions(choices, extra);
+      const savedType = (saved && !isAction && saved.type) || 'other';
+
       const row = document.createElement('div');
       row.className = 'b-map';
-
-      const savedTagId = savedSchema?.mapping?.[label]?.tagId;
-      const savedIsDelete = savedTagId === '__DELETE__';
-
-      // Akcje zamiast tagu: usunięcie wzmianki i zmiana sentymentu (włączane w Ustawieniach).
-      const actionOptions = (deleteEnabled ? `<option value="__DELETE__" ${savedIsDelete ? 'selected' : ''}>Usuń wzmiankę</option>` : '') +
-        (sentimentEnabled ? SENTIMENT_ACTIONS.map(a =>
-          `<option value="${a.value}" ${savedTagId === a.value ? 'selected' : ''}>Sentyment: ${a.name}</option>`).join('') : '');
-      const tagOptions = Object.entries(state.tags)
-        .map(([name, id]) => `<option value="${_escHtml(String(id))}" ${!savedIsDelete && savedTagId === id ? 'selected' : ''}>${_escHtml(name)}</option>`)
-        .join('');
-
-      // Type select (hidden when delete selected — managed by updateMappingState)
-      const types = ['relevant', 'irrelevant', 'other'];
-      const savedType = savedSchema?.mapping?.[label]?.type || 'other';
-      const typeOptions = types.map(t =>
-        `<option value="${t}" ${savedType === t ? 'selected' : ''}>${t}</option>`
-      ).join('');
-
+      row.dataset.label = label;
       // label pochodzi z pliku CSV/XLSX użytkownika — zawsze escape przed wstawieniem do innerHTML
       const labelEsc = _escHtml(label);
       row.innerHTML = _html(`
         <div class="b-map__label"><span class="b-map__name" title="${labelEsc}">${labelEsc}</span><span class="b-map__count">${count}</span></div>
-        <select class="b-select b-select--sm b24t-tag-select" data-label="${labelEsc}" aria-label="Tag dla oceny ${labelEsc}">
-          <option value="">Wybierz tag</option>
-          ${actionOptions ? `<optgroup label="Działania">${actionOptions}</optgroup><optgroup label="Tagi">${tagOptions}</optgroup>` : tagOptions}
-        </select>
+        <div class="b-map__tag">
+          <select class="b24t-tag-select" data-label="${labelEsc}" aria-label="Tag dla oceny ${labelEsc}" hidden>
+            <option value="">Wybierz tag</option>
+            ${actionOptions ? `<optgroup label="Działania">${actionOptions}</optgroup><optgroup label="Tagi">${tagOptions}</optgroup>` : tagOptions}
+          </select>
+          ${multi ? `<button type="button" class="b-btn b-btn--link b-small" data-alt-add hidden>${_icon('plus')}<span></span></button>` : ''}
+        </div>
         <select class="b-select b-select--sm b24t-type-select" data-label="${labelEsc}" aria-label="Rodzaj oceny ${labelEsc}">
-          ${typeOptions}
+          ${types.map(t => `<option value="${t}"${savedType === t ? ' selected' : ''}>${t}</option>`).join('')}
         </select>
       `);
+      const tagBox = row.querySelector('.b-map__tag'), tagSel = tagBox.querySelector('.b24t-tag-select');
+      tagSel.value = isAction ? saved.tagId : savedName;
+      tagBox.insertBefore(_tagCombo(tagSel, 'Wybierz tag'), tagSel);
+      alts.forEach(name => _mapAltRow(row, choices, name, onChange));
+      tagSel.addEventListener('change', onChange);
+      row.querySelector('.b24t-type-select').addEventListener('change', onChange);
+      if (multi) row.addEventListener('click', (e) => {
+        const del = e.target.closest('[data-alt-del]');
+        if (del) { del.closest('.b-map__alt').remove(); onChange(); return; }
+        if (!e.target.closest('[data-alt-add]')) return;
+        _mapAltRow(row, choices, '', onChange).querySelector('input').focus();
+        _mapAltButtons(container);
+      });
       container.appendChild(row);
     });
 
@@ -11201,27 +11500,39 @@
       container.appendChild(row);
     }
 
-    // Wire mapping selects
-    container.querySelectorAll('.b24t-tag-select, .b24t-type-select').forEach(sel => {
-      sel.addEventListener('change', () => updateMappingState(container));
-    });
-
     updateMappingState(container);
 
     // Multi-project note
     var existingNote = _$('b24t-multiproject-mapping-note');
     if (existingNote) existingNote.remove();
-    if (state.file && state.file.colMap && state.file.colMap.projectId) {
+    if (multi) {
       var mpNote = document.createElement('div');
       mpNote.id = 'b24t-multiproject-mapping-note';
       mpNote.className = 'b-banner b-banner--info b-small';
-      mpNote.innerHTML = _html(_icon('info') + '<div>Tryb wielu projektów: mapowanie działa po nazwie tagu, więc nazwa musi być identyczna we wszystkich projektach.</div>');
+      mpNote.innerHTML = _html(_icon('info') + '<div>Tryb wielu projektów: mapowanie działa po nazwie tagu. Gdy część projektów ma tag ' +
+        'pod inną nazwą, „Tag zastępczy” przy ocenie obejmuje te projekty.</div>');
       container.parentNode.insertBefore(mpNote, container.nextSibling);
     }
   }
 
+  // Przycisk „Tag zastępczy” przy ocenie, której tagi nie obejmują wszystkich projektów z jej wierszami (plik wielu
+  // projektów, po sprawdzeniu projektów). Ukryty, dopóki pole dodanego tagu zastępczego jest puste.
+  function _mapAltButtons(container) {
+    const gaps = _fileLabelGaps();
+    container.querySelectorAll('.b-map[data-label]').forEach(row => {
+      const btn = row.querySelector('[data-alt-add]');
+      if (!btn) return;
+      const miss = gaps[row.dataset.label.toUpperCase()] || [];
+      btn.hidden = !miss.length || Array.from(row.querySelectorAll('.b24t-alt-select')).some(s => !s.value);
+      if (!miss.length) return;
+      btn.lastChild.textContent = 'Tag zastępczy (brak w ' + _plPl(miss.length, 'projekcie', 'projektach', 'projektach') + ')';
+      btn.setAttribute('data-tip', 'Bez tagu tej oceny: ' + miss.join(', ') + '. Projekt dostaje pierwszy tag oceny, który ma.');
+    });
+  }
+
   function updateMappingState(container) {
     state.mapping = {};
+    const multi = !!(state.file && state.file.colMap && state.file.colMap.projectId);
     container.querySelectorAll('.b24t-tag-select').forEach(tagSel => {
       const label = tagSel.dataset.label;
       // Etykieta pochodzi z pliku: cudzysłów albo ukośnik wsteczny bez CSS.escape psuł selektor i rzucał wyjątek.
@@ -11241,31 +11552,32 @@
         return;
       }
       if (typeSel) typeSel.hidden = false;
-      const tagId = parseInt(tagSel.value);
-      if (!tagId) return;
+      const tagName = tagSel.value;
+      if (!tagName) return;
+      // ID tagu w projekcie panelu. W pliku wielu projektów może go nie być: przebieg dobiera ID po nazwie w każdym
+      // projekcie z pliku, a projekt panelu nie musi być jednym z nich.
+      const tagId = state.tags[tagName] || null;
+      if (!tagId && !multi) return;
       const type = typeSel?.value || 'other';
-      const tagName = Object.entries(state.tags).find(([, id]) => id === tagId)?.[0] || '';
-      state.mapping[label.toUpperCase()] = { tagId, tagName, type };
+      const alts = multi ? Array.from(tagSel.closest('.b-map').querySelectorAll('.b24t-alt-select'), s => s.value)
+        .filter((n, i, a) => n && n !== tagName && a.indexOf(n) === i) : [];
+      state.mapping[label.toUpperCase()] = alts.length ? { tagId, tagName, type, alts } : { tagId, tagName, type };
     });
 
-    // Show/hide switch view section based on 'other' type labels
-    const hasOther = Object.values(state.mapping).some(m => m.type === 'other');
-    _$('b24t-switchview-section').hidden = !hasOther;
-
-    // Populate switch view dropdown
-    if (hasOther) {
+    // Przełączenie widoku po przebiegu otwiera filtr tagu w projekcie panelu, więc tylko tag z ID w tym projekcie.
+    const viewable = Object.entries(state.mapping).filter(([, m]) => m.type === 'other' && m.tagId);
+    _$('b24t-switchview-section').hidden = !viewable.length;
+    if (viewable.length) {
       const sel = _$('b24t-switch-view-tag');
-      sel.innerHTML = _html(Object.entries(state.mapping)
-        .filter(([, m]) => m.type === 'other')
+      sel.innerHTML = _html(viewable
         .map(([label, m]) => `<option value="${m.tagId}">${_escHtml(m.tagName)} (${_escHtml(label)})</option>`)
         .join(''));
       state.switchViewTagId = parseInt(sel.value) || null;
     }
-    // F11: tag counts
     updateTagCountsInMapping();
     if (_match.view === 'done') _matchRender();
     updateAutoDeleteSection();
-    if (state.file && state.file.colMap && state.file.colMap.projectId) _updateTagCoverage();
+    if (multi) { _mapAltButtons(container); _updateTagCoverage(); }
   }
 
   // ───────────────────────────────────────────
@@ -11413,14 +11725,14 @@
       }
       const _row = (k, v, note) => '<div class="b-list__row"><span class="b-strong b-ell">' + _escHtml(k) + '</span><span class="b-sp"></span>' +
         _escHtml(v) + (note ? '<span class="b-muted">' + _escHtml(note) + '</span>' : '') + '</div>';
-      const _rows = _known.map((t, i) => _row(t.name, t.dateFrom + ' – ' + t.dateTo,
+      const _rows = _known.map((t, i) => _row(t.name + (t.tagName !== _autoDelete.tagName ? ' („' + t.tagName + '”)' : ''), t.dateFrom + ' – ' + t.dateTo,
         _counts[i] == null ? 'nie udało się policzyć' : 'ma tag: ' + _plPl(_counts[i], 'wzmianka', 'wzmianki', 'wzmianek')));
       const _skipped = _autoDelete.targets.filter(t => !t.tagId).map(t => t.name);
       if (!(await _dlgConfirm({
         title: 'Po przebiegu: usunięcie wzmianek z tagiem „' + _autoDelete.tagName + '”', danger: true, confirm: 'Kontynuuj z usuwaniem', from: _$('b24t-btn-start'),
         body: '<p>Po przebiegu wtyczka usunie wszystkie wzmianki z tym tagiem w podanym zakresie dat, także te spoza pliku.</p>' +
           (_rows.length ? '<div class="b-list">' + _rows.join('') + '</div>' : '') +
-          (_skipped.length ? '<p class="b-text2">Bez tagu „' + _escHtml(_autoDelete.tagName) + '”, więc bez usuwania: ' + _escHtml(_skipped.join(', ')) + '.</p>' : '') +
+          (_skipped.length ? '<p class="b-text2">Bez ' + _escHtml(_tagsMissingPl(_autoDelete.names)) + ', więc bez usuwania: ' + _escHtml(_skipped.join(', ')) + '.</p>' : '') +
           '<p class="b-text2">Wyłączenie: „Usuwanie po zakończeniu” w Ustawieniach przebiegu.</p>' +
           '<div class="b-banner b-banner--danger">' + _icon('alert') + '<div><div class="b-banner__title">Nieodwracalne</div>' +
           'Brand24 nie ma kosza; usuniętych wzmianek nie da się przywrócić.</div></div>'
@@ -12240,29 +12552,27 @@
   // F11 - TAG COUNTS IN MAPPING
   // ───────────────────────────────────────────
 
+  // Liczba wierszy pliku z tagiem, który dostaje kilka ocen: w polu tagu każdej z nich. Liczba wierszy samej oceny stoi
+  // przy jej nazwie, więc przy tagu jednej oceny licznik by ją powtarzał.
   function updateTagCountsInMapping() {
     if (!state.file || !state.file.meta || !state.file.meta.assessments) return;
     const container = _$('b24t-mapping-rows');
     if (!container) return;
-    const tagBuckets = {};
-    Object.entries(state.mapping).forEach(function(entry) {
-      const label = entry[0]; const m = entry[1];
-      const count = state.file.meta.assessments[label] || 0;
-      tagBuckets[m.tagId] = (tagBuckets[m.tagId] || 0) + count;
+    const total = {}, labels = {};
+    Object.entries(state.file.meta.assessments).forEach(function(entry) {
+      const m = state.mapping[entry[0].toUpperCase()];
+      if (!m || !m.tagName) return;
+      total[m.tagName] = (total[m.tagName] || 0) + entry[1];
+      labels[m.tagName] = (labels[m.tagName] || 0) + 1;
     });
     container.querySelectorAll('.b24t-tag-select').forEach(function(sel) {
-      const label = sel.dataset.label;
-      if (!label) return;
-      const mapping = state.mapping[label.toUpperCase()];
-      if (!mapping) return;
-      const total = tagBuckets[mapping.tagId] || 0;
-      if (!total) return;
-      Array.from(sel.options).forEach(function(opt) {
-        if (parseInt(opt.value) === mapping.tagId) {
-          if (!opt.dataset.origText) opt.dataset.origText = opt.textContent.replace(/ \(\d+\)$/, '');
-          opt.textContent = opt.dataset.origText + ' (' + total + ')';
-        }
-      });
+      const badge = sel.parentNode.querySelector('.b-tcombo > .b-tcombo__n');
+      if (!badge) return;
+      const m = state.mapping[sel.dataset.label.toUpperCase()];
+      const shared = !!m && labels[m.tagName] > 1;
+      badge.hidden = !shared;
+      if (!shared) return;
+      badge.textContent = 'razem ' + total[m.tagName];
     });
   }
 
@@ -21624,6 +21934,46 @@
   // wersji CHANGELOG.json; zapisuje go release.py, nie edytować ręcznie.
   const CHANGELOG_FALLBACK = [
     {
+      "version": "0.38.33",
+      "date": "2026-10-09",
+      "label": "new",
+      "changes": [
+        {
+          "type": "fix",
+          "area": "Tagowanie z pliku",
+          "title": "Naprawiono błąd, przez który lista tagów przy ocenie pomijała tagi projektów innych kont",
+          "items": [
+            "W pliku z wieloma projektami lista tagów przy ocenie zbiera tagi wszystkich projektów z pliku, a przy każdym tagu widać, w ilu z nich występuje.",
+            "Lista odświeża się po „Sprawdź ponownie” w sekcji „Projekty w pliku”, więc tag dodany w Brand24 pojawia się bez przeładowania strony."
+          ],
+          "text": "Naprawiono błąd, przez który lista tagów przy ocenie pomijała tagi projektów innych kont. W pliku z wieloma projektami lista tagów przy ocenie zbiera tagi wszystkich projektów z pliku, a przy każdym tagu widać, w ilu z nich występuje. Lista odświeża się po „Sprawdź ponownie” w sekcji „Projekty w pliku”, więc tag dodany w Brand24 pojawia się bez przeładowania strony."
+        },
+        {
+          "type": "new",
+          "area": "Tagowanie z pliku",
+          "title": "Wyszukiwanie tagów i tagi zastępcze w mapowaniu ocen",
+          "items": [
+            "Pole tagu przy ocenie zawęża listę do tagów z wpisanym fragmentem nazwy, tak jak wybór projektu w panelu Niestandardowe.",
+            "W pliku z wieloma projektami przycisk „Tag zastępczy” przy ocenie dodaje drugi tag dla projektów bez pierwszego. Każdy projekt dostaje pierwszy z wybranych tagów, który ma, więc literówka w nazwie tagu w części kont nie kosztuje pominiętych wierszy.",
+            "„Usuwanie po zakończeniu” usuwa w każdym projekcie wzmianki z tym tagiem oceny, który projekt dostał w przebiegu.",
+            "Pokrycie tagów ma kolumnę dla każdej oceny z tagiem, a przy tagach zastępczych litera wskazuje tag, który dostanie projekt."
+          ],
+          "text": "Wyszukiwanie tagów i tagi zastępcze w mapowaniu ocen. Pole tagu przy ocenie zawęża listę do tagów z wpisanym fragmentem nazwy, tak jak wybór projektu w panelu Niestandardowe. W pliku z wieloma projektami przycisk „Tag zastępczy” przy ocenie dodaje drugi tag dla projektów bez pierwszego. Każdy projekt dostaje pierwszy z wybranych tagów, który ma, więc literówka w nazwie tagu w części kont nie kosztuje pominiętych wierszy. „Usuwanie po zakończeniu” usuwa w każdym projekcie wzmianki z tym tagiem oceny, który projekt dostał w przebiegu. Pokrycie tagów ma kolumnę dla każdej oceny z tagiem, a przy tagach zastępczych litera wskazuje tag, który dostanie projekt."
+        },
+        {
+          "type": "improved",
+          "area": "Tagowanie z pliku",
+          "title": "Raport sesji rozbija pominięte wiersze według powodu",
+          "items": [
+            "Wiersze, których wzmianka miała już ten tag, raport liczy osobno jako „Bez zmian”, a nie jako pominięte.",
+            "Pominięte wiersze mają powód: brak tagu w projekcie, brak dopasowania w Brand24, projekt pominięty w całości i inne, a przy powodach dotyczących projektu raport wymienia projekty.",
+            "Licznik „Pominięte” w karcie postępu liczy wiersze bez dopasowania jeden raz."
+          ],
+          "text": "Raport sesji rozbija pominięte wiersze według powodu. Wiersze, których wzmianka miała już ten tag, raport liczy osobno jako „Bez zmian”, a nie jako pominięte. Pominięte wiersze mają powód: brak tagu w projekcie, brak dopasowania w Brand24, projekt pominięty w całości i inne, a przy powodach dotyczących projektu raport wymienia projekty. Licznik „Pominięte” w karcie postępu liczy wiersze bez dopasowania jeden raz."
+        }
+      ]
+    },
+    {
       "version": "0.38.32",
       "date": "2026-10-09",
       "label": "improved",
@@ -21801,82 +22151,6 @@
             "Dźwięk milknie po rozwiązaniu testu, po wyciszeniu w dowolnej z obu kart i po zatrzymaniu wyszukiwania."
           ],
           "text": "Naprawiono błąd, przez który alarm CAPTCHA nie grał dźwięku. Gdy Chrome nie pozwala na dźwięk w karcie wyszukiwania, alarm gra w karcie Brand24, z której ruszyło wyszukiwanie. Karta Brand24 pokazuje wtedy powiadomienie „Test Google (CAPTCHA)” z przyciskiem „Wycisz dźwięk”. Dźwięk milknie po rozwiązaniu testu, po wyciszeniu w dowolnej z obu kart i po zatrzymaniu wyszukiwania."
-        }
-      ]
-    },
-    {
-      "version": "0.38.23",
-      "date": "2026-10-07",
-      "label": "new",
-      "changes": [
-        {
-          "type": "fix",
-          "area": "Kampanie H&M",
-          "title": "Naprawiono błąd, przez który „Dołóż z Google News” nie dodawał adresów do koszyka",
-          "items": [
-            "Pozycje z Google News rozwijają się do adresów artykułów.",
-            "Pozycja, która już jest w koszyku, nie jest pobierana drugi raz.",
-            "Gdy Google News odsyła na stronę zgody na pliki cookie, komunikat mówi, co zrobić."
-          ],
-          "text": "Naprawiono błąd, przez który „Dołóż z Google News” nie dodawał adresów do koszyka. Pozycje z Google News rozwijają się do adresów artykułów. Pozycja, która już jest w koszyku, nie jest pobierana drugi raz. Gdy Google News odsyła na stronę zgody na pliki cookie, komunikat mówi, co zrobić."
-        },
-        {
-          "type": "fix",
-          "area": "Kampanie H&M",
-          "title": "Naprawiono odsiewanie poprawnych serwisów przez czarną listę domen",
-          "items": [
-            "Wpis „x.com” odsiewa tylko x.com i jego subdomeny, a nie każdy serwis kończący się na „x.com”.",
-            "Wpis zakończony kropką, np. „olx.”, pasuje do początku domeny, a wpis bez kropki, np. „vinted”, do jednego członu adresu."
-          ],
-          "text": "Naprawiono odsiewanie poprawnych serwisów przez czarną listę domen. Wpis „x.com” odsiewa tylko x.com i jego subdomeny, a nie każdy serwis kończący się na „x.com”. Wpis zakończony kropką, np. „olx.”, pasuje do początku domeny, a wpis bez kropki, np. „vinted”, do jednego członu adresu."
-        },
-        {
-          "type": "fix",
-          "area": "Kampanie H&M",
-          "title": "Naprawiono błąd, przez który nowe wyszukiwanie mieszało się z trwającym",
-          "items": [
-            "„Uruchom wyszukiwanie” przy trwającym wyszukiwaniu pyta, czy je zatrzymać.",
-            "Karta poprzedniego wyszukiwania nie przejmuje nowego."
-          ],
-          "text": "Naprawiono błąd, przez który nowe wyszukiwanie mieszało się z trwającym. „Uruchom wyszukiwanie” przy trwającym wyszukiwaniu pyta, czy je zatrzymać. Karta poprzedniego wyszukiwania nie przejmuje nowego."
-        },
-        {
-          "type": "improved",
-          "area": "Kampanie H&M",
-          "title": "Osobny koszyk kampanii dla każdego projektu",
-          "items": [
-            "Wyszukiwanie i Google News przypisują adresy do projektu, z którego ruszyły.",
-            "„Wklej do importu” i „Przejdź do skanowania” biorą tylko adresy otwartego projektu.",
-            "Adresy innych projektów stoją w osobnej linii pod koszykiem, z przyciskiem „Wyczyść inne”."
-          ],
-          "action": "Jeśli w koszyku zostały adresy z kilku rynków, trzeba go wyczyścić przed następnym skanem: adresy zebrane przed tą wersją widać w każdym projekcie.",
-          "text": "Osobny koszyk kampanii dla każdego projektu. Wyszukiwanie i Google News przypisują adresy do projektu, z którego ruszyły. „Wklej do importu” i „Przejdź do skanowania” biorą tylko adresy otwartego projektu. Adresy innych projektów stoją w osobnej linii pod koszykiem, z przyciskiem „Wyczyść inne”. Jeśli w koszyku zostały adresy z kilku rynków, trzeba go wyczyścić przed następnym skanem: adresy zebrane przed tą wersją widać w każdym projekcie."
-        },
-        {
-          "type": "improved",
-          "area": "Kampanie H&M",
-          "title": "Wolniejsze wyszukiwanie po teście Google i zatrzymanie po drugim teście",
-          "items": [
-            "Przez godzinę po teście Google przerwy między stronami wyników są dwa razy dłuższe, także w kolejnym wyszukiwaniu.",
-            "Drugi test w ciągu godziny zatrzymuje wyszukiwanie; koszyk zostaje.",
-            "Okno wyszukiwania i panel na stronie Google pokazują liczbę zapytań do Google z ostatniej godziny."
-          ],
-          "text": "Wolniejsze wyszukiwanie po teście Google i zatrzymanie po drugim teście. Przez godzinę po teście Google przerwy między stronami wyników są dwa razy dłuższe, także w kolejnym wyszukiwaniu. Drugi test w ciągu godziny zatrzymuje wyszukiwanie; koszyk zostaje. Okno wyszukiwania i panel na stronie Google pokazują liczbę zapytań do Google z ostatniej godziny."
-        },
-        {
-          "type": "improved",
-          "area": "Kampanie H&M",
-          "title": "Wariant frazy kończy się po dwóch stronach wyników bez nowych adresów",
-          "text": "Wariant frazy kończy się po dwóch stronach wyników bez nowych adresów."
-        },
-        {
-          "type": "new",
-          "area": "Kampanie H&M",
-          "title": "Dziennik zapytań wyszukiwania i przycisk „Kopiuj dziennik”",
-          "items": [
-            "Dziennik zapisuje każdą stronę wyników i każdy test Google z liczbą zebranych adresów."
-          ],
-          "text": "Dziennik zapytań wyszukiwania i przycisk „Kopiuj dziennik”. Dziennik zapisuje każdą stronę wyników i każdy test Google z liczbą zebranych adresów."
         }
       ]
     }
@@ -23843,7 +24117,7 @@
         dateFrom: (f.meta && f.meta.minDate) || null, dateTo: (f.meta && f.meta.maxDate) || null } : null,
       mapping: Object.keys(state.mapping || {}).map(function (label) {
         var m = state.mapping[label] || {};
-        return { label: cut(label, 80), type: m.type || null, tagName: cut(m.tagName, 80) };
+        return { label: cut(label, 80), type: m.type || null, tagName: cut(m.tagName, 80), alts: (m.alts || []).map(function (a) { return cut(a, 80); }) };
       }),
       autoDelete: {
         enabled: !!state.autoDeleteEnabled, tagId: state.autoDeleteTagId || null,
@@ -25878,7 +26152,9 @@
     const section = _$('b24t-auto-delete-section');
     if (!section) return;
 
-    const irrelevant = Object.values(state.mapping).filter(m => m.type === 'irrelevant');
+    // Tylko oceny z ID tagu w projekcie panelu: lista i preferencja w tej sekcji idą po ID. W pliku wielu projektów tag
+    // spoza projektu panelu (z projektów innych kont) ma tagId null i do usuwania na razie nie trafia.
+    const irrelevant = Object.values(state.mapping).filter(m => m.type === 'irrelevant' && m.tagId);
     section.hidden = !irrelevant.length;
     // Usuwanie po przebiegu bierze tag ze state, nie z listy. Tag spoza ocen irrelevant bieżącego mapowania przestaje
     // być celem: inaczej ukryta sekcja albo lista z „Wybierz tag” usuwały wzmianki z tagiem sprzed zmiany mapowania.
@@ -25979,18 +26255,20 @@
   // Usuwanie po zakończeniu (Auto-Delete): { tagName, targets: [{ pid, name, tagId, dateFrom, dateTo }] } albo null.
   // Plik jednego projektu: bieżący projekt i zakres dat pliku. Plik z kolumną project_id: każdy projekt z pliku
   // z zakresem dat jego wierszy, a tag po nazwie w tagach projektu, bo tagi w Brand24 należą do konta
-  // (runMultiProjectTagging odświeża je przed tagowaniem). Projekt otwarty w przeglądarce nie jest celem, gdy pliku
-  // w nim nie ma. Projekt bez tagu o tej nazwie ma tagId null i jest pomijany.
+  // (runMultiProjectTagging odświeża je przed tagowaniem); przy ocenie z tagami zastępczymi ten sam, który dostał
+  // projekt w przebiegu (_mapPick). Projekt otwarty w przeglądarce nie jest celem, gdy pliku w nim nie ma. Projekt bez
+  // żadnego z tagów (`names`) ma tagId null i jest pomijany.
   function _autoDeletePlan() {
     const f = state.file;
     const tagId = state.autoDeleteTagId;
     if (!state.autoDeleteEnabled || !tagId || !f || !f.meta) return null;
     const m = Object.values(state.mapping).find(x => x.type === 'irrelevant' && x.tagId === tagId);
     const tagName = m ? m.tagName : String(tagId);
+    const names = m ? _mapNames(m) : [tagName];
     const colPid = f.colMap && f.colMap.projectId;
     if (!colPid) {
       if (!f.meta.minDate || !f.meta.maxDate) return null;
-      return { tagName, targets: [{ pid: state.projectId, name: _pnResolve(state.projectId), tagId, dateFrom: f.meta.minDate, dateTo: f.meta.maxDate }] };
+      return { tagName, names, targets: [{ pid: state.projectId, name: _pnResolve(state.projectId), tagId, tagName, dateFrom: f.meta.minDate, dateTo: f.meta.maxDate }] };
     }
     const saved = lsGet(LS.PROJECTS, {});
     const ranges = {};
@@ -26002,11 +26280,12 @@
       if (d < r.from) r.from = d;
       if (d > r.to) r.to = d;
     });
-    return { tagName, targets: Object.keys(ranges).map(pid => ({
-      pid: parseInt(pid), name: _pnResolve(pid),
-      tagId: ((saved[pid] && saved[pid].tagIds) || {})[tagName] || null,
-      dateFrom: ranges[pid].from, dateTo: ranges[pid].to,
-    })) };
+    return { tagName, names, targets: Object.keys(ranges).map(pid => {
+      const tags = (saved[pid] && saved[pid].tagIds) || {};
+      const pick = _tagPick(names, tags);
+      return { pid: parseInt(pid), name: _pnResolve(pid), tagId: pick ? tags[pick] : null, tagName: pick || tagName,
+        dateFrom: ranges[pid].from, dateTo: ranges[pid].to };
+    }) };
   }
 
   // Auto-delete after file tagging run - called from main flow. Błąd w jednym projekcie kończy usuwanie: przy operacji
@@ -26020,14 +26299,14 @@
     let total = 0;
     for (const t of plan.targets) {
       if (!t.tagId) {
-        addLog(`⚠ Auto-Delete: projekt ${t.name} nie ma tagu "${plan.tagName}", pomijam`, 'warn');
+        addLog(`⚠ Auto-Delete: projekt ${t.name} nie ma ${_tagsMissingPl(plan.names)}, pomijam`, 'warn');
         continue;
       }
       const at = multi ? t.name + ': ' : '';
-      addLog(`→ Auto-Delete: "${plan.tagName}" (${t.dateFrom} → ${t.dateTo})${multi ? ' w projekcie ' + t.name : ''}`, 'warn');
+      addLog(`→ Auto-Delete: "${t.tagName}" (${t.dateFrom} → ${t.dateTo})${multi ? ' w projekcie ' + t.name : ''}`, 'warn');
       const onProgress = (phase, cur, n) => setStatus(at + (phase === 'collect' ? `Zbieram: str. ${cur}/${n}...` : `Usuwam: ${cur}/${n}...`));
       try {
-        let deleted = await runDeleteByTag(t.tagId, plan.tagName, t.dateFrom, t.dateTo, onProgress, t.pid);
+        let deleted = await runDeleteByTag(t.tagId, t.tagName, t.dateFrom, t.dateTo, onProgress, t.pid);
         if (deleted === 0) {
           // Indeks Brand24 mógł jeszcze nie widzieć tagów nadanych przed chwilą: druga próba po 5 s w tym samym zakresie.
           // Zakres zostaje zakresem pliku. Szersze okno (od początku poprzedniego miesiąca) usuwało bez pytania wzmianki
@@ -26035,7 +26314,7 @@
           addLog(`⚠ Auto-Delete: 0 wzmianek w ${t.dateFrom}→${t.dateTo}. Druga próba za 5 s w tym samym zakresie...`, 'warn', { tech: true, key: 'del' });
           setStatus(`${at}brak w ${t.dateFrom}→${t.dateTo}, druga próba za 5 s...`);
           await sleep(5000);
-          deleted = await runDeleteByTag(t.tagId, plan.tagName, t.dateFrom, t.dateTo, onProgress, t.pid);
+          deleted = await runDeleteByTag(t.tagId, t.tagName, t.dateFrom, t.dateTo, onProgress, t.pid);
         }
         total += deleted;
       } catch (e) {
